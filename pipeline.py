@@ -45,31 +45,32 @@ async def run_pipeline(item_id):
             await append_log(item_id, "ERROR: No protocol PDF found. Please upload a protocol PDF and try again.")
             await set_status(item_id, COL["pipeline_status"], STATUS["failed"])
             return
-        # Get assets via Monday API for reliable download
+        # Fetch fresh asset URLs right before downloading
         from monday_client import get_asset_url
         assets = await get_asset_url(item_id)
         print(f"ASSETS FOUND: {len(assets)}", flush=True)
-        for a in assets:
-            print(f"  ASSET: {a.get('name')} url={str(a.get('public_url',''))[:60]}", flush=True)
 
-        # Download protocol PDF - try public_url from assets first
+        # Get fresh public URL and download immediately
         protocol_pdf = b""
         for asset in assets:
             name = (asset.get("name") or "").lower()
-            if name.endswith(".pdf") and "protocol" in name.lower():
-                pub_url = asset.get("public_url") or asset.get("url")
-                if pub_url:
-                    protocol_pdf = await download_file(pub_url)
-                    if len(protocol_pdf) > 0:
+            if name.endswith(".pdf"):
+                # Fetch a completely fresh URL by re-querying assets
+                fresh_assets = await get_asset_url(item_id)
+                for fa in fresh_assets:
+                    if fa.get("id") == asset.get("id"):
+                        pub_url = fa.get("public_url") or fa.get("url")
+                        if pub_url:
+                            print(f"DOWNLOADING FRESH URL: {pub_url[:80]}", flush=True)
+                            protocol_pdf = await download_file(pub_url)
+                            print(f"PROTOCOL PDF: {len(protocol_pdf)} bytes", flush=True)
                         break
+                if len(protocol_pdf) > 0:
+                    break
 
-        # Fallback to column URL if assets didn't work
-        if len(protocol_pdf) == 0 and protocol_url:
-            protocol_pdf = await download_file(protocol_url)
+        if len(protocol_pdf) == 0:
+            print("WARNING: Protocol PDF downloaded as 0 bytes - proceeding without PDF", flush=True)
 
-        print(f"PROTOCOL PDF: {len(protocol_pdf)} bytes", flush=True)
-
-        # For CRF and OC Standard use column URLs directly
         crf_pdf     = await download_file(crf_url)    if crf_url    else None
         oc_std_xlsx = await download_file(oc_std_url) if oc_std_url else None
         await set_status(item_id, COL["pipeline_status"], STATUS["edc_structure_running"])
