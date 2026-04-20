@@ -16,10 +16,7 @@ COL = {
 }
 
 def get_token():
-    # Strip removes any invisible newlines or spaces Railway may add
-    token = os.environ.get("MONDAY_API_TOKEN", "").strip()
-    print(f"TOKEN LENGTH: {len(token)} FIRST4: {token[:4]} LAST4: {token[-4:]}", flush=True)
-    return token
+    return os.environ.get("MONDAY_API_TOKEN", "").strip()
 
 def get_headers():
     return {
@@ -28,69 +25,30 @@ def get_headers():
         "API-Version": "2024-01"
     }
 
+def make_mutation():
+    return "mutation($i:ID!,$b:ID!,$c:String!,$v:JSON!){change_column_value(item_id:$i,board_id:$b,column_id:$c,value:$v){id}}"
+
 async def get_item(item_id):
-    query = """
-    query ($i: [ID!]) {
-        items (ids: $i) {
-            id
-            name
-            column_values { id value text }
-        }
-    }
-    """
+    q = "query($i:[ID!]){items(ids:$i){id name column_values{id value text}}}"
     print(f"GET_ITEM: calling Monday API for item {item_id}", flush=True)
     async with httpx.AsyncClient(timeout=30) as c:
-        r = await c.post(
-            MONDAY_API_URL,
-            headers=get_headers(),
-            json={"query": query, "variables": {"i": [item_id]}}
-        )
+        r = await c.post(MONDAY_API_URL, headers=get_headers(),
+            json={"query": q, "variables": {"i": [item_id]}})
     print(f"GET_ITEM STATUS: {r.status_code}", flush=True)
     print(f"GET_ITEM RESPONSE: {r.text[:500]}", flush=True)
     resp = r.json()
-    if "errors" in resp:
-        raise Exception(f"Monday API errors: {resp['errors']}")
     if "data" not in resp:
-        raise Exception(f"Monday API unexpected response: {resp}")
+        raise Exception(f"Monday API error: {resp}")
     items = resp["data"]["items"]
     if not items:
         raise Exception(f"No item found with id {item_id}")
     return items[0]
 
-async def download_file(url):
-    """Download a file. S3 presigned URLs must NOT have auth headers."""
-    print(f"DOWNLOADING: {url[:80]}", flush=True)
-    is_s3 = "s3.amazonaws.com" in url or "files-monday-com" in url
-    if is_s3:
-        # S3 presigned URLs are self-contained - no auth header
-        async with httpx.AsyncClient(timeout=60, follow_redirects=True) as c:
-            r = await c.get(url)
-    else:
-        # Monday protected URLs need token
-        async with httpx.AsyncClient(timeout=60, follow_redirects=True) as c:
-            r = await c.get(url, headers={"Authorization": get_token()})
-    print(f"DOWNLOAD STATUS: {r.status_code} SIZE: {len(r.content)}", flush=True)
-    if r.status_code == 200 and len(r.content) > 100:
-        return r.content
-    return b""
-
 async def get_asset_url(item_id):
-    """Get public download URLs for all assets attached to an item."""
-    query = """
-    query ($i: [ID!]) {
-        items (ids: $i) {
-            assets {
-                id
-                name
-                url
-                public_url
-            }
-        }
-    }
-    """
+    q = "query($i:[ID!]){items(ids:$i){assets{id name url public_url}}}"
     async with httpx.AsyncClient(timeout=30) as c:
         r = await c.post(MONDAY_API_URL, headers=get_headers(),
-            json={"query": query, "variables": {"i": [item_id]}})
+            json={"query": q, "variables": {"i": [item_id]}})
     resp = r.json()
     print(f"ASSETS RESPONSE: {str(resp)[:300]}", flush=True)
     items = resp.get("data", {}).get("items", [])
@@ -98,43 +56,42 @@ async def get_asset_url(item_id):
         return items[0].get("assets", [])
     return []
 
-async def set_status(item_id, col_id, label_text):
-    m = """
-    mutation ($i: ID!, $b: ID!, $c: String!, $v: JSON!) {
-        change_column_value(item_id: $i, board_id: $b, column_id: $c, value: $v) { id }
-    }
-    """
-    val = json.dumps({"label": label_text})
-    async with httpx.AsyncClient(timeout=30) as c:
-        r = await c.post(MONDAY_API_URL, headers=get_headers(),
-            json={"query": m, "variables": {
-                "i": item_id, "b": BOARD_ID, "c": col_id, "v": val}})
-    print(f"SET_STATUS {col_id}={label_text}: {r.status_code}", flush=True)
+async def download_file(url):
+    print(f"DOWNLOADING: {url[:80]}", flush=True)
+    is_s3 = "s3.amazonaws.com" in url or "files-monday-com" in url
+    async with httpx.AsyncClient(timeout=60, follow_redirects=True) as c:
+        if is_s3:
+            r = await c.get(url)
+        else:
+            r = await c.get(url, headers={"Authorization": get_token()})
+    print(f"DOWNLOAD STATUS: {r.status_code} SIZE: {len(r.content)}", flush=True)
+    if r.status_code == 200 and len(r.content) > 100:
+        return r.content
+    return b""
 
+async def set_status(item_id, col_id, label_text):
+    val = json.dumps({"label": label_text})
+    variables = {"i": item_id, "b": BOARD_ID, "c": col_id, "v": val}
+    payload = {"query": make_mutation(), "variables": variables}
+    async with httpx.AsyncClient(timeout=30) as c:
+        r = await c.post(MONDAY_API_URL, headers=get_headers(), json=payload)
+    print(f"SET_STATUS {col_id}={label_text}: {r.status_code}", flush=True)
 
 async def append_log(item_id, message):
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    m = """
-    mutation ($i: ID!, $b: ID!, $c: String!, $v: JSON!) {
-        change_column_value(item_id: $i, board_id: $b, column_id: $c, value: $v) { id }
-    }
-    """
+    entry = f"[{ts}] {message}"
+    val = json.dumps({"text": entry})
+    variables = {"i": item_id, "b": BOARD_ID, "c": COL["ai_run_log"], "v": val}
+    payload = {"query": make_mutation(), "variables": variables}
     async with httpx.AsyncClient(timeout=30) as c:
-        await c.post(MONDAY_API_URL, headers=get_headers(),
-            json={"query": m, "variables": {
-                "i": item_id, "b": BOARD_ID, "c": COL["ai_run_log"],
-                "v": json.dumps({"text": f"[{ts}] {message}"})}})
+        await c.post(MONDAY_API_URL, headers=get_headers(), json=payload)
 
 async def upload_file(item_id, col_id, filename, content):
-    print(f"UPLOADING: {filename} ({len(content) if content else 0} bytes) to col {col_id}", flush=True)
-    m = """
-    mutation ($i: ID!, $c: String!) {
-        add_file_to_column(item_id: $i, column_id: $c, file: $file) { id }
-    }
-    """
+    print(f"UPLOADING: {filename} ({len(content)} bytes) to col {col_id}", flush=True)
+    m = "mutation($i:ID!,$c:String!){add_file_to_column(item_id:$i,column_id:$c,file:$file){id}}"
     async with httpx.AsyncClient(timeout=120) as c:
-        await c.post(MONDAY_API_URL,
+        r = await c.post(MONDAY_API_URL,
             headers={"Authorization": get_token()},
-            data={"query": m,
-                  "variables": f'{{"item_id":"{item_id}","col":"{col_id}"}}'},
+            data={"query": m, "variables": json.dumps({"i": item_id, "c": col_id})},
             files={"variables[file]": (filename, content, "application/octet-stream")})
+    print(f"UPLOAD STATUS: {r.status_code}", flush=True)
