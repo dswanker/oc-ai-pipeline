@@ -63,3 +63,4 @@ async def upload_file(item_id, col_id, filename, content):
             data={"query": m,
                   "variables": f'{{"item_id":"{item_id}","col":"{col_id}"}}'},
             files={"variables[file]": (filename, content, "application/octet-stream")})
+# updated
