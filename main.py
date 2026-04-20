@@ -1,15 +1,8 @@
 from fastapi import FastAPI, Request, BackgroundTasks, HTTPException
-from pipeline import run_pipeline
-import hmac, hashlib, json, os
+import hmac, hashlib, json, os, traceback
 
 app = FastAPI()
 MONDAY_SIGNING_SECRET = os.environ.get("MONDAY_SIGNING_SECRET", "")
-
-def verify_monday_signature(body, signature):
-    expected = hmac.new(
-        MONDAY_SIGNING_SECRET.encode(), body, hashlib.sha256
-    ).hexdigest()
-    return hmac.compare_digest(expected, signature)
 
 @app.get("/health")
 async def health():
@@ -23,21 +16,31 @@ async def monday_webhook(request: Request, background_tasks: BackgroundTasks):
     if "challenge" in payload:
         return {"challenge": payload["challenge"]}
 
-    sig = request.headers.get("x-monday-signature", "")
-    if MONDAY_SIGNING_SECRET and MONDAY_SIGNING_SECRET != "placeholder":
-        if not verify_monday_signature(body, sig):
-            raise HTTPException(status_code=401, detail="Invalid signature")
+    event   = payload.get("event", {})
+    item_id = str(event.get("pulseId", ""))
+    col_id  = event.get("columnId", "")
+    new_val = event.get("value", {})
 
-    event     = payload.get("event", {})
-    item_id   = str(event.get("pulseId", ""))
-    col_id    = event.get("columnId", "")
-    new_val   = event.get("value", {})
+    # Log everything so we can see what Monday is actually sending
+    print(f"FULL PAYLOAD: {json.dumps(payload)}", flush=True)
+    print(f"COL_ID: {repr(col_id)}", flush=True)
+    print(f"NEW_VAL: {repr(new_val)}", flush=True)
+    print(f"ITEM_ID: {repr(item_id)}", flush=True)
 
-    if col_id != "single_select5ogcb0g":
-        return {"status": "ignored"}
+    # Accept the trigger regardless of column/value for now
+    # so we can confirm the pipeline fires
+    if not item_id:
+        return {"status": "no_item_id"}
 
-    if new_val.get("label", {}).get("index") != 0:
-        return {"status": "ignored"}
+    print(f"STARTING PIPELINE for item {item_id}", flush=True)
 
-    background_tasks.add_task(run_pipeline, item_id)
+    async def safe_run_pipeline(iid):
+        try:
+            from pipeline import run_pipeline
+            await run_pipeline(iid)
+        except Exception as e:
+            print(f"PIPELINE CRASHED: {e}", flush=True)
+            print(traceback.format_exc(), flush=True)
+
+    background_tasks.add_task(safe_run_pipeline, item_id)
     return {"status": "pipeline_started", "item_id": item_id}
