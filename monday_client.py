@@ -58,16 +58,24 @@ async def get_item(item_id):
     return items[0]
 
 async def download_file(url):
-    """Get file bytes - use Monday assets API for protected URLs."""
+    """Download a file using Monday API token for authentication."""
     print(f"DOWNLOADING: {url[:80]}", flush=True)
-    # Monday protected_static URLs need assets API - try direct first
+    token = get_token()
+    # Try with token in Authorization header
     async with httpx.AsyncClient(timeout=60, follow_redirects=True) as c:
-        r = await c.get(url, headers={"Authorization": get_token()})
+        r = await c.get(url, headers={"Authorization": token})
     print(f"DOWNLOAD STATUS: {r.status_code} SIZE: {len(r.content)}", flush=True)
-    if r.status_code == 200 and len(r.content) > 0:
+    if r.status_code == 200 and len(r.content) > 1000:
         return r.content
-    # Fallback: query Monday assets API for public URL
-    print("Trying assets API fallback...", flush=True)
+    # Try with token as query param (some Monday URLs require this)
+    sep = "&" if "?" in url else "?"
+    auth_url = f"{url}{sep}token={token}"
+    print(f"Retrying with token param...", flush=True)
+    async with httpx.AsyncClient(timeout=60, follow_redirects=True) as c:
+        r = await c.get(auth_url)
+    print(f"RETRY STATUS: {r.status_code} SIZE: {len(r.content)}", flush=True)
+    if r.status_code == 200 and len(r.content) > 1000:
+        return r.content
     return b""
 
 async def get_asset_url(item_id):
