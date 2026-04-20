@@ -58,8 +58,15 @@ async def get_item(item_id):
     return items[0]
 
 async def download_file(url):
-    async with httpx.AsyncClient(timeout=60) as c:
-        r = await c.get(url, headers={"Authorization": get_token()})
+    token = get_token()
+    headers = {
+        "Authorization": token,
+        "User-Agent": "Mozilla/5.0"
+    }
+    print(f"DOWNLOADING: {url[:80]}", flush=True)
+    async with httpx.AsyncClient(timeout=60, follow_redirects=True) as c:
+        r = await c.get(url, headers=headers)
+    print(f"DOWNLOAD STATUS: {r.status_code} SIZE: {len(r.content)} bytes", flush=True)
     return r.content
 
 async def set_status(item_id, col_id, label_id):
