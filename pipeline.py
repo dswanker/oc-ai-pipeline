@@ -35,9 +35,9 @@ async def run_pipeline(item_id):
     try:
         item = await get_item(item_id)
         cols = {c["id"]: c for c in item["column_values"]}
-        protocol_url = get_file_url(cols.get(COL["protocol_pdf"],    {}).get("value"))
-        crf_url      = get_file_url(cols.get(COL["crf_library"],     {}).get("value"))
-        oc_std_url   = get_file_url(cols.get(COL["oc_standard"],     {}).get("value"))
+        protocol_url = get_file_url(cols.get(COL["protocol_pdf"],    {}).get("text"))
+        crf_url      = get_file_url(cols.get(COL["crf_library"],     {}).get("text"))
+        oc_std_url   = get_file_url(cols.get(COL["oc_standard"],     {}).get("text"))
         protocol_num = cols.get(COL["protocol_number"], {}).get("text", "study")
         print(f"PROTOCOL URL: {protocol_url}", flush=True)
         print(f"PROTOCOL NUM: {protocol_num}", flush=True)
