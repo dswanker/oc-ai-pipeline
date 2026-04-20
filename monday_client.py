@@ -16,6 +16,7 @@ COL = {
 }
 
 def get_headers():
+    # Monday API v2 uses raw token - no Bearer prefix
     token = os.environ.get("MONDAY_API_TOKEN", "")
     return {
         "Authorization": token,
@@ -27,40 +28,74 @@ def get_token():
     return os.environ.get("MONDAY_API_TOKEN", "")
 
 async def get_item(item_id):
-    q = "query ($i:[ID!]){items(ids:$i){id name column_values{id value text}}}"
-    async with httpx.AsyncClient() as c:
-        r = await c.post(MONDAY_API_URL, headers=get_headers(),
-            json={"query": q, "variables": {"i": [item_id]}})
-    return r.json()["data"]["items"][0]
+    query = """
+    query ($i: [ID!]) {
+        items (ids: $i) {
+            id
+            name
+            column_values { id value text }
+        }
+    }
+    """
+    print(f"GET_ITEM: calling Monday API for item {item_id}", flush=True)
+    async with httpx.AsyncClient(timeout=30) as c:
+        r = await c.post(
+            MONDAY_API_URL,
+            headers=get_headers(),
+            json={"query": query, "variables": {"i": [item_id]}}
+        )
+    print(f"GET_ITEM STATUS: {r.status_code}", flush=True)
+    print(f"GET_ITEM RESPONSE: {r.text[:500]}", flush=True)
+    resp = r.json()
+    if "errors" in resp:
+        raise Exception(f"Monday API errors: {resp['errors']}")
+    if "data" not in resp:
+        raise Exception(f"Monday API unexpected response: {resp}")
+    items = resp["data"]["items"]
+    if not items:
+        raise Exception(f"No item found with id {item_id}")
+    return items[0]
 
 async def download_file(url):
-    async with httpx.AsyncClient() as c:
+    async with httpx.AsyncClient(timeout=60) as c:
         r = await c.get(url, headers={"Authorization": get_token()})
     return r.content
 
 async def set_status(item_id, col_id, label_id):
-    m = "mutation($i:ID!,$b:ID!,$c:String!,$v:JSON!){change_column_value(item_id:$i,board_id:$b,column_id:$c,value:$v){id}}"
-    async with httpx.AsyncClient() as c:
-        await c.post(MONDAY_API_URL, headers=get_headers(),
+    m = """
+    mutation ($i: ID!, $b: ID!, $c: String!, $v: JSON!) {
+        change_column_value(item_id: $i, board_id: $b, column_id: $c, value: $v) { id }
+    }
+    """
+    async with httpx.AsyncClient(timeout=30) as c:
+        r = await c.post(MONDAY_API_URL, headers=get_headers(),
             json={"query": m, "variables": {
                 "i": item_id, "b": BOARD_ID, "c": col_id,
                 "v": json.dumps({"label": {"index": label_id}})}})
+    print(f"SET_STATUS {col_id}={label_id}: {r.status_code}", flush=True)
 
 async def append_log(item_id, message):
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    m = "mutation($i:ID!,$b:ID!,$c:String!,$v:JSON!){change_column_value(item_id:$i,board_id:$b,column_id:$c,value:$v){id}}"
-    async with httpx.AsyncClient() as c:
+    m = """
+    mutation ($i: ID!, $b: ID!, $c: String!, $v: JSON!) {
+        change_column_value(item_id: $i, board_id: $b, column_id: $c, value: $v) { id }
+    }
+    """
+    async with httpx.AsyncClient(timeout=30) as c:
         await c.post(MONDAY_API_URL, headers=get_headers(),
             json={"query": m, "variables": {
                 "i": item_id, "b": BOARD_ID, "c": COL["ai_run_log"],
                 "v": json.dumps({"text": f"[{ts}] {message}"})}})
 
 async def upload_file(item_id, col_id, filename, content):
-    m = "mutation($i:ID!,$c:String!){add_file_to_column(item_id:$i,column_id:$c,file:$file){id}}"
+    m = """
+    mutation ($i: ID!, $c: String!) {
+        add_file_to_column(item_id: $i, column_id: $c, file: $file) { id }
+    }
+    """
     async with httpx.AsyncClient(timeout=120) as c:
         await c.post(MONDAY_API_URL,
             headers={"Authorization": get_token()},
             data={"query": m,
                   "variables": f'{{"item_id":"{item_id}","col":"{col_id}"}}'},
             files={"variables[file]": (filename, content, "application/octet-stream")})
-# updated
