@@ -125,6 +125,7 @@ async def append_log(item_id, message):
                 "v": json.dumps({"text": f"[{ts}] {message}"})}})
 
 async def upload_file(item_id, col_id, filename, content):
+    print(f"UPLOADING: {filename} ({len(content) if content else 0} bytes) to col {col_id}", flush=True)
     m = """
     mutation ($i: ID!, $c: String!) {
         add_file_to_column(item_id: $i, column_id: $c, file: $file) { id }
