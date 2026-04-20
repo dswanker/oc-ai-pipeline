@@ -3,7 +3,6 @@ from monday_client import get_item, download_file, upload_file, set_status, appe
 from claude_client import run_skill
 from prompts import EDC_STRUCTURE_PROMPT, PRICING_SUMMARY_PROMPT, PRICING_MODEL_PROMPT, EDC_BUILD_PROMPT, DVS_PROMPT
 
-# Label IDs from Monday board (use id not index)
 STATUS = {
     "not_started":            5,
     "edc_structure_running":  0,
@@ -37,13 +36,7 @@ async def run_pipeline(item_id):
         oc_std_url   = cols.get(COL["oc_standard"],     {}).get("text")
         protocol_num = cols.get(COL["protocol_number"], {}).get("text", "study")
 
-        print(f"PROTOCOL URL: {protocol_url}", flush=True)
         print(f"PROTOCOL NUM: {protocol_num}", flush=True)
-
-        if not protocol_url:
-            await append_log(item_id, "ERROR: No protocol PDF found.")
-            await set_status(item_id, COL["pipeline_status"], STATUS["failed"])
-            return
 
         from monday_client import get_asset_url
         assets = await get_asset_url(item_id)
@@ -64,7 +57,6 @@ async def run_pipeline(item_id):
         crf_pdf     = await download_file(crf_url)    if crf_url    else None
         oc_std_xlsx = await download_file(oc_std_url) if oc_std_url else None
 
-        # STEP 1: EDC Structure
         await set_status(item_id, COL["pipeline_status"], STATUS["edc_structure_running"])
         await append_log(item_id, "EDC Structure skill started.")
         print("Calling Claude for EDC Structure...", flush=True)
@@ -75,7 +67,7 @@ async def run_pipeline(item_id):
             xlsx_bytes = oc_std_xlsx,
             extra_text = "Customer CRF library attached." if crf_pdf else ""
         )
-        print(f"EDC Structure response length: {len(struct_response)}", flush=True)
+        print(f"EDC Structure response: {len(struct_response)} chars", flush=True)
 
         spec_pdf  = extract_b64(struct_response, "PDF")
         spec_xlsx = extract_b64(struct_response, "XLSX")
@@ -88,11 +80,11 @@ async def run_pipeline(item_id):
 
         await set_status(item_id, COL["pipeline_status"], STATUS["edc_structure_complete"])
         await append_log(item_id, "EDC Structure complete.")
+        await asyncio.sleep(15)
 
-        # STEP 2: EDC Build (sequential - wait 15s for rate limit)
         await set_status(item_id, COL["pipeline_status"], STATUS["build_pricing_running"])
         await append_log(item_id, "EDC Build started.")
-        await asyncio.sleep(15)
+        print("Calling Claude for EDC Build...", flush=True)
 
         build_response = await run_skill(EDC_BUILD_PROMPT, xlsx_bytes=spec_xlsx)
         build_zip = extract_b64(build_response, "ZIP")
@@ -100,17 +92,17 @@ async def run_pipeline(item_id):
             await upload_file(item_id, COL["edc_build"], f"{protocol_num}_EDC_Build.zip", build_zip)
         await set_status(item_id, COL["pipeline_status"], STATUS["build_complete"])
         await append_log(item_id, "EDC Build complete.")
-
-        # STEP 3: Pricing (sequential - wait 15s for rate limit)
-        await append_log(item_id, "Pricing started.")
         await asyncio.sleep(15)
 
+        await append_log(item_id, "Pricing started.")
+        print("Calling Claude for Pricing Summary...", flush=True)
         r1 = await run_skill(PRICING_SUMMARY_PROMPT, pdf_bytes=protocol_pdf if len(protocol_pdf) > 0 else None, xlsx_bytes=spec_xlsx)
         summary_pdf = extract_b64(r1, "PDF")
         if summary_pdf:
             await upload_file(item_id, COL["pricing_summary"], f"{protocol_num}_Pricing_Summary.pdf", summary_pdf)
         await asyncio.sleep(15)
 
+        print("Calling Claude for Pricing Quote...", flush=True)
         r2 = await run_skill(PRICING_MODEL_PROMPT, pdf_bytes=summary_pdf)
         quote_pdf  = extract_b64(r2, "PDF")
         quote_xlsx = extract_b64(r2, "XLSX")
@@ -118,18 +110,14 @@ async def run_pipeline(item_id):
         if quote_xlsx: await upload_file(item_id, COL["pricing_quote"], f"{protocol_num}_Quote.xlsx", quote_xlsx)
         await set_status(item_id, COL["pipeline_status"], STATUS["pricing_complete"])
         await append_log(item_id, "Pricing complete.")
+        await asyncio.sleep(15)
 
-        # STEP 4: DVS
         if build_zip and spec_xlsx:
             await set_status(item_id, COL["pipeline_status"], STATUS["dvs_running"])
             await append_log(item_id, "DVS started.")
-            await asyncio.sleep(15)
-
-            dvs_response = await run_skill(
-                DVS_PROMPT,
-                xlsx_bytes = spec_xlsx,
-                extra_text = "[EDC Build zip attached as base64]\n" + base64.standard_b64encode(build_zip).decode()
-            )
+            print("Calling Claude for DVS...", flush=True)
+            dvs_response = await run_skill(DVS_PROMPT, xlsx_bytes=spec_xlsx,
+                extra_text="[EDC Build zip attached as base64]\n"+base64.standard_b64encode(build_zip).decode())
             dvs_xlsx = extract_b64(dvs_response, "XLSX")
             if dvs_xlsx:
                 await upload_file(item_id, COL["dvs_output"], f"{protocol_num}_DVS.xlsx", dvs_xlsx)
