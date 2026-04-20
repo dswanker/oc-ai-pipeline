@@ -4,16 +4,16 @@ from claude_client import run_skill
 from prompts import EDC_STRUCTURE_PROMPT, PRICING_SUMMARY_PROMPT, PRICING_MODEL_PROMPT, EDC_BUILD_PROMPT, DVS_PROMPT
 
 STATUS = {
-    "not_started":            5,
-    "edc_structure_running":  0,
-    "edc_structure_complete": 1,
-    "build_pricing_running":  3,
-    "build_complete":         4,
-    "pricing_complete":       6,
-    "dvs_running":            7,
-    "dvs_complete":           8,
-    "all_complete":           9,
-    "failed":                 2,
+    "not_started":            "Not Started",
+    "edc_structure_running":  "EDC Structure Running",
+    "edc_structure_complete": "EDC Structure Complete",
+    "build_pricing_running":  "Build + Pricing Running",
+    "build_complete":         "Build Complete",
+    "pricing_complete":       "Pricing Complete,",
+    "dvs_running":            "DVS Running",
+    "dvs_complete":           "DVS Complete — Awaiting Review",
+    "all_complete":           "All Complete",
+    "failed":                 "Failed",
 }
 
 def extract_b64(response, tag):
