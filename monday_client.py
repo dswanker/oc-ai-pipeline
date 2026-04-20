@@ -15,17 +15,18 @@ COL = {
     "ai_run_log": "long_text_mm2h9mnq",
 }
 
+def get_token():
+    # Strip removes any invisible newlines or spaces Railway may add
+    token = os.environ.get("MONDAY_API_TOKEN", "").strip()
+    print(f"TOKEN LENGTH: {len(token)} FIRST4: {token[:4]} LAST4: {token[-4:]}", flush=True)
+    return token
+
 def get_headers():
-    # Monday API v2 uses raw token - no Bearer prefix
-    token = os.environ.get("MONDAY_API_TOKEN", "")
     return {
-        "Authorization": token,
+        "Authorization": get_token(),
         "Content-Type": "application/json",
         "API-Version": "2024-01"
     }
-
-def get_token():
-    return os.environ.get("MONDAY_API_TOKEN", "")
 
 async def get_item(item_id):
     query = """
