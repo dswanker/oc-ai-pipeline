@@ -59,14 +59,20 @@ async def get_item(item_id):
 
 async def download_file(url):
     token = get_token()
-    headers = {
-        "Authorization": token,
-        "User-Agent": "Mozilla/5.0"
-    }
     print(f"DOWNLOADING: {url[:80]}", flush=True)
+    # Try with token first, then without (some Monday URLs are public)
     async with httpx.AsyncClient(timeout=60, follow_redirects=True) as c:
-        r = await c.get(url, headers=headers)
+        r = await c.get(url, headers={
+            "Authorization": token,
+            "Accept": "*/*"
+        })
     print(f"DOWNLOAD STATUS: {r.status_code} SIZE: {len(r.content)} bytes", flush=True)
+    if r.status_code != 200 or len(r.content) == 0:
+        # Retry without auth header
+        print("Retrying download without auth header...", flush=True)
+        async with httpx.AsyncClient(timeout=60, follow_redirects=True) as c:
+            r = await c.get(url)
+        print(f"RETRY STATUS: {r.status_code} SIZE: {len(r.content)} bytes", flush=True)
     return r.content
 
 async def set_status(item_id, col_id, label_id):
