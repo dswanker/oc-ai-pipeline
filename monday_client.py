@@ -58,23 +58,19 @@ async def get_item(item_id):
     return items[0]
 
 async def download_file(url):
-    """Download a file using Monday API token for authentication."""
+    """Download a file. S3 presigned URLs must NOT have auth headers."""
     print(f"DOWNLOADING: {url[:80]}", flush=True)
-    token = get_token()
-    # Try with token in Authorization header
-    async with httpx.AsyncClient(timeout=60, follow_redirects=True) as c:
-        r = await c.get(url, headers={"Authorization": token})
+    is_s3 = "s3.amazonaws.com" in url or "files-monday-com" in url
+    if is_s3:
+        # S3 presigned URLs are self-contained - no auth header
+        async with httpx.AsyncClient(timeout=60, follow_redirects=True) as c:
+            r = await c.get(url)
+    else:
+        # Monday protected URLs need token
+        async with httpx.AsyncClient(timeout=60, follow_redirects=True) as c:
+            r = await c.get(url, headers={"Authorization": get_token()})
     print(f"DOWNLOAD STATUS: {r.status_code} SIZE: {len(r.content)}", flush=True)
-    if r.status_code == 200 and len(r.content) > 1000:
-        return r.content
-    # Try with token as query param (some Monday URLs require this)
-    sep = "&" if "?" in url else "?"
-    auth_url = f"{url}{sep}token={token}"
-    print(f"Retrying with token param...", flush=True)
-    async with httpx.AsyncClient(timeout=60, follow_redirects=True) as c:
-        r = await c.get(auth_url)
-    print(f"RETRY STATUS: {r.status_code} SIZE: {len(r.content)}", flush=True)
-    if r.status_code == 200 and len(r.content) > 1000:
+    if r.status_code == 200 and len(r.content) > 100:
         return r.content
     return b""
 

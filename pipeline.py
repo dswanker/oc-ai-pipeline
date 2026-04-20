@@ -19,8 +19,15 @@ STATUS = {
 
 def extract_b64(response, tag):
     s, e = f"==={tag}_START===", f"==={tag}_END==="
-    if s not in response: return None
-    return base64.b64decode(response[response.index(s)+len(s):response.index(e)].strip())
+    if s not in response or e not in response: return None
+    try:
+        raw = response[response.index(s)+len(s):response.index(e)].strip()
+        # Fix base64 padding
+        raw += "=" * (4 - len(raw) % 4) if len(raw) % 4 else ""
+        return base64.b64decode(raw)
+    except Exception as ex:
+        print(f"extract_b64 error for {tag}: {ex}", flush=True)
+        return None
 
 def get_file_url(column_value):
     if not column_value: return None
