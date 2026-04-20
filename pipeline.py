@@ -3,10 +3,18 @@ from monday_client import get_item, download_file, upload_file, set_status, appe
 from claude_client import run_skill
 from prompts import EDC_STRUCTURE_PROMPT, PRICING_SUMMARY_PROMPT, PRICING_MODEL_PROMPT, EDC_BUILD_PROMPT, DVS_PROMPT
 
+# Label IDs from Monday board (NOT index values)
 STATUS = {
-    "not_started":0,"edc_structure_running":1,"edc_structure_complete":2,
-    "build_pricing_running":3,"build_complete":4,"pricing_complete":5,
-    "dvs_running":6,"dvs_complete":7,"all_complete":8,"failed":9,
+    "not_started":            5,
+    "edc_structure_running":  0,
+    "edc_structure_complete": 1,
+    "build_pricing_running":  3,
+    "build_complete":         4,
+    "pricing_complete":       6,
+    "dvs_running":            7,
+    "dvs_complete":           8,
+    "all_complete":           9,
+    "failed":                 2,
 }
 
 def extract_b64(response, tag):

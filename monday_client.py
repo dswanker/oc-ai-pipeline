@@ -112,7 +112,7 @@ async def set_status(item_id, col_id, label_id):
         r = await c.post(MONDAY_API_URL, headers=get_headers(),
             json={"query": m, "variables": {
                 "i": item_id, "b": BOARD_ID, "c": col_id,
-                "v": json.dumps({"label": {"index": label_id}})}})
+                "v": json.dumps({"label": {"id": label_id}})}})
     print(f"SET_STATUS {col_id}={label_id}: {r.status_code}", flush=True)
 
 async def append_log(item_id, message):
