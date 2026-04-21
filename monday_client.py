@@ -93,7 +93,7 @@ async def upload_file(item_id, col_id, filename, file_content):
     async with httpx.AsyncClient(timeout=120) as c:
         r = await c.post(
             MONDAY_FILE_URL,
-            headers={"Authorization": get_token(), "API-Version": "2024-01"},
+            headers={"Authorization": get_token()},
             files={
                 "operations": (None, operations, "application/json"),
                 "map":        (None, map_field,   "application/json"),
