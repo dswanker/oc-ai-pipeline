@@ -88,18 +88,19 @@ async def append_log(item_id, message):
 
 async def upload_file(item_id, col_id, filename, file_content):
     print(f"UPLOADING: {filename} ({len(file_content)} bytes) to col {col_id}", flush=True)
-    mutation = (
-        f"mutation ($file: File!) {{"
-        f"  add_file_to_column(item_id: {item_id}, column_id: \"{col_id}\", file: $file) {{ id }}"
-        f"}}"
-    )
+    query = "mutation($file:File!,$item_id:ID!,$col:String!){add_file_to_column(item_id:$item_id,column_id:$col,file:$file){id}}"
+    operations = json.dumps({"query": query, "variables": {"file": None, "item_id": str(item_id), "col": col_id}})
+    map_data = json.dumps({"0": ["variables.file"]})
     async with httpx.AsyncClient(timeout=120) as c:
         r = await c.post(
             "https://api.monday.com/v2/file",
             headers={"Authorization": get_token()},
-            data={"query": mutation},
-            files={"variables[file]": (filename, file_content, "application/octet-stream")}
+            files={
+                "operations": (None, operations, "application/json"),
+                "map":        (None, map_data,   "application/json"),
+                "0":          (filename, file_content, "application/octet-stream"),
+            }
         )
-    print(f"UPLOAD STATUS: {r.status_code} {r.text[:300]}", flush=True)
+    print(f"UPLOAD STATUS: {r.status_code} {r.text[:200]}", flush=True)
 
 
