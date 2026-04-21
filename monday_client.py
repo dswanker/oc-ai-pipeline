@@ -1,4 +1,4 @@
-import httpx, os, json  # deploy
+import httpx, os, json  # v2
 from datetime import datetime, timezone
 
 MONDAY_API_URL = "https://api.monday.com/v2"
