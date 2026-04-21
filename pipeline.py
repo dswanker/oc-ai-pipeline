@@ -491,6 +491,9 @@ async def run_pipeline(item_id):
         )
         try:
             struct_json = extract_json(struct_text)
+            if isinstance(struct_json, list):
+                struct_json = {"study_meta": {"protocol_number": protocol_num},
+                               "forms": struct_json, "review_flags": {}}
         except ValueError:
             struct_json = {"study_meta": {"protocol_number": protocol_num},
                            "forms": [], "review_flags": {}}
@@ -519,6 +522,8 @@ async def run_pipeline(item_id):
         )
         try:
             pricing_json = extract_json(pricing_text)
+            if isinstance(pricing_json, list):
+                pricing_json = {"study_meta": {"protocol_number": protocol_num}}
         except ValueError:
             pricing_json = {"study_meta": {"protocol_number": protocol_num}}
             print("Warning: Pricing Summary not valid JSON", flush=True)
