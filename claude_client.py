@@ -23,8 +23,8 @@ async def run_skill(skill_prompt, pdf_bytes=None, xlsx_bytes=None, extra_text=""
         try:
             print(f"Calling Anthropic API - attempt {attempt+1} - content blocks: {len(content)}", flush=True)
             response = await client.messages.create(
-                model="claude-haiku-4-5-20251001",
-                max_tokens=8192,
+                model="claude-sonnet-4-20250514",
+                max_tokens=16000,
                 messages=[{"role":"user","content":content}]
             )
             print(f"Anthropic API success - response length: {len(response.content[0].text)}", flush=True)
