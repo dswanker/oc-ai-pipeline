@@ -20,7 +20,8 @@ def extract_b64(response, tag):
     s, e = f"==={tag}_START===", f"==={tag}_END==="
     if s not in response or e not in response: return None
     try:
-        raw = response[response.index(s)+len(s):response.index(e)].strip()
+        raw = ''.join(response[response.index(s)+len(s):response.index(e)].split())
+        
         pad = (4 - len(raw) % 4) % 4
         return base64.b64decode(raw + "=" * pad)
     except Exception as ex:
