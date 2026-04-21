@@ -103,7 +103,7 @@ async def run_pipeline(item_id):
         await asyncio.sleep(15)
 
         print("Calling Claude for Pricing Quote...", flush=True)
-        r2 = await run_skill(PRICING_MODEL_PROMPT, extra_text=f'Pricing summary content: {len(summary_pdf)} bytes provided as context.')
+        r2 = await run_skill(PRICING_MODEL_PROMPT, extra_text=f'Pricing summary provided.' if summary_pdf else '')
         quote_pdf  = extract_b64(r2, "PDF")
         quote_xlsx = extract_b64(r2, "XLSX")
         if quote_pdf:  await upload_file(item_id, COL["pricing_quote"], f"{protocol_num}_Quote.pdf",  quote_pdf)
