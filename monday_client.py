@@ -1,8 +1,9 @@
-import httpx, os, json  # v2
+import httpx, os, json
 from datetime import datetime, timezone
 
 MONDAY_API_URL = "https://api.monday.com/v2"
-BOARD_ID       = "18409146946"
+MONDAY_FILE_URL = "https://api.monday.com/v2/file"
+BOARD_ID = "18409146946"
 
 COL = {
     "protocol_pdf": "files9__1", "crf_library": "fileb5c8dt0c",
@@ -19,11 +20,7 @@ def get_token():
     return os.environ.get("MONDAY_API_TOKEN", "").strip()
 
 def get_headers():
-    return {
-        "Authorization": get_token(),
-        "Content-Type": "application/json",
-        "API-Version": "2024-01"
-    }
+    return {"Authorization": get_token(), "Content-Type": "application/json", "API-Version": "2024-01"}
 
 def make_mutation():
     return "mutation($i:ID!,$b:ID!,$c:String!,$v:JSON!){change_column_value(item_id:$i,board_id:$b,column_id:$c,value:$v){id}}"
@@ -32,8 +29,7 @@ async def get_item(item_id):
     q = "query($i:[ID!]){items(ids:$i){id name column_values{id value text}}}"
     print(f"GET_ITEM: calling Monday API for item {item_id}", flush=True)
     async with httpx.AsyncClient(timeout=30) as c:
-        r = await c.post(MONDAY_API_URL, headers=get_headers(),
-            json={"query": q, "variables": {"i": [item_id]}})
+        r = await c.post(MONDAY_API_URL, headers=get_headers(), json={"query": q, "variables": {"i": [item_id]}})
     print(f"GET_ITEM STATUS: {r.status_code}", flush=True)
     print(f"GET_ITEM RESPONSE: {r.text[:500]}", flush=True)
     resp = r.json()
@@ -47,8 +43,7 @@ async def get_item(item_id):
 async def get_asset_url(item_id):
     q = "query($i:[ID!]){items(ids:$i){assets{id name url public_url}}}"
     async with httpx.AsyncClient(timeout=30) as c:
-        r = await c.post(MONDAY_API_URL, headers=get_headers(),
-            json={"query": q, "variables": {"i": [item_id]}})
+        r = await c.post(MONDAY_API_URL, headers=get_headers(), json={"query": q, "variables": {"i": [item_id]}})
     resp = r.json()
     print(f"ASSETS RESPONSE: {str(resp)[:300]}", flush=True)
     items = resp.get("data", {}).get("items", [])
@@ -72,35 +67,37 @@ async def download_file(url):
 async def set_status(item_id, col_id, label_text):
     val = json.dumps({"label": label_text})
     variables = {"i": item_id, "b": BOARD_ID, "c": col_id, "v": val}
-    payload = {"query": make_mutation(), "variables": variables}
     async with httpx.AsyncClient(timeout=30) as c:
-        r = await c.post(MONDAY_API_URL, headers=get_headers(), json=payload)
+        r = await c.post(MONDAY_API_URL, headers=get_headers(), json={"query": make_mutation(), "variables": variables})
     print(f"SET_STATUS {col_id}={label_text}: {r.status_code}", flush=True)
 
 async def append_log(item_id, message):
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    entry = f"[{ts}] {message}"
-    val = json.dumps({"text": entry})
+    val = json.dumps({"text": f"[{ts}] {message}"})
     variables = {"i": item_id, "b": BOARD_ID, "c": COL["ai_run_log"], "v": val}
-    payload = {"query": make_mutation(), "variables": variables}
     async with httpx.AsyncClient(timeout=30) as c:
-        await c.post(MONDAY_API_URL, headers=get_headers(), json=payload)
+        await c.post(MONDAY_API_URL, headers=get_headers(), json={"query": make_mutation(), "variables": variables})
 
 async def upload_file(item_id, col_id, filename, file_content):
     print(f"UPLOADING: {filename} ({len(file_content)} bytes) to col {col_id}", flush=True)
-    query = "mutation($file:File!,$item_id:ID!,$col:String!){add_file_to_column(item_id:$item_id,column_id:$col,file:$file){id}}"
-    operations = json.dumps({"query": query, "variables": {"file": None, "item_id": str(item_id), "col": col_id}})
-    map_data = json.dumps({"0": ["variables.file"]})
+    query = """
+    mutation ($file: File!, $item_id: ID!, $col: String!) {
+        add_file_to_column(item_id: $item_id, column_id: $col, file: $file) { id }
+    }
+    """
+    operations = json.dumps({
+        "query": query,
+        "variables": {"file": None, "item_id": str(item_id), "col": col_id}
+    })
+    map_field = json.dumps({"0": ["variables.file"]})
     async with httpx.AsyncClient(timeout=120) as c:
         r = await c.post(
-            "https://api.monday.com/v2/file",
+            MONDAY_FILE_URL,
             headers={"Authorization": get_token()},
             files={
                 "operations": (None, operations, "application/json"),
-                "map":        (None, map_data,   "application/json"),
+                "map":        (None, map_field,   "application/json"),
                 "0":          (filename, file_content, "application/octet-stream"),
             }
         )
-    print(f"UPLOAD STATUS: {r.status_code} {r.text[:200]}", flush=True)
-
-
+    print(f"UPLOAD STATUS: {r.status_code} {r.text[:300]}", flush=True)
