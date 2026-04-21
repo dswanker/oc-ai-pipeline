@@ -81,7 +81,7 @@ async def append_log(item_id, message):
 async def upload_file(item_id, col_id, filename, file_content):
     print(f"UPLOADING: {filename} ({len(file_content)} bytes) to col {col_id}", flush=True)
     query = """
-    mutation ($file: File!, $item_id: ID!, $col: String!) {
+    mutation ($file: File!, $item_id: Int!, $col: String!) {
         add_file_to_column(item_id: $item_id, column_id: $col, file: $file) { id }
     }
     """
