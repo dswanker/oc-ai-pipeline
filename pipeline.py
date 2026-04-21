@@ -592,6 +592,8 @@ async def run_pipeline(item_id):
         )
         try:
             dvs_json = extract_json(dvs_text)
+            if isinstance(dvs_json, list):
+                dvs_json = {"checks": dvs_json}
         except ValueError:
             dvs_json = {"checks": []}
             print("Warning: DVS not valid JSON", flush=True)
