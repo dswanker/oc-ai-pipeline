@@ -87,7 +87,7 @@ async def upload_file(item_id, col_id, filename, file_content):
     """
     operations = json.dumps({
         "query": query,
-        "variables": {"file": None, "item_id": str(item_id), "col": col_id}
+        "variables": {"file": None, "item_id": int(item_id), "col": col_id}
     })
     map_field = json.dumps({"0": ["variables.file"]})
     async with httpx.AsyncClient(timeout=120) as c:
