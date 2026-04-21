@@ -566,6 +566,9 @@ async def run_pipeline(item_id):
         )
         try:
             build_json = extract_json(build_text)
+            if isinstance(build_json, list):
+                build_json = {"forms": {f"form_{i+1}.xlsx": item
+                                        for i, item in enumerate(build_json)}}
         except ValueError:
             build_json = {"forms": {}}
             print("Warning: EDC Build not valid JSON", flush=True)
