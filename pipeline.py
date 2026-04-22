@@ -33,6 +33,7 @@ STATUS = {
     "pricing_complete":       "Pricing Complete",
     "dvs_running":            "DVS Running",
     "dvs_complete":           "DVS Complete — Awaiting Review",
+    "creating_oc_study":      "Creating OC Study",
     "all_complete":           "All Complete",
     "failed":                 "Failed",
 }
@@ -551,14 +552,21 @@ async def run_pipeline(item_id):
         oc_std_url   = cols.get(COL["oc_standard"],     {}).get("text")
         oc_subdomain = cols.get(COL["oc_subdomain"],    {}).get("text", "").strip()
 
-        # Checkbox columns return {"checked": "true"} or null
+        # Checkbox columns can return various formats from Monday.com
         create_study_val = cols.get(COL["create_study"], {}).get("value")
         try:
-            create_study = json.loads(create_study_val or "{}").get("checked") == "true"
+            parsed = json.loads(create_study_val or "{}")
+            if isinstance(parsed, bool):
+                create_study = parsed
+            elif isinstance(parsed, dict):
+                create_study = str(parsed.get("checked", "false")).lower() == "true"
+            else:
+                create_study = str(parsed).lower() == "true"
         except Exception:
             create_study = False
 
         print(f"Protocol: {protocol_num}", flush=True)
+        print(f"Create OC Study raw value: {create_study_val!r}", flush=True)
         print(f"Create OC Study: {create_study} | Subdomain: {oc_subdomain}", flush=True)
 
         from monday_client import get_asset_url
@@ -682,6 +690,7 @@ async def run_pipeline(item_id):
 
         # ── 6. Create study in OpenClinica (if requested) ─────────────────────
         if create_study and oc_subdomain:
+            await set_status(item_id, COL["pipeline_status"], STATUS["creating_oc_study"])
             await append_log(item_id, f"Creating study in OpenClinica ({oc_subdomain})...")
             print(f"Creating OC study on {oc_subdomain}...", flush=True)
             try:
