@@ -273,7 +273,7 @@ def _pricing_summary_pdf(pricing_json, protocol_num):
 
     # Title
     story.append(Paragraph(
-        f"Protocol Pricing Summary — {protocol_num}", h1))
+        f"Protocol Summary — {protocol_num}", h1))
     story.append(HRFlowable(width=PW, thickness=2,
                              color=colors.HexColor("#F47920"), spaceAfter=8))
 
@@ -554,6 +554,12 @@ async def run_pipeline(item_id):
         protocol_num = cols.get(COL["protocol_number"], {}).get("text", "STUDY")
         crf_url      = cols.get(COL["crf_library"],     {}).get("text")
         oc_std_url   = cols.get(COL["oc_standard"],     {}).get("text")
+
+        # Version identifier — auto-generated from run timestamp V{MMDD}.{HHMM}
+        import datetime as _dt
+        _now    = _dt.datetime.utcnow()
+        version = f"V{_now.strftime('%m%d')}.{_now.strftime('%H%M')}"
+        print(f"Run version: {version}", flush=True)
         oc_subdomain = cols.get(COL["oc_subdomain"],    {}).get("text", "").strip()
 
         # Number/percent columns — convert from display % to decimal
@@ -621,10 +627,10 @@ async def run_pipeline(item_id):
             print("Warning: EDC Structure not valid JSON", flush=True)
 
         await upload_file(item_id, COL["spec_xlsx"],
-                          f"{protocol_num}_EDC_Structure.xlsx",
+                          f"{protocol_num}_EDC_Structure_{version}.xlsx",
                           _struct_xlsx(struct_json))
         await upload_file(item_id, COL["spec_pdf"],
-                          f"{protocol_num}_EDC_Structure.pdf",
+                          f"{protocol_num}_EDC_Structure_{version}.pdf",
                           _struct_pdf(struct_json, protocol_num))
 
         await set_status(item_id, COL["pipeline_status"], STATUS["edc_structure_complete"])
@@ -633,12 +639,11 @@ async def run_pipeline(item_id):
 
         # ── 3. Pricing Summary (feeds Pricing Model — not uploaded) ───────────
         await set_status(item_id, COL["pipeline_status"], STATUS["build_pricing_running"])
-        await append_log(item_id, "Pricing Summary started.")
-        print("Claude — Pricing Summary...", flush=True)
+        await append_log(item_id, "Protocol Summary started.")
+        print("Claude — Protocol Summary...", flush=True)
 
         pricing_text = await call_claude(
             PRICING_SUMMARY_PROMPT,
-            pdf_bytes  = protocol_pdf or None,
             extra_text = "EDC Structure JSON:\n" + json.dumps(struct_json),
         )
         try:
@@ -647,13 +652,13 @@ async def run_pipeline(item_id):
                 pricing_json = {"study_meta": {"protocol_number": protocol_num}}
         except ValueError:
             pricing_json = {"study_meta": {"protocol_number": protocol_num}}
-            print("Warning: Pricing Summary not valid JSON", flush=True)
+            print("Warning: Protocol Summary not valid JSON", flush=True)
 
-        # Upload Pricing Summary PDF
+        # Upload Protocol Summary PDF
         await upload_file(item_id, COL["pricing_summary"],
-                          f"{protocol_num}_Pricing_Summary.pdf",
+                          f"{protocol_num}_Protocol_Summary_{version}.pdf",
                           _pricing_summary_pdf(pricing_json, protocol_num))
-        await append_log(item_id, "Pricing Summary PDF uploaded.")
+        await append_log(item_id, "Protocol Summary PDF uploaded.")
 
         # ── 4. Pricing Model → Internal + Client PDF + XLSX ───────────────────
         await append_log(item_id, "Pricing Model started.")
@@ -663,13 +668,13 @@ async def run_pipeline(item_id):
                                    additional_sub_disc=additional_sub_disc,
                                    additional_svc_disc=additional_svc_disc)
             await upload_file(item_id, COL["pricing_quote"],
-                              f"{protocol_num}_Quote_Internal.pdf",  qf["internal_pdf"])
+                              f"{protocol_num}_Quote_Internal_{version}.pdf",  qf["internal_pdf"])
             await upload_file(item_id, COL["pricing_quote"],
-                              f"{protocol_num}_Quote_Client.pdf",    qf["client_pdf"])
+                              f"{protocol_num}_Quote_Client_{version}.pdf",    qf["client_pdf"])
             await upload_file(item_id, COL["pricing_quote"],
-                              f"{protocol_num}_Quote_Internal.xlsx", qf["internal_xlsx"])
+                              f"{protocol_num}_Quote_Internal_{version}.xlsx", qf["internal_xlsx"])
             await upload_file(item_id, COL["pricing_quote"],
-                              f"{protocol_num}_Quote_Client.xlsx",   qf["client_xlsx"])
+                              f"{protocol_num}_Quote_Client_{version}.xlsx",   qf["client_xlsx"])
             await append_log(item_id, "Pricing complete — 4 files uploaded.")
         except Exception as e:
             print(f"Pricing Model error: {e}", flush=True)
@@ -683,9 +688,15 @@ async def run_pipeline(item_id):
         await append_log(item_id, "EDC Build started.")
         print("Claude — EDC Build...", flush=True)
 
+        # Strip EDC JSON to only what EDC Build needs (saves ~40% tokens)
+        struct_slim = {
+            "study_meta": struct_json.get("study_meta", {}),
+            "forms":      struct_json.get("forms", []),
+        }
+
         build_text = await call_claude(
             EDC_BUILD_PROMPT,
-            extra_text = "EDC Structure JSON:\n" + json.dumps(struct_json),
+            extra_text = "EDC Structure JSON:\n" + json.dumps(struct_slim),
         )
         try:
             build_json = extract_json(build_text)
@@ -697,7 +708,7 @@ async def run_pipeline(item_id):
             print("Warning: EDC Build not valid JSON", flush=True)
 
         await upload_file(item_id, COL["edc_build"],
-                          f"{protocol_num}_EDC_Build.zip",
+                          f"{protocol_num}_EDC_Build_{version}.zip",
                           _xlsform_zip(build_json))
 
         await set_status(item_id, COL["pipeline_status"], STATUS["build_complete"])
@@ -729,11 +740,26 @@ async def run_pipeline(item_id):
         await append_log(item_id, "DVS started.")
         print("Claude — DVS...", flush=True)
 
+        # Strip both JSONs to only what DVS needs — constraints, field OIDs, form names
+        struct_dvs = {
+            "study_meta":  struct_json.get("study_meta", {}),
+            "forms":       [{"name": f.get("name"), "oid": f.get("oid"),
+                             "fields": [{"name": fld.get("name"), "oid": fld.get("oid"),
+                                         "type": fld.get("type")}
+                                        for fld in f.get("fields", [])]}
+                            for f in struct_json.get("forms", [])],
+            "constraints": struct_json.get("constraints", []),
+        }
+        build_dvs = {
+            "forms": {k: {"survey": v.get("survey", [])[:5]}
+                      for k, v in build_json.get("forms", {}).items()}
+        } if isinstance(build_json.get("forms"), dict) else {}
+
         dvs_text = await call_claude(
             DVS_PROMPT,
             extra_text = (
-                "EDC Structure JSON:\n" + json.dumps(struct_json) + "\n\n"
-                + "EDC Build JSON:\n"   + json.dumps(build_json)
+                "EDC Structure JSON:\n" + json.dumps(struct_dvs) + "\n\n"
+                + "EDC Build JSON:\n"   + json.dumps(build_dvs)
             ),
         )
         try:
@@ -745,7 +771,7 @@ async def run_pipeline(item_id):
             print("Warning: DVS not valid JSON", flush=True)
 
         await upload_file(item_id, COL["dvs_output"],
-                          f"{protocol_num}_DVS.xlsx",
+                          f"{protocol_num}_DVS_{version}.xlsx",
                           _dvs_xlsx(dvs_json))
 
         await set_status(item_id, COL["pipeline_status"], STATUS["dvs_complete"])
