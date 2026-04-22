@@ -428,14 +428,17 @@ def _add_scripts(skill_name):
         sys.path.insert(0, path)
 
 
-def run_pricing_model(pricing_summary_dict, live_rates=None):
+def run_pricing_model(pricing_summary_dict, live_rates=None,
+                      additional_sub_disc=0.0, additional_svc_disc=0.0):
     """Run pricing-model scripts locally. Returns dict of file bytes."""
     _add_scripts("pricing-model")
     from pricing_engine      import calculate_quote
     from generate_quote_pdf  import build_quote_pdfs
     from generate_quote_xlsx import build_quote_xlsx
 
-    quote    = calculate_quote(pricing_summary_dict, live_rates=live_rates)
+    quote    = calculate_quote(pricing_summary_dict, live_rates=live_rates,
+                               additional_sub_disc=additional_sub_disc,
+                               additional_svc_disc=additional_svc_disc)
     protocol = quote["study_meta"].get("protocol_number", "STUDY")
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -553,6 +556,17 @@ async def run_pipeline(item_id):
         oc_std_url   = cols.get(COL["oc_standard"],     {}).get("text")
         oc_subdomain = cols.get(COL["oc_subdomain"],    {}).get("text", "").strip()
 
+        # Number/percent columns — convert from display % to decimal
+        def _pct(col_key):
+            raw = cols.get(COL[col_key], {}).get("text", "").strip()
+            try:
+                return float(raw) / 100.0 if raw else 0.0
+            except ValueError:
+                return 0.0
+
+        additional_sub_disc = _pct("subscription_discount")
+        additional_svc_disc = _pct("services_discount")
+
         create_study_val = cols.get(COL["create_study"], {}).get("value")
         try:
             parsed = json.loads(create_study_val or "{}")
@@ -645,7 +659,9 @@ async def run_pipeline(item_id):
         await append_log(item_id, "Pricing Model started.")
         print("Pricing Model scripts...", flush=True)
         try:
-            qf = run_pricing_model(pricing_json)
+            qf = run_pricing_model(pricing_json,
+                                   additional_sub_disc=additional_sub_disc,
+                                   additional_svc_disc=additional_svc_disc)
             await upload_file(item_id, COL["pricing_quote"],
                               f"{protocol_num}_Quote_Internal.pdf",  qf["internal_pdf"])
             await upload_file(item_id, COL["pricing_quote"],

@@ -93,14 +93,15 @@ def parse_live_rates(drive_text):
     return rates
 
 
-def get_list_price(module_key, segment, cfg):
-    """Get monthly list price for a module/segment combo.
-
-    Reads from cfg['subscription_list_prices'].  Live-rate overrides are
-    applied in-memory to cfg by calculate_quote() before this is called, so
-    no live_rates parameter is needed here.
-    """
+def get_list_price(module_key, segment, cfg, live_rates=None):
+    """Get monthly list price for a module/segment combo."""
     lookup_key = f"{module_key}.{segment}"
+
+    # Try live rates first
+    if live_rates and lookup_key in live_rates:
+        return live_rates[lookup_key]
+
+    # Fall back to ini
     try:
         return float(cfg['subscription_list_prices'].get(lookup_key, 0))
     except (KeyError, ValueError):
@@ -216,7 +217,7 @@ def calculate_build_fee(flag_data, cfg):
 
 
 def calculate_modules(pricing_summary, cfg, segment, duration_months,
-                      n_studies, contract_years):
+                      n_studies, contract_years, live_rates=None):
     """
     Build the full module list with pricing applied.
     Returns list of module dicts and a pricing_context dict.
@@ -282,7 +283,7 @@ def calculate_modules(pricing_summary, cfg, segment, duration_months,
 
     if use_bundle:
         # Replace core_edc + insight with bundle pricing
-        bundle_list_price = get_list_price('core_bundle', segment, cfg)
+        bundle_list_price = get_list_price('core_bundle', segment, cfg, live_rates)
         discounted_price  = bundle_list_price * (1 - vol_discount)
         if use_platform_discount:
             discounted_price *= (1 - plat_rate)
@@ -311,7 +312,7 @@ def calculate_modules(pricing_summary, cfg, segment, duration_months,
 
     for key in remaining:
         meta        = module_meta.get(key, {'name': key, 'note': '', 'always': False})
-        list_price  = get_list_price(key, segment, cfg)
+        list_price  = get_list_price(key, segment, cfg, live_rates)
         discounted  = list_price * (1 - vol_discount)
         if use_platform_discount:
             discounted *= (1 - plat_rate)
@@ -343,7 +344,7 @@ def calculate_modules(pricing_summary, cfg, segment, duration_months,
         'use_platform_discount':   use_platform_discount,
         'platform_discount':       plat_rate if use_platform_discount else 0.0,
         'platform_discount_display': f"{int(plat_rate * 100)}%" if use_platform_discount else "0%",
-        # rates_effective_date is injected by calculate_quote() after this returns
+        'rates_source':            'live_drive' if live_rates else 'ini_fallback',
     }
 
     return modules, pricing_context
@@ -416,7 +417,8 @@ def merge_edc_flags(pricing_summary, edc_structure):
 
 
 def calculate_quote(pricing_summary, config_path=None, live_rates=None,
-                    edc_structure=None):
+                    edc_structure=None, additional_sub_disc=0.0,
+                    additional_svc_disc=0.0):
     """
     Main entry point. live_rates can be passed in when the skill has
     fetched fresh data from Google Drive.
@@ -426,17 +428,6 @@ def calculate_quote(pricing_summary, config_path=None, live_rates=None,
     if edc_structure:
         pricing_summary = merge_edc_flags(pricing_summary, edc_structure)
     cfg  = load_config(config_path)
-
-    # ── Apply live rates (if any) as in-memory cfg overrides ──────────────────
-    # The caller (skill layer) fetches live rates from Google Drive via MCP and
-    # passes them here.  We patch cfg['subscription_list_prices'] in-memory so
-    # that get_list_price() / calculate_modules() need no live_rates parameter.
-    if live_rates:
-        for key, price in live_rates.items():
-            cfg['subscription_list_prices'][key] = str(price)
-        rates_effective_date = datetime.date.today().isoformat()
-    else:
-        rates_effective_date = "config baseline"
     meta = pricing_summary.get('study_meta', {})
     if not meta:
         meta = {k: v for k, v in pricing_summary.items()
@@ -456,12 +447,19 @@ def calculate_quote(pricing_summary, config_path=None, live_rates=None,
     build_fee  = calculate_build_fee(flag_data, cfg)
     modules, pricing_ctx = calculate_modules(
         pricing_summary, cfg, seg_key, dur_months,
-        n_studies, contract_years
+        n_studies, contract_years, live_rates=live_rates
     )
-    pricing_ctx['rates_effective_date'] = rates_effective_date
 
     module_total = sum(m['total_fee'] for m in modules)
-    grand_total  = build_fee['total_fee'] + module_total
+
+    # Apply additional Monday.com discounts (on top of volume/platform)
+    additional_sub_disc  = max(0.0, min(1.0, float(additional_sub_disc or 0)))
+    additional_svc_disc  = max(0.0, min(1.0, float(additional_svc_disc or 0)))
+    sub_disc_amount      = round(module_total * additional_sub_disc, 2)
+    svc_disc_amount      = round(build_fee['total_fee'] * additional_svc_disc, 2)
+    discounted_module_total = round(module_total - sub_disc_amount, 2)
+    discounted_build_total  = round(build_fee['total_fee'] - svc_disc_amount, 2)
+    grand_total  = discounted_build_total + discounted_module_total
     out_cfg      = cfg['output']
 
     return {
@@ -477,9 +475,15 @@ def calculate_quote(pricing_summary, config_path=None, live_rates=None,
         'build_fee':       build_fee,
         'modules':         modules,
         'totals': {
-            'build_fee':    build_fee['total_fee'],
-            'module_total': module_total,
-            'grand_total':  grand_total,
+            'build_fee':              build_fee['total_fee'],
+            'build_fee_discounted':   discounted_build_total,
+            'module_total':           module_total,
+            'module_total_discounted':discounted_module_total,
+            'grand_total':            grand_total,
+            'additional_sub_disc':    additional_sub_disc,
+            'additional_svc_disc':    additional_svc_disc,
+            'sub_disc_amount':        sub_disc_amount,
+            'svc_disc_amount':        svc_disc_amount,
         },
         'config_snapshot': {
             'ps_hourly_rate':      float(cfg['rates']['ps_hourly_rate']),
@@ -547,7 +551,7 @@ if __name__ == '__main__':
     print(f"Volume disc:    {pc['volume_discount_display']}  |  "
           f"Platform disc: {pc['platform_discount_display']}  |  "
           f"Bundle: {'Yes' if pc['use_bundle'] else 'No'}  |  "
-          f"Rates eff: {pc['rates_effective_date']}")
+          f"Rates: {pc['rates_source']}")
     print()
     print("ONE-TIME FEES")
     print(f"  {fa['total_flagged_counted']} items × {bf['minutes_per_item']:.0f} min "

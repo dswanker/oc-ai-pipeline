@@ -180,12 +180,29 @@ def _build_ws(wb, quote, title, is_internal):
         c.fill = _fl(WHITE); c.alignment = _al()
         ws.row_dimensions[row].height = 13; row += 1
 
+    # Additional services discount
+    tots     = quote['totals']
+    svc_disc = tots.get('additional_svc_disc', 0.0)
+    if svc_disc > 0:
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=3)
+        c = ws.cell(row=row, column=1,
+            value=f"Additional Services Discount ({int(svc_disc*100)}%)")
+        c.font = _fn(italic=True, size=9, color=OC_TEAL)
+        c.fill = _fl(WHITE); c.alignment = _al()
+        c4 = ws.cell(row=row, column=4, value=-tots['svc_disc_amount'])
+        c4.font = _fn(bold=True, color=OC_TEAL, size=9)
+        c4.fill = _fl(WHITE); c4.border = _bd()
+        c4.alignment = _al(h="right"); c4.number_format = _ccy()
+        ws.cell(row=row, column=5).fill = _fl(WHITE)
+        ws.row_dimensions[row].height = 15; row += 1
+
     # Total one-time
+    build_total_display = tots.get('build_fee_discounted', tots['build_fee'])
     ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=3)
     c = ws.cell(row=row, column=1, value="TOTAL ONE-TIME FEE")
     c.font = _fn(bold=True, color=WHITE, size=10)
     c.fill = _fl(OC_DARK); c.alignment = _al(h="left", v="center")
-    _cell(ws, row, 4, bf['total_fee'], bold=True, color=OC_TEAL, bg=OC_DARK,
+    _cell(ws, row, 4, build_total_display, bold=True, color=OC_TEAL, bg=OC_DARK,
           size=11, h="right", fmt=_ccy())
     ws.cell(row=row, column=5).fill = _fl(OC_DARK)
     ws.row_dimensions[row].height = 20; row += 1; row += 1
@@ -197,8 +214,7 @@ def _build_ws(wb, quote, title, is_internal):
         vol_d  = pc.get('volume_discount_display','0%')
         plat_d = pc.get('platform_discount_display','0%')
         bundle = pc.get('use_bundle', False)
-        rates_date = pc.get('rates_effective_date', 'config baseline')
-        src        = f"(eff. {rates_date})"
+        src    = "(live)" if pc.get('rates_source')=='live_drive' else "(fallback)"
 
         hdr_text = (f"SUBSCRIPTION FEES  —  {seg} | {dur['months']} mo | "
                     f"Vol disc: {vol_d}" +
@@ -240,10 +256,30 @@ def _build_ws(wb, quote, title, is_internal):
             ws.row_dimensions[row].height = 15; row += 1
         row += 1
 
+        # Additional subscription discount
+        sub_disc = tots.get('additional_sub_disc', 0.0)
+        if sub_disc > 0:
+            ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=3)
+            c = ws.cell(row=row, column=1,
+                value=f"Additional Subscription Discount ({int(sub_disc*100)}%)")
+            c.font = _fn(italic=True, size=9, color=OC_TEAL)
+            c.fill = _fl(WHITE); c.alignment = _al()
+            c4 = ws.cell(row=row, column=4, value=-tots['sub_disc_amount'])
+            c4.font = _fn(bold=True, color=OC_TEAL, size=9)
+            c4.fill = _fl(WHITE); c4.border = _bd()
+            c4.alignment = _al(h="right"); c4.number_format = _ccy()
+            ws.cell(row=row, column=5).fill = _fl(WHITE)
+            ws.row_dimensions[row].height = 15; row += 1
+        row += 1
+
     # Grand total
     row = _sec(ws, row, "QUOTE SUMMARY", NC)
-    summary = [("One-Time Fees (Build + Project Management)", tots['build_fee']),
-               ("Subscription Fees (all modules × duration)", tots['module_total'])]
+    summary = [
+        ("One-Time Fees (Build + Project Management)",
+         tots.get('build_fee_discounted', tots['build_fee'])),
+        ("Subscription Fees (all modules × duration)",
+         tots.get('module_total_discounted', tots['module_total'])),
+    ]
     for k, v in summary:
         bg = GREY_L if row % 2 == 0 else WHITE
         ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=3)

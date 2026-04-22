@@ -17,6 +17,8 @@ COL = {
     "oc_subdomain": "text_mm2nmefe",
     "create_study": "boolean_mm2nbn5c",
     "oc_study_url": "text_mm2nbce5",
+    "subscription_discount": "numeric_mm2nkqbq",
+    "services_discount":     "numeric_mm2n41x7",
 }
 
 def get_token():

@@ -302,11 +302,32 @@ def _build_fee(story, quote, is_internal):
     story.append(_grid(["Service", "Hours", "Rate", "Amount"], rows, st, cw))
     story.append(Spacer(1, 4))
 
+    # Additional services discount (if any)
+    tots = quote['totals']
+    svc_disc = tots.get('additional_svc_disc', 0.0)
+    if svc_disc > 0:
+        disc_row = Table([[
+            Paragraph(f"Additional Services Discount ({int(svc_disc*100)}%)",
+                      ParagraphStyle("dl", fontName="Helvetica", fontSize=9,
+                                     textColor=TEXT_DARK)),
+            Paragraph(f"−{_fmt(tots['svc_disc_amount'], sym)}",
+                      ParagraphStyle("da", fontName="Helvetica-Bold", fontSize=9,
+                                     textColor=OC_ORANGE, alignment=TA_RIGHT)),
+        ]], colWidths=[CONTENT_W*0.70, CONTENT_W*0.30])
+        disc_row.setStyle(TableStyle([
+            ("TOPPADDING",    (0,0),(-1,-1), 4),
+            ("BOTTOMPADDING", (0,0),(-1,-1), 4),
+            ("LEFTPADDING",   (0,0),(-1,-1), 10),
+            ("RIGHTPADDING",  (0,0),(-1,-1), 10),
+        ]))
+        story.append(disc_row)
+
     # Total bar
+    build_total_display = tots.get('build_fee_discounted', tots['build_fee'])
     t = Table([[
         Paragraph("TOTAL ONE-TIME FEE", ParagraphStyle("tl", fontName="Helvetica-Bold",
             fontSize=10, textColor=WHITE)),
-        Paragraph(_fmt(bf['total_fee'], sym), ParagraphStyle("tv",
+        Paragraph(_fmt(build_total_display, sym), ParagraphStyle("tv",
             fontName="Helvetica-Bold", fontSize=10, textColor=OC_ORANGE,
             alignment=TA_RIGHT)),
     ]], colWidths=[CONTENT_W*0.70, CONTENT_W*0.30])
@@ -333,12 +354,12 @@ def _subscriptions(story, quote, is_internal):
     story.append(Spacer(1, 5))
 
     # Pricing context summary
-    seg_label  = pc.get('segment', 'COMMERCIAL').replace('_', ' ').title()
-    vol_disc   = pc.get('volume_discount_display', '0%')
-    plat_disc  = pc.get('platform_discount_display', '0%')
-    bundle     = pc.get('use_bundle', False)
-    rates_date = pc.get('rates_effective_date', 'config baseline')
-    src_note   = f"effective {rates_date}"
+    seg_label = pc.get('segment', 'COMMERCIAL').replace('_', ' ').title()
+    vol_disc  = pc.get('volume_discount_display', '0%')
+    plat_disc = pc.get('platform_discount_display', '0%')
+    bundle    = pc.get('use_bundle', False)
+    source    = pc.get('rates_source', 'ini_fallback')
+    src_note  = "(live from Google Drive)" if source == "live_drive" else "(fallback rates — Drive unavailable)"
 
     story.append(Paragraph(
         f"Subscription fees for <b>{seg_label}</b> segment — "
@@ -396,6 +417,27 @@ def _subscriptions(story, quote, is_internal):
             ])
 
     story.append(_grid(hdrs, rows, st, cw))
+
+    # Additional subscription discount (if any)
+    tots    = quote['totals']
+    sub_disc = tots.get('additional_sub_disc', 0.0)
+    if sub_disc > 0:
+        disc_row = Table([[
+            Paragraph(f"Additional Subscription Discount ({int(sub_disc*100)}%)",
+                      ParagraphStyle("dl", fontName="Helvetica", fontSize=9,
+                                     textColor=TEXT_DARK)),
+            Paragraph(f"−{_fmt(tots['sub_disc_amount'], sym)}",
+                      ParagraphStyle("da", fontName="Helvetica-Bold", fontSize=9,
+                                     textColor=OC_ORANGE, alignment=TA_RIGHT)),
+        ]], colWidths=[CONTENT_W*0.70, CONTENT_W*0.30])
+        disc_row.setStyle(TableStyle([
+            ("TOPPADDING",    (0,0),(-1,-1), 4),
+            ("BOTTOMPADDING", (0,0),(-1,-1), 4),
+            ("LEFTPADDING",   (0,0),(-1,-1), 10),
+            ("RIGHTPADDING",  (0,0),(-1,-1), 10),
+        ]))
+        story.append(disc_row)
+
     story.append(Spacer(1, 14))
 
 
@@ -410,11 +452,12 @@ def _grand_total(story, quote):
 
     rows_data = [
         [Paragraph("One-Time Fees (Build + Project Management)", st["cell"]),
-         Paragraph(_fmt(totals['build_fee'], sym),
+         Paragraph(_fmt(totals.get('build_fee_discounted', totals['build_fee']), sym),
              ParagraphStyle("c", fontName="Helvetica", fontSize=8.5,
                  leading=11, alignment=TA_RIGHT))],
         [Paragraph("Subscription Fees (all modules × study duration)", st["cell"]),
-         Paragraph(_fmt(totals['module_total'], sym) if totals['module_total'] > 0 else "TBD",
+         Paragraph(_fmt(totals.get('module_total_discounted', totals['module_total']), sym)
+                   if totals.get('module_total_discounted', totals['module_total']) > 0 else "TBD",
              ParagraphStyle("c", fontName="Helvetica", fontSize=8.5,
                  leading=11, alignment=TA_RIGHT,
                  textColor=GREY_DARK if totals['module_total'] == 0 else TEXT_DARK))],
