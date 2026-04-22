@@ -20,6 +20,8 @@ COL = {
     "subscription_discount": "numeric_mm2nkqbq",
     "services_discount":     "numeric_mm2n41x7",
     "output_requested":      "dropdown_mm2nc7d4",
+    "build_input":           "file_mm2nqghj",
+    "dvs_input":             "file_mm2n517e",
 }
 
 def get_token():
@@ -91,7 +93,31 @@ async def append_log(item_id, message):
     async with httpx.AsyncClient(timeout=30) as c:
         await c.post(MONDAY_API_URL, headers=get_headers(), json={"query": make_mutation(), "variables": variables})
 
-async def upload_file(item_id, col_id, filename, file_content):
+async def download_column_file(item_id, col_id):
+    """
+    Download the most recent file from a specific file column on an item.
+    Returns bytes or None if no file is attached.
+    """
+    q = """query($i:[ID!]){
+        items(ids:$i){
+            assets{id name column_id url public_url}
+        }
+    }"""
+    async with httpx.AsyncClient(timeout=30) as c:
+        r = await c.post(MONDAY_API_URL, headers=get_headers(),
+                         json={"query": q, "variables": {"i": [item_id]}})
+    resp = r.json()
+    assets = resp.get("data", {}).get("items", [{}])[0].get("assets", [])
+    # Filter to this column and take the most recent (last in list)
+    col_assets = [a for a in assets if a.get("column_id") == col_id]
+    if not col_assets:
+        return None
+    asset = col_assets[-1]
+    url = asset.get("public_url") or asset.get("url")
+    if not url:
+        return None
+    print(f"Downloading column file: {asset.get('name')} from {url[:60]}", flush=True)
+    return await download_file(url)
     print(f"UPLOADING: {filename} ({len(file_content)} bytes) to col {col_id}", flush=True)
     mutation_query = f"""
     mutation ($file: File!) {{

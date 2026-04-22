@@ -20,10 +20,12 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
 
-from monday_client import get_item, download_file, upload_file, set_status, append_log, set_text, COL
+from monday_client import (get_item, download_file, upload_file, set_status,
+                           append_log, set_text, download_column_file, COL)
 from claude_client  import call_claude, extract_json
 from prompts        import (EDC_STRUCTURE_PROMPT, PRICING_SUMMARY_PROMPT,
-                             EDC_BUILD_PROMPT, DVS_PROMPT)
+                             EDC_BUILD_PROMPT, DVS_PROMPT, DVS_TRANSLATE_PROMPT,
+                             SPEC_FROM_BUILD_PROMPT)
 
 SKILLS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'skills')
 
@@ -349,8 +351,12 @@ def _pricing_summary_pdf(pricing_json, protocol_num):
 def _xlsform_zip(build_json):
     """
     Convert EDC Build JSON into a ZIP of XLSForm-compliant XLSX files.
-    Expected shape: { "forms": { "DM.xlsx": { "survey": [...], "choices": [...],
-                                               "settings": {...} } } }
+    Also includes any CSV files (e.g. schedule of events) if present.
+
+    Expected shape:
+      { "forms": { "DM.xlsx": { "survey": [...], "choices": [...],
+                                 "settings": {...} },
+                   "schedule_of_events.csv": "csv content string" } }
     Returns bytes.
     """
     forms   = build_json.get("forms", {})
@@ -358,6 +364,23 @@ def _xlsform_zip(build_json):
 
     with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for filename, form_data in forms.items():
+
+            # ── CSV files (e.g. schedule of events) ──────────────────────────
+            if filename.endswith('.csv'):
+                if isinstance(form_data, str):
+                    zf.writestr(filename, form_data)
+                elif isinstance(form_data, list):
+                    # List of dicts — convert to CSV
+                    import csv as _csv
+                    cbuf = io.StringIO()
+                    if form_data:
+                        writer = _csv.DictWriter(cbuf, fieldnames=form_data[0].keys())
+                        writer.writeheader()
+                        writer.writerows(form_data)
+                    zf.writestr(filename, cbuf.getvalue())
+                continue
+
+            # ── XLSForm XLSX files ────────────────────────────────────────────
             wb   = Workbook()
             ws_s = wb.active
             ws_s.title = "survey"
@@ -387,6 +410,16 @@ def _xlsform_zip(build_json):
             wb.save(xbuf)
             zf.writestr(filename, xbuf.getvalue())
 
+        # Also include study_checklist as CSV if present
+        checklist = build_json.get("study_checklist")
+        if checklist and isinstance(checklist, list) and checklist:
+            import csv as _csv
+            cbuf = io.StringIO()
+            writer = _csv.DictWriter(cbuf, fieldnames=checklist[0].keys())
+            writer.writeheader()
+            writer.writerows(checklist)
+            zf.writestr("study_checklist.csv", cbuf.getvalue())
+
     zip_buf.seek(0)
     return zip_buf.getvalue()
 
@@ -415,6 +448,210 @@ def _dvs_xlsx(dvs_json):
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
+
+
+# ── Reverse-engineer spec from build ZIP ─────────────────────────────────────
+
+async def _spec_from_build(build_json, original_struct_json,
+                           protocol_num, version, item_id):
+    """
+    Reverse-engineer a Protocol Specification from built XLSForms.
+    Preserves review_flags from the original EDC Structure run.
+    Uploads updated spec XLSX + PDF to Monday.
+    """
+    # Slim down build_json for Claude — just survey and choices
+    slim_forms = {}
+    for fname, fdata in build_json.get("forms", {}).items():
+        if fname.endswith('.csv'):
+            continue  # skip schedule of events CSV
+        slim_forms[fname] = {
+            "survey":  fdata.get("survey", []),
+            "choices": fdata.get("choices", []),
+            "settings": fdata.get("settings", {}),
+        }
+
+    print("Claude — reverse-engineering spec from build...", flush=True)
+    spec_text = await call_claude(
+        SPEC_FROM_BUILD_PROMPT,
+        extra_text = (
+            "Study meta (preserve exactly):\n"
+            + json.dumps(original_struct_json.get("study_meta", {}))
+            + "\n\nXLSForm JSON:\n"
+            + json.dumps({"forms": slim_forms})
+        ),
+    )
+    try:
+        new_struct = extract_json(spec_text)
+        if isinstance(new_struct, list):
+            new_struct = {}
+    except ValueError:
+        new_struct = {}
+        print("Warning: spec from build not valid JSON — using original", flush=True)
+
+    # Inject preserved fields from original run
+    new_struct["study_meta"]   = original_struct_json.get("study_meta", {})
+    new_struct["review_flags"] = original_struct_json.get("review_flags", {})
+
+    # Upload updated spec
+    await asyncio.gather(
+        upload_file(item_id, COL["spec_xlsx"],
+                    f"{protocol_num}_EDC_Structure_{version}.xlsx",
+                    _struct_xlsx(new_struct)),
+        upload_file(item_id, COL["spec_pdf"],
+                    f"{protocol_num}_EDC_Structure_{version}.pdf",
+                    _struct_pdf(new_struct, protocol_num)),
+    )
+    await append_log(item_id,
+        "Protocol Specification updated from build — XLSX + PDF uploaded.")
+    print("Spec from build uploaded.", flush=True)
+    return new_struct
+
+
+# ── Read user-uploaded XLSForm ZIP ───────────────────────────────────────────
+
+def _read_zip_xlsforms(zip_bytes):
+    """
+    Read a ZIP of XLSForm XLSX files uploaded by the user.
+    Returns the same forms dict structure that Claude generates:
+      { "forms": { "filename.xlsx": { "survey": [...], "choices": [...],
+                                       "settings": {...} } } }
+    Preserves original filenames exactly — no versioning inside ZIP.
+    """
+    forms = {}
+    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+        for name in zf.namelist():
+            if not name.endswith('.xlsx') or name.startswith('__'):
+                continue
+            xlsx_bytes = zf.read(name)
+            wb = Workbook()
+            # Load the existing workbook using openpyxl load_workbook
+            import openpyxl
+            src = openpyxl.load_workbook(io.BytesIO(xlsx_bytes))
+            form_data = {}
+            for sheet_name in ['survey', 'choices', 'settings']:
+                if sheet_name in src.sheetnames:
+                    ws = src[sheet_name]
+                    rows = list(ws.values)
+                    if not rows:
+                        form_data[sheet_name] = []
+                        continue
+                    headers = [str(h).strip() if h else '' for h in rows[0]]
+                    if sheet_name == 'settings':
+                        # settings is a single row
+                        if len(rows) > 1:
+                            form_data[sheet_name] = dict(zip(headers, [
+                                str(v) if v is not None else ''
+                                for v in rows[1]
+                            ]))
+                        else:
+                            form_data[sheet_name] = {}
+                    else:
+                        form_data[sheet_name] = [
+                            {h: (str(v) if v is not None else '')
+                             for h, v in zip(headers, row)}
+                            for row in rows[1:]
+                            if any(v is not None for v in row)
+                        ]
+                else:
+                    form_data[sheet_name] = [] if sheet_name != 'settings' else {}
+            # Use just the basename, no path
+            basename = os.path.basename(name)
+            forms[basename] = form_data
+
+    print(f"Read {len(forms)} XLSForm(s) from ZIP: {list(forms.keys())}", flush=True)
+    return {"forms": forms}
+
+
+# ── Translate DVS changes into updated XLSForms ───────────────────────────────
+
+def _dvs_xlsx_to_text(dvs_bytes):
+    """
+    Extract DVS XLSX content as structured text for Claude to read.
+    Returns a string representation of the DVS checks.
+    """
+    import openpyxl
+    wb = openpyxl.load_workbook(io.BytesIO(dvs_bytes))
+    lines = []
+    for sheet_name in wb.sheetnames:
+        ws = wb[sheet_name]
+        rows = list(ws.values)
+        if not rows:
+            continue
+        lines.append(f"\n=== Sheet: {sheet_name} ===")
+        headers = [str(h) if h else '' for h in rows[0]]
+        lines.append('\t'.join(headers))
+        for row in rows[1:]:
+            if any(v is not None for v in row):
+                lines.append('\t'.join(str(v) if v is not None else '' for v in row))
+    return '\n'.join(lines)
+
+
+async def _translate_dvs_to_xlsforms(dvs_bytes, current_forms_json):
+    """
+    Option B: Ask Claude to translate DVS changes into updated XLSForm fields.
+    Returns updated forms JSON in the same structure as current_forms_json.
+    """
+    dvs_text = _dvs_xlsx_to_text(dvs_bytes)
+    print("Claude — translating DVS changes to XLSForm updates...", flush=True)
+
+    updated_text = await call_claude(
+        DVS_TRANSLATE_PROMPT,
+        extra_text = (
+            "Current XLSForm JSON:\n" + json.dumps(current_forms_json) + "\n\n"
+            "DVS Changes (from uploaded DVS XLSX):\n" + dvs_text
+        ),
+    )
+    try:
+        updated = extract_json(updated_text)
+        if isinstance(updated, list):
+            updated = {"forms": {}}
+        print(f"DVS translation complete — {len(updated.get('forms', {}))} form(s) updated", flush=True)
+        return updated
+    except ValueError:
+        print("Warning: DVS translation not valid JSON — using original forms", flush=True)
+        return current_forms_json
+
+
+# ── Generate DVS from built forms ─────────────────────────────────────────────
+
+async def _generate_dvs(build_json, protocol_num, version, item_id):
+    """
+    Generate DVS XLSX from the built XLSForm JSON and upload to Monday.
+    Always called after any build path.
+    """
+    # Strip to only survey rows (constraints, calculations, relevant)
+    # to keep token count low
+    dvs_forms = {}
+    for fname, fdata in build_json.get("forms", {}).items():
+        survey = fdata.get("survey", [])
+        # Keep only rows that have constraint, calculation, or relevant
+        relevant_rows = [
+            {k: v for k, v in row.items()
+             if k in ('type', 'name', 'label', 'constraint',
+                      'constraint_message', 'calculation', 'relevant',
+                      'required')}
+            for row in survey
+            if any(row.get(k) for k in ('constraint', 'calculation', 'relevant'))
+        ]
+        dvs_forms[fname] = {"survey": relevant_rows}
+
+    dvs_text = await call_claude(
+        DVS_PROMPT,
+        extra_text = "XLSForm build data:\n" + json.dumps({"forms": dvs_forms}),
+    )
+    try:
+        dvs_json = extract_json(dvs_text)
+        if isinstance(dvs_json, list):
+            dvs_json = {"checks": dvs_json}
+    except ValueError:
+        dvs_json = {"checks": []}
+        print("Warning: DVS not valid JSON", flush=True)
+
+    await upload_file(item_id, COL["dvs_output"],
+                      f"{protocol_num}_DVS_{version}.xlsx",
+                      _dvs_xlsx(dvs_json))
+    await append_log(item_id, "DVS complete — XLSX uploaded.")
+    print("DVS uploaded.", flush=True)
 
 
 # ── Pricing model — run scripts locally ───────────────────────────────────────
@@ -706,35 +943,91 @@ async def run_pipeline(item_id):
         else:
             print("Price quote not requested — skipping.", flush=True)
 
-        # ── 5. Study build ZIP ────────────────────────────────────────────────
+        # ── 5. Study build ZIP + DVS (always together) ───────────────────────
         build_json = {"forms": {}}
         if _want("study build zip"):
             await set_status(item_id, COL["pipeline_status"], STATUS["build_pricing_running"])
             await append_log(item_id, "EDC Build started.")
-            print("Claude — EDC Build...", flush=True)
 
-            struct_slim = {
-                "study_meta": struct_json.get("study_meta", {}),
-                "forms":      struct_json.get("forms", []),
-            }
-            build_text = await call_claude(
-                EDC_BUILD_PROMPT,
-                extra_text = "EDC Structure JSON:\n" + json.dumps(struct_slim),
-            )
-            try:
-                build_json = extract_json(build_text)
-                if isinstance(build_json, list):
-                    build_json = {"forms": {f"form_{i+1}.xlsx": item
-                                            for i, item in enumerate(build_json)}}
-            except ValueError:
-                build_json = {"forms": {}}
-                print("Warning: EDC Build not valid JSON", flush=True)
+            # Check for user-uploaded inputs
+            build_input_bytes = await download_column_file(item_id, COL["build_input"])
+            dvs_input_bytes   = await download_column_file(item_id, COL["dvs_input"])
 
+            if build_input_bytes:
+                # ── Path A: User uploaded edited XLSForm ZIP ──────────────
+                print("Build path A: reading user-uploaded XLSForm ZIP...", flush=True)
+                await append_log(item_id, "Using user-uploaded XLSForm ZIP for build.")
+                try:
+                    build_json = _read_zip_xlsforms(build_input_bytes)
+                except Exception as e:
+                    print(f"Error reading build input ZIP: {e}", flush=True)
+                    await append_log(item_id, f"Error reading build input ZIP: {e}")
+                    build_json = {"forms": {}}
+
+            elif dvs_input_bytes:
+                # ── Path B: User uploaded edited DVS — translate to XLSForms
+                print("Build path B: translating DVS changes to XLSForms...", flush=True)
+                await append_log(item_id, "Translating DVS input to XLSForm updates.")
+                # Start from Claude's last EDC build as base forms
+                struct_slim = {
+                    "study_meta": struct_json.get("study_meta", {}),
+                    "forms":      struct_json.get("forms", []),
+                }
+                base_build_text = await call_claude(
+                    EDC_BUILD_PROMPT,
+                    extra_text = "EDC Structure JSON:\n" + json.dumps(struct_slim),
+                )
+                try:
+                    base_build = extract_json(base_build_text)
+                    if isinstance(base_build, list):
+                        base_build = {"forms": {}}
+                except ValueError:
+                    base_build = {"forms": {}}
+                build_json = await _translate_dvs_to_xlsforms(dvs_input_bytes, base_build)
+
+            else:
+                # ── Path C: No user input — Claude builds from protocol spec
+                print("Build path C: Claude EDC Build from protocol spec...", flush=True)
+                await append_log(item_id, "EDC Build: generating from protocol specification.")
+                struct_slim = {
+                    "study_meta": struct_json.get("study_meta", {}),
+                    "forms":      struct_json.get("forms", []),
+                }
+                build_text = await call_claude(
+                    EDC_BUILD_PROMPT,
+                    extra_text = "EDC Structure JSON:\n" + json.dumps(struct_slim),
+                )
+                try:
+                    build_json = extract_json(build_text)
+                    if isinstance(build_json, list):
+                        build_json = {"forms": {f"form_{i+1}.xlsx": item
+                                                for i, item in enumerate(build_json)}}
+                except ValueError:
+                    build_json = {"forms": {}}
+                    print("Warning: EDC Build not valid JSON", flush=True)
+
+            # Upload ZIP (versioned name, original filenames inside)
             await upload_file(item_id, COL["edc_build"],
                               f"{protocol_num}_EDC_Build_{version}.zip",
                               _xlsform_zip(build_json))
             await set_status(item_id, COL["pipeline_status"], STATUS["build_complete"])
             await append_log(item_id, "EDC Build complete — ZIP uploaded.")
+
+            # If protocol specification also selected, reverse-engineer
+            # updated spec from the built XLSForms
+            if _want("protocol specification"):
+                await append_log(item_id,
+                    "Updating Protocol Specification from build...")
+                struct_json = await _spec_from_build(
+                    build_json, struct_json, protocol_num, version, item_id)
+
+            # DVS always runs after any build path
+            await set_status(item_id, COL["pipeline_status"], STATUS["dvs_running"])
+            await append_log(item_id, "DVS started.")
+            print("Claude — DVS...", flush=True)
+            await _generate_dvs(build_json, protocol_num, version, item_id)
+            await set_status(item_id, COL["pipeline_status"], STATUS["dvs_complete"])
+
         else:
             print("Study build ZIP not requested — skipping.", flush=True)
 
@@ -758,48 +1051,6 @@ async def run_pipeline(item_id):
         else:
             await append_log(item_id, "Create Study in OC not requested — skipped.")
 
-        # ── 7. DVS specification ──────────────────────────────────────────────
-        if _want("dvs specification"):
-            await set_status(item_id, COL["pipeline_status"], STATUS["dvs_running"])
-            await append_log(item_id, "DVS started.")
-            print("Claude — DVS...", flush=True)
-
-            struct_dvs = {
-                "study_meta":  struct_json.get("study_meta", {}),
-                "forms":       [{"name": f.get("name"), "oid": f.get("oid"),
-                                 "fields": [{"name": fld.get("name"), "oid": fld.get("oid"),
-                                             "type": fld.get("type")}
-                                            for fld in f.get("fields", [])]}
-                                for f in struct_json.get("forms", [])],
-                "constraints": struct_json.get("constraints", []),
-            }
-            build_dvs = {
-                "forms": {k: {"survey": v.get("survey", [])[:5]}
-                          for k, v in build_json.get("forms", {}).items()}
-            } if isinstance(build_json.get("forms"), dict) else {}
-
-            dvs_text = await call_claude(
-                DVS_PROMPT,
-                extra_text = (
-                    "EDC Structure JSON:\n" + json.dumps(struct_dvs) + "\n\n"
-                    + "EDC Build JSON:\n"   + json.dumps(build_dvs)
-                ),
-            )
-            try:
-                dvs_json = extract_json(dvs_text)
-                if isinstance(dvs_json, list):
-                    dvs_json = {"checks": dvs_json}
-            except ValueError:
-                dvs_json = {"checks": []}
-                print("Warning: DVS not valid JSON", flush=True)
-
-            await upload_file(item_id, COL["dvs_output"],
-                              f"{protocol_num}_DVS_{version}.xlsx",
-                              _dvs_xlsx(dvs_json))
-            await set_status(item_id, COL["pipeline_status"], STATUS["dvs_complete"])
-            await append_log(item_id, "DVS complete — XLSX uploaded.")
-        else:
-            print("DVS specification not requested — skipping.", flush=True)
 
         # ── Done ──────────────────────────────────────────────────────────────
         await set_status(item_id, COL["pipeline_status"], STATUS["all_complete"])

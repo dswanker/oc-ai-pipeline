@@ -28,12 +28,11 @@ The JSON must include at minimum:
 """
 
 PRICING_SUMMARY_PROMPT = """\
-You are running the protocol-to-pricing-summary skill.
+You are running the protocol-summary skill.
 
-The attached PDF is the clinical trial protocol.
 The EDC structure JSON from the previous skill step is included below as text.
 
-Produce a complete pricing summary following your skill instructions.
+Produce a complete protocol summary following your skill instructions.
 
 Return a single, complete, valid JSON object — no text before or after it.
 
@@ -65,7 +64,7 @@ The JSON must include:
 EDC_BUILD_PROMPT = """\
 You are running the edc-builder skill.
 
-The EDC structure JSON from the protocol-to-edc-structure skill is included below.
+The EDC structure JSON from the protocol-specification skill is included below.
 
 Build all XLSForm files following your skill instructions.
 
@@ -88,12 +87,95 @@ The JSON must be structured as:
 DVS_PROMPT = """\
 You are running the dvs-specification skill.
 
-The EDC structure JSON and XLSForm data are included below.
+The XLSForm data from the EDC build is included below. This represents the
+actual forms that have been built — use these as the authoritative source
+for generating the DVS.
 
 Generate the Data Validation Specification following your skill instructions.
 
 Return a single, complete, valid JSON object — no text before or after it.
 
 The JSON must capture all validation checks, edit checks, and UAT cases
-in a structure that can be written to the DVS XLSX template.
+derived directly from the form fields, constraints, and calculations
+in the XLSForm data provided.
+
+Structure:
+{
+  "checks": [
+    {
+      "form":        "form filename (e.g. DM.xlsx)",
+      "field":       "field name/OID",
+      "check_type":  "range | pattern | required | skip | calculation | edit_check",
+      "expression":  "the validation expression or rule",
+      "message":     "error message shown to user",
+      "uat_case":    "description of how to test this check"
+    },
+    ...
+  ]
+}
+"""
+
+DVS_TRANSLATE_PROMPT = """\
+You are updating XLSForm files based on changes specified in a DVS
+(Data Validation Specification) XLSX.
+
+The current XLSForm JSON and the DVS changes are provided below.
+
+Your task:
+1. Read the DVS changes — these describe new or modified validation rules,
+   constraints, skip patterns, and calculations
+2. Translate each DVS change into the correct XLSForm field-level updates
+   (e.g. adding/updating the 'constraint', 'constraint_message',
+   'calculation', 'relevant' columns in the survey sheet)
+3. Return the complete updated XLSForm JSON with all changes applied
+
+Return a single, complete, valid JSON object — no text before or after it.
+
+Use the same structure as the input forms JSON:
+{
+  "forms": {
+    "<form_filename>.xlsx": {
+      "survey":  [ { "type": ..., "name": ..., "label": ...,
+                     "constraint": ..., "constraint_message": ...,
+                     "calculation": ..., "relevant": ... }, ... ],
+      "choices": [ ... ],
+      "settings": { ... }
+    }
+  }
+}
+
+Important rules:
+- Keep all existing fields intact — only modify fields that have DVS changes
+- Preserve all original field names exactly — do not rename any fields
+- If a DVS check applies to a field not found in the forms, add a comment
+  in the study_checklist noting the discrepancy
+- Return ALL forms, not just the ones that changed
+"""
+
+SPEC_FROM_BUILD_PROMPT = """\
+You are reverse-engineering a Protocol Specification from a set of built
+XLSForm files.
+
+The XLSForm JSON is provided below. Each form contains survey rows (fields),
+choices (codelists), and settings.
+
+Produce an updated EDC structure specification JSON that reflects the actual
+built forms — as they exist in the XLSForms — not the original protocol.
+
+Return a single, complete, valid JSON object — no text before or after it.
+
+The JSON must include:
+  study_meta  : preserve exactly as provided in the input
+  forms       : derived from the XLSForm survey sheets — one entry per form,
+                with name, oid, domain, fields (name, oid, type, label,
+                codelist if applicable, required)
+  codelists   : derived from the XLSForm choices sheets
+  constraints : derived from constraint and relevant columns in survey sheets
+  review_flags: DO NOT include — these will be injected from the original run
+
+Important:
+- Preserve all field names and OIDs exactly as they appear in the XLSForms
+- Do not invent or rename anything
+- If a field has a constraint expression, include it in constraints
+- If a field has a calculation, note it in the field's notes
 """
