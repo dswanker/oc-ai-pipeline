@@ -17,7 +17,7 @@ Outputs uploaded per skill:
 """
 import asyncio, io, json, os, sys, tempfile, zipfile
 
-from monday_client import get_item, download_file, upload_file, set_status, append_log, COL
+from monday_client import get_item, download_file, upload_file, set_status, append_log, set_text, COL
 from claude_client  import call_claude, extract_json
 from prompts        import (EDC_STRUCTURE_PROMPT, PRICING_SUMMARY_PROMPT,
                              EDC_BUILD_PROMPT, DVS_PROMPT)
@@ -449,6 +449,95 @@ def run_pricing_model(pricing_summary_dict, live_rates=None):
         return {k: open(v, "rb").read() for k, v in paths.items()}
 
 
+# ── OpenClinica Study Service API ─────────────────────────────────────────────
+
+async def create_oc_study(subdomain, struct_json):
+    """
+    Create a study in OpenClinica via the Study Service API.
+
+    Auth:   HTTP Basic Auth — OC_API_USERNAME / OC_API_PASSWORD env vars
+    Host:   https://{subdomain}.build.openclinica.io
+    Endpoint: POST /study-service/api/studies
+
+    Returns the study URL string on success, or raises on failure.
+    """
+    import base64 as _b64
+    username = os.environ.get("OC_API_USERNAME", "").strip()
+    password = os.environ.get("OC_API_PASSWORD", "").strip()
+    if not username or not password:
+        raise ValueError("OC_API_USERNAME or OC_API_PASSWORD not set in environment")
+
+    credentials = _b64.b64encode(f"{username}:{password}".encode()).decode()
+    headers = {
+        "Authorization": f"Basic {credentials}",
+        "Content-Type":  "application/json",
+    }
+
+    base_url = f"https://{subdomain}.build.openclinica.io"
+    endpoint = f"{base_url}/study-service/api/studies"
+
+    meta = struct_json.get("study_meta", {})
+
+    # Map study type from protocol — default to INTERVENTIONAL
+    type_map = {
+        "interventional": "INTERVENTIONAL",
+        "observational":  "OBSERVATIONAL",
+    }
+    study_type = type_map.get(
+        str(meta.get("type", "interventional")).lower(), "INTERVENTIONAL"
+    )
+
+    # Map phase — OC4 accepted values
+    phase_map = {
+        "phase i":   "PHASEI",   "phase 1":   "PHASEI",
+        "phase ii":  "PHASEII",  "phase 2":   "PHASEII",
+        "phase iii": "PHASEIII", "phase 3":   "PHASEIII",
+        "phase iv":  "PHASEIV",  "phase 4":   "PHASEIV",
+    }
+    phase_raw = str(meta.get("study_phase", "")).lower().strip()
+    phase = phase_map.get(phase_raw, "OTHER_NON_IND")
+
+    import datetime as _dt
+    today      = _dt.date.today().isoformat()
+    dur_months = int(meta.get("total_study_duration_months", 24) or 24)
+    end_date   = (
+        _dt.date.today().replace(year=_dt.date.today().year + dur_months // 12)
+    ).isoformat()
+
+    protocol_num = meta.get("protocol_number", "STUDY")
+
+    payload = {
+        "name":               meta.get("study_title", protocol_num),
+        "description":        meta.get("description",
+                                       f"{protocol_num} — {meta.get('indication', '')}"),
+        "uniqueIdentifier":   protocol_num[:30],   # max 30 chars
+        "type":               study_type,
+        "phase":              phase,
+        "expectedStartDate":  today,
+        "expectedEndDate":    end_date,
+        "expectedEnrollment": int(meta.get("expected_enrollment", 0) or 0),
+        "collectSex":         True,
+        "collectDateOfBirth": "ONLY_THE_YEAR",
+        "collectPersonId":    "ALWAYS",
+    }
+
+    print(f"Creating OC study at {endpoint}", flush=True)
+    async with httpx.AsyncClient(timeout=60) as c:
+        r = await c.post(endpoint, headers=headers, json=payload)
+
+    print(f"OC Study API response: {r.status_code} {r.text[:300]}", flush=True)
+
+    if r.status_code not in (200, 201):
+        raise RuntimeError(
+            f"OC Study API returned {r.status_code}: {r.text[:300]}"
+        )
+
+    data = r.json()
+    study_uuid = data.get("uuid", "")
+    study_url  = f"{base_url}/designer/#/studies/{study_uuid}" if study_uuid else base_url
+    return study_url
+
+
 # ── Main pipeline ──────────────────────────────────────────────────────────────
 
 async def run_pipeline(item_id):
@@ -460,7 +549,17 @@ async def run_pipeline(item_id):
         protocol_num = cols.get(COL["protocol_number"], {}).get("text", "STUDY")
         crf_url      = cols.get(COL["crf_library"],     {}).get("text")
         oc_std_url   = cols.get(COL["oc_standard"],     {}).get("text")
+        oc_subdomain = cols.get(COL["oc_subdomain"],    {}).get("text", "").strip()
+
+        # Checkbox columns return {"checked": "true"} or null
+        create_study_val = cols.get(COL["create_study"], {}).get("value")
+        try:
+            create_study = json.loads(create_study_val or "{}").get("checked") == "true"
+        except Exception:
+            create_study = False
+
         print(f"Protocol: {protocol_num}", flush=True)
+        print(f"Create OC Study: {create_study} | Subdomain: {oc_subdomain}", flush=True)
 
         from monday_client import get_asset_url
         protocol_pdf = b""
@@ -580,6 +679,25 @@ async def run_pipeline(item_id):
         await set_status(item_id, COL["pipeline_status"], STATUS["build_complete"])
         await append_log(item_id, "EDC Build complete — ZIP uploaded.")
         await asyncio.sleep(15)
+
+        # ── 6. Create study in OpenClinica (if requested) ─────────────────────
+        if create_study and oc_subdomain:
+            await append_log(item_id, f"Creating study in OpenClinica ({oc_subdomain})...")
+            print(f"Creating OC study on {oc_subdomain}...", flush=True)
+            try:
+                study_url = await create_oc_study(oc_subdomain, struct_json)
+                await set_text(item_id, COL["oc_study_url"], study_url)
+                await append_log(item_id,
+                    f"Study created in OpenClinica. URL: {study_url}")
+                print(f"OC Study created: {study_url}", flush=True)
+            except Exception as e:
+                print(f"OC Study creation error: {e}", flush=True)
+                await append_log(item_id, f"OC Study creation failed: {e}")
+        elif create_study and not oc_subdomain:
+            await append_log(item_id,
+                "Create Study requested but no OC Subdomain provided — skipped.")
+        else:
+            await append_log(item_id, "Create Study in OC not requested — skipped.")
 
         # ── 6. DVS → XLSX ─────────────────────────────────────────────────────
         await set_status(item_id, COL["pipeline_status"], STATUS["dvs_running"])

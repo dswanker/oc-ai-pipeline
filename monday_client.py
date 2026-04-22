@@ -14,6 +14,9 @@ COL = {
     "pricing_quote": "file_mm2g16gn", "edc_build": "file_mm2h51qw",
     "dvs_output": "file_mm2hhwmk", "pipeline_status": "color_mm2h9g3m",
     "ai_run_log": "long_text_mm2h9mnq",
+    "oc_subdomain": "text_mm2nmefe",
+    "create_study": "boolean_mm2nbn5c",
+    "oc_study_url": "text_mm2nbce5",
 }
 
 def get_token():
@@ -78,7 +81,13 @@ async def append_log(item_id, message):
     async with httpx.AsyncClient(timeout=30) as c:
         await c.post(MONDAY_API_URL, headers=get_headers(), json={"query": make_mutation(), "variables": variables})
 
-async def upload_file(item_id, col_id, filename, file_content):
+async def set_text(item_id, col_id, text_value):
+    val = json.dumps(text_value)
+    variables = {"i": item_id, "b": BOARD_ID, "c": col_id, "v": val}
+    async with httpx.AsyncClient(timeout=30) as c:
+        r = await c.post(MONDAY_API_URL, headers=get_headers(),
+                         json={"query": make_mutation(), "variables": variables})
+    print(f"SET_TEXT {col_id}={text_value[:60]}: {r.status_code}", flush=True)
     print(f"UPLOADING: {filename} ({len(file_content)} bytes) to col {col_id}", flush=True)
     mutation_query = f"""
     mutation ($file: File!) {{
