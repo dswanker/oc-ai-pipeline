@@ -552,16 +552,15 @@ async def run_pipeline(item_id):
         oc_std_url   = cols.get(COL["oc_standard"],     {}).get("text")
         oc_subdomain = cols.get(COL["oc_subdomain"],    {}).get("text", "").strip()
 
-        # Checkbox columns can return various formats from Monday.com
         create_study_val = cols.get(COL["create_study"], {}).get("value")
         try:
             parsed = json.loads(create_study_val or "{}")
             if isinstance(parsed, bool):
                 create_study = parsed
             elif isinstance(parsed, dict):
-                create_study = str(parsed.get("checked", "false")).lower() == "true"
+                create_study = bool(parsed.get("checked", False))
             else:
-                create_study = str(parsed).lower() == "true"
+                create_study = False
         except Exception:
             create_study = False
 
