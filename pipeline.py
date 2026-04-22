@@ -117,7 +117,10 @@ def _struct_xlsx(struct_json):
     ws5 = wb.create_sheet("Codelists")
     _xl_header_row(ws5, ["Codelist", "Code", "Decode"])
     _xl_col_widths(ws5, [30, 20, 50])
-    for cl_name, entries in struct_json.get("codelists", {}).items():
+    codelists = struct_json.get("codelists", {})
+    if isinstance(codelists, list):
+        codelists = {}
+    for cl_name, entries in codelists.items():
         if isinstance(entries, list):
             for entry in entries:
                 _xl_data_row(ws5, [cl_name,
