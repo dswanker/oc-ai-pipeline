@@ -14,7 +14,7 @@ COL = {
     "pricing_quote": "file_mm2g16gn", "edc_build": "file_mm2h51qw",
     "dvs_output": "file_mm2hhwmk", "pipeline_status": "color_mm2h9g3m",
     "ai_run_log": "long_text_mm2h9mnq",
-    "oc_subdomain": "text_mm2nmefe",
+    "oc_subdomain": "color_mm2n247s",
     "create_study": "boolean_mm2nbn5c",
     "oc_study_url": "text_mm2nbce5",
     "subscription_discount": "numeric_mm2nkqbq",
