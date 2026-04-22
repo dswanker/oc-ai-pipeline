@@ -5,7 +5,7 @@ Architecture
 ────────────
   Claude API       → analytical tasks → returns JSON
   File builders    → convert JSON to XLSX / PDF / ZIP locally on this server
-  Skill scripts    → pricing-model scripts generate quote PDFs + XLSXs
+  Skill scripts    → pricing-quote scripts generate quote PDFs + XLSXs
   Monday.com API   → input download / output upload
 
 Outputs uploaded per skill:
@@ -430,8 +430,8 @@ def _add_scripts(skill_name):
 
 def run_pricing_model(pricing_summary_dict, live_rates=None,
                       additional_sub_disc=0.0, additional_svc_disc=0.0):
-    """Run pricing-model scripts locally. Returns dict of file bytes."""
-    _add_scripts("pricing-model")
+    """Run pricing-quote scripts locally. Returns dict of file bytes."""
+    _add_scripts("pricing-quote")
     from pricing_engine      import calculate_quote
     from generate_quote_pdf  import build_quote_pdfs
     from generate_quote_xlsx import build_quote_xlsx
