@@ -136,3 +136,23 @@ async def download_column_file(item_id, col_id):
             }
         )
     print(f"UPLOAD STATUS: {r.status_code} {r.text[:300]}", flush=True)
+
+async def upload_file(item_id, col_id, filename, file_content):
+    print(f"UPLOADING: {filename} ({len(file_content)} bytes) to col {col_id}", flush=True)
+    mutation_query = f"""
+    mutation ($file: File!) {{
+        add_file_to_column(item_id: {item_id}, column_id: "{col_id}", file: $file) {{ id }}
+    }}
+    """
+    async with httpx.AsyncClient(timeout=120) as c:
+        r = await c.post(
+            MONDAY_FILE_URL,
+            headers={"Authorization": get_token(), "API-Version": "2023-10"},
+            files={
+                "query":     (None, mutation_query),
+                "variables": (None, '{"file": null}'),
+                "map":       (None, '{"file": ["variables.file"]}'),
+                "file":      (filename, file_content, "application/octet-stream"),
+            }
+        )
+    print(f"UPLOAD STATUS: {r.status_code} {r.text[:300]}", flush=True)
