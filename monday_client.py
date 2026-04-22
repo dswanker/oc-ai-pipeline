@@ -19,6 +19,7 @@ COL = {
     "oc_study_url": "text_mm2nbce5",
     "subscription_discount": "numeric_mm2nkqbq",
     "services_discount":     "numeric_mm2n41x7",
+    "output_requested":      "dropdown_mm2nc7d4",
 }
 
 def get_token():
