@@ -692,67 +692,110 @@ def run_pricing_model(pricing_summary_dict, live_rates=None,
 
 # ── OpenClinica Study Service API ─────────────────────────────────────────────
 
-async def create_oc_study(subdomain, struct_json):
+async def _get_oc_token(subdomain):
     """
-    Create a study in OpenClinica via the Study Service API.
-
-    Auth:   HTTP Basic Auth — OC_API_USERNAME / OC_API_PASSWORD env vars
-    Host:   https://{subdomain}.build.openclinica.io
-    Endpoint: POST /study-service/api/studies
-
-    Returns the study URL string on success, or raises on failure.
+    Obtain a Bearer token from OpenClinica user-service oauth endpoint.
+    Returns token string. Valid for 4 hours.
+    Rate limit: 2 calls/min — only call when needed.
     """
-    import base64 as _b64
     import httpx
     username = os.environ.get("OC_API_USERNAME", "").strip()
     password = os.environ.get("OC_API_PASSWORD", "").strip()
     if not username or not password:
         raise ValueError("OC_API_USERNAME or OC_API_PASSWORD not set in environment")
 
-    credentials = _b64.b64encode(f"{username}:{password}".encode()).decode()
+    url = f"https://{subdomain}.build.openclinica.io/user-service/api/oauth/token"
+    print(f"Getting OC auth token from {url}", flush=True)
+    async with httpx.AsyncClient(timeout=30) as c:
+        r = await c.post(url,
+                         headers={"Content-Type": "application/json"},
+                         json={"username": username, "password": password})
+    if r.status_code != 200:
+        raise RuntimeError(f"OC auth failed {r.status_code}: {r.text[:200]}")
+    token = r.text.strip()
+    print("OC auth token obtained.", flush=True)
+    return token
+
+
+async def _check_study_exists(subdomain, token, protocol_num):
+    """
+    Check if a study with uniqueIdentifier == protocol_num already exists.
+    Returns the study UUID if found, None if not.
+    """
+    import httpx
+    url = f"https://{subdomain}.build.openclinica.io/study-service/api/studies"
+    async with httpx.AsyncClient(timeout=30) as c:
+        r = await c.get(url,
+                        headers={"Authorization": f"Bearer {token}",
+                                 "Content-Type": "application/json"},
+                        params={"archived": "false", "size": 500})
+    if r.status_code != 200:
+        print(f"Warning: could not check existing studies: {r.status_code}", flush=True)
+        return None
+    studies = r.json()
+    uid = protocol_num[:30].lower()
+    for s in studies:
+        if s.get("uniqueIdentifier", "").lower() == uid:
+            print(f"Study already exists: {s.get('uuid')}", flush=True)
+            return s.get("uuid")
+    return None
+
+
+async def create_oc_study(subdomain, struct_json):
+    """
+    Create a study in OpenClinica via the Study Service API.
+
+    Auth:     POST /user-service/api/oauth/token → Bearer token
+    Host:     https://{subdomain}.build.openclinica.io
+    Endpoint: POST /study-service/api/studies
+
+    Checks for existing study first — skips creation if already exists.
+    Returns the study designer URL string on success.
+    """
+    import httpx, datetime as _dt
+
+    token = await _get_oc_token(subdomain)
     headers = {
-        "Authorization": f"Basic {credentials}",
+        "Authorization": f"Bearer {token}",
         "Content-Type":  "application/json",
     }
 
     base_url = f"https://{subdomain}.build.openclinica.io"
-    endpoint = f"{base_url}/study-service/api/studies"
+    meta     = struct_json.get("study_meta", {})
+    protocol_num = meta.get("protocol_number", "STUDY")
 
-    meta = struct_json.get("study_meta", {})
+    # Check if study already exists
+    existing_uuid = await _check_study_exists(subdomain, token, protocol_num)
+    if existing_uuid:
+        study_url = f"{base_url}/designer/#/studies/{existing_uuid}"
+        print(f"Study already exists — skipping creation. URL: {study_url}", flush=True)
+        return study_url
 
-    # Map study type from protocol — default to INTERVENTIONAL
-    type_map = {
-        "interventional": "INTERVENTIONAL",
-        "observational":  "OBSERVATIONAL",
-    }
+    # Map study type
+    type_map = {"interventional": "INTERVENTIONAL", "observational": "OBSERVATIONAL"}
     study_type = type_map.get(
-        str(meta.get("type", "interventional")).lower(), "INTERVENTIONAL"
-    )
+        str(meta.get("type", "interventional")).lower(), "INTERVENTIONAL")
 
-    # Map phase — OC4 accepted values
+    # Map phase
     phase_map = {
         "phase i":   "PHASEI",   "phase 1":   "PHASEI",
         "phase ii":  "PHASEII",  "phase 2":   "PHASEII",
         "phase iii": "PHASEIII", "phase 3":   "PHASEIII",
         "phase iv":  "PHASEIV",  "phase 4":   "PHASEIV",
     }
-    phase_raw = str(meta.get("study_phase", "")).lower().strip()
-    phase = phase_map.get(phase_raw, "OTHER_NON_IND")
+    phase = phase_map.get(str(meta.get("study_phase", "")).lower().strip(),
+                          "OTHER_NON_IND")
 
-    import datetime as _dt
     today      = _dt.date.today().isoformat()
     dur_months = int(meta.get("total_study_duration_months", 24) or 24)
-    end_date   = (
-        _dt.date.today().replace(year=_dt.date.today().year + dur_months // 12)
-    ).isoformat()
-
-    protocol_num = meta.get("protocol_number", "STUDY")
+    end_date   = (_dt.date.today().replace(
+                    year=_dt.date.today().year + dur_months // 12)).isoformat()
 
     payload = {
         "name":               meta.get("study_title", protocol_num),
         "description":        meta.get("description",
-                                       f"{protocol_num} — {meta.get('indication', '')}"),
-        "uniqueIdentifier":   protocol_num[:30],   # max 30 chars
+                                f"{protocol_num} — {meta.get('indication', '')}"),
+        "uniqueIdentifier":   protocol_num[:30],
         "type":               study_type,
         "phase":              phase,
         "expectedStartDate":  today,
@@ -763,18 +806,16 @@ async def create_oc_study(subdomain, struct_json):
         "collectPersonId":    "ALWAYS",
     }
 
+    endpoint = f"{base_url}/study-service/api/studies"
     print(f"Creating OC study at {endpoint}", flush=True)
     async with httpx.AsyncClient(timeout=60) as c:
         r = await c.post(endpoint, headers=headers, json=payload)
 
     print(f"OC Study API response: {r.status_code} {r.text[:300]}", flush=True)
-
     if r.status_code not in (200, 201):
-        raise RuntimeError(
-            f"OC Study API returned {r.status_code}: {r.text[:300]}"
-        )
+        raise RuntimeError(f"OC Study API returned {r.status_code}: {r.text[:300]}")
 
-    data = r.json()
+    data       = r.json()
     study_uuid = data.get("uuid", "")
     study_url  = f"{base_url}/designer/#/studies/{study_uuid}" if study_uuid else base_url
     return study_url
