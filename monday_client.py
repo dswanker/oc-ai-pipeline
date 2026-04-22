@@ -74,6 +74,13 @@ async def set_status(item_id, col_id, label_text):
         r = await c.post(MONDAY_API_URL, headers=get_headers(), json={"query": make_mutation(), "variables": variables})
     print(f"SET_STATUS {col_id}={label_text}: {r.status_code}", flush=True)
 
+async def set_text(item_id, col_id, text_value):
+    val = json.dumps(text_value)
+    variables = {"i": item_id, "b": BOARD_ID, "c": col_id, "v": val}
+    async with httpx.AsyncClient(timeout=30) as c:
+        r = await c.post(MONDAY_API_URL, headers=get_headers(), json={"query": make_mutation(), "variables": variables})
+    print(f"SET_TEXT {col_id}={str(text_value)[:60]}: {r.status_code}", flush=True)
+
 async def append_log(item_id, message):
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     val = json.dumps({"text": f"[{ts}] {message}"})
@@ -81,13 +88,7 @@ async def append_log(item_id, message):
     async with httpx.AsyncClient(timeout=30) as c:
         await c.post(MONDAY_API_URL, headers=get_headers(), json={"query": make_mutation(), "variables": variables})
 
-async def set_text(item_id, col_id, text_value):
-    val = json.dumps(text_value)
-    variables = {"i": item_id, "b": BOARD_ID, "c": col_id, "v": val}
-    async with httpx.AsyncClient(timeout=30) as c:
-        r = await c.post(MONDAY_API_URL, headers=get_headers(),
-                         json={"query": make_mutation(), "variables": variables})
-    print(f"SET_TEXT {col_id}={text_value[:60]}: {r.status_code}", flush=True)
+async def upload_file(item_id, col_id, filename, file_content):
     print(f"UPLOADING: {filename} ({len(file_content)} bytes) to col {col_id}", flush=True)
     mutation_query = f"""
     mutation ($file: File!) {{
