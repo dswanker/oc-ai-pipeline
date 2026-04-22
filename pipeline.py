@@ -463,6 +463,7 @@ async def create_oc_study(subdomain, struct_json):
     Returns the study URL string on success, or raises on failure.
     """
     import base64 as _b64
+    import httpx
     username = os.environ.get("OC_API_USERNAME", "").strip()
     password = os.environ.get("OC_API_PASSWORD", "").strip()
     if not username or not password:
