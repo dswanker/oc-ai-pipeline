@@ -106,14 +106,30 @@ def extract_json(text):
 # ── Skills API call — returns {filename: bytes} ───────────────────────────────
 
 def _extract_file_ids(response):
-    """Pull file_ids from a skill API response."""
+    """Pull file_ids from a skill API response.
+    Handles bash_code_execution_tool_result and related result types."""
     file_ids = []
+    if response is None:
+        return file_ids
     for block in response.content:
-        if getattr(block, "type", None) == "bash_code_execution_tool_result":
-            inner = getattr(block, "content", None)
-            if inner and getattr(inner, "type", None) == "bash_code_execution_result":
-                for item in getattr(inner, "content", []):
-                    fid = getattr(item, "file_id", None)
+        btype = getattr(block, "type", None) or ""
+        if "code_execution_tool_result" not in btype:
+            continue
+        inner = getattr(block, "content", None)
+        if inner is None:
+            continue
+        # Inner can be a single object or a list depending on API version
+        inner_list = inner if isinstance(inner, list) else [inner]
+        for item in inner_list:
+            # file_id may be on the item itself, or in a nested content list
+            fid = getattr(item, "file_id", None)
+            if fid:
+                file_ids.append(fid)
+                continue
+            nested = getattr(item, "content", None)
+            if nested:
+                for sub in (nested if isinstance(nested, list) else [nested]):
+                    fid = getattr(sub, "file_id", None)
                     if fid:
                         file_ids.append(fid)
     return file_ids
@@ -204,6 +220,8 @@ async def run_skill(prompt, skill_ids,
 
     # Handle pause_turn for long-running skill operations
     MAX_PAUSE = 10
+    # Preserve the original skills list for subsequent container dicts
+    original_skills = container.get("skills", [])
     for turn in range(MAX_PAUSE):
         if response.stop_reason != "pause_turn":
             break
@@ -211,7 +229,8 @@ async def run_skill(prompt, skill_ids,
         messages.append({"role": "assistant", "content": response.content})
         cont_id = getattr(getattr(response, "container", None), "id", None)
         if cont_id:
-            container = {"id": cont_id, **container}
+            # Build container dict explicitly to avoid key collision
+            container = {"id": cont_id, "skills": original_skills}
         response = await client.beta.messages.create(
             model=MODEL,
             max_tokens=MAX_TOKENS,
