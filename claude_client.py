@@ -162,6 +162,25 @@ def _extract_file_ids(response):
         inner = getattr(block, "content", None)
         if inner is None:
             continue
+
+        # DEEP DIAGNOSTIC: dump the full structure of the first result block
+        # encountered so we can see exactly where file_ids live
+        if not getattr(_extract_file_ids, "_dumped", False):
+            _extract_file_ids._dumped = True
+            try:
+                if hasattr(inner, "model_dump"):
+                    import json as _json
+                    dump = inner.model_dump()
+                    print(f"  DIAG inner model_dump (first 2000 chars):", flush=True)
+                    print(f"  {_json.dumps(dump, default=str)[:2000]}", flush=True)
+                else:
+                    print(f"  DIAG inner type={type(inner).__name__} "
+                          f"attrs={[a for a in dir(inner) if not a.startswith('_')][:20]}",
+                          flush=True)
+                    print(f"  DIAG inner repr[:500]: {repr(inner)[:500]}", flush=True)
+            except Exception as diag_e:
+                print(f"  DIAG dump failed: {diag_e}", flush=True)
+
         # Inner can be a single object or a list depending on API version
         inner_list = inner if isinstance(inner, list) else [inner]
         for item in inner_list:
@@ -180,44 +199,20 @@ def _extract_file_ids(response):
 
 
 async def _download_files(client, file_ids, container_id=None):
-    """Download files by file_id. Returns {filename: bytes}.
-    Tries beta.files API first, falls back to container files API."""
+    """Download files by file_id via beta.files API. Returns {filename: bytes}."""
     results = {}
     for fid in file_ids:
-        data     = None
-        filename = None
-
-        # Try 1: top-level beta.files API
         try:
             meta    = await client.beta.files.retrieve_metadata(
                 file_id=fid, betas=["files-api-2025-04-14"])
             content = await client.beta.files.download(
                 file_id=fid, betas=["files-api-2025-04-14"])
             data = await content.aread() if hasattr(content, "aread") else content.read()
-            filename = meta.filename
-        except Exception as e1:
-            # Try 2: container files API (some skill outputs live only here)
-            if container_id and hasattr(client.beta, "containers") and \
-               hasattr(client.beta.containers, "files"):
-                try:
-                    meta    = await client.beta.containers.files.retrieve(
-                        container_id=container_id, file_id=fid, betas=SKILL_BETAS)
-                    content = await client.beta.containers.files.content(
-                        container_id=container_id, file_id=fid, betas=SKILL_BETAS)
-                    data = await content.aread() if hasattr(content, "aread") else content.read()
-                    filename = getattr(meta, "path", None) or getattr(meta, "filename", None) or fid
-                    if filename and "/" in filename:
-                        filename = filename.rsplit("/", 1)[-1]
-                except Exception as e2:
-                    print(f"  Warning: failed to download {fid}: beta.files={e1} containers.files={e2}", flush=True)
-                    continue
-            else:
-                print(f"  Warning: failed to download {fid}: {e1}", flush=True)
-                continue
-
-        if data is not None and filename:
+            filename = getattr(meta, "filename", None) or fid
             results[filename] = data
             print(f"  Downloaded: {filename} ({len(data)} bytes)", flush=True)
+        except Exception as e:
+            print(f"  Warning: failed to download {fid}: {e}", flush=True)
     return results
 
 
@@ -312,28 +307,25 @@ async def run_skill(prompt, skill_ids,
         all_file_ids.extend(_extract_file_ids(response))
 
     # Fallback: if no file_ids were found in response blocks, list the
-    # container's files directly. The Skills API may create files in the
-    # container without referencing them in tool_result blocks.
+    # container's files via the files API using scope_id=container_id.
+    # The Skills API creates files in the container; they may not be
+    # referenced directly in tool_result blocks.
     final_cont_id = getattr(getattr(response, "container", None), "id", None)
     if not all_file_ids and final_cont_id:
-        print(f"  No file_ids in response blocks — listing container {final_cont_id}...", flush=True)
+        print(f"  No file_ids in response blocks — listing files with scope_id={final_cont_id}", flush=True)
         try:
-            if hasattr(client.beta, "containers") and hasattr(client.beta.containers, "files"):
-                listing = await client.beta.containers.files.list(
-                    container_id=final_cont_id,
-                    betas=SKILL_BETAS,
-                )
-                fetched_ids = []
-                # Iterate results (pagination handled by SDK or via .data attr)
-                items = getattr(listing, "data", None) or listing
-                for item in items:
-                    fid = getattr(item, "id", None) or getattr(item, "file_id", None)
-                    if fid:
-                        fetched_ids.append(fid)
-                print(f"  Container file listing: found {len(fetched_ids)} file(s)", flush=True)
-                all_file_ids.extend(fetched_ids)
-            else:
-                print(f"  SDK has no beta.containers.files — cannot list container files", flush=True)
+            listing = await client.beta.files.list(
+                scope_id=final_cont_id,
+                betas=["files-api-2025-04-14"],
+            )
+            items = getattr(listing, "data", None) or listing
+            fetched_ids = []
+            for item in items:
+                fid = getattr(item, "id", None) or getattr(item, "file_id", None)
+                if fid:
+                    fetched_ids.append(fid)
+            print(f"  Files in container scope: {len(fetched_ids)}", flush=True)
+            all_file_ids.extend(fetched_ids)
         except Exception as e:
             print(f"  Container file listing failed: {e}", flush=True)
 
