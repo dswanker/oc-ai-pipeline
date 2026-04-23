@@ -132,6 +132,31 @@ timepoint_csv:
              Cover SCREENING, BASELINE, every numbered visit, UNSCHEDULED,
              END_OF_TREATMENT, SAFETY_FOLLOWUP as applicable.
 
+  CRITICAL — EVENT UNIQUENESS:
+  Each `event` OID MUST appear in EXACTLY ONE row across the entire
+  `rows` list (with one exception: per-arm rows, see below). When
+  protocols contain multiple overlapping SOE tables — e.g. a detailed
+  injection-by-injection schedule AND a summary weekly schedule that
+  reference the same visit — emit the event ONCE using the most
+  specific / most complete timepoint description. NEVER emit two rows
+  with the same `event` value just because the protocol shows them in
+  two different tables.
+
+  Example of what NOT to do:
+    {"event":"SE_SCREENING",    "timepoint":"Day -28 to Day 0"}
+    {"event":"SE_SCREENING",    "timepoint":"Day -28 to Day 0"}  ← duplicate!
+    {"event":"SE_WEEK_8_10",    "timepoint":"Week 8-10 (1 month post inj 3)"}
+    {"event":"SE_WEEK_8_10",    "timepoint":"Week 8-10"}         ← duplicate!
+
+  Example of what TO do (pick the more descriptive timepoint):
+    {"event":"SE_SCREENING",    "timepoint":"Day -28 to Day 0"}
+    {"event":"SE_WEEK_8_10",    "timepoint":"Week 8-10 (1 month post inj 3)"}
+
+  PER-ARM EXCEPTION: if the protocol has multiple arms with DIFFERENT
+  visit schedules for the same timepoint, you MAY emit one row per
+  arm — but only when the `arm` field actually distinguishes them.
+  Most single-arm studies should have exactly one row per event OID.
+
 labranges_csv:  (REQUIRED — populate every lab test from the protocol)
   filename : "{protocol}_labranges.csv"
   columns  : ["test_code","test_name","lower","upper","unit","lab_name"]
@@ -314,6 +339,8 @@ QUALITY CHECKLIST (verify before returning)
 ────────────────────────────────────────────────────────────────────────────
   ✓ study_meta.total_enrollment > 0 and number_of_arms >= 1
   ✓ All timepoint_csv.rows[].event values use SE_ prefix
+  ✓ timepoint_csv.rows[].event values are UNIQUE across rows
+    (unless row per arm and `arm` field distinguishes them)
   ✓ All forms[].form_id values use F_ prefix (no F## numeric prefix)
   ✓ All forms[].visits_assigned use SE_ prefix
   ✓ All survey rows with non-group type have bind__oc_itemgroup populated

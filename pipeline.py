@@ -6,10 +6,10 @@ Architecture
   call_claude()  → JSON text  (analysis, fast, no code execution)
   run_*_*()      → real binary files via LOCAL scripts in skills/*/scripts/
 
-File generation does NOT use run_skill() because the Skills API sandbox
-does not reliably return file_ids for retrieval. Instead, every chain
-imports the skill's python scripts directly and runs them in a thread
-pool executor. This is faster, cheaper, and more reliable.
+File generation happens via local python imports from skills/*/scripts/
+rather than the Anthropic Skills API sandbox (which previously failed to
+reliably return file_ids for file retrieval). Every chain imports its
+skill's scripts directly and runs them in a thread pool executor.
 
 Flow (fresh run):
   1. call_claude           : protocol PDF  → Study Spec JSON
@@ -19,13 +19,13 @@ Flow (fresh run):
   5. run_pricing_model     : JSON          → Quote PDFs + XLSXs
   6. run_edc_build         : JSON          → EDC Build ZIP
   7. run_dvs_xlsx          : JSON + ZIP    → DVS XLSX
+  8. create_oc_study       : JSON          → OC study + design board
 
 Human-in-the-loop paths:
-  A. Edited Study Spec XLSX uploaded  → skip steps 1-2, run 3-7
+  A. Edited Study Spec XLSX uploaded  → skip steps 1-2, run 3-8
   B. Edited Build ZIP uploaded        → skip steps 1-6, run 7 only
   C. Edited DVS uploaded              → translate changes → rebuild ZIP + DVS
-  D. Edited Quote XLSX uploaded       → regenerate Quote PDFs (still uses
-                                         run_skill — TODO: migrate to local)
+  D. Edited Quote XLSX uploaded       → DEPRECATED, logs a message + skips
   E. Edited SOE CSV uploaded          → update SOE in OpenClinica (not impl)
 """
 
@@ -37,13 +37,10 @@ from openpyxl.utils import get_column_letter
 from monday_client import (get_item, download_file, upload_file, set_status,
                             append_log, set_text, download_column_file,
                             list_column_filenames, COL)
-from claude_client  import call_claude, extract_json, run_skill
+from claude_client  import call_claude, extract_json
 from prompts        import (
     EDC_STRUCTURE_PROMPT, PRICING_SUMMARY_PROMPT,
-    GENERATE_STUDY_SPEC_PROMPT, GENERATE_PROTOCOL_SUMMARY_PROMPT,
-    PRICING_QUOTE_PROMPT, EDC_BUILD_PROMPT, DVS_PROMPT,
-    DVS_TRANSLATE_PROMPT, SPEC_FROM_BUILD_PROMPT,
-    QUOTE_PDF_FROM_XLSX_PROMPT,
+    DVS_TRANSLATE_PROMPT,
 )
 
 SKILLS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'skills')
@@ -60,13 +57,6 @@ STATUS = {
     "creating_oc_study":      "Creating OC Study",
     "all_complete":           "All Complete",
     "failed":                 "Failed",
-}
-
-SKILL_IDS = {
-    "protocol_analysis": os.environ.get("SKILL_ID_PROTOCOL_ANALYSIS", ""),
-    "pricing_quote":     os.environ.get("SKILL_ID_PRICING_QUOTE",     ""),
-    "edc_builder":       os.environ.get("SKILL_ID_EDC_BUILDER",       ""),
-    "dvs_specification": os.environ.get("SKILL_ID_DVS_SPECIFICATION", ""),
 }
 
 
@@ -263,8 +253,8 @@ def run_pricing_model(pricing_summary_dict,
 
 
 # ── Local runners for Study Spec, Protocol Summary, EDC Build, DVS ──────────
-# These mirror test_skills_locally.py. They replace run_skill() calls which
-# fail to retrieve files from the skill sandbox.
+# These mirror test_skills_locally.py — imported directly from the skills
+# folder's scripts/ directory and run in a thread pool executor.
 
 def run_study_spec_files(struct_json):
     """Generate Study Spec PDF + XLSX locally. Returns {'pdf': bytes, 'xlsx': bytes}."""
@@ -809,16 +799,15 @@ async def run_pipeline(item_id):
               flush=True)
 
         # ── Path D: Edited Quote XLSX → regenerate Quote PDFs ─────────────────
-        # B3: this path still uses run_skill() which is unreliable for file
-        # retrieval. Until we migrate to a local script, log clearly so the
-        # user knows the regeneration was not performed.
+        # DEPRECATED: there's no local script to regenerate Quote PDFs from
+        # an edited XLSX. To refresh the PDFs, edit the Protocol Summary JSON
+        # or Study Spec and re-run the full pipeline.
         if edited_quote_xlsx:
             await append_log(item_id,
                 "Edited Quote XLSX detected. Automatic PDF regeneration from edited "
-                "XLSX is not currently supported on Railway — the pricing-quote "
-                "skill sandbox does not return files reliably. Your edited XLSX "
-                "remains attached; to regenerate PDFs, edit the underlying "
-                "Protocol Summary JSON or Study Spec and re-run the full pipeline."
+                "XLSX is not currently supported — to regenerate PDFs, edit the "
+                "underlying Protocol Summary JSON or Study Spec and re-run the "
+                "full pipeline."
             )
             print("Path D: edited Quote XLSX detected — regeneration not supported, "
                   "skipping without changes.", flush=True)

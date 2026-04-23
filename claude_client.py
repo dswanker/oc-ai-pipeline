@@ -33,16 +33,38 @@ SKILL_BETAS = [
 
 # ── Plain Claude call — returns text ─────────────────────────────────────────
 
-async def call_claude(prompt, pdf_bytes=None, extra_text=None, max_tokens=MAX_TOKENS):
+async def call_claude(prompt, pdf_bytes=None, extra_text=None, max_tokens=MAX_TOKENS,
+                      cache_prompt=True):
     """
     Call Claude with a prompt and optional PDF. Returns full text response.
     No skills, no code execution — used for JSON extraction tasks only.
+
+    Prompt caching:
+      When cache_prompt=True (default), the `prompt` block gets
+      cache_control=ephemeral. Since we reorder content so `prompt` is FIRST,
+      Anthropic caches it across runs, cutting cached-input cost by 90%.
+      The PDF + extra_text come AFTER (they vary per run) so they're not
+      included in the cache.
+
+      Caching requires the prompt to be >= 1024 tokens for Opus. Our
+      EDC_STRUCTURE_PROMPT (~4.3K tokens) and PRICING_SUMMARY_PROMPT
+      (~1.3K tokens) both qualify. Smaller prompts skip caching automatically
+      (Anthropic silently ignores cache_control when content is too short).
     """
     client = anthropic.AsyncAnthropic(
         api_key=os.environ.get("ANTHROPIC_API_KEY", "").strip()
     )
 
+    # Order: prompt (cacheable) FIRST, then PDF + extra_text (per-run variable).
+    # The cache key is the literal block content up to & including the
+    # cache_control marker — so anything BEFORE the marker gets cached.
     content = []
+
+    prompt_block = {"type": "text", "text": prompt}
+    if cache_prompt:
+        prompt_block["cache_control"] = {"type": "ephemeral"}
+    content.append(prompt_block)
+
     if pdf_bytes:
         content.append({
             "type": "document",
@@ -54,11 +76,11 @@ async def call_claude(prompt, pdf_bytes=None, extra_text=None, max_tokens=MAX_TO
         })
     if extra_text:
         content.append({"type": "text", "text": extra_text})
-    content.append({"type": "text", "text": prompt})
 
     for attempt in range(MAX_RETRIES):
         try:
-            print(f"call_claude — attempt {attempt+1}, blocks: {len(content)} [streaming]", flush=True)
+            print(f"call_claude — attempt {attempt+1}, blocks: {len(content)} "
+                  f"[streaming, cache={cache_prompt}]", flush=True)
             async with client.messages.stream(
                 model=MODEL,
                 max_tokens=max_tokens,
@@ -66,6 +88,16 @@ async def call_claude(prompt, pdf_bytes=None, extra_text=None, max_tokens=MAX_TO
             ) as stream:
                 response = await stream.get_final_message()
             text = response.content[0].text
+            # Usage info — shows cache hit/miss
+            u = getattr(response, "usage", None)
+            if u:
+                cache_read = getattr(u, "cache_read_input_tokens", 0) or 0
+                cache_crt  = getattr(u, "cache_creation_input_tokens", 0) or 0
+                inp        = getattr(u, "input_tokens", 0) or 0
+                out        = getattr(u, "output_tokens", 0) or 0
+                print(f"call_claude usage — input={inp}, output={out}, "
+                      f"cache_read={cache_read}, cache_created={cache_crt}",
+                      flush=True)
             print(f"call_claude success — {len(text)} chars", flush=True)
             return text
 
