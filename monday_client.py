@@ -8,8 +8,8 @@ BOARD_ID = "18409146946"
 COL = {
     # Input files (from monday.com)
     "protocol_pdf":      "files9__1",
-    "crf_library":       "fileb5c8dt0c",
-    "oc_standard":       "filetzuzo13y",
+    "crf_library":       "fileb5c8dt0c",  # Customer Specific CRF Standards
+    "oc_standard":       "file_mm2mafjc",  # Customer OC4 XLSForm Standard(s)
     # Human-in-the-loop input columns
     "edited_spec_input": "file_mm2n3x71",    # Edited Study Specification XLSX
     "build_input":       "file_mm2nqghj",    # Edited Study Build Forms ZIP
@@ -189,3 +189,58 @@ async def download_column_file(item_id, col_id):
         return await download_file(url)
 
     return None
+
+
+async def list_column_filenames(item_id, col_id):
+    """
+    Return a list of filenames (str) attached to a monday.com file column.
+    Empty list if no files or column not found.
+    """
+    q = """
+    query($i:[ID!]) {
+      items(ids:$i) {
+        column_values {
+          id
+          ... on FileValue {
+            files {
+              asset_id
+              name
+            }
+          }
+        }
+      }
+    }
+    """
+    async with httpx.AsyncClient(timeout=30) as c:
+        r = await c.post(MONDAY_API_URL, headers=get_headers(),
+                         json={"query": q, "variables": {"i": [item_id]}})
+    resp = r.json()
+    items = resp.get("data", {}).get("items", [])
+    if not items:
+        return []
+
+    for cv in items[0].get("column_values", []):
+        if cv.get("id") != col_id:
+            continue
+        files = cv.get("files", []) or []
+        # If `name` isn't populated (older API), fall back to asset lookup
+        out = []
+        missing_name_ids = []
+        for f in files:
+            n = f.get("name")
+            if n:
+                out.append(n)
+            elif f.get("asset_id"):
+                missing_name_ids.append(f["asset_id"])
+        if missing_name_ids:
+            asset_q = "query($ids:[ID!]){assets(ids:$ids){id name}}"
+            async with httpx.AsyncClient(timeout=30) as c:
+                ar = await c.post(MONDAY_API_URL, headers=get_headers(),
+                                  json={"query": asset_q,
+                                        "variables": {"ids": missing_name_ids}})
+            for a in ar.json().get("data", {}).get("assets", []) or []:
+                if a.get("name"):
+                    out.append(a["name"])
+        return out
+
+    return []
