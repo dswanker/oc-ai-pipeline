@@ -629,6 +629,13 @@ async def run_pipeline(item_id):
         crf_pdf  = await download_file(crf_url)    if crf_url    else None
         oc_zip   = await download_file(oc_std_url) if oc_std_url else None
 
+        # ── Determine if analysis/chains are needed ───────────────────────────
+        needs_analysis = (
+            _want("protocol specification") or _want("protocol summary")
+            or _want("price quote") or _want("study build zip")
+            or (create_study and oc_subdomain)
+        )
+
         # ── Steps 1-2: Study Specification ────────────────────────────────────
         struct_json = None
 
@@ -638,7 +645,6 @@ async def run_pipeline(item_id):
             print("Path A: reading edited Study Spec XLSX...", flush=True)
             import openpyxl
             wb = openpyxl.load_workbook(io.BytesIO(edited_spec_xlsx))
-            # Try to find JSON sheet
             for sheet_name in wb.sheetnames:
                 if 'json' in sheet_name.lower() or 'spec' in sheet_name.lower():
                     ws = wb[sheet_name]
@@ -652,7 +658,8 @@ async def run_pipeline(item_id):
             if struct_json is None:
                 await append_log(item_id, "Could not extract JSON from edited XLSX — running fresh analysis.")
 
-        if struct_json is None and _want("protocol specification"):
+        # Fresh analysis if needed and not already populated
+        if struct_json is None and needs_analysis:
             await set_status(item_id, COL["pipeline_status"], STATUS["analysis_running"])
             await append_log(item_id, "Protocol Analysis started.")
 
@@ -686,46 +693,28 @@ async def run_pipeline(item_id):
                                "forms": [], "review_flags": {}}
                 print("Warning: Study Spec JSON not valid — using empty fallback", flush=True)
 
-            # Upload raw JSON
+            # Upload raw JSON (only if we extracted it fresh)
             await upload_file(item_id, COL["spec_json"],
                               f"{protocol_num}_Study_Specification_{version}.json",
                               json.dumps(struct_json, indent=2).encode())
 
+        # ── Launch parallel chains if struct_json is available ────────────────
+        if struct_json and needs_analysis:
             await set_status(item_id, COL["pipeline_status"], STATUS["build_pricing_running"])
-            await append_log(item_id, "Study Spec files, Protocol Summary, and EDC Build starting in parallel.")
+            await append_log(item_id, "Chains A (spec files), B (summary+quote), C (build+DVS), D (OC study) starting in parallel.")
 
             # Shared state for parallel chains
             pricing_json = {"study_meta": {"protocol_number": protocol_num}}
-
-            # ── Parallel chains after Step 1 ──────────────────────────────────
-            # Chain A: Study Spec PDF + XLSX (Step 2)
-            # Chain B: Protocol Summary JSON → PDF + Quote (Steps 3-5)
-            # Chain C: EDC Build → DVS (Steps 6-7)
-            # All three chains only need struct_json and run independently.
 
             # ── Chain A: Study Spec files ──────────────────────────────────────
             async def chain_a():
                 if not _want("protocol specification"):
                     return
                 print("Chain A: Generating Study Spec PDF + XLSX...", flush=True)
-                # Slim struct_json for file generation — PDF/XLSX only need
-                # metadata, timepoints, review_flags and form-level summary,
-                # not full XLSForm survey rows (saves significant tokens)
-                spec_slim = {
-                    "study_meta":   struct_json.get("study_meta", {}),
-                    "timepoint_csv": struct_json.get("timepoint_csv", {}),
-                    "labranges_csv": struct_json.get("labranges_csv", {}),
-                    "review_flags": struct_json.get("review_flags", {}),
-                    "forms": [
-                        {k: v for k, v in f.items()
-                         if k not in ("survey", "choices")}
-                        for f in struct_json.get("forms", [])
-                        if isinstance(f, dict)
-                    ],
-                }
+                # Pass full struct_json — XLSX script needs survey/choices data
                 try:
                     spec_files = await run_skill(
-                        GENERATE_STUDY_SPEC_PROMPT + json.dumps(spec_slim),
+                        GENERATE_STUDY_SPEC_PROMPT + json.dumps(struct_json),
                         skill_ids=[SKILL_IDS["protocol_analysis"]],
                     )
                     spec_pdf  = _find(spec_files, "_Study_Specification.pdf")
@@ -967,7 +956,16 @@ async def run_pipeline(item_id):
                     await append_log(item_id, f"OC Study creation failed: {e}")
 
             # ── Launch all four chains in parallel ─────────────────────────────
-            await asyncio.gather(chain_a(), chain_b(), chain_c(), chain_d())
+            # return_exceptions=True prevents one chain's failure from cancelling others
+            results = await asyncio.gather(
+                chain_a(), chain_b(), chain_c(), chain_d(),
+                return_exceptions=True,
+            )
+            # Log any chain-level exceptions that escaped internal handlers
+            for name, result in zip(["A", "B", "C", "D"], results):
+                if isinstance(result, Exception):
+                    print(f"Chain {name} exception escaped: {result}", flush=True)
+                    await append_log(item_id, f"Chain {name} error: {result}")
 
             await asyncio.gather(
                 set_status(item_id, COL["pipeline_status"], STATUS["all_complete"]),
