@@ -446,6 +446,12 @@ def _build_board_json(struct_json):
 
     Uses Meteor-style 17-char random IDs generated from the OIDs
     so the import is deterministic and repeatable.
+
+    Deduplicates events by `event` OID before building lists — the Claude
+    extraction sometimes emits duplicate rows when protocols contain multiple
+    overlapping SOE tables (e.g., detailed injection schedule + summary
+    weekly schedule). We keep the FIRST occurrence of each event OID; later
+    duplicates are dropped with a log line.
     """
     import hashlib
 
@@ -459,8 +465,25 @@ def _build_board_json(struct_json):
             h //= len(chars)
         return ''.join(result)
 
-    timepoint_rows = struct_json.get("timepoint_csv", {}).get("rows", [])
-    forms          = struct_json.get("forms", [])
+    raw_timepoint_rows = struct_json.get("timepoint_csv", {}).get("rows", [])
+    forms              = struct_json.get("forms", [])
+
+    # ── Deduplicate events by OID (preserve first-seen order) ─────────────
+    seen_oids      = set()
+    timepoint_rows = []
+    dropped        = []
+    for row in raw_timepoint_rows:
+        oid = row.get("event", "")
+        if not oid:
+            continue
+        if oid in seen_oids:
+            dropped.append(oid)
+            continue
+        seen_oids.add(oid)
+        timepoint_rows.append(row)
+    if dropped:
+        print(f"_build_board_json: dropped {len(dropped)} duplicate "
+              f"event row(s): {sorted(set(dropped))}", flush=True)
 
     # Build event list (lists)
     lists = []
@@ -468,7 +491,9 @@ def _build_board_json(struct_json):
     for i, row in enumerate(timepoint_rows):
         event_oid   = row.get("event", f"SE_EVENT{i+1}")
         label       = row.get("timepoint", event_oid)
-        meteor_id   = _meteor_id(event_oid)
+        # Seed Meteor ID with (oid, index) so any future dedup leak still
+        # produces unique IDs rather than silently colliding.
+        meteor_id   = _meteor_id(f"{event_oid}|{i}")
         event_id_map[event_oid] = meteor_id
 
         # Determine if repeating — common events don't have visit windows
@@ -495,6 +520,10 @@ def _build_board_json(struct_json):
         visits       = form.get("visits_assigned", [])
         first_card   = True
 
+        # Dedup the visits_assigned list too — same root cause can produce
+        # a form assigned to the same event twice.
+        visits = list(dict.fromkeys(visits))  # preserves order
+
         for event_oid in visits:
             if event_oid not in event_id_map:
                 continue
@@ -502,8 +531,9 @@ def _build_board_json(struct_json):
             sort_idx = card_sort.get(event_oid, 0)
             card_sort[event_oid] = sort_idx + 1
 
-            # Generate stable card ID from form+event combination
-            card_id  = _meteor_id(f"{form_id}_{event_oid}")
+            # Generate stable card ID from form+event+sort to guarantee
+            # uniqueness even if some form/event combo somehow repeats.
+            card_id  = _meteor_id(f"{form_id}|{event_oid}|{sort_idx}")
 
             card = {
                 "_id":      card_id,
@@ -653,16 +683,13 @@ async def create_oc_study(subdomain, struct_json, is_production=False):
           f"{len(board_json['cards'])} form cards", flush=True)
 
     # ── Steps 3 + 4: Board import via design service ──────────────────────────
-    # KNOWN LIMITATION — the design service's /api/importStudy endpoint is
-    # protected by a Keycloak OAuth client ("designer") that does NOT allow
-    # headless password-grant authentication. The only tokens it accepts are
-    # issued via the browser-based SSO flow. Until OpenClinica provisions a
-    # service-account Keycloak client for programmatic access, the board
-    # import must be done manually in the design UI after the study shell
-    # is created.
-    #
-    # See conversation about /api/importStudy 401 Unauthorized. Re-enable
-    # the block below once a service-account client is available.
+    # NOTE: /api/importStudy/{boardId} is a CLONE-INTO-EMPTY operation. It
+    # returns HTTP 500 {"error":"Copy error"} if the target board already
+    # contains events/forms. When the pipeline creates a brand-new study,
+    # the board is always empty so this succeeds. When re-running against
+    # an existing study (study-already-exists branch above), the board
+    # probably has content from the prior run and import will fail —
+    # we handle that case gracefully with Option A (skip + log).
     board_imported = False
     board_error    = None
     try:
@@ -672,12 +699,26 @@ async def create_oc_study(subdomain, struct_json, is_production=False):
         board_imported = True
     except Exception as e:
         board_error = str(e)
-        print(f"Board import skipped — {board_error}", flush=True)
-        print("  (This is expected: the design service requires a Keycloak "
-              "service-account client that is not yet provisioned. Study shell "
-              "was created successfully; the SOE/form cards can be built "
-              "manually in the design UI using the uploaded Study Spec JSON "
-              "as reference.)", flush=True)
+        # Classify the failure so the user gets an actionable message
+        err_lower = board_error.lower()
+        if "copy error" in err_lower or "500" in board_error:
+            print(f"Board import failed — target board is not empty.",
+                  flush=True)
+            print(f"  The OpenClinica design service's importStudy endpoint "
+                  f"only works on empty boards. To re-import, open the design "
+                  f"board in the UI, delete existing events/forms, then re-run "
+                  f"this pipeline.", flush=True)
+            board_error = ("Board already has content — manual cleanup required "
+                           "before re-import. See the design board URL above.")
+        elif "401" in board_error or "unauthorized" in err_lower:
+            print(f"Board import failed — authentication rejected (401).",
+                  flush=True)
+            print(f"  Check OC_API_USERNAME / OC_API_PASSWORD Railway env vars "
+                  f"match a valid OpenClinica user account.", flush=True)
+        else:
+            print(f"Board import failed — {board_error}", flush=True)
+            print(f"  Unexpected error — check Railway logs for full traceback.",
+                  flush=True)
 
     # Return a dict so callers can surface both the URL and the import state
     return {
@@ -1193,6 +1234,7 @@ async def run_pipeline(item_id):
                                                     is_production=oc_production)
                     study_url      = result["study_url"]
                     board_imported = result["board_imported"]
+                    board_error    = result.get("board_error", "")
                     await set_text(item_id, COL["oc_study_url"], study_url)
                     if board_imported:
                         await append_log(item_id,
@@ -1200,10 +1242,7 @@ async def run_pipeline(item_id):
                     else:
                         await append_log(item_id,
                             f"Study shell created: {study_url}  |  "
-                            f"Design board import skipped (service-account auth "
-                            f"not yet provisioned — see design.openclinica.io "
-                            f"logs for details). Open the study in the design "
-                            f"UI to build the SOE manually.")
+                            f"Design board import skipped — {board_error}")
                     print(f"Chain D complete: {study_url} "
                           f"(board_imported={board_imported})", flush=True)
                 except Exception as e:
