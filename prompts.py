@@ -27,16 +27,26 @@ Return a single, complete, valid JSON object — no text before or after it.
 Do not wrap in markdown code fences.
 
 The JSON must include:
-  study_meta    : protocol_number, study_title, sponsor, study_phase,
-                  indication, total_study_duration_months
-  timepoint_csv : filename and rows [{event, timepoint}]
+  study_meta:
+    protocol_number, study_title, sponsor, study_phase, indication,
+    total_study_duration_months, type (INTERVENTIONAL|OBSERVATIONAL),
+    total_enrollment (integer), number_of_arms (integer),
+    arms (list of {arm_name, arm_code, planned_enrollment, description}),
+    customer_segment (COMMERCIAL|ACADEMIC|LOW_MARKET — infer from sponsor)
+  timepoint_csv : filename and rows [{event, timepoint, visit_number, arm}]
   labranges_csv : filename, columns, rows
   forms         : list of CRF form objects, each with:
                   form_id, form_title, form_category, cdash_domain,
                   visits_assigned, has_repeating_group, is_epro,
-                  arm_applicability, reuse_count, complexity,
+                  arm_applicability (ALL|specific arm_code),
+                  reuse_count, complexity (simple|average|complex),
                   settings, choices, survey rows
   review_flags  : each category a list of strings
+
+Critical fields for downstream pricing:
+  - study_meta.total_enrollment, number_of_arms, arms must be populated
+  - timepoint_csv.rows must list every scheduled visit
+  - forms.visits_assigned must reference timepoint events by name
 """
 
 PRICING_SUMMARY_PROMPT = """\

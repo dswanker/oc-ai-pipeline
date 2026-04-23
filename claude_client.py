@@ -15,7 +15,8 @@ Two modes:
 import anthropic, base64, json, os, asyncio, re
 
 MODEL       = "claude-opus-4-7"
-MAX_TOKENS  = 16000
+MAX_TOKENS  = 16000         # for call_claude (JSON extraction)
+MAX_TOKENS_SKILL = 32000    # for run_skill (file generation, can be long)
 MAX_RETRIES = 5
 
 SKILL_BETAS = [
@@ -155,6 +156,30 @@ def _extract_file_ids(response):
     block_types = [getattr(b, "type", None) or "?" for b in response.content]
     print(f"  response block types: {block_types}", flush=True)
 
+    # Diagnostic: dump stdout/stderr tails from all bash/text_editor result
+    # blocks so we can see what Claude was actually doing in the sandbox
+    for i, block in enumerate(response.content):
+        btype = getattr(block, "type", None) or ""
+        if "code_execution_tool_result" not in btype:
+            continue
+        inner = getattr(block, "content", None)
+        if inner is None:
+            continue
+        try:
+            if hasattr(inner, "model_dump"):
+                d = inner.model_dump()
+                stdout = (d.get("stdout") or "")[:300]
+                stderr = (d.get("stderr") or "")[:300]
+                rc     = d.get("return_code")
+                content_items = d.get("content") or []
+                print(f"  [block {i} {btype}] rc={rc} content_items={len(content_items)}", flush=True)
+                if stdout:
+                    print(f"    stdout[:300]: {stdout!r}", flush=True)
+                if stderr:
+                    print(f"    stderr[:300]: {stderr!r}", flush=True)
+        except Exception as diag_e:
+            print(f"  [block {i}] diag failed: {diag_e}", flush=True)
+
     for block in response.content:
         btype = getattr(block, "type", None) or ""
         if "code_execution_tool_result" not in btype:
@@ -162,24 +187,6 @@ def _extract_file_ids(response):
         inner = getattr(block, "content", None)
         if inner is None:
             continue
-
-        # DEEP DIAGNOSTIC: dump the full structure of the first result block
-        # encountered so we can see exactly where file_ids live
-        if not getattr(_extract_file_ids, "_dumped", False):
-            _extract_file_ids._dumped = True
-            try:
-                if hasattr(inner, "model_dump"):
-                    import json as _json
-                    dump = inner.model_dump()
-                    print(f"  DIAG inner model_dump (first 2000 chars):", flush=True)
-                    print(f"  {_json.dumps(dump, default=str)[:2000]}", flush=True)
-                else:
-                    print(f"  DIAG inner type={type(inner).__name__} "
-                          f"attrs={[a for a in dir(inner) if not a.startswith('_')][:20]}",
-                          flush=True)
-                    print(f"  DIAG inner repr[:500]: {repr(inner)[:500]}", flush=True)
-            except Exception as diag_e:
-                print(f"  DIAG dump failed: {diag_e}", flush=True)
 
         # Inner can be a single object or a list depending on API version
         inner_list = inner if isinstance(inner, list) else [inner]
@@ -259,7 +266,7 @@ async def run_skill(prompt, skill_ids,
             print(f"run_skill — attempt {attempt+1} ({len(skill_ids)} skill(s))", flush=True)
             response = await client.beta.messages.create(
                 model=MODEL,
-                max_tokens=MAX_TOKENS,
+                max_tokens=MAX_TOKENS_SKILL,
                 betas=SKILL_BETAS,
                 container=container,
                 messages=messages,
@@ -297,7 +304,7 @@ async def run_skill(prompt, skill_ids,
             container = {"id": cont_id, "skills": original_skills}
         response = await client.beta.messages.create(
             model=MODEL,
-            max_tokens=MAX_TOKENS,
+            max_tokens=MAX_TOKENS_SKILL,
             betas=SKILL_BETAS,
             container=container,
             messages=messages,
@@ -306,28 +313,13 @@ async def run_skill(prompt, skill_ids,
         print(f"Continuation — stop_reason: {response.stop_reason}", flush=True)
         all_file_ids.extend(_extract_file_ids(response))
 
-    # Fallback: if no file_ids were found in response blocks, list the
-    # container's files via the files API using scope_id=container_id.
-    # The Skills API creates files in the container; they may not be
-    # referenced directly in tool_result blocks.
+    # TODO: we need a way to retrieve files Claude created in the container.
+    # beta.files.list(scope_id=container_id) returned "invalid prefix".
+    # The deep diagnostic above shows what Claude is doing in the sandbox;
+    # use that output to figure out the right retrieval path.
     final_cont_id = getattr(getattr(response, "container", None), "id", None)
     if not all_file_ids and final_cont_id:
-        print(f"  No file_ids in response blocks — listing files with scope_id={final_cont_id}", flush=True)
-        try:
-            listing = await client.beta.files.list(
-                scope_id=final_cont_id,
-                betas=["files-api-2025-04-14"],
-            )
-            items = getattr(listing, "data", None) or listing
-            fetched_ids = []
-            for item in items:
-                fid = getattr(item, "id", None) or getattr(item, "file_id", None)
-                if fid:
-                    fetched_ids.append(fid)
-            print(f"  Files in container scope: {len(fetched_ids)}", flush=True)
-            all_file_ids.extend(fetched_ids)
-        except Exception as e:
-            print(f"  Container file listing failed: {e}", flush=True)
+        print(f"  No file_ids in response blocks. container_id={final_cont_id}", flush=True)
 
     print(f"run_skill complete — {len(all_file_ids)} file(s)", flush=True)
     return await _download_files(client, all_file_ids, container_id=final_cont_id)

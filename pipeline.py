@@ -760,14 +760,28 @@ async def run_pipeline(item_id):
 
                 # Both branches need pricing_json — extract it once
                 print("Chain B: Claude extracting Protocol Summary JSON...", flush=True)
+                # Slim struct_json for Protocol Summary — keep keys that use
+                # the actual Study Spec field names (form_id, form_title,
+                # cdash_domain). Previously slimming to "name"/"domain" lost
+                # all form identity → empty Protocol Summary → empty Quote.
                 struct_slim = {
-                    "study_meta":   struct_json.get("study_meta", {}),
-                    "review_flags": struct_json.get("review_flags", {}),
-                    "forms":        [{"name": f.get("name") if isinstance(f, dict) else f,
-                                      "domain": f.get("domain", "") if isinstance(f, dict) else "",
-                                      "complexity": f.get("complexity", "") if isinstance(f, dict) else "",
-                                      "visits_assigned": f.get("visits_assigned", []) if isinstance(f, dict) else []}
-                                     for f in struct_json.get("forms", [])],
+                    "study_meta":    struct_json.get("study_meta", {}),
+                    "timepoint_csv": struct_json.get("timepoint_csv", {}),
+                    "review_flags":  struct_json.get("review_flags", {}),
+                    "forms": [
+                        {"form_id":         f.get("form_id", ""),
+                         "form_title":      f.get("form_title", ""),
+                         "cdash_domain":    f.get("cdash_domain", ""),
+                         "form_category":   f.get("form_category", ""),
+                         "complexity":      f.get("complexity", ""),
+                         "visits_assigned": f.get("visits_assigned", []),
+                         "reuse_count":     f.get("reuse_count", 1),
+                         "is_epro":         f.get("is_epro", False),
+                         "has_repeating_group": f.get("has_repeating_group", False),
+                         "arm_applicability":   f.get("arm_applicability", "ALL")}
+                        for f in struct_json.get("forms", [])
+                        if isinstance(f, dict)
+                    ],
                 }
                 pricing_text = await call_claude(
                     PRICING_SUMMARY_PROMPT,
