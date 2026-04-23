@@ -560,12 +560,18 @@ async def run_pipeline(item_id):
 
         print(f"Create OC Study: {create_study} | Subdomain: {oc_subdomain} | Production: {oc_production}", flush=True)
 
-        # ── 1. Check for human-uploaded inputs ────────────────────────────────
-        edited_spec_xlsx  = await download_column_file(item_id, COL["edited_spec_input"])
-        edited_build_zip  = await download_column_file(item_id, COL["build_input"])
-        edited_dvs_xlsx   = await download_column_file(item_id, COL["dvs_input"])
-        edited_quote_xlsx = await download_column_file(item_id, COL["quote_input"])
-        edited_soe_csv    = await download_column_file(item_id, COL["soe_input"])
+        # ── 1. Check for human-uploaded inputs (parallel downloads) ──────────
+        (edited_spec_xlsx,
+         edited_build_zip,
+         edited_dvs_xlsx,
+         edited_quote_xlsx,
+         edited_soe_csv) = await asyncio.gather(
+            download_column_file(item_id, COL["edited_spec_input"]),
+            download_column_file(item_id, COL["build_input"]),
+            download_column_file(item_id, COL["dvs_input"]),
+            download_column_file(item_id, COL["quote_input"]),
+            download_column_file(item_id, COL["soe_input"]),
+        )
 
         print(f"Human inputs — spec:{edited_spec_xlsx is not None} "
               f"build:{edited_build_zip is not None} dvs:{edited_dvs_xlsx is not None} "
@@ -699,12 +705,28 @@ async def run_pipeline(item_id):
 
             # ── Chain A: Study Spec files ──────────────────────────────────────
             async def chain_a():
+                if not _want("protocol specification"):
+                    return
                 print("Chain A: Generating Study Spec PDF + XLSX...", flush=True)
+                # Slim struct_json for file generation — PDF/XLSX only need
+                # metadata, timepoints, review_flags and form-level summary,
+                # not full XLSForm survey rows (saves significant tokens)
+                spec_slim = {
+                    "study_meta":   struct_json.get("study_meta", {}),
+                    "timepoint_csv": struct_json.get("timepoint_csv", {}),
+                    "labranges_csv": struct_json.get("labranges_csv", {}),
+                    "review_flags": struct_json.get("review_flags", {}),
+                    "forms": [
+                        {k: v for k, v in f.items()
+                         if k not in ("survey", "choices")}
+                        for f in struct_json.get("forms", [])
+                        if isinstance(f, dict)
+                    ],
+                }
                 try:
                     spec_files = await run_skill(
-                        GENERATE_STUDY_SPEC_PROMPT,
+                        GENERATE_STUDY_SPEC_PROMPT + json.dumps(spec_slim),
                         skill_ids=[SKILL_IDS["protocol_analysis"]],
-                        extra_text="Study Specification JSON:\n" + json.dumps(struct_json),
                     )
                     spec_pdf  = _find(spec_files, "_Study_Specification.pdf")
                     spec_xlsx = _find(spec_files, "_Study_Specification.xlsx")
@@ -717,7 +739,7 @@ async def run_pipeline(item_id):
                             f"{protocol_num}_Study_Specification_{version}.xlsx", spec_xlsx))
                     if uploads:
                         await asyncio.gather(*uploads)
-                    print("Chain A complete.", flush=True)
+                    print(f"Chain A complete — pdf:{spec_pdf is not None} xlsx:{spec_xlsx is not None}", flush=True)
                 except Exception as e:
                     print(f"Chain A error: {e}", flush=True)
                     await append_log(item_id, f"Study Spec file generation error: {e}")
@@ -755,9 +777,8 @@ async def run_pipeline(item_id):
                         print("Chain B: Generating Protocol Summary PDF...", flush=True)
                         try:
                             ps_files = await run_skill(
-                                GENERATE_PROTOCOL_SUMMARY_PROMPT,
+                                GENERATE_PROTOCOL_SUMMARY_PROMPT + json.dumps(pricing_json),
                                 skill_ids=[SKILL_IDS["protocol_analysis"]],
-                                extra_text="Protocol Summary JSON:\n" + json.dumps(pricing_json),
                             )
                             ps_pdf = _find(ps_files, "_Protocol_Summary.pdf")
                             uploads = [upload_file(item_id, COL["pricing_summary"],
@@ -767,6 +788,7 @@ async def run_pipeline(item_id):
                                 uploads.append(upload_file(item_id, COL["pricing_summary"],
                                     f"{protocol_num}_Protocol_Summary_{version}.pdf", ps_pdf))
                             await asyncio.gather(*uploads)
+                            print(f"Protocol Summary PDF: {ps_pdf is not None}", flush=True)
                         except Exception as e:
                             print(f"Protocol Summary PDF error: {e}", flush=True)
                             await append_log(item_id, f"Protocol Summary PDF error: {e}")
@@ -816,7 +838,6 @@ async def run_pipeline(item_id):
                 print("Chain C complete.", flush=True)
 
             async def _run_edc_and_dvs():
-                nonlocal build_zip_holder, build_json_holder
 
                 if edited_build_zip:
                     # Path B: User uploaded edited XLSForm ZIP
@@ -864,12 +885,10 @@ async def run_pipeline(item_id):
                 else:
                     # Fresh run: edc-builder skill
                     print("Chain C: Running edc-builder skill...", flush=True)
-                    # Pass full struct_json — edc-builder needs complete form definitions
                     try:
                         build_files = await run_skill(
-                            EDC_BUILD_PROMPT,
+                            EDC_BUILD_PROMPT + json.dumps(struct_json),
                             skill_ids=[SKILL_IDS["edc_builder"]],
-                            extra_text="Study Specification JSON:\n" + json.dumps(struct_json),
                         )
                         build_zip_holder[0] = _find(build_files, "_EDC_Build.zip", ".zip")
                         if build_zip_holder[0]:
@@ -901,13 +920,11 @@ async def run_pipeline(item_id):
 
                 try:
                     dvs_files = await run_skill(
-                        DVS_PROMPT,
+                        DVS_PROMPT + json.dumps({
+                            "study_meta": struct_json.get("study_meta", {}) if struct_json else {},
+                            "forms": dvs_slim,
+                        }),
                         skill_ids=[SKILL_IDS["dvs_specification"]],
-                        extra_text=("Study Specification JSON:\n" +
-                                    json.dumps(struct_json.get("study_meta", {})
-                                               if struct_json else {}) +
-                                    "\n\nEDC Build survey data:\n" +
-                                    json.dumps({"forms": dvs_slim})),
                     )
                     dvs_xlsx = _find(dvs_files, "_DVS.xlsx", ".xlsx")
                     if dvs_xlsx:
@@ -918,30 +935,31 @@ async def run_pipeline(item_id):
                     print(f"DVS error: {e}", flush=True)
                     await append_log(item_id, f"DVS error: {e}")
 
-            # ── Launch all three chains in parallel ────────────────────────────
-            await asyncio.gather(chain_a(), chain_b(), chain_c())
+            # ── Chain D: Create OC Study (parallel, only needs struct_json) ───
+            async def chain_d():
+                if not (create_study and oc_subdomain and struct_json):
+                    if create_study and not oc_subdomain:
+                        await append_log(item_id, "Create Study requested but no OC Subdomain — skipped.")
+                    return
+                env_label = "production" if oc_production else "test"
+                await append_log(item_id, f"Creating study in OpenClinica {env_label} ({oc_subdomain})...")
+                try:
+                    study_url = await create_oc_study(oc_subdomain, struct_json,
+                                                       is_production=oc_production)
+                    await set_text(item_id, COL["oc_study_url"], study_url)
+                    await append_log(item_id, f"Study + design board created: {study_url}")
+                    print(f"Chain D complete: {study_url}", flush=True)
+                except Exception as e:
+                    print(f"OC Study error: {e}", flush=True)
+                    await append_log(item_id, f"OC Study creation failed: {e}")
 
-            await set_status(item_id, COL["pipeline_status"], STATUS["all_complete"])
-            await append_log(item_id, "Study Specification complete.")
+            # ── Launch all four chains in parallel ─────────────────────────────
+            await asyncio.gather(chain_a(), chain_b(), chain_c(), chain_d())
 
-        # ── Create OC Study ───────────────────────────────────────────────────
-        if create_study and oc_subdomain and struct_json:
-            await set_status(item_id, COL["pipeline_status"], STATUS["creating_oc_study"])
-            env_label = "production" if oc_production else "test"
-            await append_log(item_id, f"Creating study in OpenClinica {env_label} ({oc_subdomain})...")
-            try:
-                study_url = await create_oc_study(oc_subdomain, struct_json, is_production=oc_production)
-                await set_text(item_id, COL["oc_study_url"], study_url)
-                await append_log(item_id, f"Study + design board created: {study_url}")
-            except Exception as e:
-                print(f"OC Study error: {e}", flush=True)
-                await append_log(item_id, f"OC Study creation failed: {e}")
-        elif create_study and not oc_subdomain:
-            await append_log(item_id, "Create Study requested but no OC Subdomain — skipped.")
-
-        # ── Done ──────────────────────────────────────────────────────────────
-        await set_status(item_id, COL["pipeline_status"], STATUS["all_complete"])
-        await append_log(item_id, "Pipeline complete. All outputs uploaded.")
+            await asyncio.gather(
+                set_status(item_id, COL["pipeline_status"], STATUS["all_complete"]),
+                append_log(item_id, "Pipeline complete. All outputs uploaded."),
+            )
 
     except Exception as e:
         import traceback
