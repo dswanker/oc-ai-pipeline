@@ -4,23 +4,29 @@ pipeline.py — oc-ai-pipeline orchestration
 Architecture
 ────────────
   call_claude()  → JSON text  (analysis, fast, no code execution)
-  run_skill()    → real binary files via Skills API + code execution
+  run_*_*()      → real binary files via LOCAL scripts in skills/*/scripts/
+
+File generation does NOT use run_skill() because the Skills API sandbox
+does not reliably return file_ids for retrieval. Instead, every chain
+imports the skill's python scripts directly and runs them in a thread
+pool executor. This is faster, cheaper, and more reliable.
 
 Flow (fresh run):
-  1. call_claude  : protocol PDF  → Study Spec JSON
-  2. run_skill    : JSON          → Study Spec PDF + XLSX
-  3. call_claude  : JSON          → Protocol Summary JSON
-  4. run_skill    : JSON          → Protocol Summary PDF
-  5. run_skill    : JSON          → Quote PDFs + XLSXs   (pricing-quote skill)
-  6. run_skill    : JSON          → EDC Build ZIP         (edc-builder skill)
-  7. run_skill    : JSON + ZIP    → DVS XLSX              (dvs-specification skill)
+  1. call_claude           : protocol PDF  → Study Spec JSON
+  2. run_study_spec_files  : JSON          → Study Spec PDF + XLSX
+  3. call_claude           : JSON          → Protocol Summary JSON
+  4. run_protocol_summary_pdf : JSON       → Protocol Summary PDF
+  5. run_pricing_model     : JSON          → Quote PDFs + XLSXs
+  6. run_edc_build         : JSON          → EDC Build ZIP
+  7. run_dvs_xlsx          : JSON + ZIP    → DVS XLSX
 
 Human-in-the-loop paths:
   A. Edited Study Spec XLSX uploaded  → skip steps 1-2, run 3-7
   B. Edited Build ZIP uploaded        → skip steps 1-6, run 7 only
   C. Edited DVS uploaded              → translate changes → rebuild ZIP + DVS
-  D. Edited Quote XLSX uploaded       → regenerate Quote PDFs only
-  E. Edited SOE CSV uploaded          → update SOE in OpenClinica
+  D. Edited Quote XLSX uploaded       → regenerate Quote PDFs (still uses
+                                         run_skill — TODO: migrate to local)
+  E. Edited SOE CSV uploaded          → update SOE in OpenClinica (not impl)
 """
 
 import asyncio, io, json, os, sys, tempfile, zipfile, datetime as _dt
@@ -29,7 +35,8 @@ from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
 
 from monday_client import (get_item, download_file, upload_file, set_status,
-                            append_log, set_text, download_column_file, COL)
+                            append_log, set_text, download_column_file,
+                            list_column_filenames, COL)
 from claude_client  import call_claude, extract_json, run_skill
 from prompts        import (
     EDC_STRUCTURE_PROMPT, PRICING_SUMMARY_PROMPT,
@@ -227,8 +234,11 @@ def _add_scripts(skill_name):
 
 
 def run_pricing_model(pricing_summary_dict,
-                      additional_sub_disc=0.0, additional_svc_disc=0.0):
-    """Run pricing-quote scripts locally. Returns dict of file bytes."""
+                      additional_sub_disc=0.0, additional_svc_disc=0.0,
+                      edc_structure=None):
+    """Run pricing-quote scripts locally. Returns dict of file bytes.
+    Optionally pass edc_structure (Study Spec JSON) to enrich flag counts
+    and comments using merge_edc_flags."""
     _add_scripts("pricing-quote")
     from pricing_engine      import calculate_quote
     from generate_quote_pdf  import build_quote_pdfs
@@ -236,7 +246,8 @@ def run_pricing_model(pricing_summary_dict,
 
     quote    = calculate_quote(pricing_summary_dict,
                                additional_sub_disc=additional_sub_disc,
-                               additional_svc_disc=additional_svc_disc)
+                               additional_svc_disc=additional_svc_disc,
+                               edc_structure=edc_structure)
     protocol = quote["study_meta"].get("protocol_number", "STUDY")
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -249,6 +260,143 @@ def run_pricing_model(pricing_summary_dict,
         build_quote_pdfs(quote, paths["internal_pdf"], paths["client_pdf"])
         build_quote_xlsx(quote, paths["internal_xlsx"], paths["client_xlsx"])
         return {k: open(v, "rb").read() for k, v in paths.items()}
+
+
+# ── Local runners for Study Spec, Protocol Summary, EDC Build, DVS ──────────
+# These mirror test_skills_locally.py. They replace run_skill() calls which
+# fail to retrieve files from the skill sandbox.
+
+def run_study_spec_files(struct_json):
+    """Generate Study Spec PDF + XLSX locally. Returns {'pdf': bytes, 'xlsx': bytes}."""
+    _add_scripts("protocol-analysis")
+    from generate_study_spec_pdf  import build_edc_pdf
+    from generate_study_spec_xlsx import build_edc_xlsx
+
+    protocol = (struct_json.get("study_meta", {}).get("protocol_number")
+                or "STUDY")
+    with tempfile.TemporaryDirectory() as tmp:
+        pdf_path  = os.path.join(tmp, f"{protocol}_Study_Specification.pdf")
+        xlsx_path = os.path.join(tmp, f"{protocol}_Study_Specification.xlsx")
+        build_edc_pdf(struct_json, pdf_path)
+        build_edc_xlsx(struct_json, xlsx_path)
+        return {
+            "pdf":  open(pdf_path, "rb").read(),
+            "xlsx": open(xlsx_path, "rb").read(),
+        }
+
+
+def run_protocol_summary_pdf(pricing_json):
+    """Generate Protocol Summary PDF locally. Returns bytes."""
+    _add_scripts("protocol-analysis")
+    from generate_protocol_summary_pdf import build_pricing_pdf
+
+    protocol = (pricing_json.get("study_meta", {}).get("protocol_number")
+                or "STUDY")
+    with tempfile.TemporaryDirectory() as tmp:
+        pdf_path = os.path.join(tmp, f"{protocol}_Protocol_Summary.pdf")
+        build_pricing_pdf(pricing_json, pdf_path)
+        return open(pdf_path, "rb").read()
+
+
+def run_edc_build(struct_json):
+    """Build EDC ZIP locally. Returns (zip_bytes, build_log, forms_json)."""
+    _add_scripts("edc-builder")
+    from build_xlsforms  import build_all_xlsforms, write_timepoint_csv, write_labranges_csv
+    from build_checklist import build_checklist_pdf, build_checklist_xlsx
+    from build_package   import build_package
+
+    protocol = (struct_json.get("study_meta", {}).get("protocol_number")
+                or "STUDY")
+    build_log = {
+        'forms_built':         [],
+        'forms_skipped':       [],
+        'build_errors':        [],
+        'build_warnings':      [],
+        'placeholder_applied': [],
+        'oid_placeholders':    [],
+    }
+
+    with tempfile.TemporaryDirectory() as tmp:
+        forms_dir     = os.path.join(tmp, 'forms')
+        csv_dir       = os.path.join(tmp, 'csv')
+        checklist_dir = os.path.join(tmp, 'checklist')
+        package_dir   = os.path.join(tmp, 'package')
+        for d in (forms_dir, csv_dir, checklist_dir, package_dir):
+            os.makedirs(d, exist_ok=True)
+
+        build_all_xlsforms(struct_json, forms_dir, build_log)
+        write_timepoint_csv(struct_json.get('timepoint_csv', {}),
+                            os.path.join(csv_dir, f'{protocol}_tpt.csv'),
+                            build_log)
+        write_labranges_csv(struct_json.get('labranges_csv', {}),
+                            os.path.join(csv_dir, f'{protocol}_labranges.csv'),
+                            build_log)
+        build_checklist_pdf(struct_json, build_log,
+                            os.path.join(checklist_dir,
+                                         f'{protocol}_Build_Checklist.pdf'))
+        build_checklist_xlsx(struct_json, build_log,
+                             os.path.join(checklist_dir,
+                                          f'{protocol}_Build_Checklist.xlsx'))
+
+        zip_path = build_package(struct_json, build_log,
+                                 forms_dir, csv_dir, checklist_dir, package_dir)
+        zip_bytes = open(zip_path, "rb").read()
+
+        # Also build the forms_json view used by DVS (survey rows per form)
+        forms_json = {"forms": {}}
+        for fname in sorted(os.listdir(forms_dir)):
+            if fname.lower().endswith('.xlsx'):
+                import openpyxl
+                wb = openpyxl.load_workbook(os.path.join(forms_dir, fname),
+                                            read_only=True, data_only=True)
+                survey_rows = []
+                if 'survey' in wb.sheetnames:
+                    ws = wb['survey']
+                    rows = list(ws.iter_rows(values_only=True))
+                    if rows:
+                        headers = [str(h or '').strip() for h in rows[0]]
+                        for r in rows[1:]:
+                            row_dict = {headers[i]: r[i] for i in range(len(headers))
+                                        if i < len(r) and r[i] is not None}
+                            if row_dict:
+                                survey_rows.append(row_dict)
+                forms_json["forms"][fname] = {"survey": survey_rows}
+        return zip_bytes, build_log, forms_json
+
+
+def run_dvs_xlsx(struct_json, forms_json):
+    """Build DVS XLSX locally. Returns bytes or None if builder not available."""
+    _add_scripts("dvs-specification")
+    try:
+        from generate_dvs import build_dvs
+    except ImportError as e:
+        print(f"DVS builder not available locally: {e}", flush=True)
+        return None
+
+    protocol = (struct_json.get("study_meta", {}).get("protocol_number")
+                or "STUDY")
+    # Build slim DVS input identical to what the skill was fed
+    dvs_slim = {}
+    for fname, fdata in forms_json.get("forms", {}).items():
+        survey = fdata.get("survey", [])
+        relevant_rows = [
+            {k: v for k, v in row.items()
+             if k in ('type','name','label','constraint',
+                       'constraint_message','calculation',
+                       'relevant','required')}
+            for row in survey
+            if any(row.get(k) for k in ('constraint','calculation','relevant'))
+        ]
+        dvs_slim[fname] = {"survey": relevant_rows}
+
+    dvs_input = {
+        "study_meta": struct_json.get("study_meta", {}),
+        "forms": dvs_slim,
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        xlsx_path = os.path.join(tmp, f"{protocol}_DVS.xlsx")
+        build_dvs(dvs_input, xlsx_path)
+        return open(xlsx_path, "rb").read()
 
 
 # ── OpenClinica Study Service API ─────────────────────────────────────────────
@@ -530,6 +678,19 @@ async def run_pipeline(item_id):
         oc_std_url   = cols.get(COL["oc_standard"],     {}).get("text")
         oc_subdomain = cols.get(COL["oc_subdomain"],    {}).get("text", "").strip()
 
+        # Fetch library filenames for both columns so we can inject them into
+        # the Study Spec JSON's study_meta.library_files_provided (overrides
+        # whatever Claude emits). This gives humans a clear record of which
+        # library inputs were used.
+        try:
+            crf_lib_names    = await list_column_filenames(item_id, COL["crf_library"])
+            oc_std_lib_names = await list_column_filenames(item_id, COL["oc_standard"])
+        except Exception as e:
+            print(f"Warning: could not fetch library filenames: {e}", flush=True)
+            crf_lib_names, oc_std_lib_names = [], []
+        library_files_provided = crf_lib_names + oc_std_lib_names
+        print(f"Library files: CRF={crf_lib_names} | OC4={oc_std_lib_names}", flush=True)
+
         _now    = _dt.datetime.utcnow()
         version = f"V{_now.strftime('%m%d')}.{_now.strftime('%H%M')}"
         print(f"Protocol: {protocol_num} | Version: {version}", flush=True)
@@ -716,6 +877,14 @@ async def run_pipeline(item_id):
                                "forms": [], "review_flags": {}}
                 print("Warning: Study Spec JSON not valid — using empty fallback", flush=True)
 
+            # Inject library filenames from monday columns into study_meta —
+            # overrides whatever Claude may have guessed for
+            # library_files_provided. This ensures the Study Spec PDF shows
+            # the actual files that were uploaded to the item.
+            if library_files_provided:
+                sm = struct_json.setdefault("study_meta", {})
+                sm["library_files_provided"] = library_files_provided
+
             # Upload raw JSON (only if we extracted it fresh)
             await upload_file(item_id, COL["spec_json"],
                               f"{protocol_num}_Study_Specification_{version}.json",
@@ -733,27 +902,26 @@ async def run_pipeline(item_id):
             async def chain_a():
                 if not _want("protocol specification"):
                     return
-                print("Chain A: Generating Study Spec PDF + XLSX...", flush=True)
-                # Pass full struct_json — XLSX script needs survey/choices data
+                print("Chain A: Generating Study Spec PDF + XLSX (local)...", flush=True)
                 try:
-                    spec_files = await run_skill(
-                        GENERATE_STUDY_SPEC_PROMPT + json.dumps(struct_json),
-                        skill_ids=[SKILL_IDS["protocol_analysis"]],
+                    loop = asyncio.get_event_loop()
+                    spec_files = await loop.run_in_executor(
+                        None, lambda: run_study_spec_files(struct_json)
                     )
-                    spec_pdf  = _find(spec_files, "_Study_Specification.pdf")
-                    spec_xlsx = _find(spec_files, "_Study_Specification.xlsx")
-                    uploads = []
-                    if spec_pdf:
-                        uploads.append(upload_file(item_id, COL["spec_pdf"],
-                            f"{protocol_num}_Study_Specification_{version}.pdf", spec_pdf))
-                    if spec_xlsx:
-                        uploads.append(upload_file(item_id, COL["spec_xlsx"],
-                            f"{protocol_num}_Study_Specification_{version}.xlsx", spec_xlsx))
-                    if uploads:
-                        await asyncio.gather(*uploads)
-                    print(f"Chain A complete — pdf:{spec_pdf is not None} xlsx:{spec_xlsx is not None}", flush=True)
+                    await asyncio.gather(
+                        upload_file(item_id, COL["spec_pdf"],
+                            f"{protocol_num}_Study_Specification_{version}.pdf",
+                            spec_files["pdf"]),
+                        upload_file(item_id, COL["spec_xlsx"],
+                            f"{protocol_num}_Study_Specification_{version}.xlsx",
+                            spec_files["xlsx"]),
+                    )
+                    print(f"Chain A complete — pdf:{len(spec_files['pdf'])} bytes "
+                          f"xlsx:{len(spec_files['xlsx'])} bytes", flush=True)
                 except Exception as e:
+                    import traceback
                     print(f"Chain A error: {e}", flush=True)
+                    traceback.print_exc()
                     await append_log(item_id, f"Study Spec file generation error: {e}")
 
             # ── Chain B: Protocol Summary JSON → PDF + Quote ───────────────────
@@ -810,13 +978,12 @@ async def run_pipeline(item_id):
                 async def gen_ps_pdf():
                     if not want_summary:
                         return
-                    print("Chain B: Generating Protocol Summary PDF...", flush=True)
+                    print("Chain B: Generating Protocol Summary PDF (local)...", flush=True)
                     try:
-                        ps_files = await run_skill(
-                            GENERATE_PROTOCOL_SUMMARY_PROMPT + json.dumps(pricing_json),
-                            skill_ids=[SKILL_IDS["protocol_analysis"]],
+                        loop = asyncio.get_event_loop()
+                        ps_pdf = await loop.run_in_executor(
+                            None, lambda: run_protocol_summary_pdf(pricing_json)
                         )
-                        ps_pdf = _find(ps_files, "_Protocol_Summary.pdf")
                         uploads = [upload_file(item_id, COL["pricing_summary"],
                             f"{protocol_num}_Protocol_Summary_{version}.json",
                             json.dumps(pricing_json, indent=2).encode())]
@@ -824,9 +991,11 @@ async def run_pipeline(item_id):
                             uploads.append(upload_file(item_id, COL["pricing_summary"],
                                 f"{protocol_num}_Protocol_Summary_{version}.pdf", ps_pdf))
                         await asyncio.gather(*uploads)
-                        print(f"Protocol Summary PDF: {ps_pdf is not None}", flush=True)
+                        print(f"Protocol Summary PDF: {len(ps_pdf) if ps_pdf else 0} bytes", flush=True)
                     except Exception as e:
+                        import traceback
                         print(f"Protocol Summary PDF error: {e}", flush=True)
+                        traceback.print_exc()
                         await append_log(item_id, f"Protocol Summary PDF error: {e}")
 
                 async def gen_quote():
@@ -841,6 +1010,7 @@ async def run_pipeline(item_id):
                                 pricing_json,
                                 additional_sub_disc=additional_sub_disc,
                                 additional_svc_disc=additional_svc_disc,
+                                edc_structure=struct_json,
                             )
                         )
                         await asyncio.gather(
@@ -855,7 +1025,9 @@ async def run_pipeline(item_id):
                         )
                         await append_log(item_id, "Price Quote complete — 4 files uploaded.")
                     except Exception as e:
+                        import traceback
                         print(f"Price Quote error: {e}", flush=True)
+                        traceback.print_exc()
                         await append_log(item_id, f"Price Quote error: {e}")
 
                 await asyncio.gather(gen_ps_pdf(), gen_quote())
@@ -926,18 +1098,23 @@ async def run_pipeline(item_id):
                     build_zip_holder[0] = _xlsform_zip(build_json_holder[0])
 
                 else:
-                    # Fresh run: edc-builder skill
-                    print("Chain C: Running edc-builder skill...", flush=True)
+                    # Fresh run: EDC builder (local scripts)
+                    print("Chain C: Running edc-builder (local)...", flush=True)
                     try:
-                        build_files = await run_skill(
-                            EDC_BUILD_PROMPT + json.dumps(struct_json),
-                            skill_ids=[SKILL_IDS["edc_builder"]],
+                        loop = asyncio.get_event_loop()
+                        zip_bytes, edc_log, forms_json = await loop.run_in_executor(
+                            None, lambda: run_edc_build(struct_json)
                         )
-                        build_zip_holder[0] = _find(build_files, "_EDC_Build.zip", ".zip")
-                        if build_zip_holder[0]:
-                            build_json_holder[0] = _read_zip_xlsforms(build_zip_holder[0])
+                        build_zip_holder[0]  = zip_bytes
+                        build_json_holder[0] = forms_json
+                        print(f"EDC Build complete — "
+                              f"built={len(edc_log.get('forms_built', []))} "
+                              f"zip={len(zip_bytes) if zip_bytes else 0} bytes",
+                              flush=True)
                     except Exception as e:
+                        import traceback
                         print(f"EDC Build error: {e}", flush=True)
+                        traceback.print_exc()
                         await append_log(item_id, f"EDC Build error: {e}")
 
                 if build_zip_holder[0]:
@@ -947,35 +1124,28 @@ async def run_pipeline(item_id):
                     await append_log(item_id, "EDC Build complete — ZIP uploaded.")
 
                 # DVS — runs inside _run_edc_and_dvs after build completes
-                print("Chain C: Running DVS...", flush=True)
-                dvs_slim = {}
-                for fname, fdata in build_json_holder[0].get("forms", {}).items():
-                    survey = fdata.get("survey", [])
-                    relevant_rows = [
-                        {k: v for k, v in row.items()
-                         if k in ('type','name','label','constraint',
-                                   'constraint_message','calculation',
-                                   'relevant','required')}
-                        for row in survey
-                        if any(row.get(k) for k in ('constraint','calculation','relevant'))
-                    ]
-                    dvs_slim[fname] = {"survey": relevant_rows}
-
+                print("Chain C: Running DVS (local)...", flush=True)
                 try:
-                    dvs_files = await run_skill(
-                        DVS_PROMPT + json.dumps({
-                            "study_meta": struct_json.get("study_meta", {}) if struct_json else {},
-                            "forms": dvs_slim,
-                        }),
-                        skill_ids=[SKILL_IDS["dvs_specification"]],
+                    loop = asyncio.get_event_loop()
+                    dvs_xlsx = await loop.run_in_executor(
+                        None,
+                        lambda: run_dvs_xlsx(
+                            struct_json if struct_json
+                                else {"study_meta": {"protocol_number": protocol_num}},
+                            build_json_holder[0] or {"forms": {}},
+                        ),
                     )
-                    dvs_xlsx = _find(dvs_files, "_DVS.xlsx", ".xlsx")
                     if dvs_xlsx:
                         await upload_file(item_id, COL["dvs_output"],
-                                          f"{protocol_num}_DVS_{version}.xlsx", dvs_xlsx)
-                    await append_log(item_id, "DVS complete.")
+                                          f"{protocol_num}_DVS_{version}.xlsx",
+                                          dvs_xlsx)
+                        await append_log(item_id, "DVS complete.")
+                    else:
+                        await append_log(item_id, "DVS skipped — builder unavailable.")
                 except Exception as e:
+                    import traceback
                     print(f"DVS error: {e}", flush=True)
+                    traceback.print_exc()
                     await append_log(item_id, f"DVS error: {e}")
 
             # ── Chain D: Create OC Study (parallel, only needs struct_json) ───
