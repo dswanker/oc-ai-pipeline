@@ -282,7 +282,160 @@ async def _check_study_exists(subdomain, token, protocol_num):
     return None
 
 
-async def create_oc_study(subdomain, struct_json):
+def _build_board_json(struct_json):
+    """
+    Build a board.json payload for the OpenClinica Study Designer
+    from the Study Specification JSON.
+
+    board.json structure:
+      lists = Events (one per timepoint row)
+      cards = Forms (one per form per event it is assigned to)
+
+    Uses Meteor-style 17-char random IDs generated from the OIDs
+    so the import is deterministic and repeatable.
+    """
+    import hashlib
+
+    def _meteor_id(seed):
+        """Generate a stable 17-char alphanumeric ID from a seed string."""
+        chars = "23456789ABCDEFGHJKLMNPQRSTWXYZabcdefghijkmnopqrstuvwxyz"
+        h = int(hashlib.md5(seed.encode()).hexdigest(), 16)
+        result = []
+        for _ in range(17):
+            result.append(chars[h % len(chars)])
+            h //= len(chars)
+        return ''.join(result)
+
+    timepoint_rows = struct_json.get("timepoint_csv", {}).get("rows", [])
+    forms          = struct_json.get("forms", [])
+
+    # Build event list (lists)
+    lists = []
+    event_id_map = {}   # event_oid → meteor _id
+    for i, row in enumerate(timepoint_rows):
+        event_oid   = row.get("event", f"SE_EVENT{i+1}")
+        label       = row.get("timepoint", event_oid)
+        meteor_id   = _meteor_id(event_oid)
+        event_id_map[event_oid] = meteor_id
+
+        # Determine if repeating — common events don't have visit windows
+        is_repeating = "UNSCH" in event_oid.upper() or "COMMON" in event_oid.upper()
+        event_type   = "Common" if is_repeating else "Visit-Based"
+
+        lists.append({
+            "_id":         meteor_id,
+            "title":       label,
+            "sort":        i,
+            "eventOcoid":  event_oid,
+            "isRepeating": is_repeating,
+            "type":        event_type,
+        })
+
+    # Build form cards
+    cards = []
+    card_sort = {}          # event_oid → current sort index
+    original_card_id = {}  # form_id → first meteor card _id (for _parentId)
+
+    for form in forms:
+        form_id      = form.get("form_id", "")
+        form_title   = form.get("form_title", form_id)
+        visits       = form.get("visits_assigned", [])
+        first_card   = True
+
+        for event_oid in visits:
+            if event_oid not in event_id_map:
+                continue
+            list_id  = event_id_map[event_oid]
+            sort_idx = card_sort.get(event_oid, 0)
+            card_sort[event_oid] = sort_idx + 1
+
+            # Generate stable card ID from form+event combination
+            card_id  = _meteor_id(f"{form_id}_{event_oid}")
+
+            card = {
+                "_id":      card_id,
+                "title":    form_title,
+                "listId":   list_id,
+                "formOcoid": form_id,
+                "sort":     sort_idx,
+            }
+
+            # First occurrence is the original; subsequent ones reference it
+            if first_card:
+                original_card_id[form_id] = card_id
+                first_card = False
+            else:
+                card["_parentId"] = original_card_id[form_id]
+
+            cards.append(card)
+
+    return {"labels": [], "lists": lists, "cards": cards}
+
+
+async def _get_board_id(subdomain, study_uuid, is_production):
+    """
+    Get the Study Designer board ID for a newly created study.
+    The board ID is embedded in the currentBoardUrl returned by the study-service.
+    URL format: https://{subdomain}.design.openclinica(-dev).io/b/{boardId}/...
+    """
+    import httpx
+    token    = await _get_oc_token(subdomain)
+    base_url = f"https://{subdomain}.build.openclinica.io"
+    async with httpx.AsyncClient(timeout=30) as c:
+        r = await c.get(
+            f"{base_url}/study-service/api/studies/{study_uuid}",
+            headers={"Authorization": f"Bearer {token}",
+                     "Content-Type": "application/json"},
+        )
+    if r.status_code != 200:
+        raise RuntimeError(f"Could not fetch study details: {r.status_code} {r.text[:200]}")
+    data          = r.json()
+    board_url     = data.get("currentBoardUrl", "")
+    # Extract board ID from URL: .../b/{boardId}/...
+    if "/b/" in board_url:
+        parts    = board_url.split("/b/")
+        board_id = parts[1].split("/")[0]
+        print(f"Board ID: {board_id}", flush=True)
+        return board_id
+    raise RuntimeError(f"Could not extract board ID from URL: {board_url}")
+
+
+async def _import_board(subdomain, board_id, board_json, is_production):
+    """
+    Import the board.json into the study designer.
+    POST {designer_url}/api/importStudy/{boardId}
+    """
+    import httpx
+    token       = await _get_oc_token(subdomain)
+    env_suffix  = "" if is_production else "-dev"
+    designer_url = f"https://{subdomain}.design.openclinica{env_suffix}.io"
+    endpoint    = f"{designer_url}/api/importStudy/{board_id}"
+
+    print(f"Importing board to: {endpoint}", flush=True)
+    async with httpx.AsyncClient(timeout=60) as c:
+        r = await c.post(
+            endpoint,
+            headers={"Authorization": f"Bearer {token}",
+                     "Content-Type": "application/json"},
+            json=board_json,
+        )
+    print(f"Board import: {r.status_code} {r.text[:200]}", flush=True)
+    if r.status_code not in (200, 201):
+        raise RuntimeError(f"Board import failed {r.status_code}: {r.text[:300]}")
+    return True
+
+
+async def create_oc_study(subdomain, struct_json, is_production=False):
+    """
+    Create a study in OpenClinica and import the Study Design Board (SOE).
+
+    Steps:
+    1. Create study shell via study-service API
+       (skips if study already exists)
+    2. Build board.json from struct_json (events + forms)
+    3. Get the board ID from the newly created study
+    4. Import board.json via study designer API
+    """
     import httpx
     token    = await _get_oc_token(subdomain)
     headers  = {"Authorization": f"Bearer {token}",
@@ -291,50 +444,70 @@ async def create_oc_study(subdomain, struct_json):
     meta     = struct_json.get("study_meta", {})
     protocol_num = meta.get("protocol_number", "STUDY")
 
-    existing = await _check_study_exists(subdomain, token, protocol_num)
-    if existing:
-        study_url = f"{base_url}/designer/#/studies/{existing}"
-        print(f"Study already exists — skipping. URL: {study_url}", flush=True)
-        return study_url
+    # ── Step 1: Create or find the study ──────────────────────────────────────
+    existing_uuid = await _check_study_exists(subdomain, token, protocol_num)
+    if existing_uuid:
+        print(f"Study already exists (uuid: {existing_uuid}) — skipping creation.", flush=True)
+        study_uuid = existing_uuid
+    else:
+        type_map  = {"interventional": "INTERVENTIONAL", "observational": "OBSERVATIONAL"}
+        phase_map = {"phase i": "PHASEI", "phase 1": "PHASEI",
+                     "phase ii": "PHASEII", "phase 2": "PHASEII",
+                     "phase iii": "PHASEIII", "phase 3": "PHASEIII",
+                     "phase iv": "PHASEIV", "phase 4": "PHASEIV"}
+        today      = _dt.date.today().isoformat()
+        dur_months = int(meta.get("total_study_duration_months", 24) or 24)
+        end_date   = (_dt.date.today().replace(
+                       year=_dt.date.today().year + dur_months // 12)).isoformat()
 
-    type_map  = {"interventional": "INTERVENTIONAL", "observational": "OBSERVATIONAL"}
-    phase_map = {"phase i": "PHASEI", "phase 1": "PHASEI",
-                 "phase ii": "PHASEII", "phase 2": "PHASEII",
-                 "phase iii": "PHASEIII", "phase 3": "PHASEIII",
-                 "phase iv": "PHASEIV", "phase 4": "PHASEIV"}
-    today      = _dt.date.today().isoformat()
-    dur_months = int(meta.get("total_study_duration_months", 24) or 24)
-    end_date   = (_dt.date.today().replace(
-                   year=_dt.date.today().year + dur_months // 12)).isoformat()
+        payload = {
+            "name":               meta.get("study_title", protocol_num),
+            "description":        meta.get("description",
+                                   f"{protocol_num} — {meta.get('indication', '')}"),
+            "uniqueIdentifier":   protocol_num[:30],
+            "type":               type_map.get(str(meta.get("type","")).lower(),
+                                               "INTERVENTIONAL"),
+            "phase":              phase_map.get(str(meta.get("study_phase","")).lower().strip(),
+                                               "OTHER_NON_IND"),
+            "expectedStartDate":  today,
+            "expectedEndDate":    end_date,
+            "expectedEnrollment": int(meta.get("expected_enrollment", 0) or 0),
+            "collectSex":         True,
+            "collectDateOfBirth": "ONLY_THE_YEAR",
+            "collectPersonId":    "ALWAYS",
+        }
 
-    payload = {
-        "name":               meta.get("study_title", protocol_num),
-        "description":        meta.get("description",
-                               f"{protocol_num} — {meta.get('indication', '')}"),
-        "uniqueIdentifier":   protocol_num[:30],
-        "type":               type_map.get(str(meta.get("type","")).lower(),
-                                           "INTERVENTIONAL"),
-        "phase":              phase_map.get(str(meta.get("study_phase","")).lower().strip(),
-                                           "OTHER_NON_IND"),
-        "expectedStartDate":  today,
-        "expectedEndDate":    end_date,
-        "expectedEnrollment": int(meta.get("expected_enrollment", 0) or 0),
-        "collectSex":         True,
-        "collectDateOfBirth": "ONLY_THE_YEAR",
-        "collectPersonId":    "ALWAYS",
-    }
+        async with httpx.AsyncClient(timeout=60) as c:
+            r = await c.post(f"{base_url}/study-service/api/studies",
+                             headers=headers, json=payload)
+        print(f"OC Study API: {r.status_code} {r.text[:300]}", flush=True)
+        if r.status_code not in (200, 201):
+            raise RuntimeError(f"OC Study API returned {r.status_code}: {r.text[:300]}")
+        study_uuid = r.json().get("uuid", "")
+        if not study_uuid:
+            raise RuntimeError("Study created but no UUID returned")
 
-    endpoint = f"{base_url}/study-service/api/studies"
-    async with httpx.AsyncClient(timeout=60) as c:
-        r = await c.post(endpoint, headers=headers, json=payload)
+    env_suffix   = "" if is_production else "-dev"
+    designer_url = f"https://{subdomain}.design.openclinica{env_suffix}.io"
+    study_url    = f"{designer_url}/b/{study_uuid}"
 
-    print(f"OC Study API: {r.status_code} {r.text[:300]}", flush=True)
-    if r.status_code not in (200, 201):
-        raise RuntimeError(f"OC Study API returned {r.status_code}: {r.text[:300]}")
+    # ── Step 2: Build board.json from struct_json ──────────────────────────────
+    print("Building board.json from Study Specification...", flush=True)
+    board_json = _build_board_json(struct_json)
+    print(f"Board: {len(board_json['lists'])} events, "
+          f"{len(board_json['cards'])} form cards", flush=True)
 
-    data      = r.json()
-    uuid      = data.get("uuid", "")
-    study_url = f"{base_url}/designer/#/studies/{uuid}" if uuid else base_url
+    # ── Step 3: Get the board ID ───────────────────────────────────────────────
+    try:
+        board_id = await _get_board_id(subdomain, study_uuid, is_production)
+    except Exception as e:
+        print(f"Could not get board ID: {e}", flush=True)
+        raise
+
+    # ── Step 4: Import board.json ──────────────────────────────────────────────
+    await _import_board(subdomain, board_id, board_json, is_production)
+    print(f"Study design board imported successfully.", flush=True)
+
     return study_url
 
 
@@ -377,7 +550,15 @@ async def run_pipeline(item_id):
             create_study = bool(parsed.get("checked", False)) if isinstance(parsed, dict) else bool(parsed)
         except Exception:
             create_study = False
-        print(f"Create OC Study: {create_study} | Subdomain: {oc_subdomain}", flush=True)
+
+        oc_production_val = cols.get(COL["oc_production"], {}).get("value")
+        try:
+            parsed = json.loads(oc_production_val or "{}")
+            oc_production = bool(parsed.get("checked", False)) if isinstance(parsed, dict) else bool(parsed)
+        except Exception:
+            oc_production = False
+
+        print(f"Create OC Study: {create_study} | Subdomain: {oc_subdomain} | Production: {oc_production}", flush=True)
 
         # ── 1. Check for human-uploaded inputs ────────────────────────────────
         edited_spec_xlsx  = await download_column_file(item_id, COL["edited_spec_input"])
@@ -740,11 +921,12 @@ async def run_pipeline(item_id):
         # ── Create OC Study ───────────────────────────────────────────────────
         if create_study and oc_subdomain and struct_json:
             await set_status(item_id, COL["pipeline_status"], STATUS["creating_oc_study"])
-            await append_log(item_id, f"Creating study in OpenClinica ({oc_subdomain})...")
+            env_label = "production" if oc_production else "test"
+            await append_log(item_id, f"Creating study in OpenClinica {env_label} ({oc_subdomain})...")
             try:
-                study_url = await create_oc_study(oc_subdomain, struct_json)
+                study_url = await create_oc_study(oc_subdomain, struct_json, is_production=oc_production)
                 await set_text(item_id, COL["oc_study_url"], study_url)
-                await append_log(item_id, f"Study created: {study_url}")
+                await append_log(item_id, f"Study + design board created: {study_url}")
             except Exception as e:
                 print(f"OC Study error: {e}", flush=True)
                 await append_log(item_id, f"OC Study creation failed: {e}")

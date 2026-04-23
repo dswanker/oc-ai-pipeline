@@ -34,6 +34,7 @@ COL = {
     # OpenClinica
     "oc_subdomain":      "color_mm2n247s",
     "create_study":      "boolean_mm2nbn5c",
+    "oc_production":     "boolean_mm2ptpzd",
     "oc_study_url":      "text_mm2nbce5",
     # Discounts
     "subscription_discount": "numeric_mm2nkqbq",
