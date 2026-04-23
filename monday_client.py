@@ -123,3 +123,68 @@ async def upload_file(item_id, col_id, filename, file_content):
             }
         )
     print(f"UPLOAD STATUS: {r.status_code} {r.text[:300]}", flush=True)
+
+async def set_text(item_id, col_id, text_value):
+    """Set a text column value on a monday.com item."""
+    q = make_mutation()
+    v = json.dumps(text_value)
+    async with httpx.AsyncClient(timeout=30) as c:
+        r = await c.post(MONDAY_API_URL, headers=get_headers(),
+                         json={"query": q, "variables": {
+                             "i": item_id, "b": BOARD_ID,
+                             "c": col_id, "v": v}})
+    print(f"SET_TEXT {col_id}: {r.status_code}", flush=True)
+
+
+async def download_column_file(item_id, col_id):
+    """
+    Download a file from a specific file column on a monday.com item.
+    Returns bytes if a file is found, None otherwise.
+    """
+    q = """
+    query($i:[ID!]) {
+      items(ids:$i) {
+        column_values {
+          id
+          ... on FileValue {
+            files {
+              asset_id
+            }
+          }
+        }
+      }
+    }
+    """
+    async with httpx.AsyncClient(timeout=30) as c:
+        r = await c.post(MONDAY_API_URL, headers=get_headers(),
+                         json={"query": q, "variables": {"i": [item_id]}})
+    resp = r.json()
+    items = resp.get("data", {}).get("items", [])
+    if not items:
+        return None
+
+    for cv in items[0].get("column_values", []):
+        if cv.get("id") != col_id:
+            continue
+        files = cv.get("files", [])
+        if not files:
+            return None
+        asset_id = files[-1].get("asset_id")
+        if not asset_id:
+            return None
+
+        # Fetch the asset URL
+        asset_q = "query($ids:[ID!]){assets(ids:$ids){id public_url}}"
+        async with httpx.AsyncClient(timeout=30) as c:
+            ar = await c.post(MONDAY_API_URL, headers=get_headers(),
+                              json={"query": asset_q,
+                                    "variables": {"ids": [asset_id]}})
+        assets = ar.json().get("data", {}).get("assets", [])
+        if not assets:
+            return None
+        url = assets[0].get("public_url")
+        if not url:
+            return None
+        return await download_file(url)
+
+    return None
