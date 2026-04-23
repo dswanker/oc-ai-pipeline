@@ -499,6 +499,9 @@ async def run_pipeline(item_id):
             await set_status(item_id, COL["pipeline_status"], STATUS["build_pricing_running"])
             await append_log(item_id, "Study Spec files, Protocol Summary, and EDC Build starting in parallel.")
 
+            # Shared state for parallel chains
+            pricing_json = {"study_meta": {"protocol_number": protocol_num}}
+
             # ── Parallel chains after Step 1 ──────────────────────────────────
             # Chain A: Study Spec PDF + XLSX (Step 2)
             # Chain B: Protocol Summary JSON → PDF + Quote (Steps 3-5)
