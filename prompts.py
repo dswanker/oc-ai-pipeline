@@ -26,27 +26,123 @@ Specification following your skill instructions (Steps 1-8).
 Return a single, complete, valid JSON object — no text before or after it.
 Do not wrap in markdown code fences.
 
-The JSON must include:
-  study_meta:
-    protocol_number, study_title, sponsor, study_phase, indication,
-    total_study_duration_months, type (INTERVENTIONAL|OBSERVATIONAL),
-    total_enrollment (integer), number_of_arms (integer),
-    arms (list of {arm_name, arm_code, planned_enrollment, description}),
-    customer_segment (COMMERCIAL|ACADEMIC|LOW_MARKET — infer from sponsor)
-  timepoint_csv : filename and rows [{event, timepoint, visit_number, arm}]
-  labranges_csv : filename, columns, rows
-  forms         : list of CRF form objects, each with:
-                  form_id, form_title, form_category, cdash_domain,
-                  visits_assigned, has_repeating_group, is_epro,
-                  arm_applicability (ALL|specific arm_code),
-                  reuse_count, complexity (simple|average|complex),
-                  settings, choices, survey rows
-  review_flags  : each category a list of strings
+────────────────────────────────────────────────────────────────────────────
+REQUIRED TOP-LEVEL KEYS
+────────────────────────────────────────────────────────────────────────────
 
-Critical fields for downstream pricing:
-  - study_meta.total_enrollment, number_of_arms, arms must be populated
-  - timepoint_csv.rows must list every scheduled visit
-  - forms.visits_assigned must reference timepoint events by name
+study_meta:
+  protocol_number          (str, e.g. "PrTK05")
+  study_id                 (str — use protocol_number if no other identifier)
+  study_title              (str, full title from protocol cover page)
+  sponsor                  (str)
+  study_phase              (str, e.g. "Phase 2a")
+  indication               (str)
+  therapeutic_area         (str, e.g. "Oncology")
+  total_study_duration_months (int)
+  type                     ("INTERVENTIONAL" | "OBSERVATIONAL")
+  total_enrollment         (int)
+  number_of_arms           (int)
+  number_of_sites          (int or null)
+  regions                  (str or null, e.g. "United States")
+  start_date / end_date    (str or "—")
+  arms                     (list of {arm_name, arm_code, planned_enrollment, description})
+  customer_segment         ("COMMERCIAL" | "ACADEMIC" | "LOW_MARKET")
+  input_mode               ("PROTOCOL_ONLY" | "PROTOCOL_PLUS_CRF")
+  library_files_provided   (list of str, may be empty)
+
+timepoint_csv:
+  filename : "{protocol}_tpt.csv"
+  rows     : list of {event, timepoint, visit_number, arm} — one row per
+             scheduled visit per arm, covering SCREENING, BASELINE, every
+             numbered visit, UNSCHEDULED, END_OF_TREATMENT, SAFETY_FOLLOWUP
+             as applicable
+
+labranges_csv:  (REQUIRED — populate every lab test from the protocol)
+  filename : "{protocol}_labranges.csv"
+  columns  : ["test_code","test_name","lower","upper","unit","lab_name"]
+  rows     : list of {test_code, test_name, lower, upper, unit, lab_name}
+             - test_code: CDASH LBTESTCD (e.g. "HGB","WBC","ALT","CREAT")
+             - test_name: full name (e.g. "Hemoglobin","Alanine Aminotransferase")
+             - lower/upper/unit/lab_name: "[PLACEHOLDER]" until site values known
+             Include EVERY lab test mentioned in the protocol's laboratory
+             safety assessments section. Do not leave rows empty.
+
+forms: list of CRF form objects. For EACH form include:
+
+  form_id                  (str, e.g. "F01_ICF","F02_DEMO")
+  form_title               (str, human-readable)
+  form_category            ("ADMINISTRATIVE"|"CDASH_CLINICAL"|"CDASH_SAFETY"|"INFRASTRUCTURE"|"CUSTOM")
+  cdash_domain             (str or null, e.g. "DM","VS","LB","AE")
+  visits_assigned          (list of event names from timepoint_csv, or ["ALL_EVENTS"])
+  has_repeating_group      (bool)
+  is_epro                  (bool)
+  arm_applicability        ("ALL" or specific arm_code)
+  reuse_count              (int — number of events this form is used at)
+  complexity               ("simple"|"average"|"complex")
+  library_match            ({status, source_type, fields_from_library,
+                             fields_extended_from_protocol, fields_from_cdash_default})
+  settings                 ({form_title, form_id, version, style, namespaces})
+  choices                  (list of {list_name, label, name, source})
+  survey                   (list of survey rows — see below)
+  cross_form_dependencies  (list — see below)
+
+SURVEY ROWS (critical — every row needs these three metadata fields):
+
+  Each survey row MUST include these keys:
+    type                   (e.g. "text","integer","date","select_one X","calculate","begin group","end group")
+    name                   (the field name / OID)
+    label                  (question text)
+    completion_status      ("COMPLETE" | "FLAGGED" | "PLACEHOLDER")
+    library_source         ("CDASH_DEFAULT" | "CDASH_STANDARD" | "PROTOCOL_SPECIFIC" | "CUSTOM")
+    flag_reason            (str — empty "" if COMPLETE; explain why if FLAGGED/PLACEHOLDER)
+
+  Optional fields if applicable:
+    bind__oc_itemgroup, calculation, relevant, required, constraint,
+    constraint_message, readonly, appearance, bind__oc_external,
+    bind__oc_briefdescription, bind__oc_description
+
+  completion_status rules:
+    COMPLETE     — field is fully specified and can be built as-is
+    FLAGGED      — field is specified but needs reviewer confirmation
+                   (e.g. ambiguous protocol language, uncertain constraint)
+    PLACEHOLDER  — field has [PLACEHOLDER] values that MUST be filled in
+                   (e.g. site-specific lab values, unit strings, unknown codes)
+
+  Be generous with FLAGGED/PLACEHOLDER — aim to flag any field where a
+  human reviewer should confirm the mapping. Typical flag rate: 10-30%.
+
+CROSS_FORM_DEPENDENCIES (per form, list of dependency objects):
+  Each dependency records one field on this form that references another form:
+    source_form            (str, form_id of the OTHER form being referenced)
+    source_field           (str, the field name on source_form being pulled)
+    purpose                (str, why — e.g. "Randomization number from EN form")
+    visit_context          (str, when — e.g. "All visits after Baseline")
+    status                 ("FLAGGED — OID CONFIRMATION REQUIRED" typically)
+
+  Typical cross-form deps: DM.SUBJID pulled into every form; EN.RANDNUM
+  pulled into treatment forms; VS.VISIT_DT referenced by later visits.
+  Populate these wherever the protocol implies cross-form data lookups.
+
+review_flags: (ALL eight categories must be present, even if empty list)
+  site_specific           : values that must be set per site (lab ranges, units, site codes)
+  oid_confirmation        : fields whose OID path needs runtime confirmation
+  protocol_ambiguous      : protocol language unclear / multiple interpretations
+  constraint_review       : constraints inferred from protocol — need review
+  choice_list_review      : choice lists built from protocol — need review
+  custom_domain           : non-CDASH domains / custom forms
+  pdf_mapping_uncertain   : fields where PDF CRF mapping was uncertain
+  name_deviation          : field names that deviate from CDASH standard
+
+────────────────────────────────────────────────────────────────────────────
+QUALITY CHECKLIST (verify before returning)
+────────────────────────────────────────────────────────────────────────────
+  ✓ study_meta.total_enrollment > 0 and number_of_arms >= 1
+  ✓ timepoint_csv.rows covers every visit in the Schedule of Assessments
+  ✓ labranges_csv.rows has at least one entry per lab test in the protocol
+  ✓ Every survey row has completion_status, library_source, flag_reason
+  ✓ Every form has a cross_form_dependencies list (may be empty [])
+  ✓ review_flags has all 8 categories as lists (may be empty)
+  ✓ forms.visits_assigned references events from timepoint_csv by name
 """
 
 PRICING_SUMMARY_PROMPT = """\
@@ -179,17 +275,26 @@ ONE output ZIP saved to /mnt/user-data/outputs/:
 
 Use the scripts from your scripts/ folder:
 
-  import os, tempfile
+  import os, tempfile, shutil
   from build_xlsforms  import build_all_xlsforms, write_timepoint_csv, write_labranges_csv
   from build_checklist import build_checklist_pdf, build_checklist_xlsx
   from build_package   import build_package
 
-  build_log = []
+  # build_log is a dict of list buckets — NOT an empty list
+  build_log = {
+      'forms_built':    [],
+      'forms_skipped':  [],
+      'build_errors':   [],
+      'build_warnings': [],
+  }
+
   with tempfile.TemporaryDirectory() as tmp:
-      forms_dir = os.path.join(tmp, 'forms')
-      csv_dir   = os.path.join(tmp, 'csv')
-      os.makedirs(forms_dir)
-      os.makedirs(csv_dir)
+      forms_dir     = os.path.join(tmp, 'forms')
+      csv_dir       = os.path.join(tmp, 'csv')
+      checklist_dir = os.path.join(tmp, 'checklist')
+      package_dir   = os.path.join(tmp, 'package')
+      for d in (forms_dir, csv_dir, checklist_dir, package_dir):
+          os.makedirs(d, exist_ok=True)
 
       build_all_xlsforms(spec_data, forms_dir, build_log)
       write_timepoint_csv(spec_data.get('timepoint_csv', {}),
@@ -198,15 +303,20 @@ Use the scripts from your scripts/ folder:
       write_labranges_csv(spec_data.get('labranges_csv', {}),
                           os.path.join(csv_dir, f'{protocol}_labranges.csv'),
                           build_log)
+      build_checklist_pdf(spec_data, build_log,
+                          os.path.join(checklist_dir,
+                                       f'{protocol}_Build_Checklist.pdf'))
+      build_checklist_xlsx(spec_data, build_log,
+                           os.path.join(checklist_dir,
+                                        f'{protocol}_Build_Checklist.xlsx'))
 
-      checklist_pdf  = os.path.join(tmp, f'{protocol}_checklist.pdf')
-      checklist_xlsx = os.path.join(tmp, f'{protocol}_checklist.xlsx')
-      build_checklist_pdf(spec_data, build_log, checklist_pdf)
-      build_checklist_xlsx(spec_data, build_log, checklist_xlsx)
-
-      zip_path = f'/mnt/user-data/outputs/{protocol}_EDC_Build.zip'
-      build_package(spec_data, build_log, forms_dir, csv_dir,
-                    [checklist_pdf, checklist_xlsx], zip_path)
+      # build_package writes a date-stamped zip into package_dir and
+      # returns its path. Copy it to the required outputs path.
+      produced_zip = build_package(spec_data, build_log,
+                                   forms_dir, csv_dir,
+                                   checklist_dir, package_dir)
+      shutil.copy(produced_zip,
+                  f'/mnt/user-data/outputs/{protocol}_EDC_Build.zip')
 
 Follow SKILL.md Steps 2 onwards for the logic details (Step 2: process forms,
 Step 3: handle PLACEHOLDER fields, etc.).
