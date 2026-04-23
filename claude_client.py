@@ -1,72 +1,112 @@
 """
-claude_client.py — Anthropic API client with Skills + Code Execution support.
+claude_client.py — Anthropic API client for oc-ai-pipeline
 
-Skills run in a code execution sandbox and return output files as file_ids
-via the Files API. This client handles:
-  - Passing input files (PDFs, XLSXs, ZIPs) as base64 in message content
-  - Adding skill IDs and code execution tool to every request
-  - Handling pause_turn for long-running skill operations
-  - Extracting output file_ids from the response
-  - Rate limit retries with exponential backoff
+Two modes:
+  call_claude()  — plain Messages API, returns JSON text. Used for analysis
+                   tasks where Claude reads a protocol or JSON and returns
+                   structured data. Fast, no code execution, no skills.
+
+  run_skill()    — Skills API with code execution. Used when we need Claude
+                   to run Python scripts (reportlab, openpyxl) to generate
+                   real binary output files (PDFs, XLSXs, ZIPs).
+                   Returns {filename: bytes}.
 """
 
-import anthropic, base64, os, asyncio
+import anthropic, base64, json, os, asyncio, re
 
-BETAS = [
+MODEL       = "claude-opus-4-7"
+MAX_TOKENS  = 16000
+MAX_RETRIES = 5
+
+SKILL_BETAS = [
     "code-execution-2025-08-25",
     "skills-2025-10-02",
     "files-api-2025-04-14",
 ]
-MODEL = "claude-opus-4-7"
-MAX_TOKENS = 16000
-MAX_PAUSE_TURNS = 10
-MAX_RETRIES = 5
 
 
-def _build_content(pdf_bytes=None, xlsx_bytes=None, zip_bytes=None,
-                   extra_text="", prompt=""):
-    """Assemble the message content blocks."""
+# ── Plain Claude call — returns text ─────────────────────────────────────────
+
+async def call_claude(prompt, pdf_bytes=None, extra_text=None, max_tokens=MAX_TOKENS):
+    """
+    Call Claude with a prompt and optional PDF. Returns full text response.
+    No skills, no code execution — used for JSON extraction tasks only.
+    """
+    client = anthropic.AsyncAnthropic(
+        api_key=os.environ.get("ANTHROPIC_API_KEY", "").strip()
+    )
+
     content = []
-
     if pdf_bytes:
         content.append({
             "type": "document",
             "source": {
-                "type": "base64",
+                "type":       "base64",
                 "media_type": "application/pdf",
-                "data": base64.standard_b64encode(pdf_bytes).decode()
-            }
+                "data":       base64.standard_b64encode(pdf_bytes).decode(),
+            },
         })
-
-    if xlsx_bytes:
-        content.append({
-            "type": "text",
-            "text": "[XLSX file attached as base64]\n" +
-                    base64.standard_b64encode(xlsx_bytes).decode()
-        })
-
-    if zip_bytes:
-        content.append({
-            "type": "text",
-            "text": "[ZIP file attached as base64]\n" +
-                    base64.standard_b64encode(zip_bytes).decode()
-        })
-
     if extra_text:
         content.append({"type": "text", "text": extra_text})
+    content.append({"type": "text", "text": prompt})
 
-    if prompt:
-        content.append({"type": "text", "text": prompt})
+    for attempt in range(MAX_RETRIES):
+        try:
+            print(f"call_claude — attempt {attempt+1}, blocks: {len(content)}", flush=True)
+            response = await client.messages.create(
+                model=MODEL,
+                max_tokens=max_tokens,
+                messages=[{"role": "user", "content": content}],
+            )
+            text = response.content[0].text
+            print(f"call_claude success — {len(text)} chars", flush=True)
+            return text
 
-    return content
+        except anthropic.RateLimitError:
+            if attempt < MAX_RETRIES - 1:
+                wait = 60 * (attempt + 1)
+                print(f"Rate limit — waiting {wait}s (attempt {attempt+1}/{MAX_RETRIES})", flush=True)
+                await asyncio.sleep(wait)
+            else:
+                print("Rate limit — max retries exceeded", flush=True)
+                raise
+
+        except anthropic.APIError as e:
+            print(f"API error: {e}", flush=True)
+            raise
 
 
-def extract_output_file_ids(response):
+def extract_json(text):
     """
-    Pull file_ids out of a skill response.
-    Skills write output files to the container; the API returns them as
-    file_id references in bash_code_execution_tool_result blocks.
+    Extract the first valid JSON object or array from a Claude text response.
+    Strips markdown code fences before parsing.
     """
+    text = re.sub(r"```(?:json)?\s*", "", text)
+    text = re.sub(r"```", "", text)
+
+    for open_ch, close_ch in [('{', '}'), ('[', ']')]:
+        start = text.find(open_ch)
+        if start == -1:
+            continue
+        depth = 0
+        for i, ch in enumerate(text[start:], start):
+            if ch == open_ch:
+                depth += 1
+            elif ch == close_ch:
+                depth -= 1
+                if depth == 0:
+                    try:
+                        return json.loads(text[start:i + 1])
+                    except json.JSONDecodeError:
+                        break
+
+    raise ValueError("No valid JSON found in Claude response")
+
+
+# ── Skills API call — returns {filename: bytes} ───────────────────────────────
+
+def _extract_file_ids(response):
+    """Pull file_ids from a skill API response."""
     file_ids = []
     for block in response.content:
         if getattr(block, "type", None) == "bash_code_execution_tool_result":
@@ -79,121 +119,109 @@ def extract_output_file_ids(response):
     return file_ids
 
 
-async def download_output_files(client, file_ids):
-    """
-    For each file_id, fetch metadata (to get the filename) and download
-    the content. Returns a dict of {filename: bytes}.
-    """
+async def _download_files(client, file_ids):
+    """Download files by file_id. Returns {filename: bytes}."""
     results = {}
     for fid in file_ids:
         try:
-            meta = await client.beta.files.retrieve_metadata(
-                file_id=fid, betas=["files-api-2025-04-14"]
-            )
+            meta    = await client.beta.files.retrieve_metadata(
+                file_id=fid, betas=["files-api-2025-04-14"])
             content = await client.beta.files.download(
-                file_id=fid, betas=["files-api-2025-04-14"]
-            )
+                file_id=fid, betas=["files-api-2025-04-14"])
             data = await content.aread() if hasattr(content, "aread") else content.read()
             results[meta.filename] = data
             print(f"  Downloaded: {meta.filename} ({len(data)} bytes)", flush=True)
         except Exception as e:
-            print(f"  Warning: failed to download file_id {fid}: {e}", flush=True)
+            print(f"  Warning: failed to download {fid}: {e}", flush=True)
     return results
 
 
-async def run_skill(skill_prompt, skill_ids,
+async def run_skill(prompt, skill_ids,
                     pdf_bytes=None, xlsx_bytes=None, zip_bytes=None,
                     extra_text=""):
     """
-    Call one or more skills via the Messages API with code execution.
-
-    Returns a dict of {filename: bytes} for every output file the skill
-    produced.
+    Call the Skills API with code execution.
+    Used only for generating real binary output files.
+    Returns {filename: bytes}.
     """
     client = anthropic.AsyncAnthropic(
         api_key=os.environ.get("ANTHROPIC_API_KEY", "").strip()
     )
 
-    content = _build_content(
-        pdf_bytes=pdf_bytes,
-        xlsx_bytes=xlsx_bytes,
-        zip_bytes=zip_bytes,
-        extra_text=extra_text,
-        prompt=skill_prompt,
-    )
-    messages = [{"role": "user", "content": content}]
+    content = []
+    if pdf_bytes:
+        content.append({"type": "document", "source": {
+            "type": "base64", "media_type": "application/pdf",
+            "data": base64.standard_b64encode(pdf_bytes).decode()
+        }})
+    if xlsx_bytes:
+        content.append({"type": "text",
+            "text": "[XLSX attached as base64]\n" +
+                    base64.standard_b64encode(xlsx_bytes).decode()})
+    if zip_bytes:
+        content.append({"type": "text",
+            "text": "[ZIP attached as base64]\n" +
+                    base64.standard_b64encode(zip_bytes).decode()})
+    if extra_text:
+        content.append({"type": "text", "text": extra_text})
+    content.append({"type": "text", "text": prompt})
 
-    container = {
-        "skills": [
-            {"type": "custom", "skill_id": sid, "version": "latest"}
-            for sid in skill_ids
-        ]
-    }
+    messages   = [{"role": "user", "content": content}]
+    container  = {"skills": [
+        {"type": "custom", "skill_id": sid, "version": "latest"}
+        for sid in skill_ids
+    ]}
     tools = [{"type": "code_execution_20250825", "name": "code_execution"}]
 
     response = None
-    all_file_ids = []
-
     for attempt in range(MAX_RETRIES):
         try:
-            print(f"Calling Skills API — attempt {attempt+1} "
-                  f"({len(skill_ids)} skill(s))", flush=True)
-
+            print(f"run_skill — attempt {attempt+1} ({len(skill_ids)} skill(s))", flush=True)
             response = await client.beta.messages.create(
                 model=MODEL,
                 max_tokens=MAX_TOKENS,
-                betas=BETAS,
+                betas=SKILL_BETAS,
                 container=container,
                 messages=messages,
                 tools=tools,
             )
-            print(f"Response received — stop_reason: {response.stop_reason}",
-                  flush=True)
+            print(f"run_skill response — stop_reason: {response.stop_reason}", flush=True)
             break
 
         except anthropic.RateLimitError:
             if attempt < MAX_RETRIES - 1:
                 wait = 60 * (attempt + 1)
-                print(f"Rate limit — waiting {wait}s "
-                      f"(attempt {attempt+1}/{MAX_RETRIES})", flush=True)
+                print(f"Rate limit — waiting {wait}s", flush=True)
                 await asyncio.sleep(wait)
             else:
-                print("Rate limit — max retries exceeded", flush=True)
                 raise
 
         except anthropic.APIError as e:
-            print(f"API error: {e}", flush=True)
+            print(f"Skill API error: {e}", flush=True)
             raise
 
-    # Collect file_ids from this response turn
-    all_file_ids.extend(extract_output_file_ids(response))
+    all_file_ids = _extract_file_ids(response)
 
-    # Handle pause_turn — skill is still running; continue until done
-    for turn in range(MAX_PAUSE_TURNS):
+    # Handle pause_turn for long-running skill operations
+    MAX_PAUSE = 10
+    for turn in range(MAX_PAUSE):
         if response.stop_reason != "pause_turn":
             break
-
-        print(f"pause_turn received — continuing (turn {turn+1})", flush=True)
+        print(f"pause_turn — continuing (turn {turn+1})", flush=True)
         messages.append({"role": "assistant", "content": response.content})
-
-        # Reuse the same container (include container id for continuity)
         cont_id = getattr(getattr(response, "container", None), "id", None)
         if cont_id:
             container = {"id": cont_id, **container}
-
         response = await client.beta.messages.create(
             model=MODEL,
             max_tokens=MAX_TOKENS,
-            betas=BETAS,
+            betas=SKILL_BETAS,
             container=container,
             messages=messages,
             tools=tools,
         )
-        print(f"Continuation response — stop_reason: {response.stop_reason}",
-              flush=True)
-        all_file_ids.extend(extract_output_file_ids(response))
+        print(f"Continuation — stop_reason: {response.stop_reason}", flush=True)
+        all_file_ids.extend(_extract_file_ids(response))
 
-    print(f"Skill complete — {len(all_file_ids)} output file(s)", flush=True)
-
-    # Download all output files and return as {filename: bytes}
-    return await download_output_files(client, all_file_ids)
+    print(f"run_skill complete — {len(all_file_ids)} file(s)", flush=True)
+    return await _download_files(client, all_file_ids)
