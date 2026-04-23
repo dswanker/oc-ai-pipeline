@@ -52,6 +52,37 @@ def get_headers():
 def make_mutation():
     return "mutation($i:ID!,$b:ID!,$c:String!,$v:JSON!){change_column_value(item_id:$i,board_id:$b,column_id:$c,value:$v){id}}"
 
+
+def _check_monday_response(r, op_name):
+    """
+    Raise RuntimeError if a monday.com API call failed.
+    Monday returns HTTP 200 even for many errors — actual failures are
+    reported in the JSON body as an `errors` key or `error_code` key.
+
+    Args:
+      r:       httpx.Response
+      op_name: short string used in the error message (e.g. "UPLOAD", "SET_STATUS")
+    """
+    if r.status_code != 200:
+        raise RuntimeError(f"{op_name} failed — HTTP {r.status_code}: {r.text[:300]}")
+    try:
+        body = r.json()
+    except Exception:
+        # Non-JSON response on 200 — unusual but treat as success since the
+        # status code said OK. Caller will see it in the printed status line.
+        return
+    # Monday returns errors in multiple shapes:
+    #   - GraphQL: {"errors": [{"message": "..."}]}
+    #   - REST-ish: {"error_code": "...", "error_message": "..."}
+    #   - File uploads: {"status_code": 200, "errors": [...]} (mixed)
+    if isinstance(body, dict):
+        if body.get("errors"):
+            raise RuntimeError(f"{op_name} failed — monday errors: "
+                               f"{str(body['errors'])[:300]}")
+        if body.get("error_code"):
+            raise RuntimeError(f"{op_name} failed — {body.get('error_code')}: "
+                               f"{body.get('error_message', '')[:300]}")
+
 async def get_item(item_id):
     q = "query($i:[ID!]){items(ids:$i){id name column_values{id value text}}}"
     print(f"GET_ITEM: calling Monday API for item {item_id}", flush=True)
@@ -97,13 +128,18 @@ async def set_status(item_id, col_id, label_text):
     async with httpx.AsyncClient(timeout=30) as c:
         r = await c.post(MONDAY_API_URL, headers=get_headers(), json={"query": make_mutation(), "variables": variables})
     print(f"SET_STATUS {col_id}={label_text}: {r.status_code}", flush=True)
+    _check_monday_response(r, f"SET_STATUS({col_id}={label_text})")
 
 async def append_log(item_id, message):
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     val = json.dumps({"text": f"[{ts}] {message}"})
     variables = {"i": item_id, "b": BOARD_ID, "c": COL["ai_run_log"], "v": val}
     async with httpx.AsyncClient(timeout=30) as c:
-        await c.post(MONDAY_API_URL, headers=get_headers(), json={"query": make_mutation(), "variables": variables})
+        r = await c.post(MONDAY_API_URL, headers=get_headers(), json={"query": make_mutation(), "variables": variables})
+    # append_log is called from every error handler — don't raise here, just
+    # print. Raising would mask the original error we're trying to log.
+    if r.status_code != 200:
+        print(f"APPEND_LOG failed — HTTP {r.status_code}: {r.text[:200]}", flush=True)
 
 async def upload_file(item_id, col_id, filename, file_content):
     print(f"UPLOADING: {filename} ({len(file_content)} bytes) to col {col_id}", flush=True)
@@ -124,6 +160,7 @@ async def upload_file(item_id, col_id, filename, file_content):
             }
         )
     print(f"UPLOAD STATUS: {r.status_code} {r.text[:300]}", flush=True)
+    _check_monday_response(r, f"UPLOAD({filename})")
 
 async def set_text(item_id, col_id, text_value):
     """Set a text column value on a monday.com item."""
@@ -135,6 +172,7 @@ async def set_text(item_id, col_id, text_value):
                              "i": item_id, "b": BOARD_ID,
                              "c": col_id, "v": v}})
     print(f"SET_TEXT {col_id}: {r.status_code}", flush=True)
+    _check_monday_response(r, f"SET_TEXT({col_id})")
 
 
 async def download_column_file(item_id, col_id):

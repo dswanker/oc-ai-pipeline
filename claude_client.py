@@ -78,8 +78,34 @@ async def call_claude(prompt, pdf_bytes=None, extra_text=None, max_tokens=MAX_TO
                 print("Rate limit — max retries exceeded", flush=True)
                 raise
 
+        except anthropic.InternalServerError as e:
+            # B2: Anthropic transient server errors (500/502/503/504) —
+            # retry with exponential backoff. Distinct from BadRequestError
+            # (which is a client-side problem we shouldn't retry).
+            if attempt < MAX_RETRIES - 1:
+                wait = 15 * (2 ** attempt)  # 15s, 30s, 60s, 120s
+                print(f"Anthropic 5xx ({e}) — waiting {wait}s "
+                      f"(attempt {attempt+1}/{MAX_RETRIES})", flush=True)
+                await asyncio.sleep(wait)
+            else:
+                print("Anthropic 5xx — max retries exceeded", flush=True)
+                raise
+
+        except (anthropic.BadRequestError,
+                anthropic.AuthenticationError,
+                anthropic.PermissionDeniedError,
+                anthropic.NotFoundError) as e:
+            # Client-side problems — no point retrying.
+            # BadRequestError covers: invalid input, context too long,
+            # credit balance exhausted (error code 400).
+            print(f"Client error (not retrying): {e}", flush=True)
+            raise
+
         except anthropic.APIError as e:
-            print(f"API error: {e}", flush=True)
+            # Catch-all for any other Anthropic API error we haven't
+            # classified. Default to raising; better to fail loudly than
+            # retry forever on an unknown error class.
+            print(f"Unclassified API error: {e}", flush=True)
             raise
 
 
@@ -181,6 +207,20 @@ def extract_json(text, expected_keys=None):
     print(f"extract_json: found {len(candidates)} candidate(s), "
           f"returning size={best_size} tier={best_tier}{top_keys_preview}",
           flush=True)
+
+    # B3: if the caller specified expected_keys but the best candidate didn't
+    # match any of them (tier < 1), we probably have truncated output or a
+    # fragment — not a real extraction. Raising here prevents the pipeline
+    # from silently using an inner dict as if it were the full document.
+    if expected_keys and best_tier < 1:
+        raise ValueError(
+            f"extract_json: no candidate matched any of expected_keys="
+            f"{expected_keys}. Best candidate (tier={best_tier}, "
+            f"size={best_size}{top_keys_preview}) is probably a fragment "
+            f"from truncated output. Inspect the raw response and consider "
+            f"raising max_tokens."
+        )
+
     return best_parsed
 
 
@@ -326,6 +366,22 @@ async def run_skill(prompt, skill_ids,
                 await asyncio.sleep(wait)
             else:
                 raise
+
+        except anthropic.InternalServerError as e:
+            # B2: same retry pattern as call_claude
+            if attempt < MAX_RETRIES - 1:
+                wait = 15 * (2 ** attempt)
+                print(f"Skill 5xx ({e}) — waiting {wait}s", flush=True)
+                await asyncio.sleep(wait)
+            else:
+                raise
+
+        except (anthropic.BadRequestError,
+                anthropic.AuthenticationError,
+                anthropic.PermissionDeniedError,
+                anthropic.NotFoundError) as e:
+            print(f"Skill client error (not retrying): {e}", flush=True)
+            raise
 
         except anthropic.APIError as e:
             print(f"Skill API error: {e}", flush=True)
