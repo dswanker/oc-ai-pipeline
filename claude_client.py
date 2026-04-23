@@ -263,15 +263,18 @@ async def run_skill(prompt, skill_ids,
     response = None
     for attempt in range(MAX_RETRIES):
         try:
-            print(f"run_skill — attempt {attempt+1} ({len(skill_ids)} skill(s))", flush=True)
-            response = await client.beta.messages.create(
+            print(f"run_skill — attempt {attempt+1} ({len(skill_ids)} skill(s)) [streaming]", flush=True)
+            # Streaming is required for operations that may exceed 10 minutes.
+            # The SDK's stream() context manager collects the full message.
+            async with client.beta.messages.stream(
                 model=MODEL,
                 max_tokens=MAX_TOKENS_SKILL,
                 betas=SKILL_BETAS,
                 container=container,
                 messages=messages,
                 tools=tools,
-            )
+            ) as stream:
+                response = await stream.get_final_message()
             print(f"run_skill response — stop_reason: {response.stop_reason}", flush=True)
             break
 
@@ -302,14 +305,15 @@ async def run_skill(prompt, skill_ids,
         if cont_id:
             # Build container dict explicitly to avoid key collision
             container = {"id": cont_id, "skills": original_skills}
-        response = await client.beta.messages.create(
+        async with client.beta.messages.stream(
             model=MODEL,
             max_tokens=MAX_TOKENS_SKILL,
             betas=SKILL_BETAS,
             container=container,
             messages=messages,
             tools=tools,
-        )
+        ) as stream:
+            response = await stream.get_final_message()
         print(f"Continuation — stop_reason: {response.stop_reason}", flush=True)
         all_file_ids.extend(_extract_file_ids(response))
 
