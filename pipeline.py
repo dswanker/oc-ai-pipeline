@@ -29,7 +29,7 @@ Human-in-the-loop paths:
   E. Edited SOE CSV uploaded          → update SOE in OpenClinica (not impl)
 """
 
-import asyncio, io, json, os, sys, tempfile, zipfile, datetime as _dt
+import asyncio, io, json, os, sys, tempfile, traceback, zipfile, datetime as _dt
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
@@ -747,29 +747,21 @@ async def run_pipeline(item_id):
               flush=True)
 
         # ── Path D: Edited Quote XLSX → regenerate Quote PDFs ─────────────────
+        # B3: this path still uses run_skill() which is unreliable for file
+        # retrieval. Until we migrate to a local script, log clearly so the
+        # user knows the regeneration was not performed.
         if edited_quote_xlsx:
-            await append_log(item_id, "Edited Quote XLSX detected — regenerating PDFs.")
-            print("Path D: regenerating quote PDFs from edited XLSX...", flush=True)
-            try:
-                quote_files = await run_skill(
-                    QUOTE_PDF_FROM_XLSX_PROMPT,
-                    skill_ids=[SKILL_IDS["pricing_quote"]],
-                    xlsx_bytes=edited_quote_xlsx,
-                )
-                q_int_pdf = _find(quote_files, "_Quote_Internal.pdf")
-                q_cli_pdf = _find(quote_files, "_Quote_Client.pdf")
-                if q_int_pdf:
-                    await upload_file(item_id, COL["pricing_quote"],
-                                      f"{protocol_num}_Quote_Internal_{version}.pdf", q_int_pdf)
-                if q_cli_pdf:
-                    await upload_file(item_id, COL["pricing_quote"],
-                                      f"{protocol_num}_Quote_Client_{version}.pdf", q_cli_pdf)
-                await append_log(item_id, "Quote PDFs regenerated from edited XLSX.")
-            except Exception as e:
-                print(f"Quote PDF regeneration error: {e}", flush=True)
-                await append_log(item_id, f"Quote PDF regeneration error: {e}")
+            await append_log(item_id,
+                "Edited Quote XLSX detected. Automatic PDF regeneration from edited "
+                "XLSX is not currently supported on Railway — the pricing-quote "
+                "skill sandbox does not return files reliably. Your edited XLSX "
+                "remains attached; to regenerate PDFs, edit the underlying "
+                "Protocol Summary JSON or Study Spec and re-run the full pipeline."
+            )
+            print("Path D: edited Quote XLSX detected — regeneration not supported, "
+                  "skipping without changes.", flush=True)
             await set_status(item_id, COL["pipeline_status"], STATUS["all_complete"])
-            await append_log(item_id, "Pipeline complete.")
+            await append_log(item_id, "Pipeline complete (Path D — no-op).")
             return
 
         # ── Path E: Edited SOE CSV → update OpenClinica ───────────────────────
@@ -919,7 +911,6 @@ async def run_pipeline(item_id):
                     print(f"Chain A complete — pdf:{len(spec_files['pdf'])} bytes "
                           f"xlsx:{len(spec_files['xlsx'])} bytes", flush=True)
                 except Exception as e:
-                    import traceback
                     print(f"Chain A error: {e}", flush=True)
                     traceback.print_exc()
                     await append_log(item_id, f"Study Spec file generation error: {e}")
@@ -960,7 +951,9 @@ async def run_pipeline(item_id):
                 pricing_text = await call_claude(
                     PRICING_SUMMARY_PROMPT,
                     extra_text="Study Specification JSON:\n" + json.dumps(struct_slim),
+                    max_tokens=64000,  # B4: Chain B may also produce large output
                 )
+                pricing_json_valid = False
                 try:
                     pricing_json = extract_json(
                         pricing_text,
@@ -968,11 +961,33 @@ async def run_pipeline(item_id):
                                        "visit_summary", "crf_summary"],
                     )
                     if isinstance(pricing_json, list):
+                        print("Warning: Protocol Summary was a list, not a dict", flush=True)
                         pricing_json = {"study_meta": {"protocol_number": protocol_num}}
-                    print(f"Protocol Summary JSON extracted — "
-                          f"keys: {list(pricing_json.keys())}", flush=True)
+                    else:
+                        # B5: Validate required keys actually came through.
+                        # Fewer than 3 of the 4 expected keys means extraction
+                        # gave us a fragment, not a complete summary.
+                        expected = {"study_meta", "patient_population",
+                                    "visit_summary", "crf_summary"}
+                        present  = expected & set(pricing_json.keys())
+                        if len(present) >= 3:
+                            pricing_json_valid = True
+                            print(f"Protocol Summary JSON extracted — "
+                                  f"keys: {list(pricing_json.keys())}", flush=True)
+                        else:
+                            print(f"Warning: Protocol Summary missing expected keys. "
+                                  f"Got: {sorted(present)}. Skipping Chain B work.", flush=True)
                 except ValueError:
-                    print("Warning: Protocol Summary JSON not valid", flush=True)
+                    print("Warning: Protocol Summary JSON not valid — "
+                          "skipping Chain B work.", flush=True)
+
+                # B1+B5: Bail out of Chain B entirely if pricing_json is unusable.
+                # Prevents uploading empty/garbage PDFs to monday.com.
+                if not pricing_json_valid:
+                    await append_log(item_id,
+                        "Chain B skipped — Protocol Summary JSON invalid or incomplete. "
+                        "Study Spec JSON is still available; re-run may recover.")
+                    return
 
                 # Steps 4 + 5 in parallel: Protocol Summary PDF + Pricing Quote
                 async def gen_ps_pdf():
@@ -993,7 +1008,6 @@ async def run_pipeline(item_id):
                         await asyncio.gather(*uploads)
                         print(f"Protocol Summary PDF: {len(ps_pdf) if ps_pdf else 0} bytes", flush=True)
                     except Exception as e:
-                        import traceback
                         print(f"Protocol Summary PDF error: {e}", flush=True)
                         traceback.print_exc()
                         await append_log(item_id, f"Protocol Summary PDF error: {e}")
@@ -1025,7 +1039,6 @@ async def run_pipeline(item_id):
                         )
                         await append_log(item_id, "Price Quote complete — 4 files uploaded.")
                     except Exception as e:
-                        import traceback
                         print(f"Price Quote error: {e}", flush=True)
                         traceback.print_exc()
                         await append_log(item_id, f"Price Quote error: {e}")
@@ -1112,7 +1125,6 @@ async def run_pipeline(item_id):
                               f"zip={len(zip_bytes) if zip_bytes else 0} bytes",
                               flush=True)
                     except Exception as e:
-                        import traceback
                         print(f"EDC Build error: {e}", flush=True)
                         traceback.print_exc()
                         await append_log(item_id, f"EDC Build error: {e}")
@@ -1143,7 +1155,6 @@ async def run_pipeline(item_id):
                     else:
                         await append_log(item_id, "DVS skipped — builder unavailable.")
                 except Exception as e:
-                    import traceback
                     print(f"DVS error: {e}", flush=True)
                     traceback.print_exc()
                     await append_log(item_id, f"DVS error: {e}")
@@ -1172,19 +1183,30 @@ async def run_pipeline(item_id):
                 chain_a(), chain_b(), chain_c(), chain_d(),
                 return_exceptions=True,
             )
-            # Log any chain-level exceptions that escaped internal handlers
-            for name, result in zip(["A", "B", "C", "D"], results):
+            # B2: track outcomes so the final status reflects reality.
+            chain_names    = ["A", "B", "C", "D"]
+            failed_chains  = []
+            for name, result in zip(chain_names, results):
                 if isinstance(result, Exception):
+                    failed_chains.append(name)
                     print(f"Chain {name} exception escaped: {result}", flush=True)
                     await append_log(item_id, f"Chain {name} error: {result}")
 
+            if failed_chains:
+                final_status = STATUS["failed"]
+                final_log    = (f"Pipeline finished with errors in chains: "
+                                f"{', '.join(failed_chains)}. Check uploaded files "
+                                f"and logs above for details.")
+            else:
+                final_status = STATUS["all_complete"]
+                final_log    = "Pipeline complete. All outputs uploaded."
+
             await asyncio.gather(
-                set_status(item_id, COL["pipeline_status"], STATUS["all_complete"]),
-                append_log(item_id, "Pipeline complete. All outputs uploaded."),
+                set_status(item_id, COL["pipeline_status"], final_status),
+                append_log(item_id, final_log),
             )
 
     except Exception as e:
-        import traceback
         print(f"PIPELINE CRASHED: {e}", flush=True)
         print(traceback.format_exc(), flush=True)
         await append_log(item_id, f"PIPELINE ERROR: {e}")
