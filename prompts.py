@@ -23,8 +23,20 @@ You are running the protocol-analysis skill.
 Read the attached clinical trial protocol PDF and produce a complete Study
 Specification following your skill instructions (Steps 1-8).
 
-Return a single, complete, valid JSON object — no text before or after it.
-Do not wrap in markdown code fences.
+OUTPUT FORMAT — READ CAREFULLY:
+  ✓ Your ENTIRE response must be a single valid JSON object.
+  ✓ Start the response with `{` and end it with `}`.
+  ✓ No explanation before or after the JSON.
+  ✓ No markdown code fences (no ```json or ```).
+  ✓ No reasoning or commentary anywhere in the output — not even inside
+    the JSON as string values. Keep all string values concise and factual.
+  ✓ The object's top-level keys MUST include: study_meta, timepoint_csv,
+    labranges_csv, forms, review_flags.
+  ✗ Do NOT output multiple JSON fragments.
+  ✗ Do NOT output an example/stub object first and then the real one.
+  ✗ Do NOT truncate — if you approach the token limit, shorten string
+    values (especially survey row labels and flag_reason text) rather
+    than omitting required structure keys.
 
 ────────────────────────────────────────────────────────────────────────────
 REQUIRED TOP-LEVEL KEYS

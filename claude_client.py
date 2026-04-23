@@ -15,7 +15,8 @@ Two modes:
 import anthropic, base64, json, os, asyncio, re
 
 MODEL       = "claude-opus-4-7"
-MAX_TOKENS  = 16000         # for call_claude (JSON extraction)
+MAX_TOKENS  = 32000         # for call_claude (JSON extraction) — raised to
+                            # fit rich Study Spec JSON with full per-row metadata
 MAX_TOKENS_SKILL = 32000    # for run_skill (file generation, can be long)
 MAX_RETRIES = 5
 
@@ -53,12 +54,13 @@ async def call_claude(prompt, pdf_bytes=None, extra_text=None, max_tokens=MAX_TO
 
     for attempt in range(MAX_RETRIES):
         try:
-            print(f"call_claude — attempt {attempt+1}, blocks: {len(content)}", flush=True)
-            response = await client.messages.create(
+            print(f"call_claude — attempt {attempt+1}, blocks: {len(content)} [streaming]", flush=True)
+            async with client.messages.stream(
                 model=MODEL,
                 max_tokens=max_tokens,
                 messages=[{"role": "user", "content": content}],
-            )
+            ) as stream:
+                response = await stream.get_final_message()
             text = response.content[0].text
             print(f"call_claude success — {len(text)} chars", flush=True)
             return text
@@ -77,21 +79,24 @@ async def call_claude(prompt, pdf_bytes=None, extra_text=None, max_tokens=MAX_TO
             raise
 
 
-def extract_json(text):
+def extract_json(text, expected_keys=None):
     """
-    Extract the LARGEST valid JSON object or array from a Claude response.
+    Extract a valid JSON object or array from a Claude response.
 
-    Claude often prefixes responses with "Here's the JSON:" or embeds small
-    example objects before the real payload. Taking the first balanced `{`
-    that parses can yield a stub. We instead scan for every balanced JSON
-    candidate in the text and return the largest one that parses.
+    Selection order:
+      1. If expected_keys is given, prefer the LARGEST parseable candidate
+         whose top-level keys include ALL expected_keys (this avoids
+         grabbing an inner form/row dict that happens to parse).
+      2. Otherwise, prefer the LARGEST candidate whose top-level keys
+         overlap with common study-spec markers (study_meta, forms).
+      3. Fallback to the largest parseable candidate.
+
     Strips markdown code fences before parsing.
     """
     text = re.sub(r"```(?:json)?\s*", "", text)
     text = re.sub(r"```", "", text)
 
-    candidates = []   # list of parsed JSON values
-    sizes      = []   # character length of each candidate's source slice
+    candidates = []   # list of (parsed_value, source_slice_length)
 
     for open_ch, close_ch in [('{', '}'), ('[', ']')]:
         i = 0
@@ -103,6 +108,7 @@ def extract_json(text):
             in_str  = False
             escaped = False
             start   = i
+            matched = False
             for j in range(i, len(text)):
                 ch = text[j]
                 if in_str:
@@ -123,24 +129,55 @@ def extract_json(text):
                     if depth == 0:
                         slice_ = text[start:j + 1]
                         try:
-                            candidates.append(json.loads(slice_))
-                            sizes.append(len(slice_))
+                            candidates.append((json.loads(slice_), len(slice_)))
                         except json.JSONDecodeError:
                             pass
                         i = j + 1
+                        matched = True
                         break
-            else:
+            if not matched:
                 # unbalanced or ran off end — skip past this open char
                 i = start + 1
 
     if not candidates:
         raise ValueError("No valid JSON found in Claude response")
 
-    # Return the largest candidate by source length
-    best_idx = max(range(len(candidates)), key=lambda k: sizes[k])
+    # Hints about which candidate is the top-level document
+    TOP_LEVEL_MARKERS = {"study_meta", "forms", "patient_population",
+                         "crf_summary", "review_flags", "timepoint_csv"}
+    if expected_keys is None:
+        expected_keys = []
+
+    def _score(parsed, size):
+        """Higher is better."""
+        if not isinstance(parsed, dict):
+            return (-1, size)  # arrays and scalars are last resort
+        keys = set(parsed.keys())
+        # Tier 1: contains ALL expected keys
+        if expected_keys and all(k in keys for k in expected_keys):
+            return (3, size)
+        # Tier 2: contains any top-level study-spec marker
+        if keys & TOP_LEVEL_MARKERS:
+            return (2, size)
+        # Tier 3: contains ANY expected key (partial match)
+        if expected_keys and (keys & set(expected_keys)):
+            return (1, size)
+        # Tier 4: everything else
+        return (0, size)
+
+    best_idx = max(range(len(candidates)),
+                   key=lambda k: _score(candidates[k][0], candidates[k][1]))
+    best_parsed, best_size = candidates[best_idx]
+
+    # Debug summary
+    best_tier = _score(best_parsed, best_size)[0]
+    top_keys_preview = ""
+    if isinstance(best_parsed, dict):
+        top_keys_preview = f", top keys: {list(best_parsed.keys())[:8]}"
     print(f"extract_json: found {len(candidates)} candidate(s), "
-          f"returning largest ({sizes[best_idx]} chars)", flush=True)
-    return candidates[best_idx]
+          f"returning size={best_size} tier={best_tier}{top_keys_preview}",
+          flush=True)
+    return best_parsed
 
 
 # ── Skills API call — returns {filename: bytes} ───────────────────────────────

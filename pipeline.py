@@ -667,7 +667,10 @@ async def run_pipeline(item_id):
                     ws = wb[sheet_name]
                     raw = '\n'.join(str(cell.value or '') for row in ws.iter_rows() for cell in row)
                     try:
-                        struct_json = extract_json(raw)
+                        struct_json = extract_json(
+                            raw,
+                            expected_keys=["study_meta", "forms"],
+                        )
                         print("Extracted JSON from edited Study Spec XLSX.", flush=True)
                         break
                     except ValueError:
@@ -693,7 +696,10 @@ async def run_pipeline(item_id):
                 extra_text = "\n".join(extra_parts) if extra_parts else None,
             )
             try:
-                struct_json = extract_json(struct_text)
+                struct_json = extract_json(
+                    struct_text,
+                    expected_keys=["study_meta", "forms"],
+                )
                 # Normalize — handle list at top level
                 if isinstance(struct_json, list):
                     struct_json = {"study_meta": {"protocol_number": protocol_num},
@@ -788,7 +794,11 @@ async def run_pipeline(item_id):
                     extra_text="Study Specification JSON:\n" + json.dumps(struct_slim),
                 )
                 try:
-                    pricing_json = extract_json(pricing_text)
+                    pricing_json = extract_json(
+                        pricing_text,
+                        expected_keys=["study_meta", "patient_population",
+                                       "visit_summary", "crf_summary"],
+                    )
                     if isinstance(pricing_json, list):
                         pricing_json = {"study_meta": {"protocol_number": protocol_num}}
                     print(f"Protocol Summary JSON extracted — "
