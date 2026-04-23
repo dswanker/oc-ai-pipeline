@@ -664,13 +664,21 @@ async def run_pipeline(item_id):
             )
             try:
                 struct_json = extract_json(struct_text)
+                # Normalize — handle list at top level
                 if isinstance(struct_json, list):
                     struct_json = {"study_meta": {"protocol_number": protocol_num},
                                    "forms": struct_json, "review_flags": {}}
+                # Normalize — ensure forms is a list of dicts, not strings
+                forms = struct_json.get("forms", [])
+                if forms and isinstance(forms[0], str):
+                    struct_json["forms"] = [{"form_id": f, "form_title": f} for f in forms]
+                print(f"Study Spec JSON extracted — "
+                      f"{len(struct_json.get('forms', []))} forms, "
+                      f"keys: {list(struct_json.keys())}", flush=True)
             except ValueError:
                 struct_json = {"study_meta": {"protocol_number": protocol_num},
                                "forms": [], "review_flags": {}}
-                print("Warning: Study Spec JSON not valid", flush=True)
+                print("Warning: Study Spec JSON not valid — using empty fallback", flush=True)
 
             # Upload raw JSON
             await upload_file(item_id, COL["spec_json"],
@@ -725,9 +733,10 @@ async def run_pipeline(item_id):
                     struct_slim = {
                         "study_meta":   struct_json.get("study_meta", {}),
                         "review_flags": struct_json.get("review_flags", {}),
-                        "forms":        [{"name": f.get("name"), "domain": f.get("domain"),
-                                          "complexity": f.get("complexity"),
-                                          "visits_assigned": f.get("visits_assigned", [])}
+                        "forms":        [{"name": f.get("name") if isinstance(f, dict) else f,
+                                          "domain": f.get("domain", "") if isinstance(f, dict) else "",
+                                          "complexity": f.get("complexity", "") if isinstance(f, dict) else "",
+                                          "visits_assigned": f.get("visits_assigned", []) if isinstance(f, dict) else []}
                                          for f in struct_json.get("forms", [])],
                     }
                     pricing_text = await call_claude(
@@ -855,15 +864,12 @@ async def run_pipeline(item_id):
                 else:
                     # Fresh run: edc-builder skill
                     print("Chain C: Running edc-builder skill...", flush=True)
-                    struct_slim = {
-                        "study_meta": struct_json.get("study_meta", {}) if struct_json else {},
-                        "forms":      struct_json.get("forms", []) if struct_json else [],
-                    }
+                    # Pass full struct_json — edc-builder needs complete form definitions
                     try:
                         build_files = await run_skill(
                             EDC_BUILD_PROMPT,
                             skill_ids=[SKILL_IDS["edc_builder"]],
-                            extra_text="Study Specification JSON:\n" + json.dumps(struct_slim),
+                            extra_text="Study Specification JSON:\n" + json.dumps(struct_json),
                         )
                         build_zip_holder[0] = _find(build_files, "_EDC_Build.zip", ".zip")
                         if build_zip_holder[0]:
@@ -878,39 +884,39 @@ async def run_pipeline(item_id):
                                       build_zip_holder[0])
                     await append_log(item_id, "EDC Build complete — ZIP uploaded.")
 
-                # DVS
+                # DVS — runs inside _run_edc_and_dvs after build completes
                 print("Chain C: Running DVS...", flush=True)
                 dvs_slim = {}
-            for fname, fdata in build_json_holder[0].get("forms", {}).items():
-                survey = fdata.get("survey", [])
-                relevant_rows = [
-                    {k: v for k, v in row.items()
-                     if k in ('type','name','label','constraint',
-                               'constraint_message','calculation',
-                               'relevant','required')}
-                    for row in survey
-                    if any(row.get(k) for k in ('constraint','calculation','relevant'))
-                ]
-                dvs_slim[fname] = {"survey": relevant_rows}
+                for fname, fdata in build_json_holder[0].get("forms", {}).items():
+                    survey = fdata.get("survey", [])
+                    relevant_rows = [
+                        {k: v for k, v in row.items()
+                         if k in ('type','name','label','constraint',
+                                   'constraint_message','calculation',
+                                   'relevant','required')}
+                        for row in survey
+                        if any(row.get(k) for k in ('constraint','calculation','relevant'))
+                    ]
+                    dvs_slim[fname] = {"survey": relevant_rows}
 
-            try:
-                dvs_files = await run_skill(
-                    DVS_PROMPT,
-                    skill_ids=[SKILL_IDS["dvs_specification"]],
-                    extra_text=("Study Specification JSON:\n" +
-                                json.dumps(struct_json.get("study_meta", {})
-                                           if struct_json else {}) +
-                                "\n\nEDC Build survey data:\n" +
-                                json.dumps({"forms": dvs_slim})),
-                )
-                dvs_xlsx = _find(dvs_files, "_DVS.xlsx", ".xlsx")
-                if dvs_xlsx:
-                    await upload_file(item_id, COL["dvs_output"],
-                                      f"{protocol_num}_DVS_{version}.xlsx", dvs_xlsx)
-                await append_log(item_id, "DVS complete.")
-            except Exception as e:
-                print(f"DVS error: {e}", flush=True)
-                await append_log(item_id, f"DVS error: {e}")
+                try:
+                    dvs_files = await run_skill(
+                        DVS_PROMPT,
+                        skill_ids=[SKILL_IDS["dvs_specification"]],
+                        extra_text=("Study Specification JSON:\n" +
+                                    json.dumps(struct_json.get("study_meta", {})
+                                               if struct_json else {}) +
+                                    "\n\nEDC Build survey data:\n" +
+                                    json.dumps({"forms": dvs_slim})),
+                    )
+                    dvs_xlsx = _find(dvs_files, "_DVS.xlsx", ".xlsx")
+                    if dvs_xlsx:
+                        await upload_file(item_id, COL["dvs_output"],
+                                          f"{protocol_num}_DVS_{version}.xlsx", dvs_xlsx)
+                    await append_log(item_id, "DVS complete.")
+                except Exception as e:
+                    print(f"DVS error: {e}", flush=True)
+                    await append_log(item_id, f"DVS error: {e}")
 
             # ── Launch all three chains in parallel ────────────────────────────
             await asyncio.gather(chain_a(), chain_b(), chain_c())
