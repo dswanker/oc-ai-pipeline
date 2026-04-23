@@ -74,6 +74,11 @@ def _find(files: dict, *patterns) -> bytes | None:
     return None
 
 
+async def _noop_bytes():
+    """Awaitable that returns None — used as a placeholder in asyncio.gather."""
+    return None
+
+
 def _xl_header_row(ws, headers, bg="1B3A6B", fg="FFFFFF"):
     fill = PatternFill("solid", fgColor=bg)
     font = Font(name="Arial", bold=True, color=fg, size=10)
@@ -372,14 +377,15 @@ def _build_board_json(struct_json):
     return {"labels": [], "lists": lists, "cards": cards}
 
 
-async def _get_board_id(subdomain, study_uuid, is_production):
+async def _get_board_id(subdomain, study_uuid, is_production, token=None):
     """
     Get the Study Designer board ID for a newly created study.
     The board ID is embedded in the currentBoardUrl returned by the study-service.
     URL format: https://{subdomain}.design.openclinica(-dev).io/b/{boardId}/...
     """
     import httpx
-    token    = await _get_oc_token(subdomain)
+    if token is None:
+        token = await _get_oc_token(subdomain)
     base_url = f"https://{subdomain}.build.openclinica.io"
     async with httpx.AsyncClient(timeout=30) as c:
         r = await c.get(
@@ -400,13 +406,14 @@ async def _get_board_id(subdomain, study_uuid, is_production):
     raise RuntimeError(f"Could not extract board ID from URL: {board_url}")
 
 
-async def _import_board(subdomain, board_id, board_json, is_production):
+async def _import_board(subdomain, board_id, board_json, is_production, token=None):
     """
     Import the board.json into the study designer.
     POST {designer_url}/api/importStudy/{boardId}
     """
     import httpx
-    token       = await _get_oc_token(subdomain)
+    if token is None:
+        token = await _get_oc_token(subdomain)
     env_suffix  = "" if is_production else "-dev"
     designer_url = f"https://{subdomain}.design.openclinica{env_suffix}.io"
     endpoint    = f"{designer_url}/api/importStudy/{board_id}"
@@ -499,13 +506,13 @@ async def create_oc_study(subdomain, struct_json, is_production=False):
 
     # ── Step 3: Get the board ID ───────────────────────────────────────────────
     try:
-        board_id = await _get_board_id(subdomain, study_uuid, is_production)
+        board_id = await _get_board_id(subdomain, study_uuid, is_production, token=token)
     except Exception as e:
         print(f"Could not get board ID: {e}", flush=True)
         raise
 
     # ── Step 4: Import board.json ──────────────────────────────────────────────
-    await _import_board(subdomain, board_id, board_json, is_production)
+    await _import_board(subdomain, board_id, board_json, is_production, token=token)
     print(f"Study design board imported successfully.", flush=True)
 
     return study_url
@@ -613,21 +620,31 @@ async def run_pipeline(item_id):
             await set_status(item_id, COL["pipeline_status"], STATUS["all_complete"])
             return
 
-        # ── Download protocol PDF ──────────────────────────────────────────────
+        # ── Download inputs in parallel ───────────────────────────────────────
+        # Skip protocol PDF download if Path A active (edited spec provided)
         from monday_client import get_asset_url
-        protocol_pdf = b""
-        assets = await get_asset_url(item_id)
-        for asset in assets:
-            if (asset.get("name") or "").lower().endswith(".pdf"):
-                url = asset.get("public_url") or asset.get("url")
-                if url:
-                    protocol_pdf = await download_file(url)
-                if protocol_pdf:
-                    break
-        print(f"Protocol PDF: {len(protocol_pdf)} bytes", flush=True)
 
-        crf_pdf  = await download_file(crf_url)    if crf_url    else None
-        oc_zip   = await download_file(oc_std_url) if oc_std_url else None
+        async def _get_protocol_pdf():
+            if edited_spec_xlsx:
+                return b""  # Skip — we already have struct via edited XLSX
+            assets = await get_asset_url(item_id)
+            for asset in assets:
+                if (asset.get("name") or "").lower().endswith(".pdf"):
+                    url = asset.get("public_url") or asset.get("url")
+                    if url:
+                        pdf = await download_file(url)
+                        if pdf:
+                            return pdf
+            return b""
+
+        protocol_pdf, crf_pdf, oc_zip = await asyncio.gather(
+            _get_protocol_pdf(),
+            download_file(crf_url)    if crf_url    else _noop_bytes(),
+            download_file(oc_std_url) if oc_std_url else _noop_bytes(),
+        )
+        print(f"Protocol PDF: {len(protocol_pdf) if protocol_pdf else 0} bytes | "
+              f"CRF: {len(crf_pdf) if crf_pdf else 0} | "
+              f"OC ZIP: {len(oc_zip) if oc_zip else 0}", flush=True)
 
         # ── Determine if analysis/chains are needed ───────────────────────────
         needs_analysis = (
