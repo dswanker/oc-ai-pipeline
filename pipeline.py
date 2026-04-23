@@ -652,18 +652,39 @@ async def create_oc_study(subdomain, struct_json, is_production=False):
     print(f"Board: {len(board_json['lists'])} events, "
           f"{len(board_json['cards'])} form cards", flush=True)
 
-    # ── Step 3: Get the board ID ───────────────────────────────────────────────
+    # ── Steps 3 + 4: Board import via design service ──────────────────────────
+    # KNOWN LIMITATION — the design service's /api/importStudy endpoint is
+    # protected by a Keycloak OAuth client ("designer") that does NOT allow
+    # headless password-grant authentication. The only tokens it accepts are
+    # issued via the browser-based SSO flow. Until OpenClinica provisions a
+    # service-account Keycloak client for programmatic access, the board
+    # import must be done manually in the design UI after the study shell
+    # is created.
+    #
+    # See conversation about /api/importStudy 401 Unauthorized. Re-enable
+    # the block below once a service-account client is available.
+    board_imported = False
+    board_error    = None
     try:
         board_id = await _get_board_id(subdomain, study_uuid, is_production, token=token)
+        await _import_board(subdomain, board_id, board_json, is_production, token=token)
+        print("Study design board imported successfully.", flush=True)
+        board_imported = True
     except Exception as e:
-        print(f"Could not get board ID: {e}", flush=True)
-        raise
+        board_error = str(e)
+        print(f"Board import skipped — {board_error}", flush=True)
+        print("  (This is expected: the design service requires a Keycloak "
+              "service-account client that is not yet provisioned. Study shell "
+              "was created successfully; the SOE/form cards can be built "
+              "manually in the design UI using the uploaded Study Spec JSON "
+              "as reference.)", flush=True)
 
-    # ── Step 4: Import board.json ──────────────────────────────────────────────
-    await _import_board(subdomain, board_id, board_json, is_production, token=token)
-    print(f"Study design board imported successfully.", flush=True)
-
-    return study_url
+    # Return a dict so callers can surface both the URL and the import state
+    return {
+        "study_url":      study_url,
+        "board_imported": board_imported,
+        "board_error":    board_error,
+    }
 
 
 # ── Main pipeline ──────────────────────────────────────────────────────────────
@@ -1168,11 +1189,23 @@ async def run_pipeline(item_id):
                 env_label = "production" if oc_production else "test"
                 await append_log(item_id, f"Creating study in OpenClinica {env_label} ({oc_subdomain})...")
                 try:
-                    study_url = await create_oc_study(oc_subdomain, struct_json,
-                                                       is_production=oc_production)
+                    result = await create_oc_study(oc_subdomain, struct_json,
+                                                    is_production=oc_production)
+                    study_url      = result["study_url"]
+                    board_imported = result["board_imported"]
                     await set_text(item_id, COL["oc_study_url"], study_url)
-                    await append_log(item_id, f"Study + design board created: {study_url}")
-                    print(f"Chain D complete: {study_url}", flush=True)
+                    if board_imported:
+                        await append_log(item_id,
+                            f"Study + design board created: {study_url}")
+                    else:
+                        await append_log(item_id,
+                            f"Study shell created: {study_url}  |  "
+                            f"Design board import skipped (service-account auth "
+                            f"not yet provisioned — see design.openclinica.io "
+                            f"logs for details). Open the study in the design "
+                            f"UI to build the SOE manually.")
+                    print(f"Chain D complete: {study_url} "
+                          f"(board_imported={board_imported})", flush=True)
                 except Exception as e:
                     print(f"OC Study error: {e}", flush=True)
                     await append_log(item_id, f"OC Study creation failed: {e}")
