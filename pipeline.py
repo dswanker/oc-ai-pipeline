@@ -747,84 +747,90 @@ async def run_pipeline(item_id):
             # ── Chain B: Protocol Summary JSON → PDF + Quote ───────────────────
             async def chain_b():
                 nonlocal pricing_json
-                if not _want("protocol summary") and not _want("price quote"):
+                want_summary = _want("protocol summary")
+                want_quote   = _want("price quote")
+                if not want_summary and not want_quote:
                     return
 
-                if _want("protocol summary"):
-                    print("Chain B: Claude extracting Protocol Summary JSON...", flush=True)
-                    struct_slim = {
-                        "study_meta":   struct_json.get("study_meta", {}),
-                        "review_flags": struct_json.get("review_flags", {}),
-                        "forms":        [{"name": f.get("name") if isinstance(f, dict) else f,
-                                          "domain": f.get("domain", "") if isinstance(f, dict) else "",
-                                          "complexity": f.get("complexity", "") if isinstance(f, dict) else "",
-                                          "visits_assigned": f.get("visits_assigned", []) if isinstance(f, dict) else []}
-                                         for f in struct_json.get("forms", [])],
-                    }
-                    pricing_text = await call_claude(
-                        PRICING_SUMMARY_PROMPT,
-                        extra_text="Study Specification JSON:\n" + json.dumps(struct_slim),
-                    )
+                # Both branches need pricing_json — extract it once
+                print("Chain B: Claude extracting Protocol Summary JSON...", flush=True)
+                struct_slim = {
+                    "study_meta":   struct_json.get("study_meta", {}),
+                    "review_flags": struct_json.get("review_flags", {}),
+                    "forms":        [{"name": f.get("name") if isinstance(f, dict) else f,
+                                      "domain": f.get("domain", "") if isinstance(f, dict) else "",
+                                      "complexity": f.get("complexity", "") if isinstance(f, dict) else "",
+                                      "visits_assigned": f.get("visits_assigned", []) if isinstance(f, dict) else []}
+                                     for f in struct_json.get("forms", [])],
+                }
+                pricing_text = await call_claude(
+                    PRICING_SUMMARY_PROMPT,
+                    extra_text="Study Specification JSON:\n" + json.dumps(struct_slim),
+                )
+                try:
+                    pricing_json = extract_json(pricing_text)
+                    if isinstance(pricing_json, list):
+                        pricing_json = {"study_meta": {"protocol_number": protocol_num}}
+                    print(f"Protocol Summary JSON extracted — "
+                          f"keys: {list(pricing_json.keys())}", flush=True)
+                except ValueError:
+                    print("Warning: Protocol Summary JSON not valid", flush=True)
+
+                # Steps 4 + 5 in parallel: Protocol Summary PDF + Pricing Quote
+                async def gen_ps_pdf():
+                    if not want_summary:
+                        return
+                    print("Chain B: Generating Protocol Summary PDF...", flush=True)
                     try:
-                        pricing_json = extract_json(pricing_text)
-                        if isinstance(pricing_json, list):
-                            pricing_json = {"study_meta": {"protocol_number": protocol_num}}
-                    except ValueError:
-                        print("Warning: Protocol Summary JSON not valid", flush=True)
+                        ps_files = await run_skill(
+                            GENERATE_PROTOCOL_SUMMARY_PROMPT + json.dumps(pricing_json),
+                            skill_ids=[SKILL_IDS["protocol_analysis"]],
+                        )
+                        ps_pdf = _find(ps_files, "_Protocol_Summary.pdf")
+                        uploads = [upload_file(item_id, COL["pricing_summary"],
+                            f"{protocol_num}_Protocol_Summary_{version}.json",
+                            json.dumps(pricing_json, indent=2).encode())]
+                        if ps_pdf:
+                            uploads.append(upload_file(item_id, COL["pricing_summary"],
+                                f"{protocol_num}_Protocol_Summary_{version}.pdf", ps_pdf))
+                        await asyncio.gather(*uploads)
+                        print(f"Protocol Summary PDF: {ps_pdf is not None}", flush=True)
+                    except Exception as e:
+                        print(f"Protocol Summary PDF error: {e}", flush=True)
+                        await append_log(item_id, f"Protocol Summary PDF error: {e}")
 
-                    # Steps 4 + 5 in parallel: Protocol Summary PDF + Pricing Quote
-                    async def gen_ps_pdf():
-                        print("Chain B: Generating Protocol Summary PDF...", flush=True)
-                        try:
-                            ps_files = await run_skill(
-                                GENERATE_PROTOCOL_SUMMARY_PROMPT + json.dumps(pricing_json),
-                                skill_ids=[SKILL_IDS["protocol_analysis"]],
+                async def gen_quote():
+                    if not want_quote:
+                        return
+                    print("Chain B: Generating Price Quote (local scripts)...", flush=True)
+                    try:
+                        loop = asyncio.get_event_loop()
+                        qf = await loop.run_in_executor(
+                            None,
+                            lambda: run_pricing_model(
+                                pricing_json,
+                                additional_sub_disc=additional_sub_disc,
+                                additional_svc_disc=additional_svc_disc,
                             )
-                            ps_pdf = _find(ps_files, "_Protocol_Summary.pdf")
-                            uploads = [upload_file(item_id, COL["pricing_summary"],
-                                f"{protocol_num}_Protocol_Summary_{version}.json",
-                                json.dumps(pricing_json, indent=2).encode())]
-                            if ps_pdf:
-                                uploads.append(upload_file(item_id, COL["pricing_summary"],
-                                    f"{protocol_num}_Protocol_Summary_{version}.pdf", ps_pdf))
-                            await asyncio.gather(*uploads)
-                            print(f"Protocol Summary PDF: {ps_pdf is not None}", flush=True)
-                        except Exception as e:
-                            print(f"Protocol Summary PDF error: {e}", flush=True)
-                            await append_log(item_id, f"Protocol Summary PDF error: {e}")
+                        )
+                        await asyncio.gather(
+                            upload_file(item_id, COL["pricing_quote"],
+                                f"{protocol_num}_Quote_Internal_{version}.pdf",  qf["internal_pdf"]),
+                            upload_file(item_id, COL["pricing_quote"],
+                                f"{protocol_num}_Quote_Client_{version}.pdf",    qf["client_pdf"]),
+                            upload_file(item_id, COL["pricing_quote"],
+                                f"{protocol_num}_Quote_Internal_{version}.xlsx", qf["internal_xlsx"]),
+                            upload_file(item_id, COL["pricing_quote"],
+                                f"{protocol_num}_Quote_Client_{version}.xlsx",   qf["client_xlsx"]),
+                        )
+                        await append_log(item_id, "Price Quote complete — 4 files uploaded.")
+                    except Exception as e:
+                        print(f"Price Quote error: {e}", flush=True)
+                        await append_log(item_id, f"Price Quote error: {e}")
 
-                    async def gen_quote():
-                        if not _want("price quote"):
-                            return
-                        print("Chain B: Generating Price Quote (local scripts)...", flush=True)
-                        try:
-                            loop = asyncio.get_event_loop()
-                            qf = await loop.run_in_executor(
-                                None,
-                                lambda: run_pricing_model(
-                                    pricing_json,
-                                    additional_sub_disc=additional_sub_disc,
-                                    additional_svc_disc=additional_svc_disc,
-                                )
-                            )
-                            await asyncio.gather(
-                                upload_file(item_id, COL["pricing_quote"],
-                                    f"{protocol_num}_Quote_Internal_{version}.pdf",  qf["internal_pdf"]),
-                                upload_file(item_id, COL["pricing_quote"],
-                                    f"{protocol_num}_Quote_Client_{version}.pdf",    qf["client_pdf"]),
-                                upload_file(item_id, COL["pricing_quote"],
-                                    f"{protocol_num}_Quote_Internal_{version}.xlsx", qf["internal_xlsx"]),
-                                upload_file(item_id, COL["pricing_quote"],
-                                    f"{protocol_num}_Quote_Client_{version}.xlsx",   qf["client_xlsx"]),
-                            )
-                            await append_log(item_id, "Price Quote complete — 4 files uploaded.")
-                        except Exception as e:
-                            print(f"Price Quote error: {e}", flush=True)
-                            await append_log(item_id, f"Price Quote error: {e}")
-
-                    await asyncio.gather(gen_ps_pdf(), gen_quote())
-                    await append_log(item_id, "Protocol Summary + Price Quote complete.")
-                    print("Chain B complete.", flush=True)
+                await asyncio.gather(gen_ps_pdf(), gen_quote())
+                await append_log(item_id, "Chain B complete.")
+                print("Chain B complete.", flush=True)
 
             # ── Chain C: EDC Build → DVS ──────────────────────────────────────
             build_zip_holder  = [None]   # mutable container for async closure
@@ -856,12 +862,19 @@ async def run_pipeline(item_id):
                     await append_log(item_id, "Translating DVS input to XLSForm updates.")
                     dvs_text = _dvs_xlsx_to_text(edited_dvs_xlsx)
 
+                    # Claude generates XLSForm JSON directly (no file generation)
+                    build_prompt_json = (
+                        "You need to generate the XLSForm structure as JSON.\n"
+                        "Return a single valid JSON object with this structure:\n"
+                        '{"forms": {"<filename>.xlsx": {"survey": [...], "choices": [...], "settings": {...}}}}\n'
+                        "No text before or after. No markdown code fences.\n\n"
+                    )
                     struct_slim = {
                         "study_meta": struct_json.get("study_meta", {}) if struct_json else {},
                         "forms":      struct_json.get("forms", []) if struct_json else [],
                     }
                     base_build_text = await call_claude(
-                        EDC_BUILD_PROMPT,
+                        build_prompt_json,
                         extra_text="Study Specification JSON:\n" + json.dumps(struct_slim),
                     )
                     try:
