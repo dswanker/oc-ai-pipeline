@@ -187,6 +187,83 @@ forms: list of CRF form objects. For EACH form include:
   cross_form_dependencies  (list — see below)
 
 ════════════════════════════════════════════════════════════════════════════
+FORM → VISIT ASSIGNMENT RULES (critical — read carefully)
+════════════════════════════════════════════════════════════════════════════
+
+When populating `visits_assigned`, follow these rules. Getting these wrong
+causes form cards to appear on the wrong events in the OpenClinica Study
+Designer, which is a top source of post-build manual corrections.
+
+RULE 1 — ENROLLMENT vs SCREENING
+    F_EN (Enrollment) belongs at the BASELINE or FIRST DOSING visit, NOT at
+    SCREENING. Screening is for evaluating eligibility (IC/EC criteria
+    checks, baseline assessments). Enrollment is the moment the patient is
+    formally registered into the study and begins study interventions —
+    this is typically the same day as Dose 1 / Injection 1.
+
+    Correct:
+      F_EN → SE_BASELINE_INJECTION_1 (for treatment arm)
+      F_EN → SE_BASELINE              (for control arm)
+
+    Wrong (very common mistake):
+      F_EN → SE_SCREENING
+
+RULE 2 — PER-ARM VISIT COVERAGE
+    When the protocol has separate SOA tables for different arms
+    (e.g. Table 1 for Treatment, Table 2 for Control), forms that appear
+    in BOTH tables MUST list visits from BOTH tables in `visits_assigned`.
+
+    Example: if F_PSA is marked "X" at Screening/W2-3/W8-10/W16-18 in
+    Table 2 AND at Screening/Inj 2/W8-10/EOS in Table 1, then:
+      visits_assigned: ["SE_SCREENING", "SE_INJECTION_2", "SE_WEEK_8_10",
+                         "SE_END_OF_STUDY", "SE_BASELINE", "SE_WEEK_2_3"]
+
+    Do NOT emit a form with TRT-arm visits only when the SOA clearly
+    mandates it on the CTRL arm too. Read BOTH tables before finalizing
+    `visits_assigned` for each form.
+
+RULE 3 — TIMING-DEFINED EVENTS (EBRT, infusions, continuous meds)
+    Forms for procedures that begin at a specific point in the schedule
+    (e.g., "Begins X days after Injection N") should be assigned to the
+    FIRST event where the procedure actually begins, NOT to a late
+    follow-up visit like End of Study.
+
+    Example: EBRT "Begins 0-3 days after Injection #2"
+      → F_RT should be assigned to SE_INJECTION_2 onward (e.g., INJ_2,
+        TA_2, INJ_3, TA_3, any concurrent CTRL weeks), NOT just to
+        SE_END_OF_STUDY.
+
+RULE 4 — SCREENING-ONLY FORMS
+    These forms belong ONLY at SE_SCREENING (or equivalent first visit):
+      - F_ICF (Informed Consent)
+      - F_DM  (Demographics — collected once)
+      - F_MH  (Medical History — collected once)
+      - F_IE  (Inclusion/Exclusion — eligibility is only assessed once)
+      - F_DIS (Disease Assessment / Staging at baseline)
+      - F_ECOG (if assessed only at baseline per protocol)
+
+RULE 5 — CONTINUOUS / ONGOING FORMS
+    Forms that capture data throughout the study should be at EVERY visit
+    where the SOA shows an "X" — do NOT compress to a subset:
+      - F_AE  (Adverse Events): every clinical visit PLUS SE_UNSCHEDULED
+      - F_CM  (Concomitant Meds): every visit the SOA shows "X"
+      - F_VS  (Vital Signs): every visit with an "X" in SOA
+      - F_BIOSP (Biosamples): every visit in biosample rows of BOTH tables
+
+RULE 6 — UNSCHEDULED AND END-OF-STUDY
+    - SE_UNSCHEDULED should host: F_AE, F_AESAE (if applicable), F_CM,
+      F_PREG (if applicable) — anything that might arise ad hoc.
+    - SE_END_OF_STUDY should host: F_DS (Disposition) AT MINIMUM, plus
+      any final-visit assessments marked in the SOA.
+
+RULE 7 — ARM-SPECIFIC SAFETY FORMS
+    If the protocol specifies different safety reporting for different
+    arms (e.g. "For the control group, only SAEs related to biomarker
+    collection procedure should be recorded"), use `arm_applicability`
+    to mark the form's scope. Consider a separate form (e.g., F_AESAE)
+    if the control-arm safety form has materially different fields.
+
+════════════════════════════════════════════════════════════════════════════
 SURVEY ROWS — REQUIRED FIELDS AND AGGRESSIVE POPULATION
 ════════════════════════════════════════════════════════════════════════════
 
@@ -343,6 +420,14 @@ QUALITY CHECKLIST (verify before returning)
     (unless row per arm and `arm` field distinguishes them)
   ✓ All forms[].form_id values use F_ prefix (no F## numeric prefix)
   ✓ All forms[].visits_assigned use SE_ prefix
+  ✓ F_EN (Enrollment) visits_assigned includes a BASELINE event — NOT just
+    SE_SCREENING (see FORM → VISIT ASSIGNMENT RULES, Rule 1)
+  ✓ For multi-arm studies with separate SOA tables, forms present in both
+    tables have visits from BOTH tables in visits_assigned (Rule 2)
+  ✓ Procedure forms (EBRT, infusions, continuous meds) are assigned to the
+    FIRST event where the procedure begins, not a late follow-up (Rule 3)
+  ✓ F_AE assigned to every clinical visit + SE_UNSCHEDULED (Rule 5)
+  ✓ F_DS (Disposition) assigned to SE_END_OF_STUDY (Rule 6)
   ✓ All survey rows with non-group type have bind__oc_itemgroup populated
     with dotted F_<FORM>.<GROUP> form
   ✓ labranges_csv.rows has at least one entry per lab test in the protocol
