@@ -38,6 +38,68 @@ OUTPUT FORMAT — READ CAREFULLY:
     values (especially survey row labels and flag_reason text) rather
     than omitting required structure keys.
 
+════════════════════════════════════════════════════════════════════════════
+OPENCLINICA OID NAMING CONVENTIONS  (CRITICAL)
+════════════════════════════════════════════════════════════════════════════
+
+Every identifier in the JSON you produce MUST follow the OpenClinica OID
+naming conventions documented in "Locating Object Identifiers in a Study":
+
+  Object          Prefix   Example
+  ─────────────────────────────────────────────────────────
+  Study           S_       S_PrTK05
+  Site            S_       S_SITENAME(TEST)
+  Event           SE_      SE_SCREENING, SE_BASELINE_INJECTION_1
+  Form            F_       F_DEMO, F_VS, F_LB, F_ICF
+  Form Version    F_*_N    F_DEMO_1
+  Item Group      IG_      IG_DEMO_DM   (pattern: IG_<FORM>_<GROUP>)
+  Item            I_       I_DEMO_SUBJID (pattern: I_<FORM>_<FIELD>)
+
+DOTTED NOTATION for cross-form references in XLSForms:
+  The `bind::oc:itemgroup` column and cross_form_dependencies use DOTTED
+  notation: `<FORM_OID>.<GROUP>` for item groups and `<FORM_OID>.<FIELD>`
+  for items. Example: `F_DEMO.DM` (item group), `F_DEMO.SUBJID` (item).
+
+APPLY THIS TO ALL IDENTIFIERS:
+
+  • timepoint_csv.rows[].event      → "SE_SCREENING", NOT "SCREENING"
+  • forms[].form_id                 → "F_DEMO", NOT "F02_DEMO" or "DEMO"
+    (no numeric prefix like F##_; just F_<UPPERCASE_NAME>)
+  • forms[].settings.form_id        → same as forms[].form_id
+  • forms[].visits_assigned         → ["SE_SCREENING","SE_WEEK_1", ...]
+  • forms[].survey[].bind__oc_itemgroup  → "F_DEMO.DM" (dotted)
+  • forms[].survey[].name           → use the BARE field name here
+    (e.g. "SUBJID", "AETERM") — the xlsform tool constructs the full
+    Item OID `I_<FORM>_<NAME>` at build time.
+
+CROSS-FORM DEPENDENCIES — full XPath expressions:
+  For each cross_form_dependencies entry you MUST also provide an
+  `xpath_expression` field with the full OpenClinica XPath. Two patterns:
+
+  Cross-event (data from a different event):
+    instance('clinicaldata')/ODM/ClinicalData/SubjectData/
+      StudyEventData[@StudyEventOID='SE_X']/
+      FormData[@FormOID='F_Y']/
+      ItemGroupData[@ItemGroupOID='F_Y.Z']/
+      ItemData[@ItemOID='F_Y.FIELD']/@Value
+
+  Same-event (from current event):
+    instance('clinicaldata')/ODM/ClinicalData/SubjectData/
+      StudyEventData[@OpenClinica:CurrentStudyEvent='true']/
+      FormData[@FormOID='F_Y']/
+      ItemGroupData/ItemData[@ItemOID='F_Y.FIELD']/@Value
+
+  The xpath_expression may be a compact single-line string. Whitespace in
+  the template above is for readability only.
+
+FORM NAMING RULES for form_id:
+  CDASH forms — use the CDASH domain code: F_DM, F_VS, F_LB, F_AE, F_EX,
+  F_IE, F_MH, F_CM, F_DS, F_PE, F_PC.
+  When you need multiple forms in the same domain, add a short suffix:
+  F_EX (study drug), F_EXVAL (valacyclovir) — not F_EX_1/F_EX_2.
+  Non-CDASH forms — use a descriptive uppercase short name: F_ICF, F_DIS,
+  F_BIOSP, F_RT, F_PREG, F_ECOG, F_EN, F_PSA.
+
 ────────────────────────────────────────────────────────────────────────────
 REQUIRED TOP-LEVEL KEYS
 ────────────────────────────────────────────────────────────────────────────
@@ -65,9 +127,10 @@ study_meta:
 timepoint_csv:
   filename : "{protocol}_tpt.csv"
   rows     : list of {event, timepoint, visit_number, arm} — one row per
-             scheduled visit per arm, covering SCREENING, BASELINE, every
-             numbered visit, UNSCHEDULED, END_OF_TREATMENT, SAFETY_FOLLOWUP
-             as applicable
+             scheduled visit per arm. `event` MUST use SE_ prefix
+             (SE_SCREENING, SE_BASELINE_INJECTION_1, SE_WEEK_1, etc.)
+             Cover SCREENING, BASELINE, every numbered visit, UNSCHEDULED,
+             END_OF_TREATMENT, SAFETY_FOLLOWUP as applicable.
 
 labranges_csv:  (REQUIRED — populate every lab test from the protocol)
   filename : "{protocol}_labranges.csv"
@@ -81,11 +144,11 @@ labranges_csv:  (REQUIRED — populate every lab test from the protocol)
 
 forms: list of CRF form objects. For EACH form include:
 
-  form_id                  (str, e.g. "F01_ICF","F02_DEMO")
+  form_id                  (str with F_ prefix, e.g. "F_DEMO","F_VS")
   form_title               (str, human-readable)
   form_category            ("ADMINISTRATIVE"|"CDASH_CLINICAL"|"CDASH_SAFETY"|"INFRASTRUCTURE"|"CUSTOM")
   cdash_domain             (str or null, e.g. "DM","VS","LB","AE")
-  visits_assigned          (list of event names from timepoint_csv, or ["ALL_EVENTS"])
+  visits_assigned          (list of SE_-prefixed event names from timepoint_csv, or ["ALL_EVENTS"])
   has_repeating_group      (bool)
   is_epro                  (bool)
   arm_applicability        ("ALL" or specific arm_code)
@@ -98,43 +161,144 @@ forms: list of CRF form objects. For EACH form include:
   survey                   (list of survey rows — see below)
   cross_form_dependencies  (list — see below)
 
-SURVEY ROWS (critical — every row needs these three metadata fields):
+════════════════════════════════════════════════════════════════════════════
+SURVEY ROWS — REQUIRED FIELDS AND AGGRESSIVE POPULATION
+════════════════════════════════════════════════════════════════════════════
 
-  Each survey row MUST include these keys:
+Each survey row MUST include these keys (never omit, may be empty):
     type                   (e.g. "text","integer","date","select_one X","calculate","begin group","end group")
-    name                   (the field name / OID)
-    label                  (question text)
+    name                   (bare field name, no prefix — e.g. "SUBJID", "AETERM")
+    label                  (question text visible to the data entry user)
     completion_status      ("COMPLETE" | "FLAGGED" | "PLACEHOLDER")
     library_source         ("CDASH_DEFAULT" | "CDASH_STANDARD" | "PROTOCOL_SPECIFIC" | "CUSTOM")
     flag_reason            (str — empty "" if COMPLETE; explain why if FLAGGED/PLACEHOLDER)
 
-  Optional fields if applicable:
-    bind__oc_itemgroup, calculation, relevant, required, constraint,
-    constraint_message, readonly, appearance, bind__oc_external,
-    bind__oc_briefdescription, bind__oc_description
+POPULATE THESE OPTIONAL FIELDS AGGRESSIVELY — err toward inclusion:
 
-  completion_status rules:
+    bind__oc_itemgroup   — REQUIRED on every data row (not group rows).
+                           Use dotted form "F_<FORM>.<GROUP>" for example
+                           "F_DEMO.DM", "F_VS.VIT", "F_AE.AE_GROUP".
+                           When the form has only one group, reuse the
+                           form's CDASH domain code as the group name:
+                           F_LB.LB, F_DM.DM, F_VS.VS.
+
+    appearance           — Use OpenClinica/XLSForm values:
+                           w1, w2, w3, w4, w5, w6, w9 — column widths (of 6)
+                           horizontal, horizontal-compact — inline choices
+                           minimal — dropdown instead of radio
+                           multiline — multi-line text
+                           field-list — single screen group layout
+                           columns — choices in columns
+                           Example inferences:
+                             short text fields (SUBJID)          → "w2"
+                             date (VSDAT)                        → "w2"
+                             numeric with unit (TEMP, WEIGHT)    → "w2"
+                             Yes/No select_one                   → "w2 horizontal"
+                             long free-text (AE term, comments)  → "w6"
+                             choice list from YN                 → "w2 horizontal"
+                             severity/grade select with many items → "w3 minimal"
+
+    relevant             — XPath/XForms expression gating when this field
+                           appears. Populate whenever the protocol implies
+                           conditionality, e.g.:
+                             ${AEONGO}='N'         (show end date only if not ongoing)
+                             ${PREG_REPORTED}='Y'  (show preg details only if reported)
+                             ${TSTAGE}='OTHER'     (show TSTAGE_OTH if Other chosen)
+
+    required             — Use "yes", "true()", or an XPath expression.
+                           Populate whenever a field is clearly mandatory:
+                             SUBJID on every form → "yes"
+                             primary dates (VSDAT, AESTDAT, etc.) → "yes"
+                             required efficacy/safety endpoints → "yes"
+
+    constraint           — XPath validation. Populate whenever a protocol
+                           rule implies a constraint:
+                             date-not-future      → ". <= today()"
+                             date-after-start     → ". >= ${START_DATE}"
+                             integer-range        → ". >= 18 and . <= 100"
+                             positive-decimal     → ". > 0"
+                             blood-volume         → ". <= 42"
+                             gleason-sum          → ". = ${GLEASON_PRIMARY} + ${GLEASON_SECONDARY}"
+                             enum-restricted      → constraint on select_one limited choices
+
+    constraint_message   — Plain-text error message when constraint fails.
+                           Populate alongside every constraint.
+
+    calculation          — XPath expression for auto-computed fields.
+                           Populate whenever a value is derivable:
+                             total score          → "${PRIMARY} + ${SECONDARY}"
+                             age-from-DOB         → "floor((today() - ${BRTHDAT}) div 365.25)"
+                             cross-form pulldata  → "pulldata('prtk05_tpt','timepoint','event',${EVENT_CF})"
+                             cross-form instance  → full XPath as shown in
+                                                     CROSS-FORM DEPENDENCIES above
+
+    dependencies         — List of cross-form field references in dotted
+                           notation: ["F_DEMO.SUBJID", "F_EX.EXSTDAT"].
+                           Populate on every row that pulls data from
+                           another form.
+
+    readonly             — "yes" for calculated display fields.
+
+    bind__oc_external    — "clinicaldata" for cross-form XPath calculations;
+                           "labranges" for lab-range lookups; "{study}_tpt"
+                           for timepoint lookups.
+
+    bind__oc_briefdescription / bind__oc_description — Short/long descriptions
+                           for sponsor reporting. Populate when the protocol
+                           provides a definition or context beyond the label.
+
+completion_status rules:
     COMPLETE     — field is fully specified and can be built as-is
     FLAGGED      — field is specified but needs reviewer confirmation
                    (e.g. ambiguous protocol language, uncertain constraint)
     PLACEHOLDER  — field has [PLACEHOLDER] values that MUST be filled in
                    (e.g. site-specific lab values, unit strings, unknown codes)
 
-  Be generous with FLAGGED/PLACEHOLDER — aim to flag any field where a
-  human reviewer should confirm the mapping. Typical flag rate: 10-30%.
+Be generous with FLAGGED/PLACEHOLDER — aim to flag any field where a
+human reviewer should confirm the mapping. Typical flag rate: 10-30%.
 
-CROSS_FORM_DEPENDENCIES (per form, list of dependency objects):
-  Each dependency records one field on this form that references another form:
-    source_form            (str, form_id of the OTHER form being referenced)
-    source_field           (str, the field name on source_form being pulled)
+RATIONALE: Humans add rules and refine — it is far better to overfill
+these columns and let humans strip out what doesn't apply than to leave
+them blank. If the protocol suggests ANY reasonable rule, populate the
+column and mark the row FLAGGED with a flag_reason explaining your
+inference.
+
+════════════════════════════════════════════════════════════════════════════
+CROSS_FORM_DEPENDENCIES — full XPaths required
+════════════════════════════════════════════════════════════════════════════
+
+Each dependency records one field on this form that references another form:
+    source_form            (str, F_-prefixed form_id of the OTHER form)
+    source_field           (str, bare field name on source_form, e.g. "SUBJID")
+    source_item_oid        (str, dotted form "F_<FORM>.<FIELD>", e.g. "F_DEMO.SUBJID")
+    source_itemgroup_oid   (str, dotted form "F_<FORM>.<GROUP>", e.g. "F_DEMO.DM")
+    source_event_oid       (str, SE_<EVENT> or "CURRENT" for same-event reference)
+    target_field           (str, bare name of the field ON THIS FORM that
+                            will receive the pulled value — must match the
+                            `name` of one of this form's survey rows. If
+                            the naming matches the source (e.g. SUBJID →
+                            SUBJID), use the same value. Required so that
+                            downstream tooling can wire the XPath into the
+                            correct survey row's `calculation` column.)
     purpose                (str, why — e.g. "Randomization number from EN form")
     visit_context          (str, when — e.g. "All visits after Baseline")
     status                 ("FLAGGED — OID CONFIRMATION REQUIRED" typically)
+    xpath_expression       (str, full XPath as specified in the OID CONVENTIONS
+                            section above. Pick the cross-event or same-event
+                            template as appropriate.)
 
-  Typical cross-form deps: DM.SUBJID pulled into every form; EN.RANDNUM
-  pulled into treatment forms; VS.VISIT_DT referenced by later visits.
-  Populate these wherever the protocol implies cross-form data lookups.
+ALSO: Duplicate the xpath_expression into the corresponding survey row's
+`calculation` column (where target_field matches the row's `name`), and
+set `bind__oc_external: clinicaldata` on that row. This is critical —
+the survey row is what drives the actual XLSForm build; the
+cross_form_dependencies array is the structured catalog for review.
 
+Typical cross-form deps: F_DEMO.SUBJID pulled into every form;
+F_EN.RANDNUM pulled into treatment forms; F_VS.WEIGHT pulled into F_LB
+for creatinine clearance calc. Populate these wherever the protocol
+implies cross-form data lookups.
+
+────────────────────────────────────────────────────────────────────────────
 review_flags: (ALL eight categories must be present, even if empty list)
   site_specific           : values that must be set per site (lab ranges, units, site codes)
   oid_confirmation        : fields whose OID path needs runtime confirmation
@@ -149,12 +313,19 @@ review_flags: (ALL eight categories must be present, even if empty list)
 QUALITY CHECKLIST (verify before returning)
 ────────────────────────────────────────────────────────────────────────────
   ✓ study_meta.total_enrollment > 0 and number_of_arms >= 1
-  ✓ timepoint_csv.rows covers every visit in the Schedule of Assessments
+  ✓ All timepoint_csv.rows[].event values use SE_ prefix
+  ✓ All forms[].form_id values use F_ prefix (no F## numeric prefix)
+  ✓ All forms[].visits_assigned use SE_ prefix
+  ✓ All survey rows with non-group type have bind__oc_itemgroup populated
+    with dotted F_<FORM>.<GROUP> form
   ✓ labranges_csv.rows has at least one entry per lab test in the protocol
   ✓ Every survey row has completion_status, library_source, flag_reason
-  ✓ Every form has a cross_form_dependencies list (may be empty [])
+  ✓ Optional survey columns (appearance, relevant, required, constraint,
+    calculation, dependencies) are populated wherever the protocol
+    provides reasonable grounds — err toward inclusion
+  ✓ Every form has cross_form_dependencies list (may be empty [])
+  ✓ Every cross_form_dependencies entry has xpath_expression populated
   ✓ review_flags has all 8 categories as lists (may be empty)
-  ✓ forms.visits_assigned references events from timepoint_csv by name
 """
 
 PRICING_SUMMARY_PROMPT = """\
@@ -162,14 +333,123 @@ You are running the protocol-analysis skill — Protocol Summary step.
 
 The Study Specification JSON is provided below.
 
-Produce a complete Protocol Summary following your skill instructions
-(Steps 9-14).
+OUTPUT FORMAT — READ CAREFULLY:
+  ✓ Your ENTIRE response must be a single valid JSON object.
+  ✓ Start the response with `{` and end it with `}`.
+  ✓ No explanation before or after the JSON.
+  ✓ No markdown code fences (no ```json or ```).
+  ✓ No reasoning or commentary anywhere in the output.
 
-Return a single, complete, valid JSON object — no text before or after it.
-Do not wrap in markdown code fences.
+────────────────────────────────────────────────────────────────────────────
+REQUIRED TOP-LEVEL KEYS  (all must be present)
+────────────────────────────────────────────────────────────────────────────
 
-Required top-level keys: study_meta, patient_population, visit_summary,
-crf_summary, review_flags, complexity_flags, modules_detected.
+study_meta:
+  protocol_number          (str)
+  study_id                 (str — use protocol_number if no other identifier)
+  study_title              (str)
+  sponsor                  (str)
+  study_phase              (str)
+  indication               (str)
+  therapeutic_area         (str, e.g. "Oncology")
+  total_study_duration_months (int)
+  type                     ("INTERVENTIONAL" | "OBSERVATIONAL")
+  total_enrollment         (int)
+  number_of_arms           (int)
+  number_of_sites          (int or null)
+  regions                  (str or null)
+  start_date / end_date    (str or null)
+  customer_segment         ("COMMERCIAL" | "ACADEMIC" | "LOW_MARKET")
+  input_mode               (str)
+
+patient_population:
+  indication               (str)
+  sex                      (str — "MALE" | "FEMALE" | "BOTH")
+  age_range                (str)
+  key_inclusion            (list of str)
+  key_exclusion            (list of str)
+  total_enrollment         (int)    ← REQUIRED at this level too
+  number_of_arms           (int)    ← REQUIRED at this level too
+  arms: list of {
+    name               : str
+    arm_code           : str
+    n                  : int  (planned enrollment — use key 'n', not 'planned_enrollment')
+    description        : str
+  }
+
+visit_summary:
+  arms: list of {
+    name                : str   (matches the arm name from patient_population)
+    visits_per_patient  : int
+    patients            : int   (same as arm.n)
+    total_visits        : int   (visits_per_patient × patients)
+  }
+  total_patient_visits_all_arms : int   (sum across all arms)
+  unscheduled_included          : bool
+  screening_window              : str
+  treatment_duration            : str
+  follow_up_duration            : str
+  key_timepoints                : list of str (sample events across arms)
+
+crf_summary:
+  total_unique_crfs  : int
+  simple_crfs        : int
+  average_crfs       : int
+  complex_crfs       : int
+  total_reuse_crfs   : int   (how many forms are reused across multiple visits)
+  crf_detail: list of {
+    domain_name      : str (e.g. "Demographics", "Vital Signs")
+    cdash_code       : str (e.g. "DM", "VS", or "" for custom)
+    source           : "CDASH_STANDARD" | "PROTOCOL_SPECIFIC" | "CUSTOM"
+    visits_used      : list of str (event names)
+    complexity       : "simple" | "average" | "complex"
+    reuse_count      : int
+    confidence       : "HIGH" | "MEDIUM" | "LOW"
+    notes            : str
+  }
+
+review_flags:
+  site_specific_count, oid_confirmation_count, protocol_ambiguous_count,
+  constraint_review_count, choice_list_review_count, custom_domain_count,
+  pdf_mapping_uncertain_count, name_deviation_count, total_flags : int each
+  critical_items : list of str (the most important items to address)
+
+complexity_flags: dict with these keys
+  overall_complexity   : "LOW" | "MEDIUM" | "HIGH"
+  drivers              : list of str
+  mitigating_factors   : list of str
+  edc_build_estimate   : str (brief narrative of build effort)
+
+modules_detected: dict mapping module category → list of form_ids
+  Categories: safety, efficacy_disease, exposure_treatment, biomarker_pkpd,
+  standard_safety_labs, enrollment_eligibility, concomitant, disposition,
+  ecoa_epro, imaging, ecg, randomization, ivrs_irt, central_lab,
+  drug_accountability
+
+conditional_branching: list of {
+  description       : str (what the conditional logic does)
+  type              : "RELEVANT" | "REQUIRED" | "CONSTRAINT" | "CALCULATION" | "SKIP_LOGIC"
+  affected_domains  : list of str (CDASH codes or form_ids)
+  confidence        : "HIGH" | "MEDIUM" | "LOW"
+  note              : str (additional context)
+}
+Infer these from the Study Spec forms[].survey rows where `relevant`,
+`constraint`, or `calculation` columns are populated. Typical examples:
+conditional items in IE based on arm, lab panels gated by eligibility
+criteria, cross-form pulls for subject data.
+
+data_cleaning_estimate:
+  domains: list of {
+    domain            : str (form title or domain name)
+    cdash_code        : str (or "" for custom)
+    complexity_rating : "LOW" | "MEDIUM" | "HIGH"
+    implied_checks    : list of str (discrete DVS check descriptions)
+  }
+  disclaimer: str (default provided if omitted)
+
+Populate a row per form (or per domain) with at minimum LOW/MEDIUM/HIGH
+rating and 2-6 implied check descriptions. The DVS skill downstream will
+use this to scope data validation work.
 """
 
 DVS_TRANSLATE_PROMPT = """\
@@ -294,10 +574,12 @@ Use the scripts from your scripts/ folder:
 
   # build_log is a dict of list buckets — NOT an empty list
   build_log = {
-      'forms_built':    [],
-      'forms_skipped':  [],
-      'build_errors':   [],
-      'build_warnings': [],
+      'forms_built':        [],
+      'forms_skipped':      [],
+      'build_errors':       [],
+      'build_warnings':     [],
+      'placeholder_applied': [],
+      'oid_placeholders':   [],
   }
 
   with tempfile.TemporaryDirectory() as tmp:

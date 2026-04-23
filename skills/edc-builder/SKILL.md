@@ -33,6 +33,31 @@ any form.** It contains:
 - Cross-form XPath patterns
 - Hard check syntax
 - Once() pattern for repeating groups
+
+---
+
+## OpenClinica OID Naming Conventions (MUST FOLLOW)
+
+Per OpenClinica's "Locating Object Identifiers in a Study" reference,
+every identifier follows a strict prefix convention:
+
+| Object     | Prefix | Example                              |
+|------------|--------|--------------------------------------|
+| Study      | `S_`   | `S_PrTK05`                           |
+| Event      | `SE_`  | `SE_SCREENING`, `SE_WEEK_1`          |
+| Form       | `F_`   | `F_DEMO`, `F_VS`, `F_ICF`            |
+| Item Group | `IG_`  | `IG_DEMO_DM` (pattern `IG_<FORM>_<GRP>`) |
+| Item       | `I_`   | `I_DEMO_SUBJID` (pattern `I_<FORM>_<FIELD>`) |
+
+Inside XLSForms, the item group reference uses dotted notation:
+
+- `bind::oc:itemgroup` column value: `F_<FORM>.<GROUP>` — e.g. `F_DEMO.DM`
+- Cross-form ItemOID reference: `F_<FORM>.<FIELD>` — e.g. `F_DEMO.SUBJID`
+
+The Study Specification JSON input to this skill uses `form_id = "F_<n>"`
+(with F_ prefix). The settings sheet of each XLSForm must also have
+`form_id: F_<n>`. Never strip or replace the `F_` prefix.
+
 - File naming conventions
 - Critical build rules
 
@@ -173,9 +198,10 @@ The script:
 5. Saves as `{form_id}.xlsx` (or variant name for forms sharing form_id)
 
 **File naming:**
-- Standard: `{form_id}.xlsx` → e.g., `AE.xlsx`, `VS.xlsx`
+- Standard: `{form_id}.xlsx` → e.g., `F_AE.xlsx`, `F_VS.xlsx`
+  (form_id carries the `F_` prefix per the OpenClinica OID convention)
 - Variants (same form_id, different designs):
-  `{FORMID}_{VARIANT}.xlsx` → e.g., `IE_TRT.xlsx`, `IE_CTL.xlsx`
+  `{FORMID}_{VARIANT}.xlsx` → e.g., `F_IE_TRT.xlsx`, `F_IE_CTL.xlsx`
 - The filename uses the XLSX tab form_id prefix, not the settings form_id
 
 ---

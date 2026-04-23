@@ -1,0 +1,19 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Local testing artifacts (not needed on Railway)
+fixtures/
+test_outputs/
+
+# Temp files
+~$*
+*.webarchive
+
+# Environment
+.env
+.env.local

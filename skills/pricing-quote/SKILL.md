@@ -1,21 +1,21 @@
 ---
-name: pricing-model
+name: pricing-quote
 description: >
-  Reads the output from the protocol-to-pricing-summary skill and applies
-  the OpenClinica pricing model to generate a quote. Fetches live subscription
-  rates from Google Drive on each run. Outputs four files: internal PDF,
-  client PDF, internal XLSX, client XLSX. Use this skill whenever a user
-  asks to generate a quote, proposal, or pricing estimate from a pricing
-  summary. Always run protocol-to-pricing-summary BEFORE this skill.
+  Reads the Protocol Summary output from the protocol-analysis skill and
+  applies the OpenClinica pricing model to generate a quote. Outputs four
+  files: internal PDF, client PDF, internal XLSX, client XLSX. Use this
+  skill whenever a user asks to generate a quote, proposal, or pricing
+  estimate from a protocol summary. Always run protocol-analysis BEFORE
+  this skill.
 ---
 
-# Pricing Model Skill
+# Pricing Quote Skill
 
 ## Purpose
 
-Apply the OpenClinica pricing model to a protocol pricing summary and
-generate professional quote documents in PDF and XLSX format — both
-internal (full breakdown) and client-facing (summary) versions.
+Apply the OpenClinica pricing model to a Protocol Summary and generate
+professional quote documents in PDF and XLSX format — both internal
+(full breakdown) and client-facing (summary) versions.
 
 **Outputs — 4 files per run:**
 - `{PROTOCOL}_Quote_Internal.pdf` — Full breakdown with flag analysis, discounts
@@ -27,41 +27,21 @@ internal (full breakdown) and client-facing (summary) versions.
 
 ## Before You Begin — Read Reference File
 
-Read `references/pricing_model.ini` for build fee rates and config.
-The Google Drive file ID for live subscription rates is in `[google_drive]`.
+Read `references/pricing_model.ini` for all rates, discount tables, and config.
+
+**Rates are baked into the ini file (Option B).** No Google Drive fetch is
+needed or performed. The `rates_effective_date` field in `[rates]` shows
+when the rates were last updated. This date appears on internal quotes.
+
+When rates change: update `rates_effective_date` and the relevant values in
+the ini, then re-upload the skill via the Skills API.
 
 ---
 
-## Step 1: Fetch Live Subscription Rates from Google Drive
+## Step 1: Read the Protocol Summary Input
 
-**Always attempt to fetch live rates before calculating.**
-
-```python
-# The pricing spreadsheet file ID is in pricing_model.ini [google_drive]
-file_id = "1wMtw9YbM0ctILcgJ5StYgVyvD0OcZp_jHASDQdruWqA"
-```
-
-Use the Google Drive MCP tool:
-- Tool: `Google Drive:read_file_content`
-- Input: `{"fileId": "1wMtw9YbM0ctILcgJ5StYgVyvD0OcZp_jHASDQdruWqA"}`
-
-Then parse the result:
-```python
-from pricing_engine import parse_live_rates
-live_rates = parse_live_rates(drive_result['fileContent'])
-# live_rates = {"core_edc.commercial": 2600.0, "insight.commercial": 750.0, ...}
-```
-
-If Drive fetch fails or returns empty, set `live_rates = None`.
-The engine will fall back to rates in `pricing_model.ini` automatically.
-Always note in the chat whether live or fallback rates were used.
-
----
-
-## Step 2: Read the Pricing Summary Input
-
-The input is the JSON output from `protocol-to-pricing-summary`.
-Key fields consumed by this skill:
+The input is the Protocol Summary JSON output from the `protocol-analysis` skill.
+Key fields consumed:
 
 ```json
 {
@@ -76,25 +56,17 @@ Key fields consumed by this skill:
 ```
 
 **`customer_segment`** — COMMERCIAL | ACADEMIC | LOW_MARKET
-  Set by protocol-to-pricing-summary based on sponsor/customer research.
-
 **`volume_studies`** — number of studies in this contract
-  Set by protocol-to-pricing-summary based on known contract context.
-
 **`total_study_duration_months`** — drives contract_years and subscription total
-  Extracted from protocol estimated dates.
 
 ---
 
-## Step 3: Run the Pricing Calculation
+## Step 2: Run the Pricing Calculation
 
 ```python
 from pricing_engine import calculate_quote
 
-quote = calculate_quote(
-    pricing_summary_dict,
-    live_rates=live_rates   # None if Drive unavailable
-)
+quote = calculate_quote(protocol_summary_dict)
 ```
 
 **Pricing logic applied:**
@@ -112,7 +84,7 @@ quote = calculate_quote(
 
 ---
 
-## Step 4: Generate Output Files
+## Step 3: Generate Output Files
 
 ```python
 from generate_quote_pdf  import build_quote_pdfs
@@ -133,12 +105,12 @@ build_quote_xlsx(
 
 ---
 
-## Step 5: Present and Report
+## Step 4: Present and Report
 
 Use `present_files` to share all four files.
 
 Report in chat:
-- Whether live or fallback rates were used
+- Rates effective date (from ini)
 - Segment, studies, contract years
 - Volume discount %, platform discount % (if any), bundle applied (yes/no)
 - Build fee total
@@ -153,28 +125,29 @@ Report in chat:
 |---------|----------|--------|
 | Contingency | Shown as separate line | Absorbed into specialist hrs |
 | Subscription discounts | List price, vol%, plat%, net | Net monthly only |
-| Rates source | Shown (live/fallback) | Not shown |
+| Rates effective date | Shown | Not shown |
 | Flag analysis | Full category breakdown | Not shown |
 | Confidential banner | Yes | No |
 | Calculation footnotes | Full | Clean |
 
 ---
 
-## When the Spreadsheet Changes
+## Segment Classification Rules
 
-The Google Drive fetch in Step 1 automatically picks up any changes to
-the pricing spreadsheet without any skill update needed. The skill reads
-the live sheet on every run. If the structure of the rate table changes
-significantly, update `parse_live_rates()` in `pricing_engine.py` and
-repackage the skill.
-
----
-
-## Segment Classification Rules (for protocol-to-pricing-summary)
-
-The pricing summary skill should classify the customer as:
+The protocol-analysis skill classifies the customer as:
 
 - **COMMERCIAL** — Large pharma, CRO, for-profit biotech/device with revenue >$25M
 - **ACADEMIC** — Universities, hospitals, academic medical centers, non-profits
 - **LOW_MARKET** — Startups, emerging device/diagnostic companies,
   pre-revenue or <$25M annual revenue
+
+---
+
+## When Rates Change
+
+1. Update `rates_effective_date` in `references/pricing_model.ini`
+2. Update the relevant rate values in the same file
+3. Re-upload the skill via the Skills API (one command, ~5 minutes)
+
+The Google Sheet remains the team's working reference for pricing discussions.
+The ini is the source of truth for quote generation.

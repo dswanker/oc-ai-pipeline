@@ -23,7 +23,7 @@ Those are template documentation only.
 | Column | Required | Notes |
 |--------|----------|-------|
 | form_title | Yes | Human-readable name |
-| form_id | Yes | CDASH code or custom ID. No spaces. Start with letter. |
+| form_id | Yes | OpenClinica Form OID: `F_<n>` (e.g. `F_DEMO`, `F_VS`). No spaces. Must start with `F_`. |
 | version | Yes | Integer, start at 1 |
 | style | Yes | Always `theme-grid` for OpenClinica |
 | crossform_references | No | Blank, or comma-separated Event OIDs, or `current_event` |
@@ -60,7 +60,7 @@ consecutive rows. Choice list order matters — maintain spec order.
 | 1 | type | Yes | Field type (see types below) |
 | 2 | name | Yes | Machine-readable ID. No spaces. Start with letter. |
 | 3 | label | Yes | User-visible question text. Supports HTML and ${ref}. |
-| 4 | bind::oc:itemgroup | No | CDASH domain group (e.g., AE, VS, LB) |
+| 4 | bind::oc:itemgroup | No | Item group reference in dotted form `F_<FORM>.<GROUP>` (e.g. `F_DEMO.DM`, `F_AE.AE_GROUP`) |
 | 5 | hint | No | Helper text below label |
 | 6 | appearance | No | Layout hint (w1-w9, horizontal, minimal, multiline, field-list, columns) |
 | 7 | bind::oc:briefdescription | No | Short description for reporting |
@@ -227,8 +227,10 @@ Row 2: calculate | TPTCALC | (blank) | [FORM_ID] | ... |
 4. **form_id must be unique** across all forms in the study
 5. **Field names must be unique** within a form
 6. **list_name values** in choices must match `select_one [list]` references
-7. **bind::oc:itemgroup** must match the form's CDASH domain code for
-   correct data mapping in OpenClinica
+7. **bind::oc:itemgroup** uses dotted form `F_<FORM>.<GROUP>` consistent
+   with the form_id (also `F_`-prefixed). The group portion typically
+   matches the CDASH domain code or a descriptive group name. The full
+   value must be consistent for data mapping in OpenClinica.
 8. **Choice filter column** in choices sheet must match the column name
    referenced in the survey's `choice_filter` cell
 
@@ -237,8 +239,9 @@ Row 2: calculate | TPTCALC | (blank) | [FORM_ID] | ... |
 ## File Naming Convention
 
 Output files must be named to match the form_id for easy identification:
-`{form_id}.xlsx` (e.g., `AE.xlsx`, `VS.xlsx`, `DOV.xlsx`)
+`{form_id}.xlsx` (e.g., `F_AE.xlsx`, `F_VS.xlsx`, `F_DOV.xlsx`).
+form_id always carries the `F_` prefix per the OpenClinica OID convention.
 
 Exception: forms sharing the same form_id but different designs
-(e.g., IE_TRT and IE_CTL both have form_id=IE) — use the variant
-identifier as the filename: `IE_TRT.xlsx`, `IE_CTL.xlsx`
+(e.g., F_IE_TRT and F_IE_CTL both have form_id=F_IE) — use the variant
+identifier as the filename: `F_IE_TRT.xlsx`, `F_IE_CTL.xlsx`

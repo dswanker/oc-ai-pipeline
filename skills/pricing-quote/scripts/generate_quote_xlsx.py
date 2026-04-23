@@ -180,29 +180,12 @@ def _build_ws(wb, quote, title, is_internal):
         c.fill = _fl(WHITE); c.alignment = _al()
         ws.row_dimensions[row].height = 13; row += 1
 
-    # Additional services discount
-    tots     = quote['totals']
-    svc_disc = tots.get('additional_svc_disc', 0.0)
-    if svc_disc > 0:
-        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=3)
-        c = ws.cell(row=row, column=1,
-            value=f"Additional Services Discount ({int(svc_disc*100)}%)")
-        c.font = _fn(italic=True, size=9, color=OC_TEAL)
-        c.fill = _fl(WHITE); c.alignment = _al()
-        c4 = ws.cell(row=row, column=4, value=-tots['svc_disc_amount'])
-        c4.font = _fn(bold=True, color=OC_TEAL, size=9)
-        c4.fill = _fl(WHITE); c4.border = _bd()
-        c4.alignment = _al(h="right"); c4.number_format = _ccy()
-        ws.cell(row=row, column=5).fill = _fl(WHITE)
-        ws.row_dimensions[row].height = 15; row += 1
-
     # Total one-time
-    build_total_display = tots.get('build_fee_discounted', tots['build_fee'])
     ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=3)
     c = ws.cell(row=row, column=1, value="TOTAL ONE-TIME FEE")
     c.font = _fn(bold=True, color=WHITE, size=10)
     c.fill = _fl(OC_DARK); c.alignment = _al(h="left", v="center")
-    _cell(ws, row, 4, build_total_display, bold=True, color=OC_TEAL, bg=OC_DARK,
+    _cell(ws, row, 4, bf['total_fee'], bold=True, color=OC_TEAL, bg=OC_DARK,
           size=11, h="right", fmt=_ccy())
     ws.cell(row=row, column=5).fill = _fl(OC_DARK)
     ws.row_dimensions[row].height = 20; row += 1; row += 1
@@ -214,7 +197,8 @@ def _build_ws(wb, quote, title, is_internal):
         vol_d  = pc.get('volume_discount_display','0%')
         plat_d = pc.get('platform_discount_display','0%')
         bundle = pc.get('use_bundle', False)
-        src    = "(live)" if pc.get('rates_source')=='live_drive' else "(fallback)"
+        rates_date = pc.get('rates_effective_date', 'unknown')
+        src    = f"(rates effective {rates_date})"
 
         hdr_text = (f"SUBSCRIPTION FEES  —  {seg} | {dur['months']} mo | "
                     f"Vol disc: {vol_d}" +
@@ -256,30 +240,10 @@ def _build_ws(wb, quote, title, is_internal):
             ws.row_dimensions[row].height = 15; row += 1
         row += 1
 
-        # Additional subscription discount
-        sub_disc = tots.get('additional_sub_disc', 0.0)
-        if sub_disc > 0:
-            ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=3)
-            c = ws.cell(row=row, column=1,
-                value=f"Additional Subscription Discount ({int(sub_disc*100)}%)")
-            c.font = _fn(italic=True, size=9, color=OC_TEAL)
-            c.fill = _fl(WHITE); c.alignment = _al()
-            c4 = ws.cell(row=row, column=4, value=-tots['sub_disc_amount'])
-            c4.font = _fn(bold=True, color=OC_TEAL, size=9)
-            c4.fill = _fl(WHITE); c4.border = _bd()
-            c4.alignment = _al(h="right"); c4.number_format = _ccy()
-            ws.cell(row=row, column=5).fill = _fl(WHITE)
-            ws.row_dimensions[row].height = 15; row += 1
-        row += 1
-
     # Grand total
     row = _sec(ws, row, "QUOTE SUMMARY", NC)
-    summary = [
-        ("One-Time Fees (Build + Project Management)",
-         tots.get('build_fee_discounted', tots['build_fee'])),
-        ("Subscription Fees (all modules × duration)",
-         tots.get('module_total_discounted', tots['module_total'])),
-    ]
+    summary = [("One-Time Fees (Build + Project Management)", tots['build_fee']),
+               ("Subscription Fees (all modules × duration)", tots['module_total'])]
     for k, v in summary:
         bg = GREY_L if row % 2 == 0 else WHITE
         ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=3)
@@ -391,6 +355,35 @@ def _build_appendix_ws(wb, quote, is_internal):
     c.font = _fn(size=9); c.fill = _fl(GREY_L); c.alignment = _al()
     ws.row_dimensions[row].height = 15; row += 1; row += 1
 
+    # Color legend — one mini-row per category that appears in this quote
+    legend_cats = []
+    for cat in fa.get('counted_categories', []):
+        # Only include categories that actually have items in all_items
+        if any(lbl == cat_labels.get(cat, cat.replace('_',' ').title())
+               for lbl, _, _, _ in all_items):
+            legend_cats.append(cat)
+    if legend_cats:
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=NC)
+        c = ws.cell(row=row, column=1, value="COLOR KEY")
+        c.font = _fn(bold=True, size=8, color="555555")
+        c.fill = _fl(WHITE); c.alignment = _al()
+        ws.row_dimensions[row].height = 12; row += 1
+
+        # Show legend as one row with all categories side by side
+        # Each legend cell: left half = colored swatch with label
+        legend_col = 1
+        for cat in legend_cats:
+            label = cat_labels.get(cat, cat.replace('_',' ').title())
+            bg    = cat_bgs.get(cat, GREY_L)
+            if legend_col > NC:
+                row += 1
+                legend_col = 1
+            c = ws.cell(row=row, column=legend_col, value=f"  {label}")
+            c.font = _fn(bold=True, size=8, color=OC_DARK)
+            c.fill = _fl(bg); c.border = _bd(); c.alignment = _al(h="left", v="center")
+            legend_col += 1
+        ws.row_dimensions[row].height = 16; row += 1; row += 1
+
     # Column headers
     if any_comments:
         hdrs = ["#", "Category", "Item", "Comment / Action Required", "Effort"]
@@ -442,14 +435,16 @@ def _build_appendix_ws(wb, quote, is_internal):
 
 def build_quote_xlsx(quote, internal_path, client_path):
     wb_i = Workbook()
-    wb_i.active.title = "INTERNAL QUOTE"
+    # Remove the default blank sheet — _build_ws creates its own
+    del wb_i[wb_i.sheetnames[0]]
     _build_ws(wb_i, quote, "INTERNAL QUOTE", is_internal=True)
     _build_appendix_ws(wb_i, quote, is_internal=True)
     wb_i.save(internal_path)
     print(f"Internal XLSX: {internal_path}")
 
     wb_c = Workbook()
-    wb_c.active.title = "PROPOSAL"
+    # Remove the default blank sheet — _build_ws creates its own
+    del wb_c[wb_c.sheetnames[0]]
     _build_ws(wb_c, quote, "PROPOSAL", is_internal=False)
     _build_appendix_ws(wb_c, quote, is_internal=False)
     wb_c.save(client_path)

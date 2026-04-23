@@ -15,8 +15,12 @@ Two modes:
 import anthropic, base64, json, os, asyncio, re
 
 MODEL       = "claude-opus-4-7"
-MAX_TOKENS  = 32000         # for call_claude (JSON extraction) — raised to
-                            # fit rich Study Spec JSON with full per-row metadata
+MAX_TOKENS  = 64000         # for call_claude (JSON extraction). Opus 4.7
+                            # supports up to 128K output; 64K is plenty for
+                            # a rich Study Spec with per-row metadata,
+                            # XPaths, and aggressive optional-field
+                            # population. Raise to 96K or 128K if a large
+                            # study ever truncates again.
 MAX_TOKENS_SKILL = 32000    # for run_skill (file generation, can be long)
 MAX_RETRIES = 5
 

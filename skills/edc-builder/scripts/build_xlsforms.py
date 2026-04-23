@@ -78,8 +78,25 @@ def _header_cell(cell, value):
     cell.border = _border()
     cell.alignment = _align(h="center", v="center")
 
+def _coerce_cell_value(value):
+    """Coerce a value to something openpyxl can write to a cell.
+    Lists/tuples become pipe-delimited strings; dicts become JSON;
+    anything else is left as-is."""
+    if value is None:
+        return ""
+    if isinstance(value, (list, tuple)):
+        return " | ".join(str(v) for v in value)
+    if isinstance(value, dict):
+        try:
+            import json as _json
+            return _json.dumps(value)
+        except Exception:
+            return str(value)
+    return value
+
+
 def _data_cell(cell, value, row_idx=0, flagged=False):
-    cell.value = value if value is not None else ""
+    cell.value = _coerce_cell_value(value)
     cell.font = _font(size=8)
     bg = AMBER if flagged else (GREY_LIGHT if row_idx % 2 == 0 else WHITE)
     cell.fill = _fill(bg)
