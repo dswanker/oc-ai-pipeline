@@ -496,185 +496,208 @@ async def run_pipeline(item_id):
                               f"{protocol_num}_Study_Specification_{version}.json",
                               json.dumps(struct_json, indent=2).encode())
 
-            # Step 2: Generate Study Spec PDF + XLSX via skill
-            print("Step 2: Generating Study Spec PDF + XLSX...", flush=True)
-            try:
-                spec_files = await run_skill(
-                    GENERATE_STUDY_SPEC_PROMPT,
-                    skill_ids=[SKILL_IDS["protocol_analysis"]],
-                    extra_text="Study Specification JSON:\n" + json.dumps(struct_json),
-                )
-                spec_pdf  = _find(spec_files, "_Study_Specification.pdf")
-                spec_xlsx = _find(spec_files, "_Study_Specification.xlsx")
-                if spec_pdf:
-                    await upload_file(item_id, COL["spec_pdf"],
-                                      f"{protocol_num}_Study_Specification_{version}.pdf", spec_pdf)
-                if spec_xlsx:
-                    await upload_file(item_id, COL["spec_xlsx"],
-                                      f"{protocol_num}_Study_Specification_{version}.xlsx", spec_xlsx)
-            except Exception as e:
-                print(f"Study Spec file generation error: {e}", flush=True)
-                await append_log(item_id, f"Study Spec file generation error: {e}")
-
-            await set_status(item_id, COL["pipeline_status"], STATUS["analysis_complete"])
-            await append_log(item_id, "Study Specification complete.")
-
-        # ── Steps 3-5: Protocol Summary + Pricing Quote ───────────────────────
-        pricing_json = {"study_meta": {"protocol_number": protocol_num}}
-
-        if struct_json and _want("protocol summary"):
             await set_status(item_id, COL["pipeline_status"], STATUS["build_pricing_running"])
-            await append_log(item_id, "Protocol Summary started.")
+            await append_log(item_id, "Study Spec files, Protocol Summary, and EDC Build starting in parallel.")
 
-            print("Step 3: Claude extracting Protocol Summary JSON...", flush=True)
-            struct_slim = {
-                "study_meta":   struct_json.get("study_meta", {}),
-                "review_flags": struct_json.get("review_flags", {}),
-                "forms":        [{"name": f.get("name"), "domain": f.get("domain"),
-                                  "complexity": f.get("complexity"),
-                                  "visits_assigned": f.get("visits_assigned", [])}
-                                 for f in struct_json.get("forms", [])],
-            }
-            pricing_text = await call_claude(
-                PRICING_SUMMARY_PROMPT,
-                extra_text="Study Specification JSON:\n" + json.dumps(struct_slim),
-            )
-            try:
-                pricing_json = extract_json(pricing_text)
-                if isinstance(pricing_json, list):
-                    pricing_json = {"study_meta": {"protocol_number": protocol_num}}
-            except ValueError:
-                print("Warning: Protocol Summary JSON not valid", flush=True)
+            # ── Parallel chains after Step 1 ──────────────────────────────────
+            # Chain A: Study Spec PDF + XLSX (Step 2)
+            # Chain B: Protocol Summary JSON → PDF + Quote (Steps 3-5)
+            # Chain C: EDC Build → DVS (Steps 6-7)
+            # All three chains only need struct_json and run independently.
 
-            # Step 4: Generate Protocol Summary PDF via skill
-            print("Step 4: Generating Protocol Summary PDF...", flush=True)
-            try:
-                ps_files = await run_skill(
-                    GENERATE_PROTOCOL_SUMMARY_PROMPT,
-                    skill_ids=[SKILL_IDS["protocol_analysis"]],
-                    extra_text="Protocol Summary JSON:\n" + json.dumps(pricing_json),
-                )
-                ps_pdf = _find(ps_files, "_Protocol_Summary.pdf")
-                if ps_pdf:
-                    await upload_file(item_id, COL["pricing_summary"],
-                                      f"{protocol_num}_Protocol_Summary_{version}.pdf", ps_pdf)
-            except Exception as e:
-                print(f"Protocol Summary PDF error: {e}", flush=True)
-                await append_log(item_id, f"Protocol Summary PDF error: {e}")
-
-            await upload_file(item_id, COL["pricing_summary"],
-                              f"{protocol_num}_Protocol_Summary_{version}.json",
-                              json.dumps(pricing_json, indent=2).encode())
-            await append_log(item_id, "Protocol Summary complete.")
-
-        # Step 5: Pricing Quote
-        if _want("price quote"):
-            await append_log(item_id, "Price Quote started.")
-            print("Step 5: Generating Price Quote...", flush=True)
-            try:
-                qf = run_pricing_model(pricing_json,
-                                       additional_sub_disc=additional_sub_disc,
-                                       additional_svc_disc=additional_svc_disc)
-                await asyncio.gather(
-                    upload_file(item_id, COL["pricing_quote"],
-                                f"{protocol_num}_Quote_Internal_{version}.pdf",  qf["internal_pdf"]),
-                    upload_file(item_id, COL["pricing_quote"],
-                                f"{protocol_num}_Quote_Client_{version}.pdf",    qf["client_pdf"]),
-                    upload_file(item_id, COL["pricing_quote"],
-                                f"{protocol_num}_Quote_Internal_{version}.xlsx", qf["internal_xlsx"]),
-                    upload_file(item_id, COL["pricing_quote"],
-                                f"{protocol_num}_Quote_Client_{version}.xlsx",   qf["client_xlsx"]),
-                )
-                await append_log(item_id, "Price Quote complete — 4 files uploaded.")
-            except Exception as e:
-                print(f"Price Quote error: {e}", flush=True)
-                await append_log(item_id, f"Price Quote error: {e}")
-            await set_status(item_id, COL["pipeline_status"], STATUS["pricing_complete"])
-
-        # ── Steps 6-7: EDC Build + DVS ─────────────────────────────────────────
-        build_json = {"forms": {}}
-        build_zip  = None
-
-        if _want("study build zip"):
-            await set_status(item_id, COL["pipeline_status"], STATUS["build_pricing_running"])
-            await append_log(item_id, "EDC Build started.")
-
-            if edited_build_zip:
-                # Path B: User uploaded edited XLSForm ZIP
-                print("Path B: using user-uploaded XLSForm ZIP...", flush=True)
-                await append_log(item_id, "Using user-uploaded XLSForm ZIP.")
+            # ── Chain A: Study Spec files ──────────────────────────────────────
+            async def chain_a():
+                print("Chain A: Generating Study Spec PDF + XLSX...", flush=True)
                 try:
-                    build_json = _read_zip_xlsforms(edited_build_zip)
-                    build_zip  = edited_build_zip
+                    spec_files = await run_skill(
+                        GENERATE_STUDY_SPEC_PROMPT,
+                        skill_ids=[SKILL_IDS["protocol_analysis"]],
+                        extra_text="Study Specification JSON:\n" + json.dumps(struct_json),
+                    )
+                    spec_pdf  = _find(spec_files, "_Study_Specification.pdf")
+                    spec_xlsx = _find(spec_files, "_Study_Specification.xlsx")
+                    uploads = []
+                    if spec_pdf:
+                        uploads.append(upload_file(item_id, COL["spec_pdf"],
+                            f"{protocol_num}_Study_Specification_{version}.pdf", spec_pdf))
+                    if spec_xlsx:
+                        uploads.append(upload_file(item_id, COL["spec_xlsx"],
+                            f"{protocol_num}_Study_Specification_{version}.xlsx", spec_xlsx))
+                    if uploads:
+                        await asyncio.gather(*uploads)
+                    print("Chain A complete.", flush=True)
                 except Exception as e:
-                    print(f"Error reading build ZIP: {e}", flush=True)
-                    await append_log(item_id, f"Error reading build ZIP: {e}")
+                    print(f"Chain A error: {e}", flush=True)
+                    await append_log(item_id, f"Study Spec file generation error: {e}")
 
-            elif edited_dvs_xlsx:
-                # Path C: User uploaded edited DVS → translate to XLSForms
-                print("Path C: translating DVS changes to XLSForms...", flush=True)
-                await append_log(item_id, "Translating DVS input to XLSForm updates.")
-                dvs_text = _dvs_xlsx_to_text(edited_dvs_xlsx)
+            # ── Chain B: Protocol Summary JSON → PDF + Quote ───────────────────
+            async def chain_b():
+                nonlocal pricing_json
+                if not _want("protocol summary") and not _want("price quote"):
+                    return
 
-                struct_slim = {
-                    "study_meta": struct_json.get("study_meta", {}) if struct_json else {},
-                    "forms":      struct_json.get("forms", []) if struct_json else [],
-                }
-                base_build_text = await call_claude(
-                    EDC_BUILD_PROMPT,
-                    extra_text="Study Specification JSON:\n" + json.dumps(struct_slim),
-                )
-                try:
-                    base_build = extract_json(base_build_text)
-                    if isinstance(base_build, list):
-                        base_build = {"forms": {}}
-                except ValueError:
-                    base_build = {"forms": {}}
-
-                updated_text = await call_claude(
-                    DVS_TRANSLATE_PROMPT,
-                    extra_text=("Current XLSForm JSON:\n" + json.dumps(base_build) +
-                                "\n\nDVS Changes:\n" + dvs_text),
-                )
-                try:
-                    build_json = extract_json(updated_text)
-                except ValueError:
-                    build_json = base_build
-                build_zip = _xlsform_zip(build_json)
-
-            elif struct_json:
-                # Path (fresh): Claude builds from spec — use edc-builder skill
-                print("Step 6: Running edc-builder skill...", flush=True)
-                struct_slim = {
-                    "study_meta": struct_json.get("study_meta", {}),
-                    "forms":      struct_json.get("forms", []),
-                }
-                try:
-                    build_files = await run_skill(
-                        EDC_BUILD_PROMPT,
-                        skill_ids=[SKILL_IDS["edc_builder"]],
+                if _want("protocol summary"):
+                    print("Chain B: Claude extracting Protocol Summary JSON...", flush=True)
+                    struct_slim = {
+                        "study_meta":   struct_json.get("study_meta", {}),
+                        "review_flags": struct_json.get("review_flags", {}),
+                        "forms":        [{"name": f.get("name"), "domain": f.get("domain"),
+                                          "complexity": f.get("complexity"),
+                                          "visits_assigned": f.get("visits_assigned", [])}
+                                         for f in struct_json.get("forms", [])],
+                    }
+                    pricing_text = await call_claude(
+                        PRICING_SUMMARY_PROMPT,
                         extra_text="Study Specification JSON:\n" + json.dumps(struct_slim),
                     )
-                    build_zip = _find(build_files, "_EDC_Build.zip", ".zip")
-                    if build_zip:
-                        build_json = _read_zip_xlsforms(build_zip)
-                except Exception as e:
-                    print(f"EDC Build error: {e}", flush=True)
-                    await append_log(item_id, f"EDC Build error: {e}")
+                    try:
+                        pricing_json = extract_json(pricing_text)
+                        if isinstance(pricing_json, list):
+                            pricing_json = {"study_meta": {"protocol_number": protocol_num}}
+                    except ValueError:
+                        print("Warning: Protocol Summary JSON not valid", flush=True)
 
-            if build_zip:
-                await upload_file(item_id, COL["edc_build"],
-                                  f"{protocol_num}_EDC_Build_{version}.zip", build_zip)
-                await set_status(item_id, COL["pipeline_status"], STATUS["build_complete"])
-                await append_log(item_id, "EDC Build complete — ZIP uploaded.")
+                    # Steps 4 + 5 in parallel: Protocol Summary PDF + Pricing Quote
+                    async def gen_ps_pdf():
+                        print("Chain B: Generating Protocol Summary PDF...", flush=True)
+                        try:
+                            ps_files = await run_skill(
+                                GENERATE_PROTOCOL_SUMMARY_PROMPT,
+                                skill_ids=[SKILL_IDS["protocol_analysis"]],
+                                extra_text="Protocol Summary JSON:\n" + json.dumps(pricing_json),
+                            )
+                            ps_pdf = _find(ps_files, "_Protocol_Summary.pdf")
+                            uploads = [upload_file(item_id, COL["pricing_summary"],
+                                f"{protocol_num}_Protocol_Summary_{version}.json",
+                                json.dumps(pricing_json, indent=2).encode())]
+                            if ps_pdf:
+                                uploads.append(upload_file(item_id, COL["pricing_summary"],
+                                    f"{protocol_num}_Protocol_Summary_{version}.pdf", ps_pdf))
+                            await asyncio.gather(*uploads)
+                        except Exception as e:
+                            print(f"Protocol Summary PDF error: {e}", flush=True)
+                            await append_log(item_id, f"Protocol Summary PDF error: {e}")
 
-            # Step 7: DVS
-            await set_status(item_id, COL["pipeline_status"], STATUS["dvs_running"])
-            await append_log(item_id, "DVS started.")
-            print("Step 7: Running dvs-specification skill...", flush=True)
+                    async def gen_quote():
+                        if not _want("price quote"):
+                            return
+                        print("Chain B: Generating Price Quote (local scripts)...", flush=True)
+                        try:
+                            loop = asyncio.get_event_loop()
+                            qf = await loop.run_in_executor(
+                                None,
+                                lambda: run_pricing_model(
+                                    pricing_json,
+                                    additional_sub_disc=additional_sub_disc,
+                                    additional_svc_disc=additional_svc_disc,
+                                )
+                            )
+                            await asyncio.gather(
+                                upload_file(item_id, COL["pricing_quote"],
+                                    f"{protocol_num}_Quote_Internal_{version}.pdf",  qf["internal_pdf"]),
+                                upload_file(item_id, COL["pricing_quote"],
+                                    f"{protocol_num}_Quote_Client_{version}.pdf",    qf["client_pdf"]),
+                                upload_file(item_id, COL["pricing_quote"],
+                                    f"{protocol_num}_Quote_Internal_{version}.xlsx", qf["internal_xlsx"]),
+                                upload_file(item_id, COL["pricing_quote"],
+                                    f"{protocol_num}_Quote_Client_{version}.xlsx",   qf["client_xlsx"]),
+                            )
+                            await append_log(item_id, "Price Quote complete — 4 files uploaded.")
+                        except Exception as e:
+                            print(f"Price Quote error: {e}", flush=True)
+                            await append_log(item_id, f"Price Quote error: {e}")
 
-            dvs_slim = {}
-            for fname, fdata in build_json.get("forms", {}).items():
+                    await asyncio.gather(gen_ps_pdf(), gen_quote())
+                    await append_log(item_id, "Protocol Summary + Price Quote complete.")
+                    print("Chain B complete.", flush=True)
+
+            # ── Chain C: EDC Build → DVS ──────────────────────────────────────
+            build_zip_holder  = [None]   # mutable container for async closure
+            build_json_holder = [{"forms": {}}]
+
+            async def chain_c():
+                if not _want("study build zip"):
+                    return
+                print("Chain C: EDC Build starting...", flush=True)
+                await _run_edc_and_dvs()
+                print("Chain C complete.", flush=True)
+
+            async def _run_edc_and_dvs():
+                nonlocal build_zip_holder, build_json_holder
+
+                if edited_build_zip:
+                    # Path B: User uploaded edited XLSForm ZIP
+                    print("Path B: using user-uploaded XLSForm ZIP...", flush=True)
+                    await append_log(item_id, "Using user-uploaded XLSForm ZIP.")
+                    try:
+                        build_json_holder[0] = _read_zip_xlsforms(edited_build_zip)
+                        build_zip_holder[0]  = edited_build_zip
+                    except Exception as e:
+                        print(f"Error reading build ZIP: {e}", flush=True)
+                        await append_log(item_id, f"Error reading build ZIP: {e}")
+
+                elif edited_dvs_xlsx:
+                    # Path C: User uploaded edited DVS → translate to XLSForms
+                    print("Path C: translating DVS changes to XLSForms...", flush=True)
+                    await append_log(item_id, "Translating DVS input to XLSForm updates.")
+                    dvs_text = _dvs_xlsx_to_text(edited_dvs_xlsx)
+
+                    struct_slim = {
+                        "study_meta": struct_json.get("study_meta", {}) if struct_json else {},
+                        "forms":      struct_json.get("forms", []) if struct_json else [],
+                    }
+                    base_build_text = await call_claude(
+                        EDC_BUILD_PROMPT,
+                        extra_text="Study Specification JSON:\n" + json.dumps(struct_slim),
+                    )
+                    try:
+                        base_build = extract_json(base_build_text)
+                        if isinstance(base_build, list):
+                            base_build = {"forms": {}}
+                    except ValueError:
+                        base_build = {"forms": {}}
+
+                    updated_text = await call_claude(
+                        DVS_TRANSLATE_PROMPT,
+                        extra_text=("Current XLSForm JSON:\n" + json.dumps(base_build) +
+                                    "\n\nDVS Changes:\n" + dvs_text),
+                    )
+                    try:
+                        build_json_holder[0] = extract_json(updated_text)
+                    except ValueError:
+                        build_json_holder[0] = base_build
+                    build_zip_holder[0] = _xlsform_zip(build_json_holder[0])
+
+                else:
+                    # Fresh run: edc-builder skill
+                    print("Chain C: Running edc-builder skill...", flush=True)
+                    struct_slim = {
+                        "study_meta": struct_json.get("study_meta", {}) if struct_json else {},
+                        "forms":      struct_json.get("forms", []) if struct_json else [],
+                    }
+                    try:
+                        build_files = await run_skill(
+                            EDC_BUILD_PROMPT,
+                            skill_ids=[SKILL_IDS["edc_builder"]],
+                            extra_text="Study Specification JSON:\n" + json.dumps(struct_slim),
+                        )
+                        build_zip_holder[0] = _find(build_files, "_EDC_Build.zip", ".zip")
+                        if build_zip_holder[0]:
+                            build_json_holder[0] = _read_zip_xlsforms(build_zip_holder[0])
+                    except Exception as e:
+                        print(f"EDC Build error: {e}", flush=True)
+                        await append_log(item_id, f"EDC Build error: {e}")
+
+                if build_zip_holder[0]:
+                    await upload_file(item_id, COL["edc_build"],
+                                      f"{protocol_num}_EDC_Build_{version}.zip",
+                                      build_zip_holder[0])
+                    await append_log(item_id, "EDC Build complete — ZIP uploaded.")
+
+                # DVS
+                print("Chain C: Running DVS...", flush=True)
+                dvs_slim = {}
+            for fname, fdata in build_json_holder[0].get("forms", {}).items():
                 survey = fdata.get("survey", [])
                 relevant_rows = [
                     {k: v for k, v in row.items()
@@ -700,12 +723,16 @@ async def run_pipeline(item_id):
                 if dvs_xlsx:
                     await upload_file(item_id, COL["dvs_output"],
                                       f"{protocol_num}_DVS_{version}.xlsx", dvs_xlsx)
+                await append_log(item_id, "DVS complete.")
             except Exception as e:
                 print(f"DVS error: {e}", flush=True)
                 await append_log(item_id, f"DVS error: {e}")
 
-            await set_status(item_id, COL["pipeline_status"], STATUS["dvs_complete"])
-            await append_log(item_id, "DVS complete.")
+            # ── Launch all three chains in parallel ────────────────────────────
+            await asyncio.gather(chain_a(), chain_b(), chain_c())
+
+            await set_status(item_id, COL["pipeline_status"], STATUS["all_complete"])
+            await append_log(item_id, "Study Specification complete.")
 
         # ── Create OC Study ───────────────────────────────────────────────────
         if create_study and oc_subdomain and struct_json:
