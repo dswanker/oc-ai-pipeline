@@ -302,6 +302,27 @@ def _build_fee(story, quote, is_internal):
     story.append(_grid(["Service", "Hours", "Rate", "Amount"], rows, st, cw))
     story.append(Spacer(1, 4))
 
+    # Additional services discount (if any) — from monday column override
+    tots     = quote['totals']
+    svc_disc = tots.get('additional_svc_disc', 0.0)
+    if svc_disc > 0:
+        disc_row = Table([[
+            Paragraph(f"Additional Services Discount ({int(svc_disc*100)}%)",
+                      ParagraphStyle("dl", fontName="Helvetica", fontSize=9,
+                                     textColor=TEXT_DARK)),
+            Paragraph(f"−{_fmt(tots['svc_disc_amount'], sym)}",
+                      ParagraphStyle("da", fontName="Helvetica-Bold", fontSize=9,
+                                     textColor=OC_ORANGE, alignment=TA_RIGHT)),
+        ]], colWidths=[CONTENT_W*0.70, CONTENT_W*0.30])
+        disc_row.setStyle(TableStyle([
+            ("TOPPADDING",    (0,0),(-1,-1), 4),
+            ("BOTTOMPADDING", (0,0),(-1,-1), 4),
+            ("LEFTPADDING",   (0,0),(-1,-1), 10),
+            ("RIGHTPADDING",  (0,0),(-1,-1), 10),
+        ]))
+        story.append(disc_row)
+        story.append(Spacer(1, 4))
+
     # Total bar
     t = Table([[
         Paragraph("TOTAL ONE-TIME FEE", ParagraphStyle("tl", fontName="Helvetica-Bold",
@@ -396,6 +417,27 @@ def _subscriptions(story, quote, is_internal):
             ])
 
     story.append(_grid(hdrs, rows, st, cw))
+
+    # Additional subscription discount (if any) — from monday column override
+    tots     = quote['totals']
+    sub_disc = tots.get('additional_sub_disc', 0.0)
+    if sub_disc > 0:
+        disc_row = Table([[
+            Paragraph(f"Additional Subscription Discount ({int(sub_disc*100)}%)",
+                      ParagraphStyle("dl", fontName="Helvetica", fontSize=9,
+                                     textColor=TEXT_DARK)),
+            Paragraph(f"−{_fmt(tots['sub_disc_amount'], sym)}",
+                      ParagraphStyle("da", fontName="Helvetica-Bold", fontSize=9,
+                                     textColor=OC_ORANGE, alignment=TA_RIGHT)),
+        ]], colWidths=[CONTENT_W*0.70, CONTENT_W*0.30])
+        disc_row.setStyle(TableStyle([
+            ("TOPPADDING",    (0,0),(-1,-1), 4),
+            ("BOTTOMPADDING", (0,0),(-1,-1), 4),
+            ("LEFTPADDING",   (0,0),(-1,-1), 10),
+            ("RIGHTPADDING",  (0,0),(-1,-1), 10),
+        ]))
+        story.append(disc_row)
+
     story.append(Spacer(1, 14))
 
 

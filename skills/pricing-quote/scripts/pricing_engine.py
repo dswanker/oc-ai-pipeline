@@ -361,6 +361,10 @@ def calculate_quote(protocol_summary, config_path=None, edc_structure=None,
     add_sub = max(0.0, min(1.0, float(additional_sub_disc or 0.0)))
     add_svc = max(0.0, min(1.0, float(additional_svc_disc or 0.0)))
 
+    # Capture pre-discount totals for computing discount amounts below
+    module_total_before_disc = sum(m['total_fee'] for m in modules)
+    build_fee_before_disc    = build_fee['total_fee']
+
     # Q7: Apply user-supplied discounts to module + build totals AFTER the
     # volume/platform discounts that pricing config already applied.
     # These are stacked ADDITIVE (as multipliers), so 10% + 15% = 23.5% off.
@@ -370,12 +374,15 @@ def calculate_quote(protocol_summary, config_path=None, edc_structure=None,
             m['total_fee']   = round(m['total_fee']   * (1 - add_sub), 2)
             m['monthly_fee'] = round(m['monthly_fee'] * (1 - add_sub), 2)
 
-    module_total = sum(m['total_fee'] for m in modules)
+    module_total    = sum(m['total_fee'] for m in modules)
+    sub_disc_amount = round(module_total_before_disc - module_total, 2)
 
     if add_svc > 0:
         build_fee['additional_svc_disc'] = add_svc
         build_fee['subtotal_before_svc_disc'] = build_fee['total_fee']
         build_fee['total_fee'] = round(build_fee['total_fee'] * (1 - add_svc), 2)
+
+    svc_disc_amount = round(build_fee_before_disc - build_fee['total_fee'], 2)
 
     grand_total  = build_fee['total_fee'] + module_total
     out_cfg      = cfg['output']
@@ -393,9 +400,16 @@ def calculate_quote(protocol_summary, config_path=None, edc_structure=None,
         'build_fee':       build_fee,
         'modules':         modules,
         'totals': {
-            'build_fee':    build_fee['total_fee'],
-            'module_total': module_total,
-            'grand_total':  grand_total,
+            'build_fee':                build_fee['total_fee'],
+            'module_total':             module_total,
+            'grand_total':              grand_total,
+            # Discount display fields (used by PDF/XLSX generators)
+            'additional_sub_disc':      add_sub,
+            'additional_svc_disc':      add_svc,
+            'sub_disc_amount':          sub_disc_amount,
+            'svc_disc_amount':          svc_disc_amount,
+            'build_fee_discounted':     build_fee['total_fee'],
+            'module_total_discounted':  module_total,
         },
         'discounts_applied': {
             'additional_sub_disc': add_sub,
