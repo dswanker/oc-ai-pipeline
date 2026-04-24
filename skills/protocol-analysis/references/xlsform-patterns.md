@@ -16,8 +16,8 @@ identifier in a study follows a strict prefix convention:
 | Study      | `S_`   | `S_PrTK05`                           |
 | Site       | `S_`   | `S_SITENAME(TEST)`                   |
 | Event      | `SE_`  | `SE_SCREENING`, `SE_WEEK_1`          |
-| Form       | `F_`   | `F_DEMO`, `F_VS`, `F_ICF`            |
-| Form Ver.  | `F_…_N`| `F_DEMO_1`                           |
+| Form       | (none) | `DEMO`, `VS`, `ICF` (plain short name — OC adds internal prefix) |
+| Form Ver.  | `…_N`  | `DEMO_1` (OC adds internal prefix)    |
 | Item Group | `IG_`  | `IG_DEMO_DM` (pattern `IG_<FORM>_<GRP>`) |
 | Item       | `I_`   | `I_DEMO_SUBJID` (pattern `I_<FORM>_<FIELD>`) |
 ### Short-code itemgroup values inside the XLSForm
@@ -25,34 +25,39 @@ identifier in a study follows a strict prefix convention:
 **IMPORTANT** — the `bind::oc:itemgroup` column takes a SHORT GROUP CODE
 only. OpenClinica's XLSForm validator rejects any value that is not
 composed of letters, digits, and underscores (and must not start with a
-digit). Periods/dots are NOT allowed. Do NOT put the `F_` prefix in the
-itemgroup column.
+digit). Periods/dots are NOT allowed. NO F_ prefix anywhere —
+neither in the itemgroup column nor in form_id.
 
 - `bind::oc:itemgroup` column value: short group code only
     - Correct: `IC`, `DM`, `AE`, `CM`, `MH`, `VS`, `LB_CLIN`
-    - Incorrect: `F_ICF.IC` (contains dot — OC rejects)
-    - Incorrect: `F_DM` (F_ prefix belongs on form_id, not itemgroup)
+    - Incorrect: `ICF.IC` (contains dot — OC rejects)
+    - Incorrect: `F_ICF` or `F_DM` (NO F_ prefix in this column, and form_id
+      itself should also not have F_ — OC adds any internal prefix itself)
 - XPath references inside `calculation` / `relevant` expressions DO use
-  OpenClinica's dotted internal OID form (e.g. `@FormOID='F_DM'`,
-  `@ItemGroupOID='F_DM.DM'`, `@ItemOID='F_DM.SUBJID'`). That's the
-  runtime OC ODM format — it's different from the XLSForm column value.
+  OpenClinica's dotted OID form (e.g. `@FormOID='DM'`,
+  `@ItemGroupOID='DM.DM'`, `@ItemOID='DM.SUBJID'`). The dotted form is
+  only used inside XPath expressions — the column value itself stays as
+  just the short group code.
 
 **Calculate rows with external lookup:** rows where `type=calculate` AND
 `bind::oc:external=clinicaldata` MUST leave `bind::oc:itemgroup` empty.
 They pull from the ODM tree at runtime and do not persist locally.
 
-The form_id used in the settings sheet DOES keep the `F_` prefix — e.g.
-`F_DEMO`, not `F02_DEMO` and not `DEMO` bare.
+The form_id used in the settings sheet is the PLAIN short name — e.g.
+`DEMO`, `VS`, `ICF`. NO `F_` prefix. OpenClinica adds any internal prefix
+itself during upload. We confirmed this by upload testing: forms with
+`form_id='F_VS'` fail with the 'update the form failed' error, while
+forms with `form_id='VS'` succeed.
 
 ### Form naming rules
 
-- CDASH forms — use the CDASH domain code with `F_` prefix:
-  `F_DM`, `F_VS`, `F_LB`, `F_AE`, `F_EX`, `F_IE`, `F_MH`, `F_CM`, `F_DS`,
-  `F_PE`, `F_PC`.
-- When multiple forms share a domain, use a short suffix: `F_EX` for
-  study drug, `F_EXVAL` for valacyclovir. Do not use numeric suffixes.
-- Non-CDASH forms — short descriptive uppercase names with `F_` prefix:
-  `F_ICF`, `F_DIS`, `F_BIOSP`, `F_RT`, `F_PREG`, `F_ECOG`, `F_EN`, `F_PSA`.
+- CDASH forms — use the CDASH domain code as-is (NO F_ prefix):
+  `DM`, `VS`, `LB`, `AE`, `EX`, `IE`, `MH`, `CM`, `DS`,
+  `PE`, `PC`.
+- When multiple forms share a domain, use a short suffix: `EX` for
+  study drug, `EXVAL` for valacyclovir. Do not use numeric suffixes.
+- Non-CDASH forms — short descriptive uppercase names (NO F_ prefix):
+  `ICF`, `DIS`, `BIOSP`, `RT`, `PREG`, `ECOG`, `EN`, `PSA`.
 
 ---
 
@@ -72,7 +77,7 @@ Every OpenClinica XLSForm has exactly 3 sheets:
 
 ```
 form_title:  [Human readable name]
-form_id:     F_<NAME>  (with F_ prefix — e.g. F_DEMO, F_VS)
+form_id:     <short uppercase name>  (no F_ prefix — e.g. DEMO, VS, ICF)
 version:     1  (increment on updates)
 style:       theme-grid
 namespaces:  oc="http://openclinica.org/xforms" , OpenClinica="http://openclinica.com/odm"
@@ -396,9 +401,9 @@ with the `_CF` suffix:
     name:               SEX_CF   (or AGE_CF, WEIGHT_CF, ICFDAT_CF, etc.)
     calculation:        instance('clinicaldata')/ODM/ClinicalData/SubjectData/
                         StudyEventData[@StudyEventOID='SE_<X>']/
-                        FormData[@FormOID='F_<SOURCE_FORM>']/
-                        ItemGroupData[@ItemGroupOID='F_<SOURCE_FORM>.<GROUP>']/
-                        ItemData[@ItemOID='F_<SOURCE_FORM>.<FIELD>']/@Value
+                        FormData[@FormOID='<SOURCE_FORM>']/
+                        ItemGroupData[@ItemGroupOID='<SOURCE_FORM>.<GROUP>']/
+                        ItemData[@ItemOID='<SOURCE_FORM>.<FIELD>']/@Value
     bind::oc:external:  clinicaldata
     bind::oc:itemgroup: (BLANK — external lookup rows must not have itemgroup)
 
@@ -407,15 +412,15 @@ with the `_CF` suffix:
 Any form with sex-specific fields (pregnancy tests, menstrual history,
 prostate/breast exams, PSA) must:
 
-1. Add `SEX_CF` fetch from F_DM at top of form (per 7L)
+1. Add `SEX_CF` fetch from the DM form at top of form (per 7L)
 2. Each sex-specific field: `relevant: ${SEX_CF}='F'` (or `='M'`)
 
 ### Consent-date floor for event dates — 7N
 
 An event cannot predate informed consent. On every form OTHER THAN
-F_ICF itself:
+the ICF form itself:
 
-1. Add `ICFDAT_CF` fetch from F_ICF at top of form (per 7L)
+1. Add `ICFDAT_CF` fetch from the ICF form at top of form (per 7L)
 2. Every event date field's constraint: AND in `. >= ${ICFDAT_CF}`
    Example: `. <= today() and . >= ${ICFDAT_CF}`
 3. Update `constraint_message`: "Date must be on or after informed

@@ -23,7 +23,7 @@ Those are template documentation only.
 | Column | Required | Notes |
 |--------|----------|-------|
 | form_title | Yes | Human-readable name |
-| form_id | Yes | OpenClinica Form OID: `F_<n>` (e.g. `F_DEMO`, `F_VS`). No spaces. Must start with `F_`. |
+| form_id | Yes | Short uppercase name (e.g. `DEMO`, `VS`, `ICF`, `AE`). No spaces. NO F_ prefix — OpenClinica adds any internal prefix itself during upload. |
 | version | Yes | Integer, start at 1 |
 | style | Yes | Always `theme-grid` for OpenClinica |
 | crossform_references | No | Blank, or comma-separated Event OIDs, or `current_event` |
@@ -239,12 +239,13 @@ Row 2: calculate | TPTCALC | (blank) | [FORM_ID] | ... |
 ## File Naming Convention
 
 Output files must be named to match the form_id for easy identification:
-`{form_id}.xlsx` (e.g., `F_AE.xlsx`, `F_VS.xlsx`, `F_DOV.xlsx`).
-form_id always carries the `F_` prefix per the OpenClinica OID convention.
+`{form_id}.xlsx` (e.g., `AE.xlsx`, `VS.xlsx`, `DOV.xlsx`).
+form_id is a plain short uppercase name (NO F_ prefix). OpenClinica
+adds any internal prefix itself when the form is uploaded.
 
 Exception: forms sharing the same form_id but different designs
-(e.g., F_IE_TRT and F_IE_CTL both have form_id=F_IE) — use the variant
-identifier as the filename: `F_IE_TRT.xlsx`, `F_IE_CTL.xlsx`
+(e.g., IE_TRT and IE_CTL both have form_id=IE) — use the variant
+identifier as the filename: `IE_TRT.xlsx`, `IE_CTL.xlsx`
 
 
 ---
@@ -368,9 +369,9 @@ with the `_CF` suffix:
     name:               SEX_CF   (or AGE_CF, WEIGHT_CF, ICFDAT_CF, etc.)
     calculation:        instance('clinicaldata')/ODM/ClinicalData/SubjectData/
                         StudyEventData[@StudyEventOID='SE_<X>']/
-                        FormData[@FormOID='F_<SOURCE_FORM>']/
-                        ItemGroupData[@ItemGroupOID='F_<SOURCE_FORM>.<GROUP>']/
-                        ItemData[@ItemOID='F_<SOURCE_FORM>.<FIELD>']/@Value
+                        FormData[@FormOID='<SOURCE_FORM>']/
+                        ItemGroupData[@ItemGroupOID='<SOURCE_FORM>.<GROUP>']/
+                        ItemData[@ItemOID='<SOURCE_FORM>.<FIELD>']/@Value
     bind::oc:external:  clinicaldata
     bind::oc:itemgroup: (BLANK — external lookup rows must not have itemgroup)
 
@@ -379,15 +380,15 @@ with the `_CF` suffix:
 Any form with sex-specific fields (pregnancy tests, menstrual history,
 prostate/breast exams, PSA) must:
 
-1. Add `SEX_CF` fetch from F_DM at top of form (per 7L)
+1. Add `SEX_CF` fetch from the DM form at top of form (per 7L)
 2. Each sex-specific field: `relevant: ${SEX_CF}='F'` (or `='M'`)
 
 ### Consent-date floor for event dates — 7N
 
 An event cannot predate informed consent. On every form OTHER THAN
-F_ICF itself:
+the ICF form itself:
 
-1. Add `ICFDAT_CF` fetch from F_ICF at top of form (per 7L)
+1. Add `ICFDAT_CF` fetch from the ICF form at top of form (per 7L)
 2. Every event date field's constraint: AND in `. >= ${ICFDAT_CF}`
    Example: `. <= today() and . >= ${ICFDAT_CF}`
 3. Update `constraint_message`: "Date must be on or after informed

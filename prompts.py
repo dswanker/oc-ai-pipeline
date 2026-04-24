@@ -50,24 +50,28 @@ naming conventions documented in "Locating Object Identifiers in a Study":
   Study           S_       S_PrTK05
   Site            S_       S_SITENAME(TEST)
   Event           SE_      SE_SCREENING, SE_BASELINE_INJECTION_1
-  Form            F_       F_DEMO, F_VS, F_LB, F_ICF
-  Form Version    F_*_N    F_DEMO_1
+  Form            (none)   DEMO, VS, LB, ICF (use plain short uppercase name —
+                              OC adds internal prefix on upload)
+  Form Version    (none)   DEMO_1 (OC adds internal prefix)
   Item Group      IG_      IG_DEMO_DM   (pattern: IG_<FORM>_<GROUP>)
   Item            I_       I_DEMO_SUBJID (pattern: I_<FORM>_<FIELD>)
 
 DOTTED NOTATION for cross-form references in XLSForms:
   The `bind::oc:itemgroup` column and cross_form_dependencies use DOTTED
   notation: `<FORM_OID>.<GROUP>` for item groups and `<FORM_OID>.<FIELD>`
-  for items. Example: `F_DEMO.DM` (item group), `F_DEMO.SUBJID` (item).
+  for items. Example: `DEMO.DM` (item group), `DEMO.SUBJID` (item).
+  DO NOT put F_ in front — it is NOT part of the form OID you supply.
 
 APPLY THIS TO ALL IDENTIFIERS:
 
   • timepoint_csv.rows[].event      → "SE_SCREENING", NOT "SCREENING"
-  • forms[].form_id                 → "F_DEMO", NOT "F02_DEMO" or "DEMO"
-    (no numeric prefix like F##_; just F_<UPPERCASE_NAME>)
+  • forms[].form_id                 → "DEMO", "VS", "AE", "ICF" (plain
+    short uppercase name — NO plain short name convention; NO numeric prefix like F##_).
+    OpenClinica adds any internal prefixing itself during upload.
   • forms[].settings.form_id        → same as forms[].form_id
   • forms[].visits_assigned         → ["SE_SCREENING","SE_WEEK_1", ...]
-  • forms[].survey[].bind__oc_itemgroup  → "F_DEMO.DM" (dotted)
+  • forms[].survey[].bind__oc_itemgroup  → "DM" (short group code only;
+    no dot, no plain short name convention — OC rejects values with dots in this column)
   • forms[].survey[].name           → use the BARE field name here
     (e.g. "SUBJID", "AETERM") — the xlsform tool constructs the full
     Item OID `I_<FORM>_<NAME>` at build time.
@@ -79,26 +83,26 @@ CROSS-FORM DEPENDENCIES — full XPath expressions:
   Cross-event (data from a different event):
     instance('clinicaldata')/ODM/ClinicalData/SubjectData/
       StudyEventData[@StudyEventOID='SE_X']/
-      FormData[@FormOID='F_Y']/
-      ItemGroupData[@ItemGroupOID='F_Y.Z']/
-      ItemData[@ItemOID='F_Y.FIELD']/@Value
+      FormData[@FormOID='Y']/
+      ItemGroupData[@ItemGroupOID='Y.Z']/
+      ItemData[@ItemOID='Y.FIELD']/@Value
 
   Same-event (from current event):
     instance('clinicaldata')/ODM/ClinicalData/SubjectData/
       StudyEventData[@OpenClinica:CurrentStudyEvent='true']/
-      FormData[@FormOID='F_Y']/
-      ItemGroupData/ItemData[@ItemOID='F_Y.FIELD']/@Value
+      FormData[@FormOID='Y']/
+      ItemGroupData/ItemData[@ItemOID='Y.FIELD']/@Value
 
   The xpath_expression may be a compact single-line string. Whitespace in
   the template above is for readability only.
 
 FORM NAMING RULES for form_id:
-  CDASH forms — use the CDASH domain code: F_DM, F_VS, F_LB, F_AE, F_EX,
-  F_IE, F_MH, F_CM, F_DS, F_PE, F_PC.
+  CDASH forms — use the CDASH domain code as-is: DM, VS, LB, AE, EX,
+  IE, MH, CM, DS, PE, PC. NO plain short name convention on the form_id.
   When you need multiple forms in the same domain, add a short suffix:
-  F_EX (study drug), F_EXVAL (valacyclovir) — not F_EX_1/F_EX_2.
-  Non-CDASH forms — use a descriptive uppercase short name: F_ICF, F_DIS,
-  F_BIOSP, F_RT, F_PREG, F_ECOG, F_EN, F_PSA.
+  EX (study drug), EXVAL (valacyclovir) — not EX_1/EX_2.
+  Non-CDASH forms — use a descriptive uppercase short name: ICF, DIS,
+  BIOSP, RT, PREG, ECOG, EN, PSA. No plain short name convention.
 
 ════════════════════════════════════════════════════════════════════════════
 OPENCLINICA 4 AUTHORITATIVE RULES  (must follow to pass XLSForm upload)
@@ -130,8 +134,9 @@ RULE OC-2 — ITEMGROUP IS MANDATORY ON EVERY DATA ROW
   letters, digits, and underscores only, must not start with a digit,
   MUST NOT contain a period/dot.
   Correct:   "IC", "DM", "AE", "CM", "MH", "VS", "LB_CLIN"
-  Incorrect: "F_ICF.IC" (contains dot — OC rejects),
-             "F_DM" (F_ prefix belongs on form_id, not itemgroup)
+  Incorrect: "ICF.IC" (contains dot — OC rejects),
+             "ICF" or "DM" (NO plain short name convention anywhere — neither in
+                                form_id nor in itemgroup)
   Rows with type `begin group` / `end group` / `begin repeat` /
   `end repeat` do NOT need this field.
   EXCEPTION (per RULE OC-5a below): calculate rows with
@@ -155,9 +160,9 @@ RULE OC-4 — CROSS-FORM/CROSS-EVENT XPATH PATTERNS
   When a field needs a value from another form or event, use these
   exact patterns in `calculation` (not made-up XPath):
     Same event, same form:
-      instance('clinicaldata')/ODM/ClinicalData/SubjectData/StudyEventData[@OpenClinica:Current='Yes']/FormData[@FormOID='F_X']/ItemGroupData/ItemData[@ItemOID='F_X.FIELD']/@Value
+      instance('clinicaldata')/ODM/ClinicalData/SubjectData/StudyEventData[@OpenClinica:Current='Yes']/FormData[@FormOID='X']/ItemGroupData/ItemData[@ItemOID='X.FIELD']/@Value
     Different event (by OID):
-      instance('clinicaldata')/ODM/ClinicalData/SubjectData/StudyEventData[@StudyEventOID='SE_X']/FormData[@FormOID='F_X']/ItemGroupData[@ItemGroupOID='F_X.GROUP']/ItemData[@ItemOID='F_X.FIELD']/@Value
+      instance('clinicaldata')/ODM/ClinicalData/SubjectData/StudyEventData[@StudyEventOID='SE_X']/FormData[@FormOID='X']/ItemGroupData[@ItemGroupOID='X.GROUP']/ItemData[@ItemOID='X.FIELD']/@Value
     Current event OID:
       instance('clinicaldata')/ODM/ClinicalData/SubjectData/StudyEventData[@OpenClinica:Current='Yes']/@StudyEventOID
     Timepoint lookup from the study_id_tpt.csv:
@@ -171,10 +176,20 @@ RULE OC-5 — REPEATING GROUPS USE once() FOR THE KEY
   repeating form) must include a `calculate` field at the top of the
   repeating group whose calculation uses `once(... @ItemGroupRepeatKey)`.
   This prevents the repeat key from being overwritten on edit. Example:
-    once(instance('clinicaldata')/ODM/ClinicalData/SubjectData/StudyEventData[@StudyEventOID='SE_X']/FormData[@FormOID='F_X']/ItemGroupData[@ItemGroupOID='F_X.AE']/@ItemGroupRepeatKey)
+    once(instance('clinicaldata')/ODM/ClinicalData/SubjectData/StudyEventData[@StudyEventOID='SE_X']/FormData[@FormOID='X']/ItemGroupData[@ItemGroupOID='X.AE']/@ItemGroupRepeatKey)
   Pair with a separate display-only field using
     if(${ID}!='', ${ID}, 'Scheduled')
   to show the repeat number during data entry.
+
+RULE OC-5a — CALCULATE ROWS MUST NOT HAVE readonly=yes
+  `type: calculate` already implies read-only (the value is computed, not
+  entered). Adding `readonly: yes` on top of that causes OpenClinica to
+  hide the field entirely, producing the error:
+    "Element X cannot be defined as type = calculate and readonly.
+     This element will never be visible on the form."
+  DO NOT emit `readonly: yes` on any calculate row. If the row has a
+  label and appearance (i.e. it's a display-calc like AEID, CMID, MHID),
+  that is sufficient to make OC treat it as read-only display.
 
 RULE OC-6 — HARD EDIT CHECKS (when required)
   By default, constraint failures are soft (warning only). To make a
@@ -291,9 +306,9 @@ RULE OC-7 — UNIVERSAL CLINICAL DATA PATTERNS (always apply when applicable)
         name:               SEX_CF (or AGE_CF, WEIGHT_CF, etc.)
         calculation:        instance('clinicaldata')/ODM/ClinicalData/
                             SubjectData/StudyEventData[@StudyEventOID='SE_<X>']/
-                            FormData[@FormOID='F_<SOURCE_FORM>']/
-                            ItemGroupData[@ItemGroupOID='F_<SOURCE_FORM>.<GROUP>']/
-                            ItemData[@ItemOID='F_<SOURCE_FORM>.<FIELD>']/@Value
+                            FormData[@FormOID='<SOURCE_FORM>']/
+                            ItemGroupData[@ItemGroupOID='<SOURCE_FORM>.<GROUP>']/
+                            ItemData[@ItemOID='<SOURCE_FORM>.<FIELD>']/@Value
         bind::oc:external:  clinicaldata
       This row MUST NOT have bind::oc:itemgroup (per RULE OC-2).
       Use the fetched value via ${SEX_CF} in relevant/constraint/
@@ -302,7 +317,7 @@ RULE OC-7 — UNIVERSAL CLINICAL DATA PATTERNS (always apply when applicable)
   7M. SEX-DEPENDENT FIELDS REQUIRE SEX_CF CROSS-FETCH.
       Whenever a form has fields that only apply to one sex (pregnancy
       tests, menstrual history, prostate exams, breast exams, PSA, etc.):
-        1. Add a SEX_CF fetch from F_DM at the top of the form
+        1. Add a SEX_CF fetch from the DM form at the top of the form
            (per pattern 7L).
         2. Each sex-specific field gets:
            `relevant`: `${SEX_CF}='F'`  (or `='M'`)
@@ -310,8 +325,8 @@ RULE OC-7 — UNIVERSAL CLINICAL DATA PATTERNS (always apply when applicable)
   7N. CONSENT DATE FLOOR FOR EVENT DATES.
       An event cannot predate informed consent. For every clinical event
       date on the form (*STDAT, VSDAT, LBDAT, etc. — NOT including dates
-      ON the F_ICF form itself):
-        1. Add an ICFDAT_CF fetch from F_ICF at the top of the form
+      ON the ICF form itself):
+        1. Add an ICFDAT_CF fetch from the ICF form at the top of the form
            (per pattern 7L).
         2. Extend the date's existing constraint with `. >= ${ICFDAT_CF}`
            AND-joined with any other date rules.
@@ -461,7 +476,7 @@ labranges_csv:  (REQUIRED — populate every lab test from the protocol)
 
 forms: list of CRF form objects. For EACH form include:
 
-  form_id                  (str with F_ prefix, e.g. "F_DEMO","F_VS")
+  form_id                  (str, short uppercase name, e.g. "DEMO","VS","ICF")
   form_title               (str, human-readable)
   form_category            ("ADMINISTRATIVE"|"CDASH_CLINICAL"|"CDASH_SAFETY"|"INFRASTRUCTURE"|"CUSTOM")
   cdash_domain             (str or null, e.g. "DM","VS","LB","AE")
@@ -487,25 +502,25 @@ causes form cards to appear on the wrong events in the OpenClinica Study
 Designer, which is a top source of post-build manual corrections.
 
 RULE 1 — ENROLLMENT vs SCREENING
-    F_EN (Enrollment) belongs at the BASELINE or FIRST DOSING visit, NOT at
+    EN (Enrollment) belongs at the BASELINE or FIRST DOSING visit, NOT at
     SCREENING. Screening is for evaluating eligibility (IC/EC criteria
     checks, baseline assessments). Enrollment is the moment the patient is
     formally registered into the study and begins study interventions —
     this is typically the same day as Dose 1 / Injection 1.
 
     Correct:
-      F_EN → SE_BASELINE_INJECTION_1 (for treatment arm)
-      F_EN → SE_BASELINE              (for control arm)
+      EN → SE_BASELINE_INJECTION_1 (for treatment arm)
+      EN → SE_BASELINE              (for control arm)
 
     Wrong (very common mistake):
-      F_EN → SE_SCREENING
+      EN → SE_SCREENING
 
 RULE 2 — PER-ARM VISIT COVERAGE
     When the protocol has separate SOA tables for different arms
     (e.g. Table 1 for Treatment, Table 2 for Control), forms that appear
     in BOTH tables MUST list visits from BOTH tables in `visits_assigned`.
 
-    Example: if F_PSA is marked "X" at Screening/W2-3/W8-10/W16-18 in
+    Example: if PSA is marked "X" at Screening/W2-3/W8-10/W16-18 in
     Table 2 AND at Screening/Inj 2/W8-10/EOS in Table 1, then:
       visits_assigned: ["SE_SCREENING", "SE_INJECTION_2", "SE_WEEK_8_10",
                          "SE_END_OF_STUDY", "SE_BASELINE", "SE_WEEK_2_3"]
@@ -521,38 +536,38 @@ RULE 3 — TIMING-DEFINED EVENTS (EBRT, infusions, continuous meds)
     follow-up visit like End of Study.
 
     Example: EBRT "Begins 0-3 days after Injection #2"
-      → F_RT should be assigned to SE_INJECTION_2 onward (e.g., INJ_2,
+      → RT should be assigned to SE_INJECTION_2 onward (e.g., INJ_2,
         TA_2, INJ_3, TA_3, any concurrent CTRL weeks), NOT just to
         SE_END_OF_STUDY.
 
 RULE 4 — SCREENING-ONLY FORMS
     These forms belong ONLY at SE_SCREENING (or equivalent first visit):
-      - F_ICF (Informed Consent)
-      - F_DM  (Demographics — collected once)
-      - F_MH  (Medical History — collected once)
-      - F_IE  (Inclusion/Exclusion — eligibility is only assessed once)
-      - F_DIS (Disease Assessment / Staging at baseline)
-      - F_ECOG (if assessed only at baseline per protocol)
+      - ICF (Informed Consent)
+      - DM  (Demographics — collected once)
+      - MH  (Medical History — collected once)
+      - IE  (Inclusion/Exclusion — eligibility is only assessed once)
+      - DIS (Disease Assessment / Staging at baseline)
+      - ECOG (if assessed only at baseline per protocol)
 
 RULE 5 — CONTINUOUS / ONGOING FORMS
     Forms that capture data throughout the study should be at EVERY visit
     where the SOA shows an "X" — do NOT compress to a subset:
-      - F_AE  (Adverse Events): every clinical visit PLUS SE_UNSCHEDULED
-      - F_CM  (Concomitant Meds): every visit the SOA shows "X"
-      - F_VS  (Vital Signs): every visit with an "X" in SOA
-      - F_BIOSP (Biosamples): every visit in biosample rows of BOTH tables
+      - AE  (Adverse Events): every clinical visit PLUS SE_UNSCHEDULED
+      - CM  (Concomitant Meds): every visit the SOA shows "X"
+      - VS  (Vital Signs): every visit with an "X" in SOA
+      - BIOSP (Biosamples): every visit in biosample rows of BOTH tables
 
 RULE 6 — UNSCHEDULED AND END-OF-STUDY
-    - SE_UNSCHEDULED should host: F_AE, F_AESAE (if applicable), F_CM,
-      F_PREG (if applicable) — anything that might arise ad hoc.
-    - SE_END_OF_STUDY should host: F_DS (Disposition) AT MINIMUM, plus
+    - SE_UNSCHEDULED should host: AE, AESAE (if applicable), CM,
+      PREG (if applicable) — anything that might arise ad hoc.
+    - SE_END_OF_STUDY should host: DS (Disposition) AT MINIMUM, plus
       any final-visit assessments marked in the SOA.
 
 RULE 7 — ARM-SPECIFIC SAFETY FORMS
     If the protocol specifies different safety reporting for different
     arms (e.g. "For the control group, only SAEs related to biomarker
     collection procedure should be recorded"), use `arm_applicability`
-    to mark the form's scope. Consider a separate form (e.g., F_AESAE)
+    to mark the form's scope. Consider a separate form (e.g., AESAE)
     if the control-arm safety form has materially different fields.
 
 ════════════════════════════════════════════════════════════════════════════
@@ -570,11 +585,11 @@ Each survey row MUST include these keys (never omit, may be empty):
 POPULATE THESE OPTIONAL FIELDS AGGRESSIVELY — err toward inclusion:
 
     bind__oc_itemgroup   — REQUIRED on every data row (not group rows).
-                           Use dotted form "F_<FORM>.<GROUP>" for example
-                           "F_DEMO.DM", "F_VS.VIT", "F_AE.AE_GROUP".
+                           Use dotted form "<FORM>.<GROUP>" for example
+                           "DEMO.DM", "VS.VIT", "AE.AE_GROUP".
                            When the form has only one group, reuse the
                            form's CDASH domain code as the group name:
-                           F_LB.LB, F_DM.DM, F_VS.VS.
+                           LB.LB, DM.DM, VS.VS.
 
     appearance           — Use OpenClinica/XLSForm values:
                            w1, w2, w3, w4, w5, w6, w9 — column widths (of 6)
@@ -627,7 +642,7 @@ POPULATE THESE OPTIONAL FIELDS AGGRESSIVELY — err toward inclusion:
                                                      CROSS-FORM DEPENDENCIES above
 
     dependencies         — List of cross-form field references in dotted
-                           notation: ["F_DEMO.SUBJID", "F_EX.EXSTDAT"].
+                           notation: ["DEMO.SUBJID", "EX.EXSTDAT"].
                            Populate on every row that pulls data from
                            another form.
 
@@ -662,10 +677,10 @@ CROSS_FORM_DEPENDENCIES — full XPaths required
 ════════════════════════════════════════════════════════════════════════════
 
 Each dependency records one field on this form that references another form:
-    source_form            (str, F_-prefixed form_id of the OTHER form)
+    source_form            (str, plain-short-name form_id of the OTHER form)
     source_field           (str, bare field name on source_form, e.g. "SUBJID")
-    source_item_oid        (str, dotted form "F_<FORM>.<FIELD>", e.g. "F_DEMO.SUBJID")
-    source_itemgroup_oid   (str, dotted form "F_<FORM>.<GROUP>", e.g. "F_DEMO.DM")
+    source_item_oid        (str, dotted form "<FORM>.<FIELD>", e.g. "DEMO.SUBJID")
+    source_itemgroup_oid   (str, dotted form "<FORM>.<GROUP>", e.g. "DEMO.DM")
     source_event_oid       (str, SE_<EVENT> or "CURRENT" for same-event reference)
     target_field           (str, bare name of the field ON THIS FORM that
                             will receive the pulled value — must match the
@@ -687,8 +702,8 @@ set `bind__oc_external: clinicaldata` on that row. This is critical —
 the survey row is what drives the actual XLSForm build; the
 cross_form_dependencies array is the structured catalog for review.
 
-Typical cross-form deps: F_DEMO.SUBJID pulled into every form;
-F_EN.RANDNUM pulled into treatment forms; F_VS.WEIGHT pulled into F_LB
+Typical cross-form deps: DEMO.SUBJID pulled into every form;
+EN.RANDNUM pulled into treatment forms; VS.WEIGHT pulled into LB
 for creatinine clearance calc. Populate these wherever the protocol
 implies cross-form data lookups.
 
@@ -710,18 +725,18 @@ QUALITY CHECKLIST (verify before returning)
   ✓ All timepoint_csv.rows[].event values use SE_ prefix
   ✓ timepoint_csv.rows[].event values are UNIQUE across rows
     (unless row per arm and `arm` field distinguishes them)
-  ✓ All forms[].form_id values use F_ prefix (no F## numeric prefix)
+  ✓ All forms[].form_id values use plain short uppercase name (no plain short name convention, no numeric prefix)
   ✓ All forms[].visits_assigned use SE_ prefix
-  ✓ F_EN (Enrollment) visits_assigned includes a BASELINE event — NOT just
+  ✓ EN (Enrollment) visits_assigned includes a BASELINE event — NOT just
     SE_SCREENING (see FORM → VISIT ASSIGNMENT RULES, Rule 1)
   ✓ For multi-arm studies with separate SOA tables, forms present in both
     tables have visits from BOTH tables in visits_assigned (Rule 2)
   ✓ Procedure forms (EBRT, infusions, continuous meds) are assigned to the
     FIRST event where the procedure begins, not a late follow-up (Rule 3)
-  ✓ F_AE assigned to every clinical visit + SE_UNSCHEDULED (Rule 5)
-  ✓ F_DS (Disposition) assigned to SE_END_OF_STUDY (Rule 6)
+  ✓ AE assigned to every clinical visit + SE_UNSCHEDULED (Rule 5)
+  ✓ DS (Disposition) assigned to SE_END_OF_STUDY (Rule 6)
   ✓ All survey rows with non-group type have bind__oc_itemgroup populated
-    with dotted F_<FORM>.<GROUP> form
+    with dotted <FORM>.<GROUP> form
   ✓ labranges_csv.rows has at least one entry per lab test in the protocol
   ✓ Every survey row has completion_status, library_source, flag_reason
   ✓ Optional survey columns (appearance, relevant, required, constraint,
