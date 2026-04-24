@@ -220,6 +220,7 @@ def build_edc_pdf(data: dict, output_path: str):
     meta_rows = [
         ("Protocol Number", meta.get("protocol_number", "—")),
         ("Study ID",        study_id_display),
+        ("Protocol Title",  meta.get("study_title", "—")),
         ("Library Files",   ", ".join(meta.get("library_files_provided", [])) or "None"),
     ]
     story.append(kv_table(meta_rows, styles, [CONTENT_W*0.15, CONTENT_W*0.85]))

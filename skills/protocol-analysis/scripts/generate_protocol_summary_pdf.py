@@ -138,6 +138,33 @@ def kv_table(rows, styles, col_widths=None):
     return tbl
 
 
+def grid_table(headers, rows, styles, col_widths, zebra=True):
+    """
+    Grid-style table with a dark header row and optional zebra striping.
+    Mirrors the helper in generate_study_spec_pdf.py so the Study Event
+    Schedule sub-table in Section 3 of the Protocol Summary looks
+    consistent with Section 1 of the Study Spec.
+    """
+    data = [[Paragraph(h, styles["cell_header"]) for h in headers]]
+    for row in rows:
+        data.append([Paragraph(str(c) if c is not None else "—", styles["cell"])
+                     for c in row])
+    tbl = Table(data, colWidths=col_widths, repeatRows=1)
+    ts = [
+        ("BACKGROUND",    (0, 0), (-1, 0),  DARK_BLUE),
+        ("VALIGN",        (0, 0), (-1, -1), "TOP"),
+        ("TOPPADDING",    (0, 0), (-1, -1), 3),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        ("LEFTPADDING",   (0, 0), (-1, -1), 3),
+        ("RIGHTPADDING",  (0, 0), (-1, -1), 3),
+        ("GRID",          (0, 0), (-1, -1), 0.3, GREY_MID),
+    ]
+    if zebra:
+        ts.append(("ROWBACKGROUNDS", (0, 1), (-1, -1), [WHITE, GREY_LIGHT]))
+    tbl.setStyle(TableStyle(ts))
+    return tbl
+
+
 def confidence_color(conf):
     if not conf:
         return TEXT_DARK
@@ -149,7 +176,22 @@ def confidence_color(conf):
     return RED_FLAG
 
 
-def build_pricing_pdf(data: dict, output_path: str):
+def build_pricing_pdf(data: dict, output_path: str, struct_json: dict = None):
+    """
+    Build the Protocol Summary PDF.
+
+    Parameters
+    ----------
+    data : dict
+        The Protocol Summary JSON (study_meta, patient_population,
+        visit_summary, crf_summary, ...).
+    output_path : str
+        Where to write the PDF.
+    struct_json : dict, optional
+        The Study Spec JSON (with forms[] and timepoint_csv). If provided,
+        Section 3 will include a detailed Study Event Schedule sub-table
+        mirroring Study Spec Section 1 (without the Event OID column).
+    """
     styles = make_styles()
     doc = SimpleDocTemplate(
         output_path,
@@ -379,6 +421,51 @@ def build_pricing_pdf(data: dict, output_path: str):
     ))
     story.append(kv_table(vis_rows, styles))
     story.append(Spacer(1, 10))
+
+    # ── Section 3 — Study Event Schedule (SoE) sub-table ────────────────────
+    # Mirrors Study Spec Section 1's event-schedule table, but drops the
+    # Event OID column so the Protocol Summary stays high-level for the
+    # client audience. Only rendered when struct_json was provided.
+    if struct_json and isinstance(struct_json, dict):
+        forms_list = struct_json.get("forms", []) or []
+        tpt_rows   = (struct_json.get("timepoint_csv", {}) or {}).get("rows", []) or []
+
+        if forms_list:
+            # Derive event → list of form_ids from forms[].visits_assigned
+            event_map = {}
+            for form in forms_list:
+                for ev in form.get("visits_assigned", []) or []:
+                    event_map.setdefault(ev, []).append(form.get("form_id", ""))
+
+            # event_oid → timepoint label
+            tpt_lookup = {r.get("event", ""): r.get("timepoint", "")
+                          for r in tpt_rows if isinstance(r, dict)}
+
+            soe_headers = ["Timepoint Label", "Arm", "Forms Assigned"]
+            soe_cw = [CONTENT_W * 0.24, CONTENT_W * 0.12, CONTENT_W * 0.64]
+            soe_data = []
+            for ev, form_ids in event_map.items():
+                # Derive arm from event OID convention
+                if "CTL" in ev:
+                    arm = "CONTROL"
+                elif ev in ("SE_BASELINE", "SE_UNSCH", "SE_COMMON"):
+                    arm = "BOTH"
+                else:
+                    arm = "TREATMENT"
+
+                label = tpt_lookup.get(ev, ev)
+                forms_str = ", ".join(form_ids[:8])
+                if len(form_ids) > 8:
+                    forms_str += f" +{len(form_ids) - 8} more"
+                soe_data.append([label, arm, forms_str])
+
+            if soe_data:
+                story.append(Paragraph(
+                    "Study Event Schedule",
+                    styles.get("subhead") or styles.get("label") or styles["body"]))
+                story.append(Spacer(1, 3))
+                story.append(grid_table(soe_headers, soe_data, styles, soe_cw))
+                story.append(Spacer(1, 10))
 
     # ── Section 4: CRF Summary ────────────────────────────────────────────────
     story.append(header_band("SECTION 4 — CRF SUMMARY", styles))

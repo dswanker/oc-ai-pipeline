@@ -284,8 +284,13 @@ def run_study_spec_files(struct_json):
         }
 
 
-def run_protocol_summary_pdf(pricing_json):
-    """Generate Protocol Summary PDF locally. Returns bytes."""
+def run_protocol_summary_pdf(pricing_json, struct_json=None):
+    """Generate Protocol Summary PDF locally. Returns bytes.
+
+    If struct_json is provided, the PDF includes a Study Event Schedule
+    sub-table in Section 3 (Timepoint Label | Arm | Forms Assigned —
+    Event OID omitted for client-facing simplicity).
+    """
     _add_scripts("protocol-analysis")
     from generate_protocol_summary_pdf import build_pricing_pdf
 
@@ -293,7 +298,7 @@ def run_protocol_summary_pdf(pricing_json):
                 or "STUDY")
     with tempfile.TemporaryDirectory() as tmp:
         pdf_path = os.path.join(tmp, f"{protocol}_Protocol_Summary.pdf")
-        build_pricing_pdf(pricing_json, pdf_path)
+        build_pricing_pdf(pricing_json, pdf_path, struct_json=struct_json)
         return open(pdf_path, "rb").read()
 
 
@@ -651,9 +656,10 @@ async def create_oc_study(subdomain, struct_json, is_production=False):
                        year=_dt.date.today().year + dur_months // 12)).isoformat()
 
         payload = {
-            "name":               meta.get("study_title", protocol_num),
-            "description":        meta.get("description",
-                                   f"{protocol_num} — {meta.get('indication', '')}"),
+            "name":               protocol_num,
+            "description":        meta.get("study_title",
+                                   meta.get("description",
+                                            f"{protocol_num} — {meta.get('indication', '')}")),
             "uniqueIdentifier":   protocol_num[:30],
             "type":               type_map.get(str(meta.get("type","")).lower(),
                                                "INTERVENTIONAL"),
@@ -1152,7 +1158,7 @@ async def run_pipeline(item_id):
                     try:
                         loop = asyncio.get_event_loop()
                         ps_pdf = await loop.run_in_executor(
-                            None, lambda: run_protocol_summary_pdf(pricing_json)
+                            None, lambda: run_protocol_summary_pdf(pricing_json, struct_json)
                         )
                         uploads = [upload_file(item_id, COL["pricing_summary"],
                             f"{protocol_num}_Protocol_Summary_{version}.json",
