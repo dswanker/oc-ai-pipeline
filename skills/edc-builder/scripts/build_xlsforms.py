@@ -110,7 +110,31 @@ XLSX_TO_XLSFORM = {
     "bind__oc_external":         "bind::oc:external",
     "bind__oc_briefdescription": "bind::oc:briefdescription",
     "bind__oc_description":      "bind::oc:description",
+    "bind__oc_constraint_type":  "bind::oc:constraint-type",
+    "bind__oc_required_type":    "bind::oc:required-type",
 }
+# Inverse: given the XLSForm column name, find the JSON key that carries
+# its value. Used by _resolve_cell_value when the XLSForm name isn't
+# present as a direct key in the row dict.
+XLSFORM_TO_JSON = {v: k for k, v in XLSX_TO_XLSFORM.items()}
+
+
+def _resolve_cell_value(row, col):
+    """
+    Given a row dict and an XLSForm column name, return the value.
+    Tries both the XLSForm column name (e.g. 'bind::oc:itemgroup') AND its
+    JSON underscore equivalent (e.g. 'bind__oc_itemgroup'), because
+    Claude's extraction emits underscore keys (colons aren't friendly in
+    JSON) while the XLSForm spec mandates colon keys.
+    """
+    # Try exact XLSForm name first
+    if col in row and row[col] not in (None, ''):
+        return row[col]
+    # Fall back to JSON underscore variant
+    json_key = XLSFORM_TO_JSON.get(col)
+    if json_key and json_key in row:
+        return row[json_key]
+    return ''
 
 # Columns from spec XLSX to strip (never include in output XLSForms)
 STRIP_COLS = {
@@ -320,11 +344,28 @@ def build_single_xlsform(form_data, output_path, build_log):
     """Build one XLSForm .xlsx file from form_data dict."""
     wb = Workbook()
 
-    settings = form_data.get('settings', {})
+    settings = form_data.get('settings', {}) or {}
     choices  = form_data.get('choices', [])
     survey   = form_data.get('survey', [])
     extra_c  = form_data.get('extra_cols', [])
     form_id  = form_data.get('form_id', 'FORM')
+
+    # Apply OpenClinica XLSForm defaults for missing settings fields.
+    # OpenClinica's XLSForm validator requires these — without them the
+    # form won't load. Claude may omit them in the JSON extraction.
+    OC_SETTINGS_DEFAULTS = {
+        'form_title':           form_data.get('form_title', form_id),
+        'form_id':               form_id,
+        'version':               '1',
+        'style':                 'theme-grid',
+        'crossform_references': '',
+        'namespaces':
+            'oc="http://openclinica.org/xforms" , '
+            'OpenClinica="http://openclinica.com/odm"',
+    }
+    for k, default in OC_SETTINGS_DEFAULTS.items():
+        if not settings.get(k):
+            settings[k] = default
 
     # ── Sheet 1: settings ──────────────────────────────────────────────────
     ws_set = wb.active
@@ -391,7 +432,7 @@ def build_single_xlsform(form_data, output_path, build_log):
             placeholders_in_form.append(row.get('name', f'row_{row_i}'))
 
         for col_i, col in enumerate(all_survey_cols, start=1):
-            val = row.get(col, '')
+            val = _resolve_cell_value(row, col)
             _data_cell(ws_sv.cell(row=row_i, column=col_i), val,
                       row_i - 2, flagged=has_placeholder)
 

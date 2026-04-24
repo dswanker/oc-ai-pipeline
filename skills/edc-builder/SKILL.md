@@ -34,6 +34,18 @@ any form.** It contains:
 - Hard check syntax
 - Once() pattern for repeating groups
 
+**Consult `references/openclinica-oc4-docs.md` when a build question
+isn't answered by `xlsform-build-rules.md`.** It's a curated index into
+the OpenClinica 4 user documentation at https://docs.openclinica.com/oc4/
+with guidance on which doc page addresses which build decision (valid
+functions, form logic, CDASH library, OID conventions, go-live
+checklist, etc.).
+
+Order of precedence:
+1. `xlsform-build-rules.md` — distilled, stable, authoritative for build
+2. `openclinica-oc4-docs.md` — index into live OC4 docs; use for edge
+   cases the rules file doesn't cover, then fetch the live page
+
 ---
 
 ## OpenClinica OID Naming Conventions (MUST FOLLOW)

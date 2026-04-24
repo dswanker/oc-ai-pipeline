@@ -35,7 +35,7 @@ in a single pass:
 
 ## Before You Begin — Read All Reference Files
 
-**Always read all four reference files before processing any protocol:**
+**Always read all five reference files before processing any protocol:**
 
 1. `references/xlsform-patterns.md` — Standard XLSForm column definitions,
    OpenClinica-specific columns, field type reference, and standard constraint
@@ -52,6 +52,16 @@ in a single pass:
 4. `references/crf-categorization-examples.md` — Human-corrected examples
    from previous runs. Entries here override general rules when a similar
    situation is encountered. Read all entries before classifying.
+
+5. `references/openclinica-oc4-docs.md` — Curated index into the live
+   OpenClinica 4 user documentation (https://docs.openclinica.com/oc4/).
+   Consult this when a question isn't answered by the four reference files
+   above — in particular for XPath function support (OC4 docs §2.4.6
+   Validated Functions Index), Form Logic syntax (§2.4.5), CDASH form
+   library content (§2.3), and OID naming conventions (§2.4.9). When the
+   distilled references (#1–#4) and the OC4 docs disagree on something,
+   the distilled references win because they reflect what OpenClinica
+   actually accepts in practice.
 
 ---
 
