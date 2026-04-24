@@ -100,6 +100,86 @@ FORM NAMING RULES for form_id:
   Non-CDASH forms — use a descriptive uppercase short name: F_ICF, F_DIS,
   F_BIOSP, F_RT, F_PREG, F_ECOG, F_EN, F_PSA.
 
+════════════════════════════════════════════════════════════════════════════
+OPENCLINICA 4 AUTHORITATIVE RULES  (must follow to pass XLSForm upload)
+════════════════════════════════════════════════════════════════════════════
+
+The rules below are distilled from the OpenClinica 4 user documentation
+(https://docs.openclinica.com/oc4/) and the official blank form template.
+Following them is not optional — violations cause silent upload
+failures in the Form Designer.
+
+RULE OC-1 — VALIDATED FUNCTIONS ONLY
+  Expressions in `relevant`, `constraint`, `calculation`, and `default`
+  must use functions from the OpenClinica Validated Functions Index
+  (OC4 docs §2.4.6.1). Common safe functions:
+    . (self)              today()             now()
+    selected()            count-selected()    string-length()
+    regex()               coalesce()          substr()
+    date()                decimal-date-time() format-date()
+    int()                 number()            round()
+    if()                  once()              position(..)
+    concat()              upper-case()        lower-case()
+  Avoid non-validated XPath functions (e.g. fn:… namespace, custom
+  Enketo-only functions). When unsure, prefer a simpler expression.
+
+RULE OC-2 — ITEMGROUP IS MANDATORY ON EVERY DATA ROW
+  Every survey row whose `type` is a data type (text, integer, decimal,
+  date, time, dateTime, select_one, select_multiple, note, calculate)
+  MUST have `bind__oc_itemgroup` populated with the dotted form
+  `F_<FORM>.<GROUP>`. Rows with type `begin group` / `end group` /
+  `begin repeat` / `end repeat` do NOT need this field.
+  Forms that are uploaded without itemgroups are silently rejected.
+
+RULE OC-3 — SETTINGS FIELDS REQUIRED
+  The settings sheet needs these six cells populated (per OC4 docs
+  §2.4.4 Using the Form Template):
+    form_title       — human-readable name
+    form_id          — form OID starting with F_
+    version          — integer, start at 1
+    style            — always "theme-grid"
+    crossform_references — blank, comma-separated Event OIDs, or "current_event"
+    namespaces       — EXACTLY:
+                       oc="http://openclinica.org/xforms" , OpenClinica="http://openclinica.com/odm"
+  These are produced in `settings` (object with those six keys) per form.
+
+RULE OC-4 — CROSS-FORM/CROSS-EVENT XPATH PATTERNS
+  When a field needs a value from another form or event, use these
+  exact patterns in `calculation` (not made-up XPath):
+    Same event, same form:
+      instance('clinicaldata')/ODM/ClinicalData/SubjectData/StudyEventData[@OpenClinica:Current='Yes']/FormData[@FormOID='F_X']/ItemGroupData/ItemData[@ItemOID='F_X.FIELD']/@Value
+    Different event (by OID):
+      instance('clinicaldata')/ODM/ClinicalData/SubjectData/StudyEventData[@StudyEventOID='SE_X']/FormData[@FormOID='F_X']/ItemGroupData[@ItemGroupOID='F_X.GROUP']/ItemData[@ItemOID='F_X.FIELD']/@Value
+    Current event OID:
+      instance('clinicaldata')/ODM/ClinicalData/SubjectData/StudyEventData[@OpenClinica:Current='Yes']/@StudyEventOID
+    Timepoint lookup from the study_id_tpt.csv:
+      pulldata('<study_id>_tpt','timepoint','event',${EVENT_CF})
+  Fields using these also need `bind__oc_external: "clinicaldata"` (or
+  the CSV name for `pulldata`). Put referenced event OIDs into
+  `settings.crossform_references` (comma-separated) for performance.
+
+RULE OC-5 — REPEATING GROUPS USE once() FOR THE KEY
+  Forms with repeating groups (AE, CM, MH, DV, PR, and any custom
+  repeating form) must include a `calculate` field at the top of the
+  repeating group whose calculation uses `once(... @ItemGroupRepeatKey)`.
+  This prevents the repeat key from being overwritten on edit. Example:
+    once(instance('clinicaldata')/ODM/ClinicalData/SubjectData/StudyEventData[@StudyEventOID='SE_X']/FormData[@FormOID='F_X']/ItemGroupData[@ItemGroupOID='F_X.AE']/@ItemGroupRepeatKey)
+  Pair with a separate display-only field using
+    if(${ID}!='', ${ID}, 'Scheduled')
+  to show the repeat number during data entry.
+
+RULE OC-6 — HARD EDIT CHECKS (when required)
+  By default, constraint failures are soft (warning only). To make a
+  constraint a hard rejection, add the column `bind::oc:constraint-type`
+  with value "hard" on that row. Same for hard-required fields:
+  `bind::oc:required-type` = "hard". In JSON output use the underscore
+  forms: `bind__oc_constraint_type` and `bind__oc_required_type`.
+
+When in doubt about any rule above, the OpenClinica 4 user documentation
+at https://docs.openclinica.com/oc4/ is the source of truth —
+especially §2.4.4 (Using the Form Template), §2.4.5 (Form Logic),
+§2.4.6 (Functions), and §2.4.9 (Locating Object Identifiers).
+
 ────────────────────────────────────────────────────────────────────────────
 REQUIRED TOP-LEVEL KEYS
 ────────────────────────────────────────────────────────────────────────────
