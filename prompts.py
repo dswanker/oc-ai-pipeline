@@ -52,7 +52,7 @@ naming conventions documented in "Locating Object Identifiers in a Study":
   Event           SE_      SE_SCREENING, SE_BASELINE_INJECTION_1
   Form            (none)   DEMO, VS, LB, ICF (use plain short uppercase name —
                               OC adds internal prefix on upload)
-  Form Version    (none)   DEMO_1 (OC adds internal prefix)
+  Form Version    F_*_N    F_DEMO_1
   Item Group      IG_      IG_DEMO_DM   (pattern: IG_<FORM>_<GROUP>)
   Item            I_       I_DEMO_SUBJID (pattern: I_<FORM>_<FIELD>)
 
@@ -181,15 +181,80 @@ RULE OC-5 — REPEATING GROUPS USE once() FOR THE KEY
     if(${ID}!='', ${ID}, 'Scheduled')
   to show the repeat number during data entry.
 
-RULE OC-5a — CALCULATE ROWS MUST NOT HAVE readonly=yes
-  `type: calculate` already implies read-only (the value is computed, not
-  entered). Adding `readonly: yes` on top of that causes OpenClinica to
-  hide the field entirely, producing the error:
-    "Element X cannot be defined as type = calculate and readonly.
-     This element will never be visible on the form."
-  DO NOT emit `readonly: yes` on any calculate row. If the row has a
-  label and appearance (i.e. it's a display-calc like AEID, CMID, MHID),
-  that is sufficient to make OC treat it as read-only display.
+RULE OC-5a — ELEMENT-TYPE COLUMN RESTRICTIONS
+  OpenClinica's XLSForm parser treats different element types as having
+  different capabilities. Emitting a column value on an element type that
+  does not accept it causes OC to either reject the upload or silently
+  hide the field. The following matrix is exhaustive:
+
+  ──────────────────────────────────────────────────────────────────────
+  ELEMENT TYPE                     | ALLOWED COLUMNS
+  ──────────────────────────────────────────────────────────────────────
+  Data types: text, integer,       | name, label, appearance, required,
+  decimal, date, time, dateTime,   | constraint, constraint_message,
+  select_one, select_multiple      | relevant, calculation, readonly,
+                                   | bind::oc:itemgroup
+                                   | (all columns valid)
+  ──────────────────────────────────────────────────────────────────────
+  calculate (local, no external)   | name, label, appearance, relevant,
+                                   | calculation, bind::oc:itemgroup
+                                   | FORBIDDEN: readonly, constraint,
+                                   |            required
+                                   | (calculate is already internal-only;
+                                   |  adding these makes OC hide it)
+  ──────────────────────────────────────────────────────────────────────
+  calculate (with                  | name, calculation,
+  bind::oc:external=clinicaldata)  | bind::oc:external
+                                   | FORBIDDEN: bind::oc:itemgroup,
+                                   |            readonly, constraint,
+                                   |            required, label (usually)
+                                   | (external lookup row — internal
+                                   |  ODM query, not a user-visible field)
+  ──────────────────────────────────────────────────────────────────────
+  note                             | name, label, appearance, relevant
+                                   | FORBIDDEN: bind::oc:itemgroup,
+                                   |            required, constraint
+                                   | (OC error: "Read-only note element X
+                                   |  cannot have a value in column
+                                   |  bind::oc:itemgroup")
+  ──────────────────────────────────────────────────────────────────────
+  begin group / end group,         | type, name, appearance,
+  begin repeat / end repeat        | relevant (on begin only),
+                                   | bind::oc:itemgroup (optional)
+  ──────────────────────────────────────────────────────────────────────
+
+  Common OC error messages and their causes:
+    "cannot be defined as type = calculate and readonly. This element
+     will never be visible" → remove readonly=yes from calculate row.
+    "cannot be defined as type = calculate and have a constraint. This
+     element will never be visible" → remove constraint from calculate.
+     Instead, add a separate note with relevant=${CALC}<min or ${CALC}>max
+     to display a warning (OC-7 7O-g out-of-range pattern).
+    "Read-only note element X cannot have a value in column
+     bind::oc:itemgroup" → blank the bind::oc:itemgroup column on note row.
+
+RULE OC-5b — DISPLAY-ONLY CALCULATED FIELDS USE type=text, NOT type=calculate
+  When a computed value needs to be VISIBLE to the data-entry user (not
+  just used internally in other expressions), use a `text` element with
+  `calculation` + `readonly=yes` instead of `type: calculate`.
+
+  Correct (visible display of calculated ID):
+    type:        text
+    name:        CMSPID
+    label:       CM ID:
+    calculation: ${CMID_CALC}
+    readonly:    yes
+    appearance:  w1
+    bind::oc:itemgroup: CM
+
+  Incorrect (OC hides type=calculate from the user):
+    type:        calculate          ← would be invisible to data entry
+    name:        CMSPID
+    calculation: ${CMID_CALC}
+
+  Use type=calculate ONLY for values consumed by other expressions
+  (relevant, calculation, constraint). Use type=text + readonly=yes when
+  the end user must see the computed value on the form.
 
 RULE OC-6 — HARD EDIT CHECKS (when required)
   By default, constraint failures are soft (warning only). To make a
@@ -406,6 +471,52 @@ When in doubt about any rule above, the OpenClinica 4 user documentation
 at https://docs.openclinica.com/oc4/ is the source of truth —
 especially §2.4.4 (Using the Form Template), §2.4.5 (Form Logic),
 §2.4.6 (Functions), and §2.4.9 (Locating Object Identifiers).
+
+RULE OC-8 — REPEATING-FORM STRUCTURAL PATTERN
+  OpenClinica uses a NON-STANDARD XLSForm structure for repeating forms.
+  The pattern is:
+
+    (1) All data fields wrapped in a begin group / end group block
+        (with `relevant` gating on the YN first-entry flag, e.g.
+         `${CMYN}='Y'`).
+
+    (2) AFTER the `end group`, three closing rows declare the repeat:
+
+         type=begin repeat  name=<form_id>  bind::oc:itemgroup=<group>
+         type=end group                     bind::oc:itemgroup=<group>
+         type=end repeat                    bind::oc:itemgroup=<group>
+
+  The inner `end group` between `begin repeat` and `end repeat` is
+  REQUIRED, even though there is no matching `begin group` inside the
+  repeat block. Without it OC fails to activate the uploaded form
+  version — the file uploads successfully but the version stays
+  unselected with the message "Please select default version for
+  data entry", and no data entry is possible.
+
+  ADDITIONALLY for repeating forms:
+    - DO NOT include a top-level SUBJID text row. OC uses its
+      built-in subject context for repeating forms.
+    - The first-entry YN gate (e.g. CMYN, AEYN, MHYN) uses
+      `relevant: ${REPKEY_ID}=1` where REPKEY_ID is the local
+      calculated display of the repeat key (see OC-7 7O-f).
+
+  Example — minimal CM (concomitant medications) repeating form shape:
+
+    EVENT_CF       (external calc, no itemgroup)
+    TPTCALC        (local calc, has itemgroup)
+    CMID           (external calc, repeat key, no itemgroup)
+    CMID_CALC      (local calc, display form, has itemgroup)
+    ICFDAT_CF      (external calc, for date floor, no itemgroup)
+    CMYN           (select_one yn, relevant=${CMID}=1)
+    begin group CM1                relevant=${CMYN}='Y'
+      CMSPID       (type=text + calc + readonly — see OC-5b)
+      CMTRT        (data field)
+      ... more data fields ...
+      CMENDAT
+    end group
+    begin repeat CM
+    end group                      ← REQUIRED closing "phantom" end group
+    end repeat
 
 ────────────────────────────────────────────────────────────────────────────
 REQUIRED TOP-LEVEL KEYS
@@ -759,7 +870,6 @@ OUTPUT FORMAT — READ CAREFULLY:
   ✓ No markdown code fences (no ```json or ```).
   ✓ No reasoning or commentary anywhere in the output.
 
-────────────────────────────────────────────────────────────────────────────
 REQUIRED TOP-LEVEL KEYS  (all must be present)
 ────────────────────────────────────────────────────────────────────────────
 

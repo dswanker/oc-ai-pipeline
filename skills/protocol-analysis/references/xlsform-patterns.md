@@ -470,3 +470,91 @@ on termination reason. The `DSDECOD` field drives visibility:
 | `OTHER`             | Specify free-text field                     |
 
 Each follow-up field uses `relevant: ${DSDECOD}='<value>'`.
+
+
+---
+
+## Element-Type Column Restrictions (OC-5a)
+
+OpenClinica rejects or silently hides elements that have columns
+incompatible with their type. The table below is exhaustive.
+
+| Element type | Allowed columns | Forbidden columns |
+|---|---|---|
+| `text`, `integer`, `decimal`, `date`, `time`, `dateTime`, `select_one`, `select_multiple` | all columns | — |
+| `calculate` (local) | `name`, `label`, `appearance`, `relevant`, `calculation`, `bind::oc:itemgroup` | `readonly`, `constraint`, `required` |
+| `calculate` + `bind::oc:external=clinicaldata` | `name`, `calculation`, `bind::oc:external` | `bind::oc:itemgroup`, `readonly`, `constraint`, `required`, `label` (usually) |
+| `note` | `name`, `label`, `appearance`, `relevant` | `bind::oc:itemgroup`, `required`, `constraint` |
+| `begin group` / `end group` / `begin repeat` / `end repeat` | `type`, `name`, `appearance`, `relevant` (on begin only), `bind::oc:itemgroup` (optional) | — |
+
+### Common errors and fixes
+
+| Error message | Cause | Fix |
+|---|---|---|
+| "cannot be defined as type = calculate and readonly" | `readonly=yes` on `type=calculate` | Remove `readonly` column |
+| "cannot be defined as type = calculate and have a constraint" | `constraint` on `type=calculate` | Remove constraint; add a `note` with `relevant=${CALC}<min or ${CALC}>max` instead (OC-7 7O-g pattern) |
+| "Read-only note element X cannot have a value in column bind::oc:itemgroup" | `bind::oc:itemgroup` on `type=note` | Blank the itemgroup cell on the note row |
+
+## Display-Only Calculated Fields (OC-5b)
+
+When a computed value needs to be **visible** to the data-entry user (not
+just used internally by other expressions), use a `text` element with
+`calculation` + `readonly=yes` rather than `type=calculate`. OpenClinica
+treats `type=calculate` as internal-only and does not display it to users.
+
+**Correct** — visible display of a calculated ID:
+
+```
+type:        text
+name:        CMSPID
+label:       CM ID:
+calculation: ${CMID_CALC}
+readonly:    yes
+appearance:  w1
+bind::oc:itemgroup: CM
+```
+
+**Incorrect** — would be invisible:
+
+```
+type:        calculate
+name:        CMSPID
+calculation: ${CMID_CALC}
+```
+
+Rule of thumb: `type=calculate` for values consumed by other expressions;
+`type=text` + `calculation` + `readonly=yes` for values the user must see.
+
+## Repeating-Form Structural Pattern (OC-8)
+
+OpenClinica uses a NON-STANDARD XLSForm structure for repeating forms.
+
+The structural shape of every repeating form:
+
+1. External calcs at top (EVENT_CF, repeat-key, ICFDAT_CF, etc.)
+2. Local display/helper calcs
+3. First-entry YN gate: `relevant: ${REPKEY_ID}=1`
+4. `begin group` wrapping all data fields: `relevant: ${YN}='Y'`
+5. Data fields inside the group
+6. `end group` closing the data group
+7. Three closing rows:
+
+```
+type=begin repeat   name=<form_id>   bind::oc:itemgroup=<group>
+type=end group                       bind::oc:itemgroup=<group>   ← REQUIRED
+type=end repeat                      bind::oc:itemgroup=<group>
+```
+
+The inner `end group` between `begin repeat` and `end repeat` is REQUIRED
+even though there's no matching `begin group` inside the repeat block.
+Without it, the XLSForm uploads successfully but OC fails to activate the
+version — the form stays at "Please select default version for data entry"
+and no data entry is possible.
+
+### Additional rules for repeating forms
+
+- **Do NOT include a top-level SUBJID text row.** OC uses its built-in
+  subject context for repeating forms.
+- **First-entry YN gate** uses `relevant: ${REPKEY_ID}=1` (OC-7 7O-f).
+- **Data group is gated** by `relevant: ${YN}='Y'` so data fields only
+  appear once the user has confirmed there is something to capture.
