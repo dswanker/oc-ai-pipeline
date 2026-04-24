@@ -558,3 +558,64 @@ and no data entry is possible.
 - **First-entry YN gate** uses `relevant: ${REPKEY_ID}=1` (OC-7 7O-f).
 - **Data group is gated** by `relevant: ${YN}='Y'` so data fields only
   appear once the user has confirmed there is something to capture.
+
+
+---
+
+## Common Visit for Cross-Visit Forms (OC-9)
+
+Every study includes a single repeating, non-scheduled event called
+**Common Visit** with OID `SE_COMMON`. This event is available *after*
+the enrollment/randomization event and allows coordinators to log
+cross-visit events at any time during the trial.
+
+### Forms that live ONLY on SE_COMMON
+
+| Form | Purpose |
+|---|---|
+| `AE` | Adverse Events |
+| `CM` | Concomitant Medications |
+| `DV` | Protocol Deviations |
+| `AESAE` | Serious Adverse Event Report |
+
+These forms are never attached to a scheduled visit. Coordinators add
+new entries to SE_COMMON as events occur.
+
+### Study Spec JSON shape
+
+Events list must include:
+
+```json
+{
+  "event_oid":       "SE_COMMON",
+  "event_title":     "Common Visit",
+  "event_type":      "common",
+  "is_repeating":    true,
+  "available_after": "<enrollment event oid>"
+}
+```
+
+Each affected form in the forms list:
+
+```json
+{
+  "form_id":         "AE",
+  "visits_assigned": ["SE_COMMON"]
+}
+```
+
+### Why
+
+AEs, CMs, deviations, and SAEs can occur at any time during a trial.
+Attaching them to every scheduled visit creates duplication and confuses
+the data model. A single Common Visit gives a single place to log these
+cross-visit events and matches OpenClinica's native "common event"
+pattern.
+
+### Skipping SE_COMMON
+
+If the protocol does not mention adverse event collection, concomitant
+medications, deviations, or serious adverse events, skip the
+corresponding form entirely — do NOT emit `AE` etc. with empty content.
+SE_COMMON itself only exists when at least one of the four forms is in
+scope.

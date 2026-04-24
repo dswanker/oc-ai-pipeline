@@ -732,6 +732,80 @@ async def create_oc_study(subdomain, struct_json, is_production=False):
     }
 
 
+# ── OC-9 backstop: Common Visit for cross-visit forms ────────────────────────
+
+def _enforce_common_visit(struct_json):
+    """RULE OC-9 backstop. Ensure SE_COMMON exists and AE/CM/DV/AESAE
+    forms only live there. Runs after Claude returns the Study Spec JSON
+    and fixes the structure deterministically if Claude forgot.
+
+    Idempotent — safe to call multiple times.
+    """
+    COMMON_FORMS = {"AE", "CM", "DV", "AESAE"}
+
+    if not isinstance(struct_json, dict):
+        return struct_json
+
+    forms = struct_json.get("forms", [])
+    if not isinstance(forms, list):
+        return struct_json
+
+    # Events may be stored under "events" or "visits" depending on version.
+    # We canonicalize to "events" but tolerate both.
+    events = struct_json.get("events")
+    if events is None:
+        events = struct_json.get("visits", [])
+    if not isinstance(events, list):
+        events = []
+
+    # Only create SE_COMMON if at least one of the common forms is actually
+    # in scope for this protocol. If none are scoped, skip entirely.
+    common_forms_in_study = [
+        f for f in forms
+        if isinstance(f, dict) and f.get("form_id") in COMMON_FORMS
+    ]
+    if not common_forms_in_study:
+        return struct_json
+
+    # Find enrollment event to anchor SE_COMMON's availability window
+    enrollment_oid = None
+    for ev in events:
+        if not isinstance(ev, dict):
+            continue
+        oid = str(ev.get("event_oid", "")).upper()
+        if "ENRL" in oid or "RAND" in oid or "ENROLL" in oid:
+            enrollment_oid = ev.get("event_oid")
+            break
+
+    # Ensure SE_COMMON exists in events
+    has_se_common = any(
+        isinstance(ev, dict) and ev.get("event_oid") == "SE_COMMON"
+        for ev in events
+    )
+    if not has_se_common:
+        events.append({
+            "event_oid":       "SE_COMMON",
+            "event_title":     "Common Visit",
+            "event_type":      "common",
+            "is_repeating":    True,
+            "available_after": enrollment_oid or "",
+        })
+        struct_json["events"] = events
+
+    # Force visits_assigned=["SE_COMMON"] on each common form
+    fixed_count = 0
+    for f in common_forms_in_study:
+        if f.get("visits_assigned") != ["SE_COMMON"]:
+            f["visits_assigned"] = ["SE_COMMON"]
+            fixed_count += 1
+
+    if fixed_count:
+        print(f"OC-9 backstop: reassigned {fixed_count} form(s) to SE_COMMON",
+              flush=True)
+
+    return struct_json
+
+
 # ── Main pipeline ──────────────────────────────────────────────────────────────
 
 async def run_pipeline(item_id):
@@ -890,6 +964,8 @@ async def run_pipeline(item_id):
                             expected_keys=["study_meta", "forms"],
                         )
                         print("Extracted JSON from edited Study Spec XLSX.", flush=True)
+                        # OC-9 backstop: apply to edited-XLSX path as well
+                        struct_json = _enforce_common_visit(struct_json)
                         break
                     except ValueError:
                         pass
@@ -938,6 +1014,10 @@ async def run_pipeline(item_id):
                 struct_json = {"study_meta": {"protocol_number": protocol_num},
                                "forms": [], "review_flags": {}}
                 print("Warning: Study Spec JSON not valid — using empty fallback", flush=True)
+
+            # OC-9 backstop: ensure SE_COMMON exists and AE/CM/DV/AESAE
+            # forms live only there. Deterministic fix-up if Claude missed it.
+            struct_json = _enforce_common_visit(struct_json)
 
             # Inject library filenames from monday columns into study_meta —
             # overrides whatever Claude may have guessed for

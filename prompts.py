@@ -518,6 +518,41 @@ RULE OC-8 — REPEATING-FORM STRUCTURAL PATTERN
     end group                      ← REQUIRED closing "phantom" end group
     end repeat
 
+RULE OC-9 — COMMON VISIT FOR CROSS-VISIT FORMS
+
+  Every study MUST include one visit/event called "Common Visit" with
+  OID SE_COMMON. This event is:
+    - Repeating (multiple instances can be added per subject)
+    - Non-scheduled (no fixed timepoint)
+    - Available AFTER the enrollment/randomization event
+
+  The following forms MUST live ONLY on SE_COMMON, not on any
+  scheduled visit:
+    - AE       (Adverse Events)
+    - CM       (Concomitant Medications)
+    - DV       (Protocol Deviations)
+    - AESAE    (Serious Adverse Event Report)
+
+  In the Study Spec JSON:
+    * events list — include:
+        {"event_oid": "SE_COMMON", "event_title": "Common Visit",
+         "event_type": "common", "is_repeating": true,
+         "available_after": "<enrollment event oid>"}
+    * For each AE/CM/DV/AESAE form in forms[]:
+        visits_assigned = ["SE_COMMON"]   (exactly this, nothing else)
+
+  Rationale: AEs, CMs, deviations, and SAEs can occur at any time during
+  the trial. Attaching them to every scheduled visit creates duplication
+  and confuses the data model. A single Common Visit gives coordinators
+  one place to log these cross-visit events and matches OpenClinica's
+  native "common event" pattern.
+
+  If the protocol does not mention adverse event collection, concomitant
+  medications, deviations, or serious adverse events, skip the corresponding
+  form entirely (do not emit AE etc. with empty content). But SE_COMMON
+  itself should still exist as long as ANY of the four forms are in scope.
+
+
 ────────────────────────────────────────────────────────────────────────────
 REQUIRED TOP-LEVEL KEYS
 ────────────────────────────────────────────────────────────────────────────
@@ -870,6 +905,7 @@ OUTPUT FORMAT — READ CAREFULLY:
   ✓ No markdown code fences (no ```json or ```).
   ✓ No reasoning or commentary anywhere in the output.
 
+────────────────────────────────────────────────────────────────────────────
 REQUIRED TOP-LEVEL KEYS  (all must be present)
 ────────────────────────────────────────────────────────────────────────────
 
