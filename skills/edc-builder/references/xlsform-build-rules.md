@@ -60,7 +60,7 @@ consecutive rows. Choice list order matters — maintain spec order.
 | 1 | type | Yes | Field type (see types below) |
 | 2 | name | Yes | Machine-readable ID. No spaces. Start with letter. |
 | 3 | label | Yes | User-visible question text. Supports HTML and ${ref}. |
-| 4 | bind::oc:itemgroup | No | Item group reference in dotted form `F_<FORM>.<GROUP>` (e.g. `F_DEMO.DM`, `F_AE.AE_GROUP`) |
+| 4 | bind::oc:itemgroup | Yes for data rows | Short group code (letters/digits/underscores only, no dots, no F_ prefix). E.g. `DM`, `AE`, `LB_CLIN`. Calculate rows with bind::oc:external=clinicaldata leave this blank. |
 | 5 | hint | No | Helper text below label |
 | 6 | appearance | No | Layout hint (w1-w9, horizontal, minimal, multiline, field-list, columns) |
 | 7 | bind::oc:briefdescription | No | Short description for reporting |
@@ -227,10 +227,10 @@ Row 2: calculate | TPTCALC | (blank) | [FORM_ID] | ... |
 4. **form_id must be unique** across all forms in the study
 5. **Field names must be unique** within a form
 6. **list_name values** in choices must match `select_one [list]` references
-7. **bind::oc:itemgroup** uses dotted form `F_<FORM>.<GROUP>` consistent
-   with the form_id (also `F_`-prefixed). The group portion typically
-   matches the CDASH domain code or a descriptive group name. The full
-   value must be consistent for data mapping in OpenClinica.
+7. **bind::oc:itemgroup** is a SHORT GROUP CODE only (letters, digits,
+   underscores, no dots, no F_ prefix). E.g. `DM`, `AE`, `LB_CLIN`.
+   Calculate rows with `bind::oc:external=clinicaldata` MUST leave this
+   field blank.
 8. **Choice filter column** in choices sheet must match the column name
    referenced in the survey's `choice_filter` cell
 
@@ -245,3 +245,195 @@ form_id always carries the `F_` prefix per the OpenClinica OID convention.
 Exception: forms sharing the same form_id but different designs
 (e.g., F_IE_TRT and F_IE_CTL both have form_id=F_IE) — use the variant
 identifier as the filename: `F_IE_TRT.xlsx`, `F_IE_CTL.xlsx`
+
+
+---
+
+## Universal Clinical Data Rules (OC-7)
+
+These patterns apply across nearly every clinical form. Always include
+them when the relevant fields are present, even if the protocol doesn't
+explicitly request them.
+
+### Paired start/end dates (1A, 1B, 1C)
+
+When a form has a paired `*STDAT` / `*ENDAT` pair for the same
+logical item (medical condition, AE, medication, etc.):
+
+**End date field:**
+- `constraint`: `. >= ${XXSTDAT} and . <= today()`
+- `constraint_message`: "End date must be on or after start date and
+  cannot be in the future."
+- `relevant` (when the form has a matching `*ONGO` field): `${XXONGO}='N'`
+
+**Start date field:**
+- `constraint`: `. <= today()` (unless it's a scheduled/planned date)
+- `constraint_message`: "Date cannot be in the future."
+
+**Examples from reference builds:**
+- `AEENDAT` constraint: `. <= today() and . >= ${AESTDAT}`
+- `AEENDAT` relevant: `${AEONGO}='N'`
+- `CMENDAT` constraint: `. >= ${CMSTDAT}`
+
+### Sequential dates cascade (1D)
+
+When a form has three or more dates that must occur in chronological
+order (e.g. event date → awareness date → report date → IRB date):
+each successive date's `constraint` should be `. >= ${PREVIOUS_DATE}`.
+
+### BMI calculation (2A)
+
+When a form captures both weight (kg) and height (cm), add:
+
+    type:        calculate
+    name:        BMI
+    label:       BMI (kg/m²)
+    calculation: ${WEIGHT_FIELD} div (${HEIGHT_FIELD} * ${HEIGHT_FIELD} div 10000)
+    readonly:    yes
+
+### AE severity / serious logic (2F)
+
+On AE forms, if fields `AESEV` (grade) and `AESER` (serious?) both exist:
+- `AESER` constraint: `(${AESEV}!='5') or (.='Y')`
+- `AESER` constraint_message: "Grade 5 AE must be classified as serious."
+- Any SAE-detail group should have `relevant`: `${AESER}='Y'`
+
+### Eligibility criteria fixed-value constraints (2G)
+
+On the IE (Inclusion/Exclusion) form:
+- Each **inclusion** criterion: `constraint` = `. = 'Y'`
+- Each **exclusion** criterion: `constraint` = `. = 'N'`
+- `constraint_message`: "Subject is ineligible if this criterion is
+  not met." / "...if this exclusion criterion is present."
+
+### Physiological range sanity checks (2H)
+
+Apply when the form captures these fields. Use soft constraints unless
+the protocol demands hard (e.g. for eligibility).
+
+| Field   | Constraint                                 | Units        |
+|---------|--------------------------------------------|--------------|
+| SYSBP   | `. >= 60 and . <= 250`                     | mmHg         |
+| DIABP   | `. >= 30 and . <= 150 and . < ${SYSBP}`    | mmHg         |
+| PULSE   | `. >= 30 and . <= 200`                     | bpm          |
+| RESP    | `. >= 5 and . <= 60`                       | breaths/min  |
+| TEMP    | `. >= 34 and . <= 42`                      | °C           |
+| HEIGHT  | `. >= 100 and . <= 250`                    | cm           |
+| WEIGHT  | `. >= 20 and . <= 300`                     | kg           |
+| SpO2    | `. >= 0 and . <= 100`                      | %            |
+| ECG HR  | `. >= 30 and . <= 200`                     | bpm          |
+
+Narrow these bounds when protocol inclusion criteria are stricter
+(e.g. protocol requires age 18-65 → `AGE` constraint
+`. >= 18 and . <= 65`).
+
+### RACE multi-select exclusion (2I)
+
+When RACE is a `select_multiple` with Unknown (UNK) and Not Reported
+(NOT_REP) options:
+
+- `constraint`: `not(selected(.,'UNK') and count-selected(.) > 1) and
+  not(selected(.,'NOT_REP') and count-selected(.) > 1)`
+- `constraint_message`: "Cannot select Unknown or Not Reported with
+  other options."
+
+### Optional — dose and duration calculations (2J, 2K)
+
+**Dose calculation** (when dose/kg and weight are both captured):
+
+    type:        calculate
+    calculation: ${DOSE_MG_KG} * ${WEIGHT}
+    label:       Calculated dose (mg)
+    readonly:    yes
+
+**Duration in days** (when start and end dates are captured):
+
+    type:        calculate
+    calculation: (decimal-date-time(${ENDDAT}) - decimal-date-time(${STDAT})) div 86400
+    relevant:    ${ONGO}='N'
+    readonly:    yes
+
+
+---
+
+## Cross-form, Relevance, and Branching Patterns (OC-7 L–P)
+
+### Cross-form value fetch (CF pattern) — 7L
+
+To read a value from another form into the current form, add a
+`calculate` row at the TOP of the current form's survey, named
+with the `_CF` suffix:
+
+    type:               calculate
+    name:               SEX_CF   (or AGE_CF, WEIGHT_CF, ICFDAT_CF, etc.)
+    calculation:        instance('clinicaldata')/ODM/ClinicalData/SubjectData/
+                        StudyEventData[@StudyEventOID='SE_<X>']/
+                        FormData[@FormOID='F_<SOURCE_FORM>']/
+                        ItemGroupData[@ItemGroupOID='F_<SOURCE_FORM>.<GROUP>']/
+                        ItemData[@ItemOID='F_<SOURCE_FORM>.<FIELD>']/@Value
+    bind::oc:external:  clinicaldata
+    bind::oc:itemgroup: (BLANK — external lookup rows must not have itemgroup)
+
+### Sex-dependent fields via SEX_CF — 7M
+
+Any form with sex-specific fields (pregnancy tests, menstrual history,
+prostate/breast exams, PSA) must:
+
+1. Add `SEX_CF` fetch from F_DM at top of form (per 7L)
+2. Each sex-specific field: `relevant: ${SEX_CF}='F'` (or `='M'`)
+
+### Consent-date floor for event dates — 7N
+
+An event cannot predate informed consent. On every form OTHER THAN
+F_ICF itself:
+
+1. Add `ICFDAT_CF` fetch from F_ICF at top of form (per 7L)
+2. Every event date field's constraint: AND in `. >= ${ICFDAT_CF}`
+   Example: `. <= today() and . >= ${ICFDAT_CF}`
+3. Update `constraint_message`: "Date must be on or after informed
+   consent date and cannot be in the future."
+
+### Universal relevance patterns — 7O
+
+Apply whenever the structural condition is present.
+
+| Pattern | Relevant expression | Use case |
+|---------|---------------------|----------|
+| Yes-branch | `${GATE}='Y'` | AE detail block when AEYN='Y' |
+| No-branch | `${XXONGO}='N'` | End date visible when not ongoing |
+| Other follow-up (single) | `${FIELD}='OTHER'` | Free-text specify field |
+| Other follow-up (multi) | `selected(${FIELD},'OTHER')` | RACEOTH when RACE has OTHER |
+| Multi-select value | `selected(${FIELD},'VALUE')` | Show when value chosen |
+| Multi-select NOT | `not(selected(${FIELD},'NONE'))` | Show when anything but NONE |
+| Timepoint-specific | `${TPTCALC}='Screening'` | Field only at screening |
+| Timepoint NOT | `${TPTCALC}!='Screening'` | Field at all visits except screening |
+| First-repeat-only | `${REPKEY_ID}=1` | YN gate only on first AE/CM/MH entry |
+| Out-of-range warning | `${FIELD} < LOW or ${FIELD} > HIGH` | Flag abnormal values |
+
+### Universal conditional branching patterns — 7P
+
+Use these building blocks; do not invent new XPath constructs.
+
+| Pattern | Expression | Example |
+|---------|------------|---------|
+| AND-chained | `${A}='Y' and ${B}='Y'` | `${SEX_CF}='F' and ${TPTCALC}='Screening' and ${FSH_REQD}='Y'` |
+| OR-branched | `${A}='Y' or ${B}='Y'` | `${AEYN}='Y' or ${AEYN_CF}='Y'` (current OR propagated) |
+| Cross-form | `${FIELD_CF}='value'` | `${SEX_CF}='F'` |
+| Derived-flag | `${CALC}=value` | `${BMI} < 18 or ${BMI} > 40` |
+| Negated | `not(selected(${FIELD},'NONE'))` or `${FLAG}!='value'` | Show when not a specific choice |
+| End-state | `${DSDECOD}='<reason>'` | Different follow-up per DS termination reason |
+
+### DS form end-state branching example
+
+The disposition (DS) form typically has different follow-up depending
+on termination reason. The `DSDECOD` field drives visibility:
+
+| DSDECOD value       | Follow-up field visible                     |
+|---------------------|---------------------------------------------|
+| `ADVERSE_EVENT`     | AE reference (link to AE repeat key)        |
+| `WITHDREW_CONSENT`  | Withdrawal date                             |
+| `LOST_TO_FOLLOWUP`  | Last contact date, attempts made            |
+| `DEATH`             | Death date, cause of death                  |
+| `OTHER`             | Specify free-text field                     |
+
+Each follow-up field uses `relevant: ${DSDECOD}='<value>'`.
