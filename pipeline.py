@@ -400,27 +400,20 @@ def run_dvs_xlsx(struct_json, forms_json):
 
 # ── OpenClinica Study Service API ─────────────────────────────────────────────
 
-def _env_suffix(is_production):
-    """Return '' for production, '-dev' for test/dev environments.
-
-    OpenClinica has parallel infrastructure: openclinica.io (production)
-    and openclinica-dev.io (test). The monday item's `boolean_mm2ptpzd`
-    column controls which environment we target. All OC URLs — user-service,
-    study-service, design service — must use the SAME suffix within a run,
-    otherwise tokens issued by one environment won't be accepted by another
-    environment's services (causes 401 Unauthorized).
-    """
-    return "" if is_production else "-dev"
-
-
 async def _get_oc_token(subdomain, is_production=False):
+    """
+    Get OC auth token via user-service password grant.
+
+    Note: `is_production` is retained for logging/monday-column compatibility
+    but no longer affects the URL — all OC traffic goes to openclinica.io
+    (the single customer-facing environment).
+    """
     import httpx
     username = os.environ.get("OC_API_USERNAME", "").strip()
     password = os.environ.get("OC_API_PASSWORD", "").strip()
     if not username or not password:
         raise ValueError("OC_API_USERNAME or OC_API_PASSWORD not set")
-    suffix = _env_suffix(is_production)
-    url = f"https://{subdomain}.build.openclinica{suffix}.io/user-service/api/oauth/token"
+    url = f"https://{subdomain}.build.openclinica.io/user-service/api/oauth/token"
     print(f"Getting OC auth token from {url}", flush=True)
     async with httpx.AsyncClient(timeout=30) as c:
         r = await c.post(url,
@@ -433,8 +426,7 @@ async def _get_oc_token(subdomain, is_production=False):
 
 async def _check_study_exists(subdomain, token, protocol_num, is_production=False):
     import httpx
-    suffix = _env_suffix(is_production)
-    url = f"https://{subdomain}.build.openclinica{suffix}.io/study-service/api/studies"
+    url = f"https://{subdomain}.build.openclinica.io/study-service/api/studies"
     async with httpx.AsyncClient(timeout=30) as c:
         r = await c.get(url,
                         headers={"Authorization": f"Bearer {token}",
@@ -573,13 +565,12 @@ async def _get_board_id(subdomain, study_uuid, is_production, token=None):
     """
     Get the Study Designer board ID for a newly created study.
     The board ID is embedded in the currentBoardUrl returned by the study-service.
-    URL format: https://{subdomain}.design.openclinica(-dev).io/b/{boardId}/...
+    URL format: https://{subdomain}.design.openclinica.io/b/{boardId}/...
     """
     import httpx
     if token is None:
         token = await _get_oc_token(subdomain, is_production=is_production)
-    suffix   = _env_suffix(is_production)
-    base_url = f"https://{subdomain}.build.openclinica{suffix}.io"
+    base_url = f"https://{subdomain}.build.openclinica.io"
     async with httpx.AsyncClient(timeout=30) as c:
         r = await c.get(
             f"{base_url}/study-service/api/studies/{study_uuid}",
@@ -607,8 +598,7 @@ async def _import_board(subdomain, board_id, board_json, is_production, token=No
     import httpx
     if token is None:
         token = await _get_oc_token(subdomain, is_production=is_production)
-    env_suffix  = _env_suffix(is_production)
-    designer_url = f"https://{subdomain}.design.openclinica{env_suffix}.io"
+    designer_url = f"https://{subdomain}.design.openclinica.io"
     endpoint    = f"{designer_url}/api/importStudy/{board_id}"
 
     print(f"Importing board to: {endpoint}", flush=True)
@@ -640,8 +630,7 @@ async def create_oc_study(subdomain, struct_json, is_production=False):
     token    = await _get_oc_token(subdomain, is_production=is_production)
     headers  = {"Authorization": f"Bearer {token}",
                  "Content-Type": "application/json"}
-    suffix   = _env_suffix(is_production)
-    base_url = f"https://{subdomain}.build.openclinica{suffix}.io"
+    base_url = f"https://{subdomain}.build.openclinica.io"
     meta     = struct_json.get("study_meta", {})
     protocol_num = meta.get("protocol_number", "STUDY")
 
@@ -689,8 +678,7 @@ async def create_oc_study(subdomain, struct_json, is_production=False):
         if not study_uuid:
             raise RuntimeError("Study created but no UUID returned")
 
-    env_suffix   = _env_suffix(is_production)
-    designer_url = f"https://{subdomain}.design.openclinica{env_suffix}.io"
+    designer_url = f"https://{subdomain}.design.openclinica.io"
     study_url    = f"{designer_url}/b/{study_uuid}"
 
     # ── Step 2: Build board.json from struct_json ──────────────────────────────
@@ -1289,6 +1277,7 @@ async def run_pipeline(item_id):
                 except Exception as e:
                     print(f"OC Study error: {e}", flush=True)
                     await append_log(item_id, f"OC Study creation failed: {e}")
+                    raise   # B6: propagate to the chain-outcome tracker
 
             # ── Launch all four chains in parallel ─────────────────────────────
             # return_exceptions=True prevents one chain's failure from cancelling
