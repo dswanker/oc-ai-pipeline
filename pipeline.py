@@ -223,23 +223,30 @@ def _add_scripts(skill_name):
         sys.path.insert(0, path)
 
 
-def run_pricing_model(pricing_summary_dict, edc_structure=None):
+def run_pricing_model(pricing_summary_dict,
+                      additional_sub_disc=0.0, additional_svc_disc=0.0,
+                      edc_structure=None):
     """Run pricing-quote scripts locally. Returns dict of file bytes.
 
-    Optionally pass edc_structure (Study Spec JSON) to enrich flag counts
-    and comments using merge_edc_flags.
-
-    NOTE: additional_sub_disc and additional_svc_disc are no longer
-    supported by pricing_engine.calculate_quote (Option B refactor moved
-    discounts into pricing_model.ini config). Monday columns for these
-    are still read but don't currently affect the quote.
+    Args:
+      pricing_summary_dict: the Protocol Summary JSON (primary pricing input)
+      additional_sub_disc:  user-entered subscription discount (decimal,
+                            e.g., 0.10 for 10% off). Applied to all module
+                            totals (monthly_fee × duration) after volume +
+                            platform discounts.
+      additional_svc_disc:  user-entered services discount (decimal). Applied
+                            to the build_fee (ps_hours + pm_hours + contingency).
+      edc_structure:        Study Spec JSON for enriching flag comments.
     """
     _add_scripts("pricing-quote")
     from pricing_engine      import calculate_quote
     from generate_quote_pdf  import build_quote_pdfs
     from generate_quote_xlsx import build_quote_xlsx
 
-    quote    = calculate_quote(pricing_summary_dict, edc_structure=edc_structure)
+    quote    = calculate_quote(pricing_summary_dict,
+                               additional_sub_disc=additional_sub_disc,
+                               additional_svc_disc=additional_svc_disc,
+                               edc_structure=edc_structure)
     protocol = quote["study_meta"].get("protocol_number", "STUDY")
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -903,6 +910,11 @@ async def run_pipeline(item_id):
                 await append_log(item_id, "Could not extract JSON from edited XLSX — running fresh analysis.")
 
         # Fresh analysis if needed and not already populated
+        # B7: will hold the optional JSON-upload coroutine, to be awaited
+        # concurrently with the chains at the main asyncio.gather below.
+        # It's set to a coroutine only when we fresh-extract struct_json.
+        spec_json_upload_task = None
+
         if struct_json is None and needs_analysis:
             await set_status(item_id, COL["pipeline_status"], STATUS["analysis_running"])
             await append_log(item_id, "Protocol Analysis started.")
@@ -948,10 +960,15 @@ async def run_pipeline(item_id):
                 sm = struct_json.setdefault("study_meta", {})
                 sm["library_files_provided"] = library_files_provided
 
-            # Upload raw JSON (only if we extracted it fresh)
-            await upload_file(item_id, COL["spec_json"],
-                              f"{protocol_num}_Study_Specification_{version}.json",
-                              json.dumps(struct_json, indent=2).encode())
+            # B7: JSON upload is prepared as a coroutine but NOT awaited here —
+            # it runs concurrently with chains A-D via the main gather() below.
+            # This block only executes when we freshly extracted struct_json
+            # (guaranteed by the outer `if struct_json is None` guard).
+            spec_json_upload_task = upload_file(
+                item_id, COL["spec_json"],
+                f"{protocol_num}_Study_Specification_{version}.json",
+                json.dumps(struct_json, indent=2).encode()
+            )
 
         # ── Launch parallel chains if struct_json is available ────────────────
         if struct_json and needs_analysis:
@@ -1082,6 +1099,7 @@ async def run_pipeline(item_id):
                         print(f"Protocol Summary PDF error: {e}", flush=True)
                         traceback.print_exc()
                         await append_log(item_id, f"Protocol Summary PDF error: {e}")
+                        raise   # B6: surface failure to chain_b
 
                 async def gen_quote():
                     if not want_quote:
@@ -1093,6 +1111,8 @@ async def run_pipeline(item_id):
                             None,
                             lambda: run_pricing_model(
                                 pricing_json,
+                                additional_sub_disc=additional_sub_disc,
+                                additional_svc_disc=additional_svc_disc,
                                 edc_structure=struct_json,
                             )
                         )
@@ -1111,8 +1131,20 @@ async def run_pipeline(item_id):
                         print(f"Price Quote error: {e}", flush=True)
                         traceback.print_exc()
                         await append_log(item_id, f"Price Quote error: {e}")
+                        raise   # B6: surface failure to chain_b
 
-                await asyncio.gather(gen_ps_pdf(), gen_quote())
+                # B6: use return_exceptions so gen_ps_pdf failure doesn't cancel
+                # gen_quote (or vice versa). If either raised, chain_b re-raises
+                # the first exception so chain-level tracking sees the failure.
+                sub_results = await asyncio.gather(gen_ps_pdf(), gen_quote(),
+                                                    return_exceptions=True)
+                sub_errors = [r for r in sub_results if isinstance(r, Exception)]
+                if sub_errors:
+                    await append_log(item_id,
+                        f"Chain B finished with {len(sub_errors)} subtask failure(s).")
+                    print(f"Chain B had {len(sub_errors)} failure(s); re-raising first.",
+                          flush=True)
+                    raise sub_errors[0]
                 await append_log(item_id, "Chain B complete.")
                 print("Chain B complete.", flush=True)
 
@@ -1197,6 +1229,7 @@ async def run_pipeline(item_id):
                         print(f"EDC Build error: {e}", flush=True)
                         traceback.print_exc()
                         await append_log(item_id, f"EDC Build error: {e}")
+                        raise   # B6: propagate to chain_c
 
                 if build_zip_holder[0]:
                     await upload_file(item_id, COL["edc_build"],
@@ -1227,6 +1260,7 @@ async def run_pipeline(item_id):
                     print(f"DVS error: {e}", flush=True)
                     traceback.print_exc()
                     await append_log(item_id, f"DVS error: {e}")
+                    raise   # B6: propagate to chain_c
 
             # ── Chain D: Create OC Study (parallel, only needs struct_json) ───
             async def chain_d():
@@ -1257,19 +1291,23 @@ async def run_pipeline(item_id):
                     await append_log(item_id, f"OC Study creation failed: {e}")
 
             # ── Launch all four chains in parallel ─────────────────────────────
-            # return_exceptions=True prevents one chain's failure from cancelling others
-            results = await asyncio.gather(
-                chain_a(), chain_b(), chain_c(), chain_d(),
-                return_exceptions=True,
-            )
+            # return_exceptions=True prevents one chain's failure from cancelling
+            # others. B7: the Study Spec JSON upload runs concurrently here too
+            # (saves 1-3s vs blocking before chain launch).
+            tasks       = [chain_a(), chain_b(), chain_c(), chain_d()]
+            task_names  = ["A", "B", "C", "D"]
+            if spec_json_upload_task is not None:
+                tasks.append(spec_json_upload_task)
+                task_names.append("spec_json_upload")
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+
             # B2: track outcomes so the final status reflects reality.
-            chain_names    = ["A", "B", "C", "D"]
-            failed_chains  = []
-            for name, result in zip(chain_names, results):
+            failed_chains = []
+            for name, result in zip(task_names, results):
                 if isinstance(result, Exception):
                     failed_chains.append(name)
-                    print(f"Chain {name} exception escaped: {result}", flush=True)
-                    await append_log(item_id, f"Chain {name} error: {result}")
+                    print(f"Task {name} exception escaped: {result}", flush=True)
+                    await append_log(item_id, f"Task {name} error: {result}")
 
             if failed_chains:
                 final_status = STATUS["failed"]

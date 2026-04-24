@@ -314,11 +314,24 @@ def merge_edc_flags(pricing_summary, edc_structure):
     return enriched
 
 
-def calculate_quote(protocol_summary, config_path=None, edc_structure=None):
+def calculate_quote(protocol_summary, config_path=None, edc_structure=None,
+                    additional_sub_disc=0.0, additional_svc_disc=0.0):
     """
     Main entry point.
-    protocol_summary: the JSON output from the protocol-analysis skill (Protocol Summary JSON).
-    edc_structure: optionally supply the Study Specification JSON to enrich flag comments.
+
+    Args:
+      protocol_summary:     JSON output from the protocol-analysis skill
+                            (Protocol Summary JSON).
+      config_path:          optional path to pricing_model.ini
+      edc_structure:        optionally supply the Study Spec JSON to enrich
+                            flag comments.
+      additional_sub_disc:  decimal discount to apply to ALL subscription
+                            module totals (monthly fee × duration). E.g., 0.10
+                            for 10% off. Applied AFTER volume + platform
+                            discounts, on top of them.
+      additional_svc_disc:  decimal discount to apply to services (build fee).
+                            Applied after all ps_hours + pm_hours +
+                            contingency calculations.
     """
     if edc_structure:
         protocol_summary = merge_edc_flags(protocol_summary, edc_structure)
@@ -344,7 +357,26 @@ def calculate_quote(protocol_summary, config_path=None, edc_structure=None):
         protocol_summary, cfg, seg_key, dur_months, n_studies, contract_years
     )
 
+    # Clamp discounts into [0,1] so bad input doesn't invert pricing
+    add_sub = max(0.0, min(1.0, float(additional_sub_disc or 0.0)))
+    add_svc = max(0.0, min(1.0, float(additional_svc_disc or 0.0)))
+
+    # Q7: Apply user-supplied discounts to module + build totals AFTER the
+    # volume/platform discounts that pricing config already applied.
+    # These are stacked ADDITIVE (as multipliers), so 10% + 15% = 23.5% off.
+    if add_sub > 0:
+        for m in modules:
+            m['additional_sub_disc'] = add_sub
+            m['total_fee']   = round(m['total_fee']   * (1 - add_sub), 2)
+            m['monthly_fee'] = round(m['monthly_fee'] * (1 - add_sub), 2)
+
     module_total = sum(m['total_fee'] for m in modules)
+
+    if add_svc > 0:
+        build_fee['additional_svc_disc'] = add_svc
+        build_fee['subtotal_before_svc_disc'] = build_fee['total_fee']
+        build_fee['total_fee'] = round(build_fee['total_fee'] * (1 - add_svc), 2)
+
     grand_total  = build_fee['total_fee'] + module_total
     out_cfg      = cfg['output']
 
@@ -364,6 +396,10 @@ def calculate_quote(protocol_summary, config_path=None, edc_structure=None):
             'build_fee':    build_fee['total_fee'],
             'module_total': module_total,
             'grand_total':  grand_total,
+        },
+        'discounts_applied': {
+            'additional_sub_disc': add_sub,
+            'additional_svc_disc': add_svc,
         },
         'config_snapshot': {
             'ps_hourly_rate':      float(cfg['rates']['ps_hourly_rate']),
