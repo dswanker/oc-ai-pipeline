@@ -223,21 +223,23 @@ def _add_scripts(skill_name):
         sys.path.insert(0, path)
 
 
-def run_pricing_model(pricing_summary_dict,
-                      additional_sub_disc=0.0, additional_svc_disc=0.0,
-                      edc_structure=None):
+def run_pricing_model(pricing_summary_dict, edc_structure=None):
     """Run pricing-quote scripts locally. Returns dict of file bytes.
+
     Optionally pass edc_structure (Study Spec JSON) to enrich flag counts
-    and comments using merge_edc_flags."""
+    and comments using merge_edc_flags.
+
+    NOTE: additional_sub_disc and additional_svc_disc are no longer
+    supported by pricing_engine.calculate_quote (Option B refactor moved
+    discounts into pricing_model.ini config). Monday columns for these
+    are still read but don't currently affect the quote.
+    """
     _add_scripts("pricing-quote")
     from pricing_engine      import calculate_quote
     from generate_quote_pdf  import build_quote_pdfs
     from generate_quote_xlsx import build_quote_xlsx
 
-    quote    = calculate_quote(pricing_summary_dict,
-                               additional_sub_disc=additional_sub_disc,
-                               additional_svc_disc=additional_svc_disc,
-                               edc_structure=edc_structure)
+    quote    = calculate_quote(pricing_summary_dict, edc_structure=edc_structure)
     protocol = quote["study_meta"].get("protocol_number", "STUDY")
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -391,13 +393,27 @@ def run_dvs_xlsx(struct_json, forms_json):
 
 # ── OpenClinica Study Service API ─────────────────────────────────────────────
 
-async def _get_oc_token(subdomain):
+def _env_suffix(is_production):
+    """Return '' for production, '-dev' for test/dev environments.
+
+    OpenClinica has parallel infrastructure: openclinica.io (production)
+    and openclinica-dev.io (test). The monday item's `boolean_mm2ptpzd`
+    column controls which environment we target. All OC URLs — user-service,
+    study-service, design service — must use the SAME suffix within a run,
+    otherwise tokens issued by one environment won't be accepted by another
+    environment's services (causes 401 Unauthorized).
+    """
+    return "" if is_production else "-dev"
+
+
+async def _get_oc_token(subdomain, is_production=False):
     import httpx
     username = os.environ.get("OC_API_USERNAME", "").strip()
     password = os.environ.get("OC_API_PASSWORD", "").strip()
     if not username or not password:
         raise ValueError("OC_API_USERNAME or OC_API_PASSWORD not set")
-    url = f"https://{subdomain}.build.openclinica.io/user-service/api/oauth/token"
+    suffix = _env_suffix(is_production)
+    url = f"https://{subdomain}.build.openclinica{suffix}.io/user-service/api/oauth/token"
     print(f"Getting OC auth token from {url}", flush=True)
     async with httpx.AsyncClient(timeout=30) as c:
         r = await c.post(url,
@@ -408,9 +424,10 @@ async def _get_oc_token(subdomain):
     return r.text.strip()
 
 
-async def _check_study_exists(subdomain, token, protocol_num):
+async def _check_study_exists(subdomain, token, protocol_num, is_production=False):
     import httpx
-    url = f"https://{subdomain}.build.openclinica.io/study-service/api/studies"
+    suffix = _env_suffix(is_production)
+    url = f"https://{subdomain}.build.openclinica{suffix}.io/study-service/api/studies"
     async with httpx.AsyncClient(timeout=30) as c:
         r = await c.get(url,
                         headers={"Authorization": f"Bearer {token}",
@@ -553,8 +570,9 @@ async def _get_board_id(subdomain, study_uuid, is_production, token=None):
     """
     import httpx
     if token is None:
-        token = await _get_oc_token(subdomain)
-    base_url = f"https://{subdomain}.build.openclinica.io"
+        token = await _get_oc_token(subdomain, is_production=is_production)
+    suffix   = _env_suffix(is_production)
+    base_url = f"https://{subdomain}.build.openclinica{suffix}.io"
     async with httpx.AsyncClient(timeout=30) as c:
         r = await c.get(
             f"{base_url}/study-service/api/studies/{study_uuid}",
@@ -581,8 +599,8 @@ async def _import_board(subdomain, board_id, board_json, is_production, token=No
     """
     import httpx
     if token is None:
-        token = await _get_oc_token(subdomain)
-    env_suffix  = "" if is_production else "-dev"
+        token = await _get_oc_token(subdomain, is_production=is_production)
+    env_suffix  = _env_suffix(is_production)
     designer_url = f"https://{subdomain}.design.openclinica{env_suffix}.io"
     endpoint    = f"{designer_url}/api/importStudy/{board_id}"
 
@@ -612,15 +630,17 @@ async def create_oc_study(subdomain, struct_json, is_production=False):
     4. Import board.json via study designer API
     """
     import httpx
-    token    = await _get_oc_token(subdomain)
+    token    = await _get_oc_token(subdomain, is_production=is_production)
     headers  = {"Authorization": f"Bearer {token}",
                  "Content-Type": "application/json"}
-    base_url = f"https://{subdomain}.build.openclinica.io"
+    suffix   = _env_suffix(is_production)
+    base_url = f"https://{subdomain}.build.openclinica{suffix}.io"
     meta     = struct_json.get("study_meta", {})
     protocol_num = meta.get("protocol_number", "STUDY")
 
     # ── Step 1: Create or find the study ──────────────────────────────────────
-    existing_uuid = await _check_study_exists(subdomain, token, protocol_num)
+    existing_uuid = await _check_study_exists(subdomain, token, protocol_num,
+                                               is_production=is_production)
     if existing_uuid:
         print(f"Study already exists (uuid: {existing_uuid}) — skipping creation.", flush=True)
         study_uuid = existing_uuid
@@ -662,7 +682,7 @@ async def create_oc_study(subdomain, struct_json, is_production=False):
         if not study_uuid:
             raise RuntimeError("Study created but no UUID returned")
 
-    env_suffix   = "" if is_production else "-dev"
+    env_suffix   = _env_suffix(is_production)
     designer_url = f"https://{subdomain}.design.openclinica{env_suffix}.io"
     study_url    = f"{designer_url}/b/{study_uuid}"
 
@@ -1073,8 +1093,6 @@ async def run_pipeline(item_id):
                             None,
                             lambda: run_pricing_model(
                                 pricing_json,
-                                additional_sub_disc=additional_sub_disc,
-                                additional_svc_disc=additional_svc_disc,
                                 edc_structure=struct_json,
                             )
                         )
