@@ -364,37 +364,36 @@ def run_edc_build(struct_json):
 
 
 def run_dvs_xlsx(struct_json, forms_json):
-    """Build DVS XLSX locally. Returns bytes or None if builder not available."""
+    """Build DVS XLSX locally. Returns bytes or None if builder not available.
+
+    The DVS is a MECHANICAL MIRROR of what's actually in the XLSForms —
+    not an invention of new checks from the protocol. Every constraint,
+    required flag, calculation, and relevant expression in the forms
+    produces corresponding rows in DVS_OC4, Protocol_Extraction,
+    Query_Text_Library, and UAT_Cases. Humans add missing checks by
+    editing the DVS and re-uploading (DVS_TRANSLATE_PROMPT picks up the
+    diff and injects it back into the forms)."""
     _add_scripts("dvs-specification")
     try:
         from generate_dvs import build_dvs
+        from extract_dvs_from_forms import extract_dvs_data
     except ImportError as e:
         print(f"DVS builder not available locally: {e}", flush=True)
         return None
 
     protocol = (struct_json.get("study_meta", {}).get("protocol_number")
                 or "STUDY")
-    # Build slim DVS input identical to what the skill was fed
-    dvs_slim = {}
-    for fname, fdata in forms_json.get("forms", {}).items():
-        survey = fdata.get("survey", [])
-        relevant_rows = [
-            {k: v for k, v in row.items()
-             if k in ('type','name','label','constraint',
-                       'constraint_message','calculation',
-                       'relevant','required')}
-            for row in survey
-            if any(row.get(k) for k in ('constraint','calculation','relevant'))
-        ]
-        dvs_slim[fname] = {"survey": relevant_rows}
 
-    dvs_input = {
-        "study_meta": struct_json.get("study_meta", {}),
-        "forms": dvs_slim,
-    }
+    # Mechanical extraction — walks every survey row in every form and
+    # emits the 4 DVS content arrays in the shape build_dvs expects.
+    dvs_data = extract_dvs_data(struct_json, forms_json)
+    print(f"DVS extraction — {len(dvs_data['dvs_oc4'])} checks, "
+          f"{len(dvs_data['query_text_library'])} unique messages, "
+          f"{len(dvs_data['uat_cases'])} UAT cases", flush=True)
+
     with tempfile.TemporaryDirectory() as tmp:
         xlsx_path = os.path.join(tmp, f"{protocol}_DVS.xlsx")
-        build_dvs(dvs_input, xlsx_path)
+        build_dvs(dvs_data, xlsx_path)
         return open(xlsx_path, "rb").read()
 
 
