@@ -73,8 +73,10 @@ oc-uat-runner/                    NEW separate repo
     customer_profiles/            Per-customer OC URLs, credentials
 
   outputs/
-    dvs_results.py                Update DVS XLSX with test results
-    summary_report.py             Generate run summary PDF/JSON
+    dvs_results.py                Update DVS XLSX with pass/fail + actual results
+    validation_traceability.py    Generate Validation Traceability Matrix (XLSX)
+    validation_summary.py         Generate Validation Summary Report (PDF)
+    monday_updater.py             (Optional) Push all 3 output files to Monday
 
   tests/
     fixtures/                     Sample DVS files, expected outputs
@@ -121,7 +123,128 @@ All three modes share the same backend. Different front-ends.
 
 ---
 
-## 4. Standard customer-provided input package
+## 4. Output documents
+
+Each UAT run produces three output files. All are generated from the same
+data the runner already collects — no additional API calls required.
+
+---
+
+### 4.1 Updated DVS XLSX
+
+The original DVS XLSX returned with three new columns populated on the
+UAT_Cases sheet:
+
+| Column | Content |
+|---|---|
+| Actual Result | What the system actually returned (error message, inserted value, DN text) |
+| Test Result | PASS / FAIL / SKIPPED |
+| Execution Date | ISO timestamp of when this case was executed |
+
+SKIPPED cases include a reason (e.g. "cross-form: build ZIP not provided" or
+"blocked by failed prerequisite case").
+
+This is the working document the build team uses to triage failures.
+
+---
+
+### 4.2 Validation Traceability Matrix (VTM) — XLSX
+
+A regulatory-grade traceability document mapping every requirement to its
+test cases and recorded outcomes. Required by FDA 21 CFR Part 11 and ICH E6
+GCP guidelines for validated clinical systems.
+
+**Sheet structure:**
+
+| Column | Description |
+|---|---|
+| Form | Form short code (e.g. AE, VS, DM) |
+| Field OID | Item OID from OC study |
+| Field Label | Human-readable field label |
+| Validation Rule Type | Constraint / Required / Calculation / Conditional Display / Cross-form |
+| Rule Description | The validation rule in plain English |
+| DVS Check ID | Check identifier from DVS |
+| UAT Case ID | QT-ID from DVS UAT_Cases sheet |
+| Test Scenario | Brief description (e.g. "Value above upper range limit") |
+| Input Data | Exact data entered for this case |
+| Expected Result | What should happen |
+| Actual Result | What did happen |
+| Test Result | PASS / FAIL / SKIPPED |
+| Executed By | Service account or user ID |
+| Execution Date | ISO timestamp |
+| Environment | OC Test environment URL |
+| OC Version | Version of OpenClinica used |
+
+**Key property:** Every validation rule in the study is covered by at least
+one row. Regulators can confirm 100% rule coverage at a glance.
+
+**Format:** XLSX. Tabular, sortable, filterable. One row per UAT case.
+Multiple rows per field when multiple test scenarios exist for one rule.
+
+---
+
+### 4.3 Validation Summary Report (VSR) — PDF
+
+A narrative executive summary of the validation run. This is the document
+a QA manager or Sponsor representative reviews and signs before the study
+goes to Production.
+
+**Sections:**
+
+1. **Study Information**
+   - Protocol number, study title, OC study UUID
+   - Test environment URL and OC version
+   - Date of execution, executed by
+
+2. **Scope**
+   - Forms included in scope
+   - Number of validation rules tested
+   - Number of UAT cases executed
+
+3. **Results Summary**
+   - Total cases: N
+   - Passed: N (N%)
+   - Failed: N (N%)
+   - Skipped: N (N%) with reason breakdown
+   - Pass rate
+
+4. **Failed Cases** (if any)
+   - Table of failed cases with Check ID, form, field, expected vs actual
+   - Severity classification (Minor / Major / Critical)
+   - Disposition (Accepted as-is / Remediation required)
+
+5. **Deviations and Anomalies**
+   - Any test environment issues, skipped cases, or unexpected behaviors
+
+6. **Conclusion**
+   - "The study build meets validation requirements and is approved for
+     release to the Production environment."
+   - OR: "N items require remediation before Production release. See
+     Section 4 for details."
+
+7. **Signature Block**
+   - Executed by: _________________ Date: _______
+   - Reviewed by: _________________ Date: _______
+   - Approved by: _________________ Date: _______
+
+**Format:** PDF. Professionally formatted, consistent with clinical
+regulatory documentation standards. Matches the visual style of other
+OpenClinica output documents (quote PDFs, study spec PDFs).
+
+---
+
+### 4.4 Monday integration (optional)
+
+When UAT Runner is triggered from oc-ai-pipeline (Chain E), all three output
+files are uploaded to the relevant Monday item columns:
+- Updated DVS XLSX → DVS file column
+- VTM XLSX → new "UAT Results" column
+- VSR PDF → new "Validation Summary" column
+- Monday item status updated → "UAT Complete" or "UAT Failed"
+
+---
+
+## 5. Standard customer-provided input package
 
 This is the commercially smart insight: standardize the inputs as the
 **interface contract** between build and test phases. External customers
@@ -151,7 +274,7 @@ Required deliverables for this to work as a standalone product:
 
 ---
 
-## 5. Open questions (need answers before code starts)
+## 6. Open questions (need answers before code starts)
 
 ### 5.1 Publish step automation
 - Is there a programmatic publish-to-Test endpoint? (unverified)
@@ -244,7 +367,7 @@ Two paths, each with tradeoffs:
 
 ---
 
-## 6. Sequencing and milestones
+## 7. Sequencing and milestones
 
 ### Phase 0: Validate the unknown (1 week)
 - Engineering team confirms: programmatic publish API or browser automation?
@@ -277,7 +400,7 @@ Two paths, each with tradeoffs:
 
 ---
 
-## 7. Risks and mitigations
+## 8. Risks and mitigations
 
 | Risk | Likelihood | Impact | Mitigation |
 |---|---|---|---|
@@ -292,7 +415,7 @@ Two paths, each with tradeoffs:
 
 ---
 
-## 8. Decisions needed before code starts
+## 9. Decisions needed before code starts
 
 1. **Engineering team review** of publish-to-Test feasibility
 2. **Credential model:** bearer per run vs stored OAuth (or both?)
@@ -303,7 +426,7 @@ Two paths, each with tradeoffs:
 
 ---
 
-## 9. When to resume
+## 10. When to resume
 
 **Trigger conditions:**
 - User has moved to Anthropic Enterprise account
@@ -316,7 +439,7 @@ Phase 0 questions. Then start Phase 1 PoC against CRS-138.
 
 ---
 
-## 10. Notes from the 24-25 April 2026 conversation
+## 11. Notes from the 24-25 April 2026 conversation
 
 **24 April session:**
 - User asked theoretically whether oc-ai-pipeline could load DVS test data and
