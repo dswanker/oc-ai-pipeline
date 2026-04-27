@@ -1294,9 +1294,22 @@ async def run_pipeline(item_id):
                         )
                         build_zip_holder[0]  = zip_bytes
                         build_json_holder[0] = forms_json
+                        # Summarise validation results if present
+                        v_results = edc_log.get('validation_results', [])
+                        if v_results:
+                            n_total  = len(v_results)
+                            n_err    = sum(1 for r in v_results if r.get('errors'))
+                            n_warn   = sum(1 for r in v_results if r.get('warnings'))
+                            n_skip   = sum(1 for r in v_results if r.get('skipped'))
+                            v_msg    = (f"validation: {n_total} forms, "
+                                        f"{n_err} with errors, {n_warn} with warnings"
+                                        + (f", {n_skip} skipped" if n_skip else ""))
+                        else:
+                            v_msg = "validation: not run"
                         print(f"EDC Build complete — "
                               f"built={len(edc_log.get('forms_built', []))} "
-                              f"zip={len(zip_bytes) if zip_bytes else 0} bytes",
+                              f"zip={len(zip_bytes) if zip_bytes else 0} bytes "
+                              f"| {v_msg}",
                               flush=True)
                     except Exception as e:
                         print(f"EDC Build error: {e}", flush=True)

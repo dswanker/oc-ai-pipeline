@@ -51,6 +51,11 @@ FORMS BUILT
 FORMS WITH PLACEHOLDER VALUES (require site-specific completion)
 ----------------------------------------------------------------
 {placeholder_forms}
+
+XLSFORM VALIDATION RESULTS (pyxform)
+------------------------------------
+{validation_summary}
+{validation_detail}
 """
 
 
@@ -88,6 +93,42 @@ def build_package(spec_data, build_log, forms_dir, csv_dir,
         if p.get('form_id') != 'labranges.csv'
     ) or "  None"
 
+    # Validation results — summary line + per-form detail (errors/warnings only)
+    v_results = build_log.get('validation_results', [])
+    if v_results:
+        n_total    = len(v_results)
+        n_errors   = sum(1 for r in v_results if r.get('errors'))
+        n_warns    = sum(1 for r in v_results if r.get('warnings'))
+        n_skipped  = sum(1 for r in v_results if r.get('skipped'))
+        n_clean    = sum(1 for r in v_results
+                         if not r.get('errors') and not r.get('warnings')
+                         and not r.get('skipped'))
+
+        if n_skipped == n_total:
+            v_summary = f"  Validation skipped (pyxform unavailable in build environment)."
+            v_detail  = ""
+        else:
+            v_summary = (f"  Forms validated: {n_total}  |  "
+                         f"Clean: {n_clean}  |  "
+                         f"With warnings: {n_warns}  |  "
+                         f"With errors: {n_errors}")
+            if n_skipped:
+                v_summary += f"  |  Skipped: {n_skipped}"
+            # Per-form detail for forms with errors or warnings
+            detail_lines = []
+            for r in v_results:
+                if r.get('errors') or r.get('warnings'):
+                    detail_lines.append(f"\n  {r.get('form_id','?')}:")
+                    for err in r.get('errors', []):
+                        detail_lines.append(f"    [ERROR]   {err}")
+                    for warn in r.get('warnings', []):
+                        detail_lines.append(f"    [WARNING] {warn}")
+            v_detail = '\n'.join(detail_lines) if detail_lines else \
+                       "\n  All validated forms passed cleanly."
+    else:
+        v_summary = "  No validation results recorded."
+        v_detail  = ""
+
     readme = README_TEMPLATE.format(
         protocol=protocol,
         study_id=study_id,
@@ -96,6 +137,8 @@ def build_package(spec_data, build_log, forms_dir, csv_dir,
         attention_items=attention_text,
         forms_list=forms_list,
         placeholder_forms=ph_forms,
+        validation_summary=v_summary,
+        validation_detail=v_detail,
     )
 
     os.makedirs(output_dir, exist_ok=True)

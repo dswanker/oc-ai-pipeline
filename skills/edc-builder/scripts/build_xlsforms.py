@@ -458,9 +458,20 @@ def build_all_xlsforms(spec_data, output_dir, build_log):
     """
     Build all XLSForm files from spec_data.
     Returns list of (form_id, output_path) tuples.
+
+    Each successfully-built form is also validated using pyxform; results
+    are accumulated in build_log['validation_results'] for downstream
+    surfacing in BUILD_README and the Build Checklist PDF.
     """
+    # Lazy import to keep build_xlsforms.py lean
+    try:
+        from validate_form import validate_xlsform
+    except ImportError:
+        validate_xlsform = None
+
     os.makedirs(output_dir, exist_ok=True)
     built = []
+    build_log.setdefault('validation_results', [])
 
     # Track form_ids to handle variants (same form_id, different designs)
     seen_form_ids = {}
@@ -491,6 +502,11 @@ def build_all_xlsforms(spec_data, output_dir, build_log):
             build_single_xlsform(form, output_path, build_log)
             built.append((tab_prefix, output_path))
             build_log['forms_built'].append(form_id)
+
+            # Validate the form we just built
+            if validate_xlsform is not None:
+                v_result = validate_xlsform(output_path, form_id=tab_prefix)
+                build_log['validation_results'].append(v_result)
         except Exception as e:
             build_log['build_errors'].append({
                 'form_id': form_id,
