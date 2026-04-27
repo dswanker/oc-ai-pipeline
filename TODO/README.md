@@ -4,7 +4,7 @@ This folder holds in-progress and future planning documents for the
 oc-ai-pipeline and related products. Updated as items are added, completed,
 or moved.
 
-**Last updated:** 26 April 2026
+**Last updated:** 27 April 2026
 
 ---
 
@@ -60,6 +60,19 @@ form continuity), and add unit tests.
 **Priority:** Medium. Pick up when customer feedback flags specific bad
 cells, when UAT Runner Phase 1 needs cleaner input to test against, or when
 a new protocol with a different TA exposes context-coverage gaps.
+
+### TODO-xlsform-validation.md
+**Status:** Approved approach, not yet implemented. Two-phase plan documented.
+**Summary:** Add XLSForm validation to edc-builder using `pyxform` library
+locally (not HTTP-calling getodk.org). Phase 1 (~1 hour): basic per-form
+validation with `validate=False`; errors and warnings surfaced in build
+report; pipeline proceeds even on errors. Phase 2 (deferred, days of work):
+auto-resolve known error patterns + learning loop that feeds anti-patterns
+into `EDC_STRUCTURE_PROMPT`. Phase 2 is closely related to and may be merged
+with the RAG/Trainer project.
+**Estimated effort:** Phase 1: 1-1.5 hours. Phase 2: 1-2 weeks.
+**Priority:** Phase 1 is high (catches errors before forms ship to OC).
+Phase 2 deferred until real error data accumulated.
 
 ---
 
