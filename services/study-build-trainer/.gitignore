@@ -1,0 +1,25 @@
+# Environment
+.env
+.venv/
+venv/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Corpus data — never commit indexed embeddings or downloaded files
+corpus/embeddings.db
+corpus/embeddings.db-*
+corpus/cache/
+corpus/*.json
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store

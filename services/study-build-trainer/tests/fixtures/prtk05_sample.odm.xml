@@ -1,0 +1,432 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Synthetic CDISC ODM 1.3 export for PrTK05 study.
+
+  Based on the PrTK05 Protocol v2.0.1 (Candel Therapeutics, 20 Nov 2025):
+    - Phase 2 open-label, multi-center, concurrent control
+    - Indication: localized intermediate-risk prostate cancer
+    - Intervention: aglatimagene besadenovec (CAN-2409) + valacyclovir + EBRT
+    - Control: standard-of-care EBRT only
+    - 7 study events (Screening through 3-month FU)
+    - 9 forms covering DM, IE, VS, CM, AE, EX, PSA, Biomarker, DS
+
+  This is a TEST FIXTURE — synthesized to exercise the parser, not a real
+  OC export. Item OIDs follow OpenClinica conventions but content has been
+  minimized for readability. Sponsor identity is intentionally placed in
+  multiple locations (StudyDescription, OpenClinica:Sponsor extension) so
+  the parser's sponsor-detection logic can be exercised against both paths.
+-->
+<ODM xmlns="http://www.cdisc.org/ns/odm/v1.3"
+     xmlns:OpenClinica="http://www.openclinica.org/ns/odm_ext_v130/v3.1"
+     ODMVersion="1.3"
+     FileType="Snapshot"
+     FileOID="OC_ODM_PRTK05_FIXTURE"
+     CreationDateTime="2025-11-20T14:30:00-05:00"
+     Description="PrTK05 ODM export (synthetic test fixture)">
+
+  <Study OID="S_PRTK05">
+
+    <GlobalVariables>
+      <StudyName>PrTK05 — Aglatimagene Besadenovec for Localized Prostate Cancer</StudyName>
+      <StudyDescription>A Phase 2 open-label, multi-center study of aglatimagene besadenovec (CAN-2409) plus valacyclovir followed by external beam radiation therapy (EBRT) in patients with localized intermediate-risk prostate cancer. Sponsor: Candel Therapeutics, Inc.</StudyDescription>
+      <ProtocolName>PrTK05</ProtocolName>
+    </GlobalVariables>
+
+    <BasicDefinitions>
+      <MeasurementUnit OID="MU_MG" Name="mg">
+        <Symbol><TranslatedText>mg</TranslatedText></Symbol>
+      </MeasurementUnit>
+      <MeasurementUnit OID="MU_KG" Name="kg">
+        <Symbol><TranslatedText>kg</TranslatedText></Symbol>
+      </MeasurementUnit>
+      <MeasurementUnit OID="MU_NGML" Name="ng/mL">
+        <Symbol><TranslatedText>ng/mL</TranslatedText></Symbol>
+      </MeasurementUnit>
+      <MeasurementUnit OID="MU_BPM" Name="bpm">
+        <Symbol><TranslatedText>bpm</TranslatedText></Symbol>
+      </MeasurementUnit>
+      <MeasurementUnit OID="MU_MMHG" Name="mmHg">
+        <Symbol><TranslatedText>mmHg</TranslatedText></Symbol>
+      </MeasurementUnit>
+    </BasicDefinitions>
+
+    <MetaDataVersion OID="MDV_v1" Name="v1">
+
+      <!-- ════════════════════════════════════════════════════════════
+           Protocol — defines the study event sequence
+           ════════════════════════════════════════════════════════════ -->
+      <Protocol>
+        <StudyEventRef StudyEventOID="SE_SCREENING"  Mandatory="Yes" OrderNumber="1"/>
+        <StudyEventRef StudyEventOID="SE_BASELINE"   Mandatory="Yes" OrderNumber="2"/>
+        <StudyEventRef StudyEventOID="SE_TX_C1"      Mandatory="Yes" OrderNumber="3"/>
+        <StudyEventRef StudyEventOID="SE_TX_C2"      Mandatory="Yes" OrderNumber="4"/>
+        <StudyEventRef StudyEventOID="SE_TX_C3"      Mandatory="Yes" OrderNumber="5"/>
+        <StudyEventRef StudyEventOID="SE_FU_1MO"     Mandatory="Yes" OrderNumber="6"/>
+        <StudyEventRef StudyEventOID="SE_FU_3MO"     Mandatory="Yes" OrderNumber="7"/>
+      </Protocol>
+
+      <!-- ════════════════════════════════════════════════════════════
+           Study events (visits)
+           ════════════════════════════════════════════════════════════ -->
+      <StudyEventDef OID="SE_SCREENING" Name="Screening" Repeating="No" Type="Scheduled">
+        <FormRef FormOID="F_DM"  Mandatory="Yes" OrderNumber="1"/>
+        <FormRef FormOID="F_IE"  Mandatory="Yes" OrderNumber="2"/>
+        <FormRef FormOID="F_VS"  Mandatory="Yes" OrderNumber="3"/>
+        <FormRef FormOID="F_PSA" Mandatory="Yes" OrderNumber="4"/>
+        <FormRef FormOID="F_CM"  Mandatory="No"  OrderNumber="5"/>
+      </StudyEventDef>
+      <StudyEventDef OID="SE_BASELINE" Name="Baseline" Repeating="No" Type="Scheduled">
+        <FormRef FormOID="F_VS"        Mandatory="Yes" OrderNumber="1"/>
+        <FormRef FormOID="F_PSA"       Mandatory="Yes" OrderNumber="2"/>
+        <FormRef FormOID="F_BIOMARKER" Mandatory="Yes" OrderNumber="3"/>
+      </StudyEventDef>
+      <StudyEventDef OID="SE_TX_C1" Name="Treatment Course 1" Repeating="No" Type="Scheduled">
+        <FormRef FormOID="F_VS"        Mandatory="Yes" OrderNumber="1"/>
+        <FormRef FormOID="F_EX"        Mandatory="Yes" OrderNumber="2"/>
+        <FormRef FormOID="F_AE"        Mandatory="No"  OrderNumber="3"/>
+        <FormRef FormOID="F_BIOMARKER" Mandatory="Yes" OrderNumber="4"/>
+      </StudyEventDef>
+      <StudyEventDef OID="SE_TX_C2" Name="Treatment Course 2" Repeating="No" Type="Scheduled">
+        <FormRef FormOID="F_VS" Mandatory="Yes" OrderNumber="1"/>
+        <FormRef FormOID="F_EX" Mandatory="Yes" OrderNumber="2"/>
+        <FormRef FormOID="F_AE" Mandatory="No"  OrderNumber="3"/>
+      </StudyEventDef>
+      <StudyEventDef OID="SE_TX_C3" Name="Treatment Course 3" Repeating="No" Type="Scheduled">
+        <FormRef FormOID="F_VS" Mandatory="Yes" OrderNumber="1"/>
+        <FormRef FormOID="F_EX" Mandatory="Yes" OrderNumber="2"/>
+        <FormRef FormOID="F_AE" Mandatory="No"  OrderNumber="3"/>
+      </StudyEventDef>
+      <StudyEventDef OID="SE_FU_1MO" Name="1 Month Follow-up" Repeating="No" Type="Scheduled">
+        <FormRef FormOID="F_VS"        Mandatory="Yes" OrderNumber="1"/>
+        <FormRef FormOID="F_PSA"       Mandatory="Yes" OrderNumber="2"/>
+        <FormRef FormOID="F_BIOMARKER" Mandatory="Yes" OrderNumber="3"/>
+        <FormRef FormOID="F_AE"        Mandatory="No"  OrderNumber="4"/>
+      </StudyEventDef>
+      <StudyEventDef OID="SE_FU_3MO" Name="3 Month Follow-up" Repeating="No" Type="Scheduled">
+        <FormRef FormOID="F_VS"        Mandatory="Yes" OrderNumber="1"/>
+        <FormRef FormOID="F_PSA"       Mandatory="Yes" OrderNumber="2"/>
+        <FormRef FormOID="F_BIOMARKER" Mandatory="Yes" OrderNumber="3"/>
+        <FormRef FormOID="F_DS"        Mandatory="Yes" OrderNumber="4"/>
+        <FormRef FormOID="F_AE"        Mandatory="No"  OrderNumber="5"/>
+      </StudyEventDef>
+
+      <!-- ════════════════════════════════════════════════════════════
+           Forms (CRFs) — 9 total
+           ════════════════════════════════════════════════════════════ -->
+      <FormDef OID="F_DM" Name="Demographics" Repeating="No">
+        <ItemGroupRef ItemGroupOID="IG_DM" Mandatory="Yes" OrderNumber="1"/>
+      </FormDef>
+      <FormDef OID="F_IE" Name="Inclusion/Exclusion Criteria" Repeating="No">
+        <ItemGroupRef ItemGroupOID="IG_IE" Mandatory="Yes" OrderNumber="1"/>
+      </FormDef>
+      <FormDef OID="F_VS" Name="Vital Signs" Repeating="No">
+        <ItemGroupRef ItemGroupOID="IG_VS" Mandatory="Yes" OrderNumber="1"/>
+      </FormDef>
+      <FormDef OID="F_PSA" Name="PSA Lab Result" Repeating="No">
+        <ItemGroupRef ItemGroupOID="IG_PSA" Mandatory="Yes" OrderNumber="1"/>
+      </FormDef>
+      <FormDef OID="F_EX" Name="Exposure — CAN-2409 Administration" Repeating="No">
+        <ItemGroupRef ItemGroupOID="IG_EX_INJECTION" Mandatory="Yes" OrderNumber="1"/>
+        <ItemGroupRef ItemGroupOID="IG_EX_VALACYCLOVIR" Mandatory="Yes" OrderNumber="2"/>
+      </FormDef>
+      <FormDef OID="F_CM" Name="Concomitant Medications" Repeating="Yes">
+        <ItemGroupRef ItemGroupOID="IG_CM" Mandatory="Yes" OrderNumber="1"/>
+      </FormDef>
+      <FormDef OID="F_AE" Name="Adverse Events" Repeating="Yes">
+        <ItemGroupRef ItemGroupOID="IG_AE" Mandatory="Yes" OrderNumber="1"/>
+      </FormDef>
+      <FormDef OID="F_BIOMARKER" Name="Biospecimen Collection (Blood/Urine/Semen)" Repeating="No">
+        <ItemGroupRef ItemGroupOID="IG_BIOMARKER" Mandatory="Yes" OrderNumber="1"/>
+      </FormDef>
+      <FormDef OID="F_DS" Name="Disposition" Repeating="No">
+        <ItemGroupRef ItemGroupOID="IG_DS" Mandatory="Yes" OrderNumber="1"/>
+      </FormDef>
+
+      <!-- ════════════════════════════════════════════════════════════
+           Item groups
+           ════════════════════════════════════════════════════════════ -->
+      <ItemGroupDef OID="IG_DM" Name="Demographics" Repeating="No">
+        <ItemRef ItemOID="I_DM_BRTHDAT"  Mandatory="Yes" OrderNumber="1"/>
+        <ItemRef ItemOID="I_DM_AGE"      Mandatory="Yes" OrderNumber="2"/>
+        <ItemRef ItemOID="I_DM_SEX"      Mandatory="Yes" OrderNumber="3"/>
+        <ItemRef ItemOID="I_DM_RACE"     Mandatory="Yes" OrderNumber="4"/>
+        <ItemRef ItemOID="I_DM_ETHNIC"   Mandatory="Yes" OrderNumber="5"/>
+      </ItemGroupDef>
+
+      <ItemGroupDef OID="IG_IE" Name="Inclusion/Exclusion" Repeating="No">
+        <ItemRef ItemOID="I_IE_AGE_GE_18"        Mandatory="Yes" OrderNumber="1"/>
+        <ItemRef ItemOID="I_IE_PROSTATE_CONFIRM" Mandatory="Yes" OrderNumber="2"/>
+        <ItemRef ItemOID="I_IE_INTERMEDIATE"     Mandatory="Yes" OrderNumber="3"/>
+        <ItemRef ItemOID="I_IE_PSA_LE_20"        Mandatory="Yes" OrderNumber="4"/>
+        <ItemRef ItemOID="I_IE_NO_METASTASIS"    Mandatory="Yes" OrderNumber="5"/>
+      </ItemGroupDef>
+
+      <ItemGroupDef OID="IG_VS" Name="Vital Signs" Repeating="No">
+        <ItemRef ItemOID="I_VS_DAT"     Mandatory="Yes" OrderNumber="1"/>
+        <ItemRef ItemOID="I_VS_SYSBP"   Mandatory="Yes" OrderNumber="2"/>
+        <ItemRef ItemOID="I_VS_DIABP"   Mandatory="Yes" OrderNumber="3"/>
+        <ItemRef ItemOID="I_VS_PULSE"   Mandatory="Yes" OrderNumber="4"/>
+        <ItemRef ItemOID="I_VS_WEIGHT"  Mandatory="Yes" OrderNumber="5"/>
+      </ItemGroupDef>
+
+      <ItemGroupDef OID="IG_PSA" Name="PSA" Repeating="No">
+        <ItemRef ItemOID="I_PSA_DAT"   Mandatory="Yes" OrderNumber="1"/>
+        <ItemRef ItemOID="I_PSA_VAL"   Mandatory="Yes" OrderNumber="2"/>
+        <ItemRef ItemOID="I_PSA_GLEASON" Mandatory="No" OrderNumber="3"/>
+      </ItemGroupDef>
+
+      <ItemGroupDef OID="IG_EX_INJECTION" Name="CAN-2409 Injection" Repeating="No">
+        <ItemRef ItemOID="I_EX_INJ_DAT"     Mandatory="Yes" OrderNumber="1"/>
+        <ItemRef ItemOID="I_EX_INJ_DOSE"    Mandatory="Yes" OrderNumber="2"/>
+        <ItemRef ItemOID="I_EX_INJ_ROUTE"   Mandatory="Yes" OrderNumber="3"/>
+        <ItemRef ItemOID="I_EX_INJ_GUIDED"  Mandatory="Yes" OrderNumber="4"/>
+      </ItemGroupDef>
+
+      <ItemGroupDef OID="IG_EX_VALACYCLOVIR" Name="Valacyclovir Course" Repeating="No">
+        <ItemRef ItemOID="I_EX_VAL_START"  Mandatory="Yes" OrderNumber="1"/>
+        <ItemRef ItemOID="I_EX_VAL_END"    Mandatory="Yes" OrderNumber="2"/>
+      </ItemGroupDef>
+
+      <ItemGroupDef OID="IG_CM" Name="Concomitant Med" Repeating="Yes">
+        <ItemRef ItemOID="I_CM_NAME"     Mandatory="Yes" OrderNumber="1"/>
+        <ItemRef ItemOID="I_CM_INDIC"    Mandatory="Yes" OrderNumber="2"/>
+        <ItemRef ItemOID="I_CM_STDAT"    Mandatory="Yes" OrderNumber="3"/>
+        <ItemRef ItemOID="I_CM_ENDAT"    Mandatory="No"  OrderNumber="4"/>
+        <ItemRef ItemOID="I_CM_ONGOING"  Mandatory="No"  OrderNumber="5"/>
+      </ItemGroupDef>
+
+      <ItemGroupDef OID="IG_AE" Name="Adverse Event" Repeating="Yes">
+        <ItemRef ItemOID="I_AE_TERM"     Mandatory="Yes" OrderNumber="1"/>
+        <ItemRef ItemOID="I_AE_STDAT"    Mandatory="Yes" OrderNumber="2"/>
+        <ItemRef ItemOID="I_AE_ENDAT"    Mandatory="No"  OrderNumber="3"/>
+        <ItemRef ItemOID="I_AE_GRADE"    Mandatory="Yes" OrderNumber="4"/>
+        <ItemRef ItemOID="I_AE_RELATED"  Mandatory="Yes" OrderNumber="5"/>
+        <ItemRef ItemOID="I_AE_SERIOUS"  Mandatory="Yes" OrderNumber="6"/>
+      </ItemGroupDef>
+
+      <ItemGroupDef OID="IG_BIOMARKER" Name="Biospecimen Collection" Repeating="No">
+        <ItemRef ItemOID="I_BIO_BLOOD"  Mandatory="Yes" OrderNumber="1"/>
+        <ItemRef ItemOID="I_BIO_URINE"  Mandatory="Yes" OrderNumber="2"/>
+        <ItemRef ItemOID="I_BIO_SEMEN"  Mandatory="No"  OrderNumber="3"/>
+        <ItemRef ItemOID="I_BIO_DAT"    Mandatory="Yes" OrderNumber="4"/>
+      </ItemGroupDef>
+
+      <ItemGroupDef OID="IG_DS" Name="Disposition" Repeating="No">
+        <ItemRef ItemOID="I_DS_STATUS"   Mandatory="Yes" OrderNumber="1"/>
+        <ItemRef ItemOID="I_DS_REASON"   Mandatory="No"  OrderNumber="2"/>
+        <ItemRef ItemOID="I_DS_DAT"      Mandatory="Yes" OrderNumber="3"/>
+      </ItemGroupDef>
+
+      <!-- ════════════════════════════════════════════════════════════
+           Item definitions
+           ════════════════════════════════════════════════════════════ -->
+      <ItemDef OID="I_DM_BRTHDAT" Name="BRTHDAT" DataType="date">
+        <Question><TranslatedText>Date of Birth</TranslatedText></Question>
+      </ItemDef>
+      <ItemDef OID="I_DM_AGE" Name="AGE" DataType="integer">
+        <Question><TranslatedText>Age (years)</TranslatedText></Question>
+      </ItemDef>
+      <ItemDef OID="I_DM_SEX" Name="SEX" DataType="text">
+        <Question><TranslatedText>Sex</TranslatedText></Question>
+        <CodeListRef CodeListOID="CL_SEX"/>
+      </ItemDef>
+      <ItemDef OID="I_DM_RACE" Name="RACE" DataType="text">
+        <Question><TranslatedText>Race</TranslatedText></Question>
+        <CodeListRef CodeListOID="CL_RACE"/>
+      </ItemDef>
+      <ItemDef OID="I_DM_ETHNIC" Name="ETHNIC" DataType="text">
+        <Question><TranslatedText>Ethnicity</TranslatedText></Question>
+      </ItemDef>
+
+      <ItemDef OID="I_IE_AGE_GE_18" Name="AGE_GE_18" DataType="text">
+        <Question><TranslatedText>Subject is at least 18 years of age</TranslatedText></Question>
+        <CodeListRef CodeListOID="CL_YESNO"/>
+      </ItemDef>
+      <ItemDef OID="I_IE_PROSTATE_CONFIRM" Name="PROSTATE_CONFIRM" DataType="text">
+        <Question><TranslatedText>Histologically confirmed adenocarcinoma of the prostate</TranslatedText></Question>
+        <CodeListRef CodeListOID="CL_YESNO"/>
+      </ItemDef>
+      <ItemDef OID="I_IE_INTERMEDIATE" Name="INTERMEDIATE" DataType="text">
+        <Question><TranslatedText>Intermediate-risk per NCCN criteria</TranslatedText></Question>
+        <CodeListRef CodeListOID="CL_YESNO"/>
+      </ItemDef>
+      <ItemDef OID="I_IE_PSA_LE_20" Name="PSA_LE_20" DataType="text">
+        <Question><TranslatedText>PSA ≤ 20 ng/mL at screening</TranslatedText></Question>
+        <CodeListRef CodeListOID="CL_YESNO"/>
+      </ItemDef>
+      <ItemDef OID="I_IE_NO_METASTASIS" Name="NO_METASTASIS" DataType="text">
+        <Question><TranslatedText>No evidence of distant metastasis on imaging</TranslatedText></Question>
+        <CodeListRef CodeListOID="CL_YESNO"/>
+      </ItemDef>
+
+      <ItemDef OID="I_VS_DAT" Name="VSDAT" DataType="date">
+        <Question><TranslatedText>Date of vital signs measurement</TranslatedText></Question>
+      </ItemDef>
+      <ItemDef OID="I_VS_SYSBP" Name="SYSBP" DataType="integer">
+        <Question><TranslatedText>Systolic blood pressure (mmHg)</TranslatedText></Question>
+        <MeasurementUnitRef MeasurementUnitOID="MU_MMHG"/>
+      </ItemDef>
+      <ItemDef OID="I_VS_DIABP" Name="DIABP" DataType="integer">
+        <Question><TranslatedText>Diastolic blood pressure (mmHg)</TranslatedText></Question>
+        <MeasurementUnitRef MeasurementUnitOID="MU_MMHG"/>
+      </ItemDef>
+      <ItemDef OID="I_VS_PULSE" Name="PULSE" DataType="integer">
+        <Question><TranslatedText>Pulse rate (bpm)</TranslatedText></Question>
+        <MeasurementUnitRef MeasurementUnitOID="MU_BPM"/>
+      </ItemDef>
+      <ItemDef OID="I_VS_WEIGHT" Name="WEIGHT" DataType="float">
+        <Question><TranslatedText>Body weight (kg)</TranslatedText></Question>
+        <MeasurementUnitRef MeasurementUnitOID="MU_KG"/>
+      </ItemDef>
+
+      <ItemDef OID="I_PSA_DAT" Name="PSADAT" DataType="date">
+        <Question><TranslatedText>Date of PSA collection</TranslatedText></Question>
+      </ItemDef>
+      <ItemDef OID="I_PSA_VAL" Name="PSAVAL" DataType="float">
+        <Question><TranslatedText>PSA result (ng/mL)</TranslatedText></Question>
+        <MeasurementUnitRef MeasurementUnitOID="MU_NGML"/>
+      </ItemDef>
+      <ItemDef OID="I_PSA_GLEASON" Name="GLEASON" DataType="text">
+        <Question><TranslatedText>Gleason score (e.g., 3+4=7)</TranslatedText></Question>
+      </ItemDef>
+
+      <ItemDef OID="I_EX_INJ_DAT" Name="EXINJDAT" DataType="date">
+        <Question><TranslatedText>Date of CAN-2409 injection</TranslatedText></Question>
+      </ItemDef>
+      <ItemDef OID="I_EX_INJ_DOSE" Name="EXINJDOSE" DataType="float">
+        <Question><TranslatedText>CAN-2409 dose administered (mg)</TranslatedText></Question>
+        <MeasurementUnitRef MeasurementUnitOID="MU_MG"/>
+      </ItemDef>
+      <ItemDef OID="I_EX_INJ_ROUTE" Name="EXINJROUTE" DataType="text">
+        <Question><TranslatedText>Route of administration</TranslatedText></Question>
+        <CodeListRef CodeListOID="CL_INJ_ROUTE"/>
+      </ItemDef>
+      <ItemDef OID="I_EX_INJ_GUIDED" Name="EXINJGUIDED" DataType="text">
+        <Question><TranslatedText>Ultrasound guidance used?</TranslatedText></Question>
+        <CodeListRef CodeListOID="CL_YESNO"/>
+      </ItemDef>
+      <ItemDef OID="I_EX_VAL_START" Name="VALSTART" DataType="date">
+        <Question><TranslatedText>Valacyclovir start date</TranslatedText></Question>
+      </ItemDef>
+      <ItemDef OID="I_EX_VAL_END" Name="VALEND" DataType="date">
+        <Question><TranslatedText>Valacyclovir end date</TranslatedText></Question>
+      </ItemDef>
+
+      <ItemDef OID="I_CM_NAME" Name="CMNAME" DataType="text">
+        <Question><TranslatedText>Medication name</TranslatedText></Question>
+      </ItemDef>
+      <ItemDef OID="I_CM_INDIC" Name="CMINDIC" DataType="text">
+        <Question><TranslatedText>Indication</TranslatedText></Question>
+      </ItemDef>
+      <ItemDef OID="I_CM_STDAT" Name="CMSTDAT" DataType="date">
+        <Question><TranslatedText>Start date</TranslatedText></Question>
+      </ItemDef>
+      <ItemDef OID="I_CM_ENDAT" Name="CMENDAT" DataType="date">
+        <Question><TranslatedText>End date</TranslatedText></Question>
+      </ItemDef>
+      <ItemDef OID="I_CM_ONGOING" Name="CMONGOING" DataType="text">
+        <Question><TranslatedText>Ongoing?</TranslatedText></Question>
+        <CodeListRef CodeListOID="CL_YESNO"/>
+      </ItemDef>
+
+      <ItemDef OID="I_AE_TERM" Name="AETERM" DataType="text">
+        <Question><TranslatedText>Adverse event term</TranslatedText></Question>
+      </ItemDef>
+      <ItemDef OID="I_AE_STDAT" Name="AESTDAT" DataType="date">
+        <Question><TranslatedText>Onset date</TranslatedText></Question>
+      </ItemDef>
+      <ItemDef OID="I_AE_ENDAT" Name="AEENDAT" DataType="date">
+        <Question><TranslatedText>Resolution date</TranslatedText></Question>
+      </ItemDef>
+      <ItemDef OID="I_AE_GRADE" Name="AEGRADE" DataType="integer">
+        <Question><TranslatedText>CTCAE grade (1–5)</TranslatedText></Question>
+      </ItemDef>
+      <ItemDef OID="I_AE_RELATED" Name="AERELATED" DataType="text">
+        <Question><TranslatedText>Related to study drug?</TranslatedText></Question>
+        <CodeListRef CodeListOID="CL_RELATED"/>
+      </ItemDef>
+      <ItemDef OID="I_AE_SERIOUS" Name="AESERIOUS" DataType="text">
+        <Question><TranslatedText>Serious adverse event?</TranslatedText></Question>
+        <CodeListRef CodeListOID="CL_YESNO"/>
+      </ItemDef>
+
+      <ItemDef OID="I_BIO_BLOOD" Name="BIOBLOOD" DataType="text">
+        <Question><TranslatedText>Blood specimen collected?</TranslatedText></Question>
+        <CodeListRef CodeListOID="CL_YESNO"/>
+      </ItemDef>
+      <ItemDef OID="I_BIO_URINE" Name="BIOURINE" DataType="text">
+        <Question><TranslatedText>Urine specimen collected?</TranslatedText></Question>
+        <CodeListRef CodeListOID="CL_YESNO"/>
+      </ItemDef>
+      <ItemDef OID="I_BIO_SEMEN" Name="BIOSEMEN" DataType="text">
+        <Question><TranslatedText>Semen specimen collected (optional)?</TranslatedText></Question>
+        <CodeListRef CodeListOID="CL_YESNO"/>
+      </ItemDef>
+      <ItemDef OID="I_BIO_DAT" Name="BIODAT" DataType="date">
+        <Question><TranslatedText>Collection date</TranslatedText></Question>
+      </ItemDef>
+
+      <ItemDef OID="I_DS_STATUS" Name="DSSTATUS" DataType="text">
+        <Question><TranslatedText>Disposition status</TranslatedText></Question>
+        <CodeListRef CodeListOID="CL_DS_STATUS"/>
+      </ItemDef>
+      <ItemDef OID="I_DS_REASON" Name="DSREASON" DataType="text">
+        <Question><TranslatedText>Reason for discontinuation (if applicable)</TranslatedText></Question>
+      </ItemDef>
+      <ItemDef OID="I_DS_DAT" Name="DSDAT" DataType="date">
+        <Question><TranslatedText>Disposition date</TranslatedText></Question>
+      </ItemDef>
+
+      <!-- ════════════════════════════════════════════════════════════
+           Code lists (kept minimal for fixture)
+           ════════════════════════════════════════════════════════════ -->
+      <CodeList OID="CL_YESNO" Name="Yes/No" DataType="text">
+        <CodeListItem CodedValue="Y"><Decode><TranslatedText>Yes</TranslatedText></Decode></CodeListItem>
+        <CodeListItem CodedValue="N"><Decode><TranslatedText>No</TranslatedText></Decode></CodeListItem>
+      </CodeList>
+      <CodeList OID="CL_SEX" Name="Sex" DataType="text">
+        <CodeListItem CodedValue="M"><Decode><TranslatedText>Male</TranslatedText></Decode></CodeListItem>
+        <CodeListItem CodedValue="F"><Decode><TranslatedText>Female</TranslatedText></Decode></CodeListItem>
+      </CodeList>
+      <CodeList OID="CL_RACE" Name="Race" DataType="text">
+        <CodeListItem CodedValue="WHITE"><Decode><TranslatedText>White</TranslatedText></Decode></CodeListItem>
+        <CodeListItem CodedValue="BLACK"><Decode><TranslatedText>Black or African American</TranslatedText></Decode></CodeListItem>
+        <CodeListItem CodedValue="ASIAN"><Decode><TranslatedText>Asian</TranslatedText></Decode></CodeListItem>
+        <CodeListItem CodedValue="OTHER"><Decode><TranslatedText>Other</TranslatedText></Decode></CodeListItem>
+      </CodeList>
+      <CodeList OID="CL_INJ_ROUTE" Name="Injection Route" DataType="text">
+        <CodeListItem CodedValue="TR"><Decode><TranslatedText>Transrectal</TranslatedText></Decode></CodeListItem>
+        <CodeListItem CodedValue="TP"><Decode><TranslatedText>Transperineal</TranslatedText></Decode></CodeListItem>
+      </CodeList>
+      <CodeList OID="CL_RELATED" Name="Causality" DataType="text">
+        <CodeListItem CodedValue="UNRELATED"><Decode><TranslatedText>Unrelated</TranslatedText></Decode></CodeListItem>
+        <CodeListItem CodedValue="UNLIKELY"><Decode><TranslatedText>Unlikely</TranslatedText></Decode></CodeListItem>
+        <CodeListItem CodedValue="POSSIBLE"><Decode><TranslatedText>Possible</TranslatedText></Decode></CodeListItem>
+        <CodeListItem CodedValue="PROBABLE"><Decode><TranslatedText>Probable</TranslatedText></Decode></CodeListItem>
+        <CodeListItem CodedValue="DEFINITE"><Decode><TranslatedText>Definite</TranslatedText></Decode></CodeListItem>
+      </CodeList>
+      <CodeList OID="CL_DS_STATUS" Name="Disposition Status" DataType="text">
+        <CodeListItem CodedValue="COMPLETED"><Decode><TranslatedText>Completed study</TranslatedText></Decode></CodeListItem>
+        <CodeListItem CodedValue="DISCONTINUED"><Decode><TranslatedText>Discontinued early</TranslatedText></Decode></CodeListItem>
+      </CodeList>
+
+      <!-- ════════════════════════════════════════════════════════════
+           OpenClinica vendor extensions — sponsor info
+           This is an alternate location where sponsor identity may be
+           recorded. The parser should fall back to this if not present
+           in StudyDescription.
+           ════════════════════════════════════════════════════════════ -->
+      <OpenClinica:StudyDetails StudyOID="S_PRTK05">
+        <OpenClinica:StudyDescriptionParameters>
+          <OpenClinica:Sponsor>Candel Therapeutics, Inc.</OpenClinica:Sponsor>
+          <OpenClinica:OfficialTitle>A Phase 2, Open-Label, Multi-Center Study of Aglatimagene Besadenovec Plus Valacyclovir Followed by EBRT in Localized Intermediate-Risk Prostate Cancer</OpenClinica:OfficialTitle>
+          <OpenClinica:Phase>Phase 2</OpenClinica:Phase>
+          <OpenClinica:ProtocolType>interventional</OpenClinica:ProtocolType>
+        </OpenClinica:StudyDescriptionParameters>
+      </OpenClinica:StudyDetails>
+
+    </MetaDataVersion>
+
+  </Study>
+
+</ODM>

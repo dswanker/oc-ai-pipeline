@@ -38,6 +38,11 @@ from monday_client import (get_item, download_file, upload_file, set_status,
                             append_log, set_text, download_column_file,
                             list_column_filenames, COL)
 from claude_client  import call_claude, extract_json
+from trainer_integration import (
+    run_protocol_analysis_quick,
+    retrieve_examples,
+    format_examples_block,
+)
 from prompts        import (
     EDC_STRUCTURE_PROMPT, PRICING_SUMMARY_PROMPT,
     DVS_TRANSLATE_PROMPT,
@@ -58,7 +63,9 @@ STATUS = {
     "all_complete":           "All Complete",
     "failed":                 "Failed",
 }
-
+# Trainer retrieval — number of similar past pairs to request.
+# Phase 1 starts at 3; raise after observing prompt length & quality.
+TRAINER_K = 3
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -993,6 +1000,32 @@ async def run_pipeline(item_id):
                 extra_parts.append("Customer CRF Library (PDF) attached — use as Priority 1.")
             if oc_zip:
                 extra_parts.append("Customer OC4 XLSForm Standards (ZIP) attached — use as Priority 2.")
+# ─── Trainer retrieval: fetch similar past pairs as few-shot examples ──
+            # Best-effort — any failure leaves extra_parts unchanged and the
+            # pipeline continues without examples.
+            try:
+                print("Step 0: Trainer retrieval — quick protocol analysis...", flush=True)
+                quick_analysis = await run_protocol_analysis_quick(protocol_pdf or b"")
+                if quick_analysis:
+                    print(f"Step 0: Trainer retrieval — fetching examples (k={TRAINER_K})...",
+                          flush=True)
+                    matches = await retrieve_examples(
+                        quick_analysis, k=TRAINER_K, reserve_same_sponsor=True,
+                    )
+                    if matches:
+                        block = format_examples_block(
+                            matches,
+                            sponsor_hint=quick_analysis.get("sponsor"),
+                            reserve_same_sponsor=True,
+                        )
+                        if block:
+                            extra_parts.append(block)
+                            await append_log(item_id,
+                                f"Trainer retrieval: {len(matches)} similar past "
+                                f"build(s) injected as examples.")
+            except Exception as _trainer_exc:  # noqa: BLE001
+                print(f"Trainer retrieval failed: {_trainer_exc} — continuing without examples",
+                      flush=True)
 
             print("Step 1: Claude extracting Study Spec JSON...", flush=True)
             struct_text = await call_claude(

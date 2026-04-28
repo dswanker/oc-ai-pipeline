@@ -7,7 +7,7 @@ __pycache__/
 *.pyo
 
 # Local testing artifacts (not needed on Railway)
-fixtures/
+/fixtures/
 test_outputs/
 
 # Temp files
@@ -17,3 +17,11 @@ test_outputs/
 # Environment
 .env
 .env.local
+
+# Backups and dev-time copies (added April 2026)
+*.bak
+
+# macOS Finder duplicates ("X copy", "X copy.ext", "X copy/")
+*[ ]copy
+*[ ]copy.*
+*[ ]copy/
