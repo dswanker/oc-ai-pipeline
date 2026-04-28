@@ -41,6 +41,8 @@ COL = {
     "services_discount":     "numeric_mm2n41x7",
     # Output selection
     "output_requested":  "dropdown_mm2nc7d4",
+    # Trainer (per-row toggle)
+    "send_to_trainer":   "boolean_mm2vy4dv",
 }
 
 def get_token():

@@ -879,7 +879,16 @@ async def run_pipeline(item_id):
         except Exception:
             oc_production = False
 
-        print(f"Create OC Study: {create_study} | Subdomain: {oc_subdomain} | Production: {oc_production}", flush=True)
+        # Per-row toggle: only call the trainer when this checkbox is checked.
+        # Default (unchecked / missing column) → skip the trainer entirely.
+        send_to_trainer_val = cols.get(COL["send_to_trainer"], {}).get("value")
+        try:
+            parsed = json.loads(send_to_trainer_val or "{}")
+            send_to_trainer = bool(parsed.get("checked", False)) if isinstance(parsed, dict) else bool(parsed)
+        except Exception:
+            send_to_trainer = False
+
+        print(f"Create OC Study: {create_study} | Subdomain: {oc_subdomain} | Production: {oc_production} | Send to Trainer: {send_to_trainer}", flush=True)
 
         # ── 1. Check for human-uploaded inputs (parallel downloads) ──────────
         (edited_spec_xlsx,
@@ -1000,32 +1009,37 @@ async def run_pipeline(item_id):
                 extra_parts.append("Customer CRF Library (PDF) attached — use as Priority 1.")
             if oc_zip:
                 extra_parts.append("Customer OC4 XLSForm Standards (ZIP) attached — use as Priority 2.")
-# ─── Trainer retrieval: fetch similar past pairs as few-shot examples ──
-            # Best-effort — any failure leaves extra_parts unchanged and the
-            # pipeline continues without examples.
-            try:
-                print("Step 0: Trainer retrieval — quick protocol analysis...", flush=True)
-                quick_analysis = await run_protocol_analysis_quick(protocol_pdf or b"")
-                if quick_analysis:
-                    print(f"Step 0: Trainer retrieval — fetching examples (k={TRAINER_K})...",
-                          flush=True)
-                    matches = await retrieve_examples(
-                        quick_analysis, k=TRAINER_K, reserve_same_sponsor=True,
-                    )
-                    if matches:
-                        block = format_examples_block(
-                            matches,
-                            sponsor_hint=quick_analysis.get("sponsor"),
-                            reserve_same_sponsor=True,
-                        )
-                        if block:
-                            extra_parts.append(block)
-                            await append_log(item_id,
-                                f"Trainer retrieval: {len(matches)} similar past "
-                                f"build(s) injected as examples.")
-            except Exception as _trainer_exc:  # noqa: BLE001
-                print(f"Trainer retrieval failed: {_trainer_exc} — continuing without examples",
+            # ─── Trainer retrieval: fetch similar past pairs as few-shot examples ──
+            # Gated by the per-row "Send to Trainer" checkbox on the AI Testing
+            # Estimations board. Default unchecked → skip entirely. Checked →
+            # run the existing best-effort retrieval.
+            if not send_to_trainer:
+                print("Step 0: Trainer retrieval — SKIPPED (Send to Trainer checkbox is unchecked)",
                       flush=True)
+            else:
+                try:
+                    print("Step 0: Trainer retrieval — quick protocol analysis...", flush=True)
+                    quick_analysis = await run_protocol_analysis_quick(protocol_pdf or b"")
+                    if quick_analysis:
+                        print(f"Step 0: Trainer retrieval — fetching examples (k={TRAINER_K})...",
+                              flush=True)
+                        matches = await retrieve_examples(
+                            quick_analysis, k=TRAINER_K, reserve_same_sponsor=True,
+                        )
+                        if matches:
+                            block = format_examples_block(
+                                matches,
+                                sponsor_hint=quick_analysis.get("sponsor"),
+                                reserve_same_sponsor=True,
+                            )
+                            if block:
+                                extra_parts.append(block)
+                                await append_log(item_id,
+                                    f"Trainer retrieval: {len(matches)} similar past "
+                                    f"build(s) injected as examples.")
+                except Exception as _trainer_exc:  # noqa: BLE001
+                    print(f"Trainer retrieval failed: {_trainer_exc} — continuing without examples",
+                          flush=True)
 
             print("Step 1: Claude extracting Study Spec JSON...", flush=True)
             struct_text = await call_claude(
