@@ -663,6 +663,333 @@ def build_settings_sheet(wb, form):
 
 
 # ── Supporting sheets ─────────────────────────────────────────────────────────
+def build_conventions_sheet(wb, data):
+    """
+    Build the CONVENTIONS sheet per
+    references/conventions.md §"Surfacing in the Study Specification" → D.
+
+    Reads study_meta.conventions_applied. Inserts a new sheet between
+    INDEX and TIMEPOINTS. Skips sheet creation entirely if conventions
+    block is absent (legacy data).
+    """
+    ca = data.get("study_meta", {}).get("conventions_applied", {}) or {}
+    if not ca:
+        return
+
+    ws = wb.create_sheet(title="CONVENTIONS")
+    ws.sheet_properties.tabColor = "27AE60"  # green
+
+    # Banner row
+    ws.merge_cells("A1:E1")
+    c = ws["A1"]
+    c.value = ("BUILD CONVENTIONS APPLIED — Defaults from references/conventions.md "
+               "applied to this build. Override by editing per-form sheets, or by "
+               "adding a study-specific override block to the customer library.")
+    c.font = hdr_font(size=9, color=WHITE_HEX)
+    c.fill = fill(DARK_BLUE_HEX)
+    c.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
+    ws.row_dimensions[1].height = 30
+
+    # Source / version meta strip
+    src_row = 2
+    ws.cell(row=src_row, column=1, value="Conventions Source:")
+    ws.cell(row=src_row, column=2, value=ca.get("source", "references/conventions.md"))
+    ws.cell(row=src_row, column=3, value="Version:")
+    ws.cell(row=src_row, column=4, value=str(ca.get("version", "1")))
+    for col in range(1, 6):
+        cell = ws.cell(row=src_row, column=col)
+        cell.font = body_font(bold=(col % 2 == 1), size=8)
+        cell.fill = fill(LIGHT_BLUE_HEX)
+        cell.border = thin_border()
+        cell.alignment = wrap_align()
+
+    # Headers row
+    hdrs = ["Convention", "Status", "Coverage", "Exemptions / Deviations", "Notes"]
+    for col, h in enumerate(hdrs, start=1):
+        c = ws.cell(row=3, column=col, value=h)
+        c.font = hdr_font(color=WHITE_HEX, size=9)
+        c.fill = fill(DARK_BLUE_HEX)
+        c.border = thin_border()
+        c.alignment = wrap_align("center")
+    ws.row_dimensions[3].height = 18
+
+    # Column widths
+    set_col_width(ws, "A", 38)
+    set_col_width(ws, "B", 14)
+    set_col_width(ws, "C", 30)
+    set_col_width(ws, "D", 32)
+    set_col_width(ws, "E", 38)
+
+    # Read sub-blocks safely
+    fdc   = ca.get("future_date_constraint_applied", {}) or {}
+    grp   = ca.get("group_wrapping_applied", {}) or {}
+    cdash = ca.get("cdash_naming_applied", {}) or {}
+    rmc   = ca.get("required_message_coverage", {}) or {}
+
+    icf_applied   = bool(ca.get("icf_form_added_by_default", False))
+    fd_const      = int(fdc.get("fields_constrained", 0) or 0)
+    fd_exempt     = int(fdc.get("fields_exempted", 0) or 0)
+    fd_exempts    = fdc.get("exemptions", []) or []
+    grp_wrapped   = int(grp.get("forms_wrapped", 0) or 0)
+    grp_name      = grp.get("single_section_group_name", "group0")
+    cdash_using   = int(cdash.get("fields_using_cdash", 0) or 0)
+    cdash_dev     = int(cdash.get("name_deviations", 0) or 0)
+    cdash_devlist = cdash.get("deviations_list", []) or []
+    upper_applied = bool(ca.get("uppercase_choice_lists", False))
+    rm_required   = int(rmc.get("required_fields", 0) or 0)
+    rm_with       = int(rmc.get("fields_with_message", 0) or 0)
+
+    # §7 — common event placement
+    cea          = ca.get("common_event_applied", {}) or {}
+    cea_event    = cea.get("event_oid", "—")
+    cea_forms    = cea.get("forms_in_common_event", []) or []
+    cea_excluded = cea.get("forms_excluded_by_override", []) or []
+    cea_added    = cea.get("conditional_forms_added", []) or []
+    cea_skipped  = cea.get("conditional_forms_skipped", []) or []
+
+    # §8–§19 metrics
+    sec  = ca.get("soft_edit_checks_applied", {}) or {}
+    sec_strict_req = int(sec.get("strict_required_count", 0) or 0)
+    sec_strict_con = int(sec.get("strict_constraint_count", 0) or 0)
+
+    pdr  = ca.get("pdate_for_recall_dates", {}) or {}
+    pdr_pdate    = int(pdr.get("pdate_fields", 0) or 0)
+    pdr_date     = int(pdr.get("date_fields", 0) or 0)
+    pdr_xform    = pdr.get("rule_flagged_crossform_uses", []) or []
+
+    aac  = ca.get("autocomplete_appearance", {}) or {}
+    aac_p_elig   = int(aac.get("participate_lists_eligible", 0) or 0)
+    aac_p_done   = int(aac.get("participate_lists_with_minimal", 0) or 0)
+    aac_s_elig   = int(aac.get("site_lists_eligible", 0) or 0)
+    aac_s_done   = int(aac.get("site_lists_with_minimal", 0) or 0)
+
+    ext  = ca.get("external_csv_for_long_lists", {}) or {}
+    ext_count    = int(ext.get("lists_exceeded_threshold", 0) or 0)
+    ext_csvs     = ext.get("external_csvs_created", []) or []
+
+    icc  = ca.get("item_count_caps", {}) or {}
+    icc_site_over   = icc.get("site_forms_over_200", []) or []
+    icc_partic_over = icc.get("participate_forms_over_50", []) or []
+
+    bdc  = ca.get("briefdescription_coverage", {}) or {}
+    bdc_done = int(bdc.get("applied_count", 0) or 0)
+    bdc_total = int(bdc.get("total_data_rows", 0) or 0)
+    bdc_missing = int(bdc.get("missing_count", 0) or 0)
+
+    fse  = ca.get("form_style_explicit", {}) or {}
+    fse_simple   = int(fse.get("site_simple_single", 0) or 0)
+    fse_pages    = int(fse.get("site_simple_pages", 0) or 0)
+    fse_grid     = int(fse.get("site_theme_grid", 0) or 0)
+    fse_partic   = int(fse.get("participate_simple_pages", 0) or 0)
+    fse_missing  = int(fse.get("missing_style", 0) or 0)
+
+    cfr  = ca.get("crossform_references_populated", {}) or {}
+    cfr_with_calc = int(cfr.get("forms_with_cross_form_calc", 0) or 0)
+    cfr_with_xref = int(cfr.get("forms_with_crossform_references", 0) or 0)
+
+    igk  = ca.get("itemgroup_keep_together", {}) or {}
+    igk_records   = int(igk.get("repeating_logical_records", 0) or 0)
+    igk_consistent = int(igk.get("repeating_records_consistent", 0) or 0)
+    igk_deviations = igk.get("deviations", []) or []
+
+    lik  = ca.get("likert_appearance_rule", {}) or {}
+    lik_total      = int(lik.get("likert_fields", 0) or 0)
+    lik_compliant  = int(lik.get("likert_compliant", 0) or 0)
+    lik_noncompl   = lik.get("likert_non_compliant", []) or []
+
+    vas  = ca.get("vas_appearance_rule", {}) or {}
+    vas_total    = int(vas.get("vas_fields", 0) or 0)
+    vas_vertical = int(vas.get("vas_vertical", 0) or 0)
+
+    tbl  = ca.get("table_appearance_rule", {}) or {}
+    tbl_total      = int(tbl.get("table_fields", 0) or 0)
+    tbl_compliant  = int(tbl.get("table_compliant", 0) or 0)
+
+    def _list_text(items):
+        if not items:
+            return "—"
+        names = []
+        for it in items[:3]:
+            if isinstance(it, dict):
+                names.append(f"{it.get('form','?')}.{it.get('field','?')}")
+            else:
+                names.append(str(it))
+        s = ", ".join(names)
+        if len(items) > 3:
+            s += f" (+{len(items) - 3} more)"
+        return s
+
+    if rm_required == 0:
+        rm_status, rm_fill = "—", WHITE_HEX
+    elif rm_with == rm_required:
+        rm_status, rm_fill = "Applied", GREEN_LIGHT_HEX
+    else:
+        rm_status, rm_fill = "Partial", AMBER_HEX
+
+    rows = [
+        ("1. Standalone ICF form (default)",
+         "Applied" if icf_applied else "Skipped",
+         "form added" if icf_applied else "—",
+         "—",
+         "Default behaviour per conventions.md §1",
+         GREEN_LIGHT_HEX if icf_applied else RED_LIGHT_HEX),
+        ("2. Future-date constraint on date fields",
+         "Applied" if fd_exempt == 0 else "Partial",
+         f"{fd_const} constrained, {fd_exempt} exempted",
+         _list_text(fd_exempts),
+         ("All date fields constrained" if fd_exempt == 0
+          else "Exemptions intentional — see review_flags.constraint_review"),
+         GREEN_LIGHT_HEX if fd_exempt == 0 else AMBER_HEX),
+        ("3. begin/end group wrapping",
+         "Applied",
+         f"{grp_wrapped} forms wrapped",
+         "—",
+         f"Single-section forms use '{grp_name}'",
+         GREEN_LIGHT_HEX),
+        ("4. CDASH naming convention",
+         "Applied" if cdash_dev == 0 else "Partial",
+         f"{cdash_using} CDASH names, {cdash_dev} deviations",
+         _list_text(cdash_devlist),
+         ("No deviations" if cdash_dev == 0
+          else "Customer-preferred names carried forward"),
+         GREEN_LIGHT_HEX if cdash_dev == 0 else AMBER_HEX),
+        ("5. UPPERCASE choice list names",
+         "Applied" if upper_applied else "Skipped",
+         "applied" if upper_applied else "—",
+         "—",
+         "All list_name values uppercase",
+         GREEN_LIGHT_HEX if upper_applied else RED_LIGHT_HEX),
+        ("6. required_message on required fields",
+         rm_status,
+         f"{rm_with} / {rm_required} required fields",
+         "—",
+         ("Auto-populated per conventions.md §6" if rm_required > 0
+          else "No required fields in this build"),
+         rm_fill),
+        ("7. Common event with reactive forms",
+         ("Applied" if cea_forms and not cea_excluded
+          else ("Partial" if cea_forms and cea_excluded
+                else "—")),
+         (f"{cea_event}: {', '.join(cea_forms)}" if cea_forms else "—"),
+         (", ".join(cea_excluded) if cea_excluded
+          else (f"+{len(cea_added)} cond added, {len(cea_skipped)} cond skipped"
+                if (cea_added or cea_skipped) else "—")),
+         ("Override active — see forms_excluded_by_override" if cea_excluded
+          else "Default placement per conventions.md §7"),
+         (GREEN_LIGHT_HEX if cea_forms and not cea_excluded
+          else (AMBER_HEX if cea_forms and cea_excluded
+                else WHITE_HEX))),
+        ("8. Soft edit checks default",
+         ("Partial" if (sec_strict_req or sec_strict_con) else "Applied"),
+         (f"{sec_strict_req} strict-req, {sec_strict_con} strict-con"
+          if (sec_strict_req or sec_strict_con) else "All soft"),
+         "—",
+         ("Override(s) per conventions.md §8"
+          if (sec_strict_req or sec_strict_con)
+          else "All required/constraint rows soft per §8"),
+         (AMBER_HEX if (sec_strict_req or sec_strict_con) else GREEN_LIGHT_HEX)),
+        ("9. PDate for recall, Date for definite",
+         (("Partial" if pdr_xform else "Applied") if (pdr_pdate or pdr_date) else "—"),
+         (f"{pdr_pdate} PDate, {pdr_date} Date" if (pdr_pdate or pdr_date) else "No date fields"),
+         (_list_text(pdr_xform) if pdr_xform else "—"),
+         (f"{len(pdr_xform)} PDate field(s) used in cross-form calc — review"
+          if pdr_xform else "Per conventions.md §9"),
+         (AMBER_HEX if pdr_xform else (GREEN_LIGHT_HEX if (pdr_pdate or pdr_date) else WHITE_HEX))),
+        ("10. Minimal autocomplete on long lists",
+         ("Applied" if (aac_p_done == aac_p_elig and aac_s_done == aac_s_elig) else "Partial"),
+         f"Participate {aac_p_done}/{aac_p_elig}, Site {aac_s_done}/{aac_s_elig}",
+         "—",
+         "Threshold: 5+ Participate, 20+ site (§10)",
+         (GREEN_LIGHT_HEX if (aac_p_done == aac_p_elig and aac_s_done == aac_s_elig)
+          else AMBER_HEX)),
+        ("11. External CSV for long choice lists",
+         "Applied",
+         (f"{ext_count} list(s) externalized" if ext_count else "None needed"),
+         (_list_text(ext_csvs) if ext_csvs else "—"),
+         "Per conventions.md §11",
+         GREEN_LIGHT_HEX),
+        ("12. Item-count caps (build-time check)",
+         ("Partial" if (icc_site_over or icc_partic_over) else "Applied"),
+         (f"{len(icc_site_over)} site over 200, {len(icc_partic_over)} Participate over 50"
+          if (icc_site_over or icc_partic_over) else "All within caps"),
+         (_list_text([f["form_id"] for f in icc_site_over + icc_partic_over
+                       if isinstance(f, dict)])
+          if (icc_site_over or icc_partic_over) else "—"),
+         ("Forms exceeding cap need review per §12"
+          if (icc_site_over or icc_partic_over)
+          else "Site ≤200, Participate ≤50 items per form"),
+         (AMBER_HEX if (icc_site_over or icc_partic_over) else GREEN_LIGHT_HEX)),
+        ("13. bind::oc:briefdescription coverage",
+         (("Partial" if bdc_missing else "Applied") if bdc_total else "—"),
+         (f"{bdc_done} / {bdc_total} data rows" if bdc_total else "—"),
+         "—",
+         (f"{bdc_missing} row(s) missing description" if bdc_missing
+          else "Auto-populated per conventions.md §13"),
+         (AMBER_HEX if bdc_missing else (GREEN_LIGHT_HEX if bdc_total else WHITE_HEX))),
+        ("14. Form style declared explicitly",
+         ("Partial" if fse_missing else "Applied"),
+         f"S-single {fse_simple}, S-pages {fse_pages}, grid {fse_grid}, P-pages {fse_partic}",
+         "—",
+         (f"{fse_missing} form(s) missing style"
+          if fse_missing else "Per conventions.md §14"),
+         (AMBER_HEX if fse_missing else GREEN_LIGHT_HEX)),
+        ("15. crossform_references on settings sheet",
+         (("Applied" if cfr_with_calc == cfr_with_xref else "Partial")
+          if cfr_with_calc else "—"),
+         (f"{cfr_with_xref} / {cfr_with_calc} forms with cross-form calc"
+          if cfr_with_calc else "No cross-form calc rows"),
+         "—",
+         ("Auto-populated from dependency graph (§15)"
+          if cfr_with_calc else "No cross-form calc rows"),
+         (GREEN_LIGHT_HEX if cfr_with_calc and cfr_with_calc == cfr_with_xref
+          else (AMBER_HEX if cfr_with_calc else WHITE_HEX))),
+        ("16. itemgroup keep-together (repeating)",
+         (("Partial" if igk_deviations else "Applied") if igk_records else "—"),
+         (f"{igk_consistent} / {igk_records} records consistent"
+          if igk_records else "No repeating records"),
+         (_list_text(igk_deviations) if igk_deviations else "—"),
+         (f"{len(igk_deviations)} deviation(s) — review"
+          if igk_deviations else "Per conventions.md §16"),
+         (AMBER_HEX if igk_deviations else (GREEN_LIGHT_HEX if igk_records else WHITE_HEX))),
+        ("17. Likert appearance ≤5 short labels",
+         (("Partial" if lik_noncompl else "Applied") if lik_total else "—"),
+         (f"{lik_compliant} / {lik_total} compliant" if lik_total else "No Likert fields"),
+         (_list_text(lik_noncompl) if lik_noncompl else "—"),
+         (f"{len(lik_noncompl)} override(s) carried"
+          if lik_noncompl else "Per conventions.md §17"),
+         (AMBER_HEX if lik_noncompl else (GREEN_LIGHT_HEX if lik_total else WHITE_HEX))),
+        ("18. VAS scales rendered vertically",
+         ("Applied" if vas_total else "—"),
+         (f"{vas_vertical} / {vas_total} vertical" if vas_total else "No VAS fields"),
+         "—",
+         ("Per conventions.md §18" if vas_total
+          else "Narrow rule — fires only when VAS exists"),
+         (GREEN_LIGHT_HEX if vas_total else WHITE_HEX)),
+        ("19. Table appearance short labels",
+         (("Applied" if tbl_compliant == tbl_total else "Partial")
+          if tbl_total else "—"),
+         (f"{tbl_compliant} / {tbl_total} compliant"
+          if tbl_total else "No table-appearance fields"),
+         "—",
+         ("Per conventions.md §19" if tbl_total
+          else "Narrow rule — fires only when used"),
+         (GREEN_LIGHT_HEX if tbl_total and tbl_compliant == tbl_total
+          else (AMBER_HEX if tbl_total else WHITE_HEX))),
+    ]
+
+    for i, (conv, status, coverage, exempts, notes, status_bg) in enumerate(rows, start=4):
+        bg = GREY_LIGHT_HEX if i % 2 == 0 else WHITE_HEX
+        cells = [conv, status, coverage, exempts, notes]
+        for col, val in enumerate(cells, start=1):
+            c = ws.cell(row=i, column=col, value=val)
+            c.font = body_font(size=8, bold=(col == 2))
+            c.border = thin_border()
+            c.alignment = wrap_align()
+            c.fill = fill(status_bg if col == 2 else bg)
+
+    ws.freeze_panes = "A4"
+
+
 def build_timepoint_sheet(wb, tpt_csv):
     ws = wb.create_sheet(title="TIMEPOINTS")
     ws.sheet_properties.tabColor = "1B3A6B"
@@ -811,6 +1138,9 @@ def build_edc_xlsx(data: dict, output_path: str):
 
     # INDEX sheet (uses default active sheet)
     build_index_sheet(wb, data)
+
+    # CONVENTIONS sheet (per references/conventions.md §"Surfacing" → D)
+    build_conventions_sheet(wb, data)
 
     # Supporting sheets
     build_timepoint_sheet(wb, data.get("timepoint_csv", {}))

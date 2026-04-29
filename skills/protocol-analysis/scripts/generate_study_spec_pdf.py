@@ -169,6 +169,257 @@ def grid_table(headers, rows, styles, col_widths, zebra=True):
     return tbl
 
 
+# ── Build Conventions Applied page ────────────────────────────────────────────
+def build_conventions_page(meta, styles):
+    """
+    Build the "Build Conventions Applied" page per
+    references/conventions.md §"Surfacing in the Study Specification" → C.
+
+    Reads study_meta.conventions_applied. Returns a list of flowables to
+    extend onto the story. Returns [] if the conventions block is absent
+    (legacy data).
+    """
+    ca = meta.get("conventions_applied", {}) or {}
+    if not ca:
+        return []
+
+    flowables = []
+
+    # Header band
+    flowables.append(header_band("BUILD CONVENTIONS APPLIED", styles))
+    flowables.append(Spacer(1, 4))
+
+    # Source / version strip
+    src_rows = [
+        ("Conventions Source",  ca.get("source", "references/conventions.md")),
+        ("Conventions Version", str(ca.get("version", "1"))),
+    ]
+    flowables.append(kv_table(src_rows, styles, [CONTENT_W * 0.20, CONTENT_W * 0.80]))
+    flowables.append(Spacer(1, 6))
+
+    # Inline-coloured status text (ReportLab Paragraph supports <font color=...>)
+    GREEN_X = "#27AE60"; AMBER_X = "#E67E22"; RED_X = "#C0392B"
+    def _ok(t="\u2713 Applied"):    return f'<b><font color="{GREEN_X}">{t}</font></b>'
+    def _warn(t="\u26A0 Partial"):  return f'<b><font color="{AMBER_X}">{t}</font></b>'
+    def _skip(t="\u2717 Skipped"):  return f'<b><font color="{RED_X}">{t}</font></b>'
+
+    fdc   = ca.get("future_date_constraint_applied", {}) or {}
+    grp   = ca.get("group_wrapping_applied", {}) or {}
+    cdash = ca.get("cdash_naming_applied", {}) or {}
+    rmc   = ca.get("required_message_coverage", {}) or {}
+
+    icf_applied   = bool(ca.get("icf_form_added_by_default", False))
+    fd_const      = int(fdc.get("fields_constrained", 0) or 0)
+    fd_exempt     = int(fdc.get("fields_exempted", 0) or 0)
+    grp_wrapped   = int(grp.get("forms_wrapped", 0) or 0)
+    grp_name      = grp.get("single_section_group_name", "group0")
+    cdash_using   = int(cdash.get("fields_using_cdash", 0) or 0)
+    cdash_dev     = int(cdash.get("name_deviations", 0) or 0)
+    upper_applied = bool(ca.get("uppercase_choice_lists", False))
+    rm_required   = int(rmc.get("required_fields", 0) or 0)
+    rm_with       = int(rmc.get("fields_with_message", 0) or 0)
+
+    # §7 — common event placement
+    cea          = ca.get("common_event_applied", {}) or {}
+    cea_event    = cea.get("event_oid", "—")
+    cea_forms    = cea.get("forms_in_common_event", []) or []
+    cea_excluded = cea.get("forms_excluded_by_override", []) or []
+    cea_added    = cea.get("conditional_forms_added", []) or []
+    cea_skipped  = cea.get("conditional_forms_skipped", []) or []
+
+    # §8–§19 metrics
+    sec  = ca.get("soft_edit_checks_applied", {}) or {}
+    sec_strict_req = int(sec.get("strict_required_count", 0) or 0)
+    sec_strict_con = int(sec.get("strict_constraint_count", 0) or 0)
+
+    pdr  = ca.get("pdate_for_recall_dates", {}) or {}
+    pdr_pdate    = int(pdr.get("pdate_fields", 0) or 0)
+    pdr_date     = int(pdr.get("date_fields", 0) or 0)
+    pdr_xform    = pdr.get("rule_flagged_crossform_uses", []) or []
+
+    aac  = ca.get("autocomplete_appearance", {}) or {}
+    aac_p_elig   = int(aac.get("participate_lists_eligible", 0) or 0)
+    aac_p_done   = int(aac.get("participate_lists_with_minimal", 0) or 0)
+    aac_s_elig   = int(aac.get("site_lists_eligible", 0) or 0)
+    aac_s_done   = int(aac.get("site_lists_with_minimal", 0) or 0)
+
+    ext  = ca.get("external_csv_for_long_lists", {}) or {}
+    ext_count    = int(ext.get("lists_exceeded_threshold", 0) or 0)
+    ext_csvs     = ext.get("external_csvs_created", []) or []
+
+    icc  = ca.get("item_count_caps", {}) or {}
+    icc_site_over   = icc.get("site_forms_over_200", []) or []
+    icc_partic_over = icc.get("participate_forms_over_50", []) or []
+
+    bdc  = ca.get("briefdescription_coverage", {}) or {}
+    bdc_done = int(bdc.get("applied_count", 0) or 0)
+    bdc_total = int(bdc.get("total_data_rows", 0) or 0)
+    bdc_missing = int(bdc.get("missing_count", 0) or 0)
+
+    fse  = ca.get("form_style_explicit", {}) or {}
+    fse_simple   = int(fse.get("site_simple_single", 0) or 0)
+    fse_pages    = int(fse.get("site_simple_pages", 0) or 0)
+    fse_grid     = int(fse.get("site_theme_grid", 0) or 0)
+    fse_partic   = int(fse.get("participate_simple_pages", 0) or 0)
+    fse_missing  = int(fse.get("missing_style", 0) or 0)
+
+    cfr  = ca.get("crossform_references_populated", {}) or {}
+    cfr_with_calc = int(cfr.get("forms_with_cross_form_calc", 0) or 0)
+    cfr_with_xref = int(cfr.get("forms_with_crossform_references", 0) or 0)
+
+    igk  = ca.get("itemgroup_keep_together", {}) or {}
+    igk_records   = int(igk.get("repeating_logical_records", 0) or 0)
+    igk_consistent = int(igk.get("repeating_records_consistent", 0) or 0)
+    igk_deviations = igk.get("deviations", []) or []
+
+    lik  = ca.get("likert_appearance_rule", {}) or {}
+    lik_total      = int(lik.get("likert_fields", 0) or 0)
+    lik_compliant  = int(lik.get("likert_compliant", 0) or 0)
+    lik_noncompl   = lik.get("likert_non_compliant", []) or []
+
+    vas  = ca.get("vas_appearance_rule", {}) or {}
+    vas_total    = int(vas.get("vas_fields", 0) or 0)
+    vas_vertical = int(vas.get("vas_vertical", 0) or 0)
+
+    tbl  = ca.get("table_appearance_rule", {}) or {}
+    tbl_total      = int(tbl.get("table_fields", 0) or 0)
+    tbl_compliant  = int(tbl.get("table_compliant", 0) or 0)
+
+    if rm_required == 0:
+        rm_status = _skip("\u2014 N/A")
+    elif rm_with == rm_required:
+        rm_status = _ok()
+    else:
+        rm_status = _warn()
+
+    headers = ["Convention", "Status", "Coverage", "Notes"]
+    rows = [
+        ["1. Standalone ICF form (default)",
+            _ok() if icf_applied else _skip(),
+            "form added" if icf_applied else "—",
+            "Default behaviour per conventions.md §1"],
+        ["2. Future-date constraint on date fields",
+            _ok() if fd_exempt == 0 else _warn(),
+            f"{fd_const} constrained, {fd_exempt} exempted",
+            ("All date fields constrained" if fd_exempt == 0
+             else "Exemptions intentional — see review_flags.constraint_review")],
+        ["3. begin/end group wrapping",
+            _ok(),
+            f"{grp_wrapped} forms wrapped",
+            f"Single-section forms use '{grp_name}'"],
+        ["4. CDASH naming convention",
+            _ok() if cdash_dev == 0 else _warn(),
+            f"{cdash_using} CDASH names, {cdash_dev} deviations",
+            ("No deviations" if cdash_dev == 0
+             else "Customer-preferred names carried forward")],
+        ["5. UPPERCASE choice list names",
+            _ok() if upper_applied else _skip(),
+            "applied" if upper_applied else "—",
+            "All list_name values uppercase"],
+        ["6. required_message on required fields",
+            rm_status,
+            f"{rm_with} / {rm_required} required fields",
+            ("Auto-populated per conventions.md §6" if rm_required > 0
+             else "No required fields in this build")],
+        ["7. Common event with reactive forms",
+            (_ok() if cea_forms and not cea_excluded
+             else (_warn() if cea_forms and cea_excluded
+                   else _skip("\u2014 N/A"))),
+            (f"{cea_event}: {', '.join(cea_forms)}" if cea_forms else "—"),
+            (("Override: " + ", ".join(cea_excluded) + " excluded")
+             if cea_excluded
+             else (f"+{len(cea_added)} conditional added, "
+                   f"{len(cea_skipped)} skipped"
+                   if (cea_added or cea_skipped)
+                   else "Default placement per conventions.md §7"))],
+        ["8. Soft edit checks default",
+            (_warn() if (sec_strict_req or sec_strict_con) else _ok()),
+            (f"{sec_strict_req} strict-req, {sec_strict_con} strict-con"
+             if (sec_strict_req or sec_strict_con) else "All soft"),
+            ("Override(s) applied per conventions.md \u00a78"
+             if (sec_strict_req or sec_strict_con)
+             else "All required/constraint rows soft per \u00a78")],
+        ["9. PDate for recall, Date for definite",
+            (_warn() if pdr_xform else _ok()) if (pdr_pdate or pdr_date) else _skip("\u2014 N/A"),
+            (f"{pdr_pdate} PDate, {pdr_date} Date"
+             if (pdr_pdate or pdr_date) else "No date fields"),
+            (f"{len(pdr_xform)} PDate field(s) used in cross-form calc \u2014 review"
+             if pdr_xform else "Per conventions.md \u00a79")],
+        ["10. Minimal autocomplete on long lists",
+            (_ok() if (aac_p_done == aac_p_elig and aac_s_done == aac_s_elig)
+             else _warn()),
+            (f"Participate {aac_p_done}/{aac_p_elig}, Site {aac_s_done}/{aac_s_elig}"),
+            "Threshold: 5+ Participate, 20+ site (\u00a710)"],
+        ["11. External CSV for long choice lists",
+            (_ok() if ext_count == 0 else _ok()),
+            (f"{ext_count} list(s) externalized" if ext_count else "None needed"),
+            ("CSV(s) emitted: " + ", ".join(ext_csvs[:3])
+             if ext_csvs else "Per conventions.md \u00a711")],
+        ["12. Item-count caps (build-time check)",
+            (_warn() if (icc_site_over or icc_partic_over) else _ok()),
+            (f"{len(icc_site_over)} site over 200, {len(icc_partic_over)} Participate over 50"
+             if (icc_site_over or icc_partic_over) else "All within caps"),
+            ("Forms exceeding cap need review per \u00a712"
+             if (icc_site_over or icc_partic_over)
+             else "Site \u2264200, Participate \u226450 items per form")],
+        ["13. bind::oc:briefdescription coverage",
+            (_ok() if bdc_total > 0 and bdc_missing == 0
+             else (_warn() if bdc_missing else _skip("\u2014 N/A"))),
+            (f"{bdc_done} / {bdc_total} data rows" if bdc_total else "—"),
+            (f"{bdc_missing} row(s) missing description" if bdc_missing
+             else "Auto-populated per conventions.md \u00a713")],
+        ["14. Form style declared explicitly",
+            (_warn() if fse_missing else _ok()),
+            (f"S-single {fse_simple}, S-pages {fse_pages}, grid {fse_grid}, P-pages {fse_partic}"),
+            (f"{fse_missing} form(s) missing style"
+             if fse_missing else "Per conventions.md \u00a714")],
+        ["15. crossform_references on settings sheet",
+            (_ok() if cfr_with_calc == cfr_with_xref else _warn()),
+            (f"{cfr_with_xref} / {cfr_with_calc} forms with cross-form calc"),
+            ("Auto-populated from dependency graph (\u00a715)"
+             if cfr_with_calc else "No cross-form calc rows")],
+        ["16. itemgroup keep-together (repeating)",
+            (_ok() if igk_records and not igk_deviations
+             else (_warn() if igk_deviations else _skip("\u2014 N/A"))),
+            (f"{igk_consistent} / {igk_records} records consistent"
+             if igk_records else "No repeating records"),
+            (f"{len(igk_deviations)} deviation(s) \u2014 review"
+             if igk_deviations else "Per conventions.md \u00a716")],
+        ["17. Likert appearance \u22645 short labels",
+            (_ok() if lik_total and not lik_noncompl
+             else (_warn() if lik_noncompl else _skip("\u2014 N/A"))),
+            (f"{lik_compliant} / {lik_total} compliant"
+             if lik_total else "No Likert fields"),
+            (f"{len(lik_noncompl)} override(s) carried"
+             if lik_noncompl else "Per conventions.md \u00a717")],
+        ["18. VAS scales rendered vertically",
+            (_ok() if vas_total else _skip("\u2014 N/A")),
+            (f"{vas_vertical} / {vas_total} vertical" if vas_total else "No VAS fields"),
+            "Per conventions.md \u00a718" if vas_total else "Narrow rule \u2014 fires only when VAS exists"],
+        ["19. Table appearance short labels",
+            (_ok() if tbl_total and tbl_compliant == tbl_total
+             else (_warn() if tbl_total else _skip("\u2014 N/A"))),
+            (f"{tbl_compliant} / {tbl_total} compliant"
+             if tbl_total else "No table-appearance fields"),
+            "Per conventions.md \u00a719" if tbl_total else "Narrow rule \u2014 fires only when used"],
+    ]
+    cw = [CONTENT_W * 0.30, CONTENT_W * 0.14, CONTENT_W * 0.28, CONTENT_W * 0.28]
+    flowables.append(grid_table(headers, rows, styles, cw))
+
+    # Override note
+    flowables.append(Spacer(1, 8))
+    flowables.append(Paragraph(
+        "<b>Override these defaults</b> by editing the EDC Structure XLSX and "
+        "re-running the skill, or by adding a study-specific override block to "
+        "the customer library. See <i>references/conventions.md</i> for the "
+        "authoritative spec.",
+        styles["body_small"]
+    ))
+    flowables.append(Spacer(1, 6))
+    flowables.append(PageBreak())
+    return flowables
+
+
 # ── Main builder ──────────────────────────────────────────────────────────────
 def build_edc_pdf(data: dict, output_path: str):
     styles = make_styles()
@@ -225,6 +476,9 @@ def build_edc_pdf(data: dict, output_path: str):
     ]
     story.append(kv_table(meta_rows, styles, [CONTENT_W*0.15, CONTENT_W*0.85]))
     story.append(Spacer(1, 10))
+
+    # ── Build Conventions Applied (per references/conventions.md) ───────────
+    story.extend(build_conventions_page(meta, styles))
 
     # ─────────────────────────────────────────────────────────────────────────
     # SECTION 1 — Study Event Schedule
