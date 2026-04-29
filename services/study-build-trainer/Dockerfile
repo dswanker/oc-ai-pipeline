@@ -72,4 +72,4 @@ RUN mkdir -p /data/huggingface
 EXPOSE 8080
 
 # Use the same start command railway.toml expects.
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8080}"]
