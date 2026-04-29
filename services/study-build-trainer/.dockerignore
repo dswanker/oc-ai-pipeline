@@ -1,0 +1,46 @@
+# Local virtualenv — should never be in the image
+.venv/
+venv/
+env/
+
+# Python caches
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Tests (shouldn't run in production image)
+tests/
+
+# Local development files
+.env
+.env.local
+
+# OS / editor cruft
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Documentation
+*.md
+README.*
+
+# Cached corpus files (will be on the volume at runtime, not baked in)
+corpus/cache/
+corpus/files/
+corpus/embeddings.db
+
+# Backup files
+*.bak
+*.bak2
+
+# Git
+.git/
+.gitignore
