@@ -186,7 +186,7 @@ def build_conventions_page(meta, styles):
     flowables = []
 
     # Header band
-    flowables.append(header_band("BUILD CONVENTIONS APPLIED", styles))
+    flowables.append(header_band("APPENDIX — BUILD CONVENTIONS APPLIED", styles))
     flowables.append(Spacer(1, 4))
 
     # Source / version strip
@@ -477,8 +477,8 @@ def build_edc_pdf(data: dict, output_path: str):
     story.append(kv_table(meta_rows, styles, [CONTENT_W*0.15, CONTENT_W*0.85]))
     story.append(Spacer(1, 10))
 
-    # ── Build Conventions Applied (per references/conventions.md) ───────────
-    story.extend(build_conventions_page(meta, styles))
+    # Build Conventions Applied page is rendered as an appendix at the end
+    # of the document — see end of build_edc_pdf().
 
     # ─────────────────────────────────────────────────────────────────────────
     # SECTION 1 — Study Event Schedule
@@ -1053,6 +1053,12 @@ def build_edc_pdf(data: dict, output_path: str):
         ("RIGHTPADDING",  (0,0),(-1,-1), 10),
     ]))
     story.append(review_tbl)
+
+    # ── APPENDIX — Build Conventions Applied (per references/conventions.md) ─
+    appendix_flowables = build_conventions_page(meta, styles)
+    if appendix_flowables:
+        story.append(PageBreak())
+        story.extend(appendix_flowables)
 
     doc.build(story)
     print(f"EDC Structure PDF written to: {output_path}")

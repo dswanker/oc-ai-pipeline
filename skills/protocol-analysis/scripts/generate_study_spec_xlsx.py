@@ -1139,9 +1139,6 @@ def build_edc_xlsx(data: dict, output_path: str):
     # INDEX sheet (uses default active sheet)
     build_index_sheet(wb, data)
 
-    # CONVENTIONS sheet (per references/conventions.md §"Surfacing" → D)
-    build_conventions_sheet(wb, data)
-
     # Supporting sheets
     build_timepoint_sheet(wb, data.get("timepoint_csv", {}))
     build_labranges_sheet(wb, data.get("labranges_csv", {}))
@@ -1152,6 +1149,10 @@ def build_edc_xlsx(data: dict, output_path: str):
         build_survey_sheet(wb, form)
         build_choices_sheet(wb, form)
         build_settings_sheet(wb, form)
+
+    # APPENDIX — CONVENTIONS sheet (last sheet in workbook,
+    # per references/conventions.md §"Surfacing" → D)
+    build_conventions_sheet(wb, data)
 
     wb.save(output_path)
     print(f"EDC Structure XLSX written to: {output_path}")

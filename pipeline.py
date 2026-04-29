@@ -278,6 +278,16 @@ def run_study_spec_files(struct_json):
     from generate_study_spec_pdf  import build_edc_pdf
     from generate_study_spec_xlsx import build_edc_xlsx
 
+    # Compute conventions_applied metrics from the forms data per
+    # references/conventions.md. Best-effort — failures don't block the build.
+    try:
+        from compute_conventions import compute_and_apply
+        ca, _ = compute_and_apply(struct_json.get("forms", []))
+        struct_json.setdefault("study_meta", {})["conventions_applied"] = ca
+        print(f"compute_conventions: applied (version={ca.get('version','?')})", flush=True)
+    except Exception as ex:
+        print(f"compute_conventions FAILED — continuing without conventions block: {ex}", flush=True)
+
     protocol = (struct_json.get("study_meta", {}).get("protocol_number")
                 or "STUDY")
     with tempfile.TemporaryDirectory() as tmp:
