@@ -371,9 +371,144 @@ def _normalize_sponsor(s: str | None) -> str:
     return text
 
 
+# ─── HTTP call: POST /pending-row ────────────────────────────────────────
+
+
+_PENDING_ROW_TIMEOUT_S = 30.0
+
+
+async def create_pending_row(
+    protocol_pdf: bytes,
+    *,
+    name: str,
+    protocol_filename: str,
+    sponsor_client: str | None = None,
+    source_pipeline_item: str | None = None,
+    http_client: "httpx.AsyncClient | None" = None,
+) -> int | None:
+    """
+    Create a pending row on the trainer's monday corpus board.
+
+    Sends the protocol PDF + metadata to the trainer's POST /pending-row
+    endpoint. The trainer creates a row in "Awaiting Build Completion"
+    status, attaches the protocol, and returns the new monday item_id.
+
+    A human will later visit that row, upload the final form definitions
+    (ODM XML or XLSForm zip), and flip the trigger to ingest the pair
+    into the corpus.
+
+    Args:
+        protocol_pdf: Raw PDF bytes.
+        name: Row title (typically the protocol number, e.g. ABT-CIP-10601).
+        protocol_filename: Original filename for the PDF (preserved on
+            upload so the trainer's parser can dispatch on extension).
+        sponsor_client: Optional sponsor name to seed the Sponsor/Client
+            column on the trainer board.
+        source_pipeline_item: Optional oc-ai-pipeline item ID for
+            traceability — links the trainer row back to the pipeline run.
+        http_client: Injectable for tests. If None, a fresh one is
+            created and closed inside this function.
+
+    Returns:
+        The new trainer-board item_id, or None on any error. Failure is
+        graceful — caller should not treat None as fatal.
+    """
+    if not protocol_pdf:
+        print("[trainer] create_pending_row: empty protocol_pdf — skipping", flush=True)
+        return None
+    if not name:
+        print("[trainer] create_pending_row: empty name — skipping", flush=True)
+        return None
+
+    url = f"{_trainer_url()}/pending-row"
+
+    # Lazy httpx import — same pattern as retrieve_examples.
+    if http_client is None:
+        try:
+            import httpx as _httpx
+        except ImportError:
+            print("[trainer] httpx not installed — cannot create pending row",
+                  flush=True)
+            return None
+        connect_error_cls: type[BaseException] = _httpx.ConnectError
+        timeout_error_cls: type[BaseException] = _httpx.TimeoutException
+        client = _httpx.AsyncClient(timeout=_PENDING_ROW_TIMEOUT_S)
+        owned_client = True
+    else:
+        try:
+            import httpx as _httpx
+            connect_error_cls = _httpx.ConnectError
+            timeout_error_cls = _httpx.TimeoutException
+        except ImportError:
+            connect_error_cls = ConnectionError  # type: ignore[assignment]
+            timeout_error_cls = TimeoutError  # type: ignore[assignment]
+        client = http_client
+        owned_client = False
+
+    # Multipart form data: protocol_pdf as a file, others as form fields.
+    files = {
+        "protocol_pdf": (protocol_filename, protocol_pdf, "application/pdf"),
+    }
+    data: dict[str, str] = {"name": name}
+    if sponsor_client:
+        data["sponsor_client"] = sponsor_client
+    if source_pipeline_item:
+        data["source_pipeline_item"] = str(source_pipeline_item)
+
+    try:
+        response = await client.post(url, files=files, data=data)
+    except connect_error_cls:
+        print(f"[trainer] not reachable at {url} — pending row not created",
+              flush=True)
+        if owned_client:
+            await client.aclose()
+        return None
+    except timeout_error_cls:
+        print(f"[trainer] /pending-row timed out at {url}", flush=True)
+        if owned_client:
+            await client.aclose()
+        return None
+    except Exception as exc:  # noqa: BLE001
+        print(f"[trainer] /pending-row unexpected error: {type(exc).__name__}: {exc}",
+              flush=True)
+        if owned_client:
+            await client.aclose()
+        return None
+    finally:
+        if owned_client and not client.is_closed:
+            try:
+                await client.aclose()
+            except Exception:  # noqa: BLE001
+                pass
+
+    if response.status_code not in (200, 201):
+        print(f"[trainer] /pending-row HTTP {response.status_code}: "
+              f"{response.text[:200]}",
+              flush=True)
+        return None
+
+    try:
+        body = response.json()
+    except Exception:  # noqa: BLE001
+        print("[trainer] /pending-row returned non-JSON body", flush=True)
+        return None
+
+    item_id = body.get("item_id") if isinstance(body, dict) else None
+    if not isinstance(item_id, int):
+        print(f"[trainer] /pending-row response missing item_id: {body!r}",
+              flush=True)
+        return None
+
+    print(f"[trainer] pending row created: item_id={item_id} name={name!r}",
+          flush=True)
+    return item_id
+
+
+
 __all__ = [
     "run_protocol_analysis_quick",
     "retrieve_examples",
     "format_examples_block",
+    "create_pending_row",
     "QUICK_ANALYSIS_PROMPT",
 ]

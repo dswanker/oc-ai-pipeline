@@ -41,6 +41,7 @@ from claude_client  import call_claude, extract_json
 from trainer_integration import (
     run_protocol_analysis_quick,
     retrieve_examples,
+    create_pending_row,
     format_examples_block,
 )
 from prompts        import (
@@ -1099,6 +1100,35 @@ async def run_pipeline(item_id):
                 f"{protocol_num}_Study_Specification_{version}.json",
                 json.dumps(struct_json, indent=2).encode()
             )
+
+            # ── Trainer: create pending row on trainer board ────────────────
+            # Gated by the per-row "Send to Trainer" checkbox. Best-effort —
+            # any failure is logged but does not block the pipeline. The
+            # trainer row sits in "Awaiting Build Completion" status until
+            # a human uploads the final form definitions.
+            if send_to_trainer and protocol_pdf:
+                try:
+                    sponsor_hint = (struct_json.get("study_meta", {})
+                                    .get("sponsor")
+                                    or struct_json.get("study_meta", {})
+                                    .get("sponsor_name"))
+                    print(f"[trainer] creating pending row: name={protocol_num!r} "
+                          f"sponsor={sponsor_hint!r}", flush=True)
+                    new_trainer_item_id = await create_pending_row(
+                        protocol_pdf,
+                        name=protocol_num,
+                        protocol_filename=f"{protocol_num}.pdf",
+                        sponsor_client=sponsor_hint,
+                        source_pipeline_item=str(item_id),
+                    )
+                    if new_trainer_item_id:
+                        await append_log(
+                            item_id,
+                            f"Trainer pending row created: item_id={new_trainer_item_id}",
+                        )
+                except Exception as _trainer_exc:  # noqa: BLE001
+                    print(f"[trainer] create_pending_row failed: {_trainer_exc} "
+                          f"— continuing without trainer row", flush=True)
 
         # ── Launch parallel chains if struct_json is available ────────────────
         if struct_json and needs_analysis:

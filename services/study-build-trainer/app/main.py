@@ -18,7 +18,7 @@ import structlog
 from fastapi import FastAPI
 
 from app.config import settings
-from app.routes import health, ingest, jobs, retrieve, webhook
+from app.routes import health, ingest, jobs, pending_row, retrieve, webhook
 from workers.queue import IngestQueue
 
 logger = structlog.get_logger(__name__)
@@ -68,6 +68,7 @@ def create_app() -> FastAPI:
     app.include_router(health.router)
     app.include_router(webhook.router, prefix="/webhook", tags=["webhook"])
     app.include_router(ingest.router, prefix="/ingest", tags=["ingest"])
+    app.include_router(pending_row.router, prefix="/pending-row", tags=["pending-row"])
     app.include_router(retrieve.router, prefix="/retrieve", tags=["retrieve"])
     app.include_router(jobs.router, tags=["jobs"])
 
