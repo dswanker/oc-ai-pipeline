@@ -62,6 +62,7 @@ STATUS = {
     "dvs_complete":           "DVS Complete — Awaiting Review",
     "creating_oc_study":      "Creating OC Study",
     "all_complete":           "All Complete",
+    "build_preview_running":  "Build Preview Running",
     "failed":                 "Failed",
 }
 # Trainer retrieval — number of similar past pairs to request.
@@ -1464,12 +1465,65 @@ async def run_pipeline(item_id):
                     await append_log(item_id, f"OC Study creation failed: {e}")
                     raise   # B6: propagate to the chain-outcome tracker
 
+            # ── Chain E: Build Preview PDF (local renderer, no Claude API) ────
+            # Consumes the in-memory `struct_json` and the EDC build zip held by
+            # `build_zip_holder[0]` (populated by chain_c). If the user only
+            # selected "build preview" in the dropdown (chain_c skipped), we
+            # trigger _run_edc_and_dvs() inline so the build zip exists before
+            # we render. Renderer is fully local — no Claude API calls.
+            async def chain_e():
+                if not _want("build preview"):
+                    return
+                if not struct_json:
+                    print("Chain E: skipped — no struct_json available", flush=True)
+                    return
+                # Build Preview needs the EDC zip from chain_c. If chain_c isn't
+                # producing one (chain_c gated off), trigger the build inline.
+                if not build_zip_holder[0]:
+                    print("Chain E: building EDC zip first (chain_c not selected)…",
+                          flush=True)
+                    try:
+                        await _run_edc_and_dvs()
+                    except Exception as e:
+                        print(f"Chain E: EDC build failed: {e}", flush=True)
+                        await append_log(item_id,
+                            f"Build Preview skipped — EDC build failed: {e}")
+                        return
+                if not build_zip_holder[0]:
+                    print("Chain E: skipped — EDC zip unavailable", flush=True)
+                    await append_log(item_id,
+                        "Build Preview skipped — no EDC build zip produced.")
+                    return
+
+                print("Chain E: rendering Build Preview PDF (local)...",
+                      flush=True)
+                await append_log(item_id, "Build Preview started.")
+                try:
+                    from build_preview import render_build_preview_from_spec
+                    loop = asyncio.get_event_loop()
+                    pdf_bytes = await loop.run_in_executor(
+                        None,
+                        lambda: render_build_preview_from_spec(
+                            struct_json, build_zip_holder[0], protocol_num),
+                    )
+                    await upload_file(item_id, COL["build_preview"],
+                        f"{protocol_num}_Build_Preview_{version}.pdf",
+                        pdf_bytes)
+                    await append_log(item_id,
+                        f"Build Preview complete — {len(pdf_bytes):,} bytes uploaded.")
+                    print(f"Chain E complete — {len(pdf_bytes)} bytes",
+                          flush=True)
+                except Exception as e:
+                    print(f"Chain E error: {e}", flush=True)
+                    traceback.print_exc()
+                    await append_log(item_id, f"Build Preview error: {e}")
+
             # ── Launch all four chains in parallel ─────────────────────────────
             # return_exceptions=True prevents one chain's failure from cancelling
             # others. B7: the Study Spec JSON upload runs concurrently here too
             # (saves 1-3s vs blocking before chain launch).
-            tasks       = [chain_a(), chain_b(), chain_c(), chain_d()]
-            task_names  = ["A", "B", "C", "D"]
+            tasks       = [chain_a(), chain_b(), chain_c(), chain_d(), chain_e()]
+            task_names  = ["A", "B", "C", "D", "E"]
             if spec_json_upload_task is not None:
                 tasks.append(spec_json_upload_task)
                 task_names.append("spec_json_upload")

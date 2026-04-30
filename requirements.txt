@@ -7,3 +7,10 @@ python-dotenv==1.0.0
 openpyxl==3.1.5
 reportlab==4.4.10
 pyxform>=2.1.0
+
+# --- Build Preview dependencies ---
+# playwright version must match the Chromium revision in the
+# Microsoft Playwright Docker image (v1.49.0-jammy). If you bump the image
+# version in the Dockerfile, bump this pin to the matching version.
+playwright==1.49.0
+pypdf>=4.0
