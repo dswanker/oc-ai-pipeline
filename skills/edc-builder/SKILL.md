@@ -65,6 +65,14 @@ Open the XLSX using openpyxl. Read in this order:
    - `[FORMID]_choices` tab: rows 3+ (row 1 = title banner, row 2 = headers)
      - Skip rows where ACTION = DELETE
    - `[FORMID]_settings` tab: rows 3-8, column 2 (yellow editable cells)
+     - The **cross-form dependencies table** in the settings tab is READ-ONLY
+       reference — do not read or write dependencies from there. The authoritative
+       source for dependencies is the survey tab (calculate rows with XPath in the
+       calculation column and clinicaldata in bind::oc:external).
+     - The **choice lists** do not appear in the settings tab — read them
+       exclusively from the `[FORMID]_choices` tab.
+     - To add a dependency: look for calculate rows in the survey tab with
+       ACTION=ADD that have an XPath expression in the calculation column.
 
 **Column name mapping** — XLSX uses underscores, XLSForm uses colons:
 - `bind__oc_itemgroup` → `bind::oc:itemgroup`

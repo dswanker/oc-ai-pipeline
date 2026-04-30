@@ -519,66 +519,18 @@ def build_settings_sheet(wb, form):
         c.border = thin_border()
         c.alignment = wrap_align()
 
-    # ── CHOICE LISTS ──
-    choices = form.get("choices", [])
-    if choices:
-        ch_start = len(editable_settings) + 4
-        ws.merge_cells(f"A{ch_start}:F{ch_start}")
-        c = ws.cell(row=ch_start, column=1)
-        list_names = list(dict.fromkeys(ch.get("list_name","") for ch in choices))
-        c.value = f"CHOICE LISTS  ({len(list_names)} lists, {len(choices)} options)"
-        c.font = Font(name="Arial", bold=True, size=9, color="FFFFFF")
-        c.fill = PatternFill("solid", fgColor="2E6DA4")
-        c.alignment = Alignment(horizontal="left", vertical="center")
-
-        # Choice list headers
-        ch_hdrs = ["list_name", "label", "name", "source", "filter_column", "filter_value"]
-        ch_widths = [16, 28, 22, 18, 14, 20]
-        for col_i, (h, w) in enumerate(zip(ch_hdrs, ch_widths), start=1):
-            c = ws.cell(row=ch_start+1, column=col_i, value=h)
-            c.font = Font(name="Arial", bold=True, size=8, color="FFFFFF")
-            c.fill = PatternFill("solid", fgColor="1B3A6B")
-            c.border = Border(
-                left=Side(style="thin", color="CCCCCC"),
-                right=Side(style="thin", color="CCCCCC"),
-                top=Side(style="thin", color="CCCCCC"),
-                bottom=Side(style="thin", color="CCCCCC")
-            )
-            c.alignment = Alignment(wrap_text=True, vertical="top", horizontal="center")
-            ws.column_dimensions[get_column_letter(col_i)].width = w
-
-        list_colours = ["D6E4F0", "D0F0F0", "F5F5F5", "FFFFFF"]
-        list_idx_map = {ln: i % len(list_colours) for i, ln in enumerate(list_names)}
-        for r_i, ch in enumerate(choices):
-            r = ch_start + 2 + r_i
-            ln = ch.get("list_name","")
-            src = ch.get("source","")
-            row_bg = "FFF3CD" if src == "PROTOCOL_SPECIFIC" else list_colours[list_idx_map.get(ln, 0)]
-            for col_i, key in enumerate(ch_hdrs, start=1):
-                val = ch.get(key, "")
-                c = ws.cell(row=r, column=col_i, value=val)
-                c.font = Font(name="Arial", size=8)
-                c.fill = PatternFill("solid", fgColor=row_bg)
-                c.border = Border(
-                    left=Side(style="thin", color="CCCCCC"),
-                    right=Side(style="thin", color="CCCCCC"),
-                    top=Side(style="thin", color="CCCCCC"),
-                    bottom=Side(style="thin", color="CCCCCC")
-                )
-                c.alignment = Alignment(wrap_text=True, vertical="top")
-            ws.row_dimensions[r].height = 13
-
-        # Offset meta_start past choices block
-        meta_start_offset = ch_start + 2 + len(choices) + 2
-    else:
-        meta_start_offset = len(editable_settings) + 4
+    # Choice lists are shown in the dedicated [FORMID]_choices tab — not repeated here.
+    meta_start_offset = len(editable_settings) + 4
 
     # ── DEPENDENCIES SUMMARY ──
     form_all_deps = extract_all_form_dependencies(form)
     dep_start = meta_start_offset
     ws.merge_cells(f"A{dep_start}:F{dep_start}")
     c = ws.cell(row=dep_start, column=1)
-    c.value = f"DEPENDENCIES  ({len(form_all_deps)} cross-form references)"
+    c.value = (f"CROSS-FORM DEPENDENCIES — READ-ONLY REFERENCE  "
+              f"({len(form_all_deps)} references)  "
+              f"| To add a dependency: add a calculate row in the survey tab with "
+              f"ACTION=ADD and the XPath in the calculation column")
     c.font = Font(name="Arial", bold=True, size=9, color="FFFFFF")
     c.fill = PatternFill("solid", fgColor="1B3A6B")
     c.alignment = Alignment(horizontal="left", vertical="center")
@@ -644,7 +596,7 @@ def build_settings_sheet(wb, form):
         dep_start = meta_start + len(metadata) + 2
         ws.merge_cells(f"A{dep_start}:F{dep_start}")
         c = ws.cell(row=dep_start, column=1)
-        c.value = "CROSS-FORM DEPENDENCIES — All require OID confirmation after study configuration"
+        c.value = "CROSS-FORM DEPENDENCIES — READ-ONLY. To add a new dependency: insert a calculate row in the survey tab (ACTION=ADD). OID confirmation required for all entries after study configuration."
         c.font = hdr_font(color=WHITE_HEX, size=9)
         c.fill = fill(MID_BLUE_HEX)
         c.alignment = Alignment(horizontal="left", vertical="center")
