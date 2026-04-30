@@ -1374,12 +1374,19 @@ async def run_pipeline(item_id):
             # ── Chain C: EDC Build → DVS ──────────────────────────────────────
             build_zip_holder  = [None]   # mutable container for async closure
             build_json_holder = [{"forms": {}}]
+            # Event set by chain_c when its EDC build (and DVS) is complete.
+            # chain_e waits on this instead of triggering a duplicate build.
+            edc_build_event   = asyncio.Event()
 
             async def chain_c():
                 if not _want("study build zip"):
+                    edc_build_event.set()   # not running — unblock chain_e
                     return
                 print("Chain C: EDC Build starting...", flush=True)
-                await _run_edc_and_dvs()
+                try:
+                    await _run_edc_and_dvs()
+                finally:
+                    edc_build_event.set()   # always unblock chain_e
                 print("Chain C complete.", flush=True)
 
             async def _run_edc_and_dvs():
@@ -1539,18 +1546,25 @@ async def run_pipeline(item_id):
                 if not struct_json:
                     print("Chain E: skipped — no struct_json available", flush=True)
                     return
-                # Build Preview needs the EDC zip from chain_c. If chain_c isn't
-                # producing one (chain_c gated off), trigger the build inline.
+                # Build Preview needs the EDC zip from chain_c.
+                # If chain_c is running it, wait for it — don't trigger a
+                # duplicate build (which would also double-upload the DVS).
+                # If chain_c is not selected, run the build inline ourselves.
                 if not build_zip_holder[0]:
-                    print("Chain E: building EDC zip first (chain_c not selected)…",
-                          flush=True)
-                    try:
-                        await _run_edc_and_dvs()
-                    except Exception as e:
-                        print(f"Chain E: EDC build failed: {e}", flush=True)
-                        await append_log(item_id,
-                            f"Build Preview skipped — EDC build failed: {e}")
-                        return
+                    if _want("study build zip"):
+                        print("Chain E: waiting for Chain C EDC build…",
+                              flush=True)
+                        await edc_build_event.wait()
+                    else:
+                        print("Chain E: building EDC zip (chain_c not selected)…",
+                              flush=True)
+                        try:
+                            await _run_edc_and_dvs()
+                        except Exception as e:
+                            print(f"Chain E: EDC build failed: {e}", flush=True)
+                            await append_log(item_id,
+                                f"Build Preview skipped — EDC build failed: {e}")
+                            return
                 if not build_zip_holder[0]:
                     print("Chain E: skipped — EDC zip unavailable", flush=True)
                     await append_log(item_id,

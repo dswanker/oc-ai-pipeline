@@ -493,6 +493,12 @@ RULE OC-8 — REPEATING-FORM STRUCTURAL PATTERN
   unselected with the message "Please select default version for
   data entry", and no data entry is possible.
 
+  CRITICAL NAME RULE: `end group` and `end repeat` rows MUST have a
+  BLANK name field. Never put a name (e.g. "AE_REPEAT_END") on these
+  rows. pyxform validation fails with "Unmatched end_group" if a name
+  is present, because it tries to match the name to a begin_group and
+  fails. The phantom `end group` also must have a blank name.
+
   ADDITIONALLY for repeating forms:
     - DO NOT include a top-level SUBJID text row. OC uses its
       built-in subject context for repeating forms.

@@ -354,6 +354,29 @@ def read_spec_xlsx(spec_path):
     return result
 
 
+# ── Survey row normalization ──────────────────────────────────────────────────
+def _normalize_survey_rows(rows):
+    """
+    Normalize survey rows before writing to XLSForm.
+
+    XLSForm spec (and pyxform validation) requires that end group and
+    end repeat rows have a BLANK name. Claude sometimes generates these
+    rows with names (e.g. 'AE_REPEAT_END') which causes pyxform to look
+    for a matching begin_group by name and fail. This fix also handles
+    the OC-8 phantom end group (between begin repeat and end repeat)
+    which has no matching begin group by design.
+    """
+    END_TYPES = {'end group', 'end repeat', 'end_group', 'end_repeat'}
+    normalized = []
+    for row in rows:
+        r = dict(row)
+        t = str(r.get('type', '') or '').strip().lower()
+        if t in END_TYPES:
+            r['name'] = ''
+        normalized.append(r)
+    return normalized
+
+
 # ── Build a single XLSForm .xlsx ───────────────────────────────────────────────
 def build_single_xlsform(form_data, output_path, build_log):
     """Build one XLSForm .xlsx file from form_data dict.
@@ -503,6 +526,8 @@ def build_single_xlsform(form_data, output_path, build_log):
     for col_i, col in enumerate(all_survey_cols, start=1):
         ws_sv.column_dimensions[get_column_letter(col_i)].width = \
             SURVEY_WIDTHS.get(col, 16)
+
+    survey = _normalize_survey_rows(survey)
 
     placeholders_in_form = []
     for row_i, row in enumerate(survey, start=2):
