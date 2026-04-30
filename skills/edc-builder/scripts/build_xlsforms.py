@@ -398,6 +398,37 @@ def build_single_xlsform(form_data, output_path, build_log):
         ws_ch  = wb['choices']
         ws_sv  = wb['survey']
 
+        # Clean up LibreOffice conversion artefacts that cause Excel to show
+        # a "repaired content" warning on every open:
+        #
+        # 1. Invalid sheetView selection elements — LO writes 4 <selection>
+        #    pane entries (topRight, bottomLeft×2, bottomRight) for a simple
+        #    horizontal freeze. Excel only accepts 2 for a row-only freeze.
+        #    Wipe all selections/panes now; freeze_panes='A2' below rewrites
+        #    them cleanly.
+        #
+        # 2. type=None DataValidations — internal LO markers, not real rules.
+        #
+        # 3. formula2='0' and operator='between' on list validations — invalid
+        #    for list type; Excel flags and repairs them.
+        # Trim LibreOffice's extra <selection> pane elements from sheetViews.
+        # LO writes 4 selections for a simple horizontal freeze; Excel only
+        # accepts 1. openpyxl's freeze_panes setter only modifies selection[0]
+        # and leaves the extras intact, so we strip them here explicitly.
+        # The actual freeze ('A2') is applied later per-sheet.
+        for ws in (ws_set, ws_ch, ws_sv):
+            ws.sheet_view.selection = ws.sheet_view.selection[:1]
+
+        for ws in (ws_set, ws_ch, ws_sv):
+            bad = [dv for dv in ws.data_validations.dataValidation
+                   if dv.type is None]
+            for dv in bad:
+                ws.data_validations.dataValidation.remove(dv)
+            for dv in ws.data_validations.dataValidation:
+                if dv.type == 'list':
+                    dv.formula2 = None
+                    dv.operator = None
+
         # Clear any data rows left in the template (keep row 1 = headers)
         for ws in (ws_set, ws_ch, ws_sv):
             for row_cells in ws.iter_rows(min_row=2):

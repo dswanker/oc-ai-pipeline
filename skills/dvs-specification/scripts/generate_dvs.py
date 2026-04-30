@@ -192,6 +192,26 @@ def build_dvs(dvs_data, output_path):
     """
     # Load template to preserve reference sheets
     wb = load_workbook(TEMPLATE_PATH)
+
+    # Clean up LibreOffice conversion artefacts that cause Excel to show a
+    # "repaired content" warning on every open. Applied to every sheet so
+    # nothing slips through regardless of which sheets the template contains.
+    #
+    #  1. Trim extra <selection> pane elements — LO writes up to 4 for a
+    #     simple freeze; Excel only accepts 1 for a row-only freeze.
+    #  2. Remove type=None DataValidations — internal LO markers.
+    #  3. Clear formula2='0' and operator='between' on list validations —
+    #     invalid for list type and trigger Excel's repair dialog.
+    for _ws in wb.worksheets:
+        _ws.sheet_view.selection = _ws.sheet_view.selection[:1]
+        _bad = [_dv for _dv in _ws.data_validations.dataValidation
+                if _dv.type is None]
+        for _dv in _bad:
+            _ws.data_validations.dataValidation.remove(_dv)
+        for _dv in _ws.data_validations.dataValidation:
+            if _dv.type == 'list':
+                _dv.formula2 = None
+                _dv.operator = None
     today = datetime.date.today().isoformat()
     meta  = dvs_data.get("study_meta", {})
 
