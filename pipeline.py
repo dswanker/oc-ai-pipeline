@@ -1682,17 +1682,24 @@ async def run_pipeline(item_id):
                 try:
                     from build_preview import render_build_preview_from_spec
                     loop = asyncio.get_event_loop()
-                    pdf_bytes = await loop.run_in_executor(
+                    pdf_bytes, html_zip_bytes = await loop.run_in_executor(
                         None,
                         lambda: render_build_preview_from_spec(
                             struct_json, build_zip_holder[0], protocol_num),
                     )
+                    # Upload PDF and interactive ZIP to the same column —
+                    # monday.com supports multiple files per column.
                     await upload_file(item_id, COL["build_preview"],
                         f"{protocol_num}_Build_Preview_{version}.pdf",
                         pdf_bytes)
+                    await upload_file(item_id, COL["build_preview"],
+                        f"{protocol_num}_Form_Simulator_{version}.zip",
+                        html_zip_bytes)
                     await append_log(item_id,
-                        f"Build Preview complete — {len(pdf_bytes):,} bytes uploaded.")
-                    print(f"Chain E complete — {len(pdf_bytes)} bytes",
+                        f"Build Preview complete — PDF {len(pdf_bytes):,} bytes "
+                        f"+ Simulator ZIP {len(html_zip_bytes):,} bytes uploaded.")
+                    print(f"Chain E complete — PDF {len(pdf_bytes):,}b "
+                          f"+ ZIP {len(html_zip_bytes):,}b",
                           flush=True)
                 except Exception as e:
                     print(f"Chain E error: {e}", flush=True)

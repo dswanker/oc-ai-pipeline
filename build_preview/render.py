@@ -53,6 +53,7 @@ from pypdf import PdfWriter, PdfReader
 
 from .sanitize import sanitize_xlsform_bytes, get_form_settings_bytes
 from .study_spec_parser import parse_study_spec_bytes
+from .interactive import build_interactive_zip
 
 
 # Paths to vendored static assets (transformer.js + grid.css + scaffold.html)
@@ -518,7 +519,8 @@ def _render_with_study_spec(study_spec: dict, edc_zip_bytes: bytes,
             grid_css = f.read()
 
         # 5) Launch Chromium once, transform + render every form, then close.
-        per_form_pdfs = []
+        per_form_pdfs     = []
+        forms_with_html   = []   # accumulates raw HTML for interactive ZIP
         with transformer_scaffold_server(scaffold_dir) as port:
             with sync_playwright() as p:
                 browser = p.chromium.launch()
@@ -572,8 +574,17 @@ def _render_with_study_spec(study_spec: dict, edc_zip_bytes: bytes,
                         continue
 
                     choices = parse_choices_from_model(result['model'])
-                    form_html = expand_itemsets(result['form'], choices)
-                    form_html = annotate_form_html(form_html)
+                    raw_form_html = expand_itemsets(result['form'], choices)
+
+                    # Collect raw HTML (before annotation) for interactive ZIP
+                    forms_with_html.append({
+                        'fm':       fm,
+                        'raw_html': raw_form_html,
+                    })
+
+                    # Annotate for PDF (forces all branches visible, shows
+                    # constraint text as static annotations)
+                    form_html = annotate_form_html(raw_form_html)
 
                     page_html = (
                         f'<!doctype html><html><head><meta charset="utf-8">'
@@ -608,10 +619,21 @@ def _render_with_study_spec(study_spec: dict, edc_zip_bytes: bytes,
         writer.write(out)
         result_bytes = out.getvalue()
 
+        # Build interactive HTML ZIP from the raw (un-annotated) form HTML
+        study_spec_for_zip = study_spec  # already has events/form_to_events
+        html_zip_bytes = build_interactive_zip(
+            forms_with_html,
+            study_spec_for_zip,
+            protocol_id_for_filename,
+            grid_css,
+        )
+
         elapsed = time.time() - t_start
         print(f'[build_preview] Rendered {len(forms_meta)} forms + SoE in {elapsed:.1f}s '
-              f'-> {len(result_bytes):,} bytes', flush=True)
-        return result_bytes
+              f'-> {len(result_bytes):,} bytes PDF '
+              f'+ {len(html_zip_bytes):,} bytes interactive ZIP',
+              flush=True)
+        return result_bytes, html_zip_bytes, html_zip_bytes
 
     finally:
         shutil.rmtree(work_root, ignore_errors=True)
