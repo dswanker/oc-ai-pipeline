@@ -107,13 +107,39 @@ def _xl_col_widths(ws, widths):
 # ── XLSForm ZIP builder (local, from JSON) ────────────────────────────────────
 
 def _xlsform_zip(build_json):
-    """Convert EDC Build JSON into a ZIP of XLSForm xlsx files. Returns bytes."""
+    """Convert EDC Build JSON into a ZIP of XLSForm xlsx files. Returns bytes.
+
+    Uses build_single_xlsform from the edc-builder skill scripts so every
+    output form carries the OC form template (reference tabs + dropdown).
+    Falls back to building from scratch if the skill scripts are unavailable.
+    """
+    # Standard survey columns — used to detect extra_cols from JSON data
+    _SURVEY_COLS = {
+        "type", "name", "label", "bind::oc:itemgroup", "hint", "appearance",
+        "bind::oc:briefdescription", "bind::oc:description", "relevant",
+        "required", "required_message", "constraint", "constraint_message",
+        "default", "calculation", "trigger", "readonly", "image",
+        "repeat_count", "bind::oc:external"
+    }
+
+    # Try to import the edc-builder script so we get the template + dropdown
+    _add_scripts("edc-builder")
+    try:
+        from build_xlsforms import build_single_xlsform as _build_single
+        _use_skill = True
+    except ImportError:
+        _build_single = None
+        _use_skill = False
+        print("_xlsform_zip: build_xlsforms not available — using scratch builder",
+              flush=True)
+
     forms   = build_json.get("forms", {})
     zip_buf = io.BytesIO()
 
     with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for filename, form_data in forms.items():
 
+            # ── CSV pass-through (timepoint, lab ranges, checklist) ────────
             if filename.endswith('.csv'):
                 if isinstance(form_data, str):
                     zf.writestr(filename, form_data)
@@ -127,34 +153,70 @@ def _xlsform_zip(build_json):
                     zf.writestr(filename, cbuf.getvalue())
                 continue
 
-            wb   = Workbook()
-            ws_s = wb.active
-            ws_s.title = "survey"
+            survey   = form_data.get("survey", [])
+            choices  = form_data.get("choices", [])
+            settings = form_data.get("settings", {}) or {}
 
-            survey = form_data.get("survey", [])
-            if survey:
-                hdrs = list(survey[0].keys())
-                _xl_header_row(ws_s, hdrs)
+            # Derive form_id from settings or strip extension from filename
+            form_id = (settings.get("form_id")
+                       or os.path.splitext(filename)[0])
+
+            if _use_skill:
+                # ── Template-based path via build_single_xlsform ──────────
+                # Detect any extra columns beyond the standard 20
+                extra_cols = []
                 for row in survey:
-                    _xl_data_row(ws_s, [row.get(h, "") for h in hdrs])
+                    for k in row:
+                        if k not in _SURVEY_COLS and k not in extra_cols:
+                            extra_cols.append(k)
 
-            ws_c = wb.create_sheet("choices")
-            choices = form_data.get("choices", [])
-            if choices:
-                hdrs = list(choices[0].keys())
-                _xl_header_row(ws_c, hdrs)
-                for row in choices:
-                    _xl_data_row(ws_c, [row.get(h, "") for h in hdrs])
+                skill_form_data = {
+                    "form_id":    form_id,
+                    "form_title": settings.get("form_title", form_id),
+                    "settings":   settings,
+                    "survey":     survey,
+                    "choices":    choices,
+                    "extra_cols": extra_cols,
+                }
+                build_log = {"placeholder_applied": [], "build_errors": []}
+                with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tf:
+                    tmp_path = tf.name
+                try:
+                    _build_single(skill_form_data, tmp_path, build_log)
+                    with open(tmp_path, "rb") as f:
+                        zf.writestr(filename, f.read())
+                finally:
+                    try:
+                        os.unlink(tmp_path)
+                    except OSError:
+                        pass
 
-            ws_t = wb.create_sheet("settings")
-            settings = form_data.get("settings", {})
-            if settings:
-                _xl_header_row(ws_t, list(settings.keys()))
-                _xl_data_row(ws_t, list(settings.values()))
+            else:
+                # ── Scratch fallback (no template, no reference tabs) ──────
+                wb   = Workbook()
+                ws_s = wb.active
+                ws_s.title = "survey"
+                if survey:
+                    hdrs = list(survey[0].keys())
+                    _xl_header_row(ws_s, hdrs)
+                    for row in survey:
+                        _xl_data_row(ws_s, [row.get(h, "") for h in hdrs])
 
-            xbuf = io.BytesIO()
-            wb.save(xbuf)
-            zf.writestr(filename, xbuf.getvalue())
+                ws_c = wb.create_sheet("choices")
+                if choices:
+                    hdrs = list(choices[0].keys())
+                    _xl_header_row(ws_c, hdrs)
+                    for row in choices:
+                        _xl_data_row(ws_c, [row.get(h, "") for h in hdrs])
+
+                ws_t = wb.create_sheet("settings")
+                if settings:
+                    _xl_header_row(ws_t, list(settings.keys()))
+                    _xl_data_row(ws_t, list(settings.values()))
+
+                xbuf = io.BytesIO()
+                wb.save(xbuf)
+                zf.writestr(filename, xbuf.getvalue())
 
         checklist = build_json.get("study_checklist")
         if checklist and isinstance(checklist, list) and checklist:

@@ -1,18 +1,33 @@
 """
 build_xlsforms.py — OpenClinica XLSForm Generator
 Generates one production-ready .xlsx file per CRF form from the EDC
-structure specification. Output matches the OpenClinica blank template
-exactly: settings, choices, survey sheets in that order.
+structure specification.
+
+Each output file is built from form_template.xlsx (must live alongside
+this script in the same directory).  The template supplies:
+  • Correctly structured settings / choices / survey sheets with OC headers
+  • Six reference/instruction tabs (Cross-Form Examples, Custom Annotation
+    Examples, Contact Info Examples, eConsent Examples, Hard Checks
+    Examples, Offline Forms Examples)
+  • bind::oc:external dropdown in the survey sheet
+
+If form_template.xlsx is not found, the script falls back to building
+the three functional sheets from scratch (no reference tabs, no dropdowns).
 
 Usage:
     from build_xlsforms import build_all_xlsforms, build_single_xlsform
     results = build_all_xlsforms(spec_data, output_dir)
 """
 
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
+from openpyxl.worksheet.datavalidation import DataValidation
 import os, re, datetime
+
+# Path to the OC form template (must be in the same folder as this script)
+_SCRIPT_DIR   = os.path.dirname(os.path.abspath(__file__))
+TEMPLATE_PATH = os.path.join(_SCRIPT_DIR, 'form_template.xlsx')
 
 # ── Colours ───────────────────────────────────────────────────────────────────
 DARK_BLUE  = "1B3A6B"
@@ -341,9 +356,16 @@ def read_spec_xlsx(spec_path):
 
 # ── Build a single XLSForm .xlsx ───────────────────────────────────────────────
 def build_single_xlsform(form_data, output_path, build_log):
-    """Build one XLSForm .xlsx file from form_data dict."""
-    wb = Workbook()
+    """Build one XLSForm .xlsx file from form_data dict.
 
+    When form_template.xlsx is present alongside this script, the output is
+    based on that template so the human receives:
+      - The six OC reference/instruction tabs (Cross-Form Examples, etc.)
+      - The bind::oc:external dropdown in the survey sheet
+      - The official OC header row styling
+    If the template is missing, falls back to building the three functional
+    sheets from scratch (original behaviour).
+    """
     settings = form_data.get('settings', {}) or {}
     choices  = form_data.get('choices', [])
     survey   = form_data.get('survey', [])
@@ -367,26 +389,43 @@ def build_single_xlsform(form_data, output_path, build_log):
         if not settings.get(k):
             settings[k] = default
 
-    # ── Sheet 1: settings ──────────────────────────────────────────────────
-    ws_set = wb.active
-    ws_set.title = 'settings'
+    use_template = os.path.exists(TEMPLATE_PATH)
 
-    for col_i, col in enumerate(SETTINGS_COLS, start=1):
-        _header_cell(ws_set.cell(row=1, column=col_i), col)
-        ws_set.column_dimensions[get_column_letter(col_i)].width = \
-            SETTINGS_WIDTHS.get(col, 20)
+    # ── Load workbook ──────────────────────────────────────────────────────
+    if use_template:
+        wb = load_workbook(TEMPLATE_PATH)
+        ws_set = wb['settings']
+        ws_ch  = wb['choices']
+        ws_sv  = wb['survey']
+
+        # Clear any data rows left in the template (keep row 1 = headers)
+        for ws in (ws_set, ws_ch, ws_sv):
+            for row_cells in ws.iter_rows(min_row=2):
+                for cell in row_cells:
+                    cell.value = None
+    else:
+        wb     = Workbook()
+        ws_set = wb.active
+        ws_set.title = 'settings'
+        ws_ch  = wb.create_sheet('choices')
+        ws_sv  = wb.create_sheet('survey')
+
+    # ── Sheet: settings ────────────────────────────────────────────────────
+    if not use_template:
+        for col_i, col in enumerate(SETTINGS_COLS, start=1):
+            _header_cell(ws_set.cell(row=1, column=col_i), col)
 
     for col_i, col in enumerate(SETTINGS_COLS, start=1):
         val = settings.get(col, '')
-        _data_cell(ws_set.cell(row=2, column=col_i), val)
+        ws_set.cell(row=2, column=col_i).value = val or ''
+        ws_set.column_dimensions[get_column_letter(col_i)].width = \
+            SETTINGS_WIDTHS.get(col, 20)
 
     ws_set.row_dimensions[1].height = 16
     ws_set.row_dimensions[2].height = 14
+    ws_set.freeze_panes = 'A2'
 
-    # ── Sheet 2: choices ───────────────────────────────────────────────────
-    ws_ch = wb.create_sheet('choices')
-
-    # Determine actual choice columns (base 4 + any filter columns)
+    # ── Sheet: choices ─────────────────────────────────────────────────────
     choice_extra_cols = []
     for ch in choices:
         for k in ch:
@@ -394,8 +433,17 @@ def build_single_xlsform(form_data, output_path, build_log):
                 choice_extra_cols.append(k)
     all_choice_cols = CHOICES_COLS + choice_extra_cols
 
-    for col_i, col in enumerate(all_choice_cols, start=1):
-        _header_cell(ws_ch.cell(row=1, column=col_i), col)
+    if not use_template:
+        for col_i, col in enumerate(all_choice_cols, start=1):
+            _header_cell(ws_ch.cell(row=1, column=col_i), col)
+    else:
+        # Extra columns beyond the template's 4 still need headers written
+        for col_i, col in enumerate(all_choice_cols, start=1):
+            if col_i > len(CHOICES_COLS):
+                _header_cell(ws_ch.cell(row=1, column=col_i), col)
+
+    for col_i in range(1, len(all_choice_cols) + 1):
+        col = all_choice_cols[col_i - 1]
         ws_ch.column_dimensions[get_column_letter(col_i)].width = \
             CHOICES_WIDTHS.get(col, 18)
 
@@ -407,23 +455,26 @@ def build_single_xlsform(form_data, output_path, build_log):
     ws_ch.row_dimensions[1].height = 16
     ws_ch.freeze_panes = 'A2'
 
-    # ── Sheet 3: survey ────────────────────────────────────────────────────
-    ws_sv = wb.create_sheet('survey')
-
-    # Determine actual survey columns
-    # Additional columns present in this form's data
+    # ── Sheet: survey ──────────────────────────────────────────────────────
     additional_survey_cols = [c for c in extra_c
                                if c not in SURVEY_COLS and c not in STRIP_COLS]
     all_survey_cols = SURVEY_COLS + additional_survey_cols
 
+    if not use_template:
+        for col_i, col in enumerate(all_survey_cols, start=1):
+            _header_cell(ws_sv.cell(row=1, column=col_i), col)
+    else:
+        # Extra columns beyond the template's 20 still need headers written
+        for col_i, col in enumerate(all_survey_cols, start=1):
+            if col_i > len(SURVEY_COLS):
+                _header_cell(ws_sv.cell(row=1, column=col_i), col)
+
     for col_i, col in enumerate(all_survey_cols, start=1):
-        _header_cell(ws_sv.cell(row=1, column=col_i), col)
         ws_sv.column_dimensions[get_column_letter(col_i)].width = \
             SURVEY_WIDTHS.get(col, 16)
 
     placeholders_in_form = []
     for row_i, row in enumerate(survey, start=2):
-        # Check if this row has any placeholder values
         has_placeholder = any(
             '[PLACEHOLDER' in str(v).upper() or '[UNIT]' in str(v).upper()
             for v in row.values() if v
@@ -434,12 +485,24 @@ def build_single_xlsform(form_data, output_path, build_log):
         for col_i, col in enumerate(all_survey_cols, start=1):
             val = _resolve_cell_value(row, col)
             _data_cell(ws_sv.cell(row=row_i, column=col_i), val,
-                      row_i - 2, flagged=has_placeholder)
-
+                       row_i - 2, flagged=has_placeholder)
         ws_sv.row_dimensions[row_i].height = 13
 
     ws_sv.row_dimensions[1].height = 16
     ws_sv.freeze_panes = 'A2'
+
+    # bind::oc:external dropdown — only needed when building from scratch;
+    # the template already carries this validation for rows 2:10000.
+    if not use_template:
+        external_col = len(SURVEY_COLS)   # column 20 = bind::oc:external
+        dv = DataValidation(
+            type="list",
+            formula1='"clinicaldata,contactdata,signature,identifier"',
+            allow_blank=True,
+            showDropDown=False,
+        )
+        dv.sqref = f"{get_column_letter(external_col)}2:{get_column_letter(external_col)}10000"
+        ws_sv.add_data_validation(dv)
 
     # Log any placeholders found
     if placeholders_in_form:
