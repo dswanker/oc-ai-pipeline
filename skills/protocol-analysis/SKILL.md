@@ -85,16 +85,23 @@ in a single pass:
 ### Optional Inputs (check for each)
 - **Customer CRF Library** — one or more PDF documents (monday.com column:
   `fileb5c8dt0c`). These are human-authored paper or visual form layouts.
-- **Customer OC4 XLSForm Standards** — a zip file containing one xlsx per
-  form/domain (monday.com column: `file_mm2mafjc`). These are
-  OpenClinica-format XLSForms with survey/choices/settings sheets,
-  in the same format produced by the edc-builder skill.
+- **Customer OC4 XLSForm Standards or ODM XML** — either a zip file
+  containing one xlsx per form/domain, or a full OC Study ODM XML export
+  (monday.com column: `file_mm2mafjc`). This is **Priority 1** — more
+  authoritative than the PDF library because it reflects what the customer
+  has actually built and deployed in OpenClinica.
 
 Determine input mode:
 - **Mode 1** — Protocol only. No customer library or XLSForm standards provided.
-- **Mode 2** — Protocol + Customer CRF Library (PDFs) only.
-- **Mode 3** — Protocol + Customer OC4 XLSForm Standards (zip) only.
-- **Mode 4** — Protocol + both Customer CRF Library and XLSForm Standards.
+- **Mode 2** — Protocol + Customer CRF Library (PDFs) only. PDFs are Priority 2.
+- **Mode 3** — Protocol + Customer OC4 XLSForm Standards (zip) only. ZIP is Priority 1.
+- **Mode 4** — Protocol + Customer OC4 XLSForm Standards (zip) + Customer CRF Library
+  (PDFs). ZIP is Priority 1; PDF is Priority 2 fallback for forms not in the ZIP.
+- **Mode 5** — Protocol + Customer OC Study ODM XML (exported from OpenClinica).
+  ODM XML is Priority 1 — it provides form templates AND the customer's
+  schedule-of-events architecture AND their existing OID conventions.
+- **Mode 6** — Protocol + Customer CRF Library (PDFs) + Customer OC Study ODM XML.
+  ODM XML is Priority 1; PDF is Priority 2 fallback for forms not in the ODM.
 
 ---
 
@@ -103,14 +110,20 @@ Determine input mode:
 For every form the protocol requires, work down this priority list and stop
 at the first match found:
 
-**Priority 1 — Customer CRF Library (PDF)**
-- If a matching PDF form exists for this domain, use it as the base.
+**Priority 1 — Customer OC4 XLSForm Standards (zip of xlsx) OR Customer ODM XML**
+- Most authoritative source: represents what the customer has actually built
+  and deployed in OpenClinica.
+- **If a ZIP of XLSForms:** if a matching xlsx exists in the zip, use it as the base.
+- **If an ODM XML:** extract FormDef/ItemDef/CodeList for the matching domain
+  and use as the base (see "Processing Priority 1 — ODM XML" section below).
 - Extend with any missing protocol-required fields; flag each extension.
-- Never drop to Priority 2 once a PDF match is found, even for a partial match.
+- ODM XML additionally provides the schedule-of-events architecture —
+  always extract and apply this regardless of which forms match (see Step 1b).
+- Never drop to Priority 2 once a match is found, even for a partial match.
 
-**Priority 2 — Customer OC4 XLSForm Standards (zip of xlsx)**
-- Only consulted if no PDF match was found at Priority 1.
-- If a matching xlsx exists in the zip, use it as the base.
+**Priority 2 — Customer CRF Library (PDF)**
+- Only consulted if no XLSForm or ODM match was found at Priority 1.
+- If a matching PDF form exists for this domain, use it as the base.
 - Extend with any missing protocol-required fields; flag each extension.
 
 **Priority 3 — CDASH Defaults**
@@ -120,7 +133,7 @@ at the first match found:
 
 ---
 
-## Processing Priority 1 — Customer CRF Library (PDF)
+## Processing Priority 2 — Customer CRF Library (PDF)
 *(Modes 2 and 4 only — skip if no PDFs provided)*
 
 ### PDF-1: Identify Each Form
@@ -189,8 +202,8 @@ When the protocol requires fields beyond what the PDF form contains:
 
 ---
 
-## Processing Priority 2 — Customer OC4 XLSForm Standards (zip)
-*(Modes 3 and 4 only, and only for forms with no Priority 1 PDF match)*
+## Processing Priority 1 — Customer OC4 XLSForm Standards (zip)
+*(Modes 3 and 4 only, and only for forms with no Priority 1 ODM XML match)*
 
 ### XLSX-1: Unzip and Read Each Form File
 Unzip the provided zip file. For each xlsx file (one per form/domain),
@@ -255,6 +268,141 @@ When the protocol requires fields beyond what the xlsx form contains:
 
 ---
 
+## Processing Priority 1 — Customer ODM XML
+*(Modes 5 and 6 only — skip if no ODM XML provided)*
+
+An ODM XML exported from OpenClinica contains the complete study definition.
+Parse it as follows before building any forms.
+
+### ODM-1: Extract Schedule of Events Architecture
+
+Parse every `<StudyEventDef>` element:
+
+```xml
+<StudyEventDef OID="SE_SCREENING" Name="Screening" Type="Scheduled" Repeating="No">
+  <FormRef FormOID="F_DM" Mandatory="Yes" OrderNumber="1"/>
+  <FormRef FormOID="F_IE" Mandatory="Yes" OrderNumber="2"/>
+</StudyEventDef>
+```
+
+For each StudyEventDef, record:
+- `OID` — the customer's event OID (use this as the baseline for the new study)
+- `Name` — human-readable event name
+- `Type` — **Scheduled**, **Unscheduled**, or **Common**
+- `Repeating` — Yes / No
+- `FormRef` list — which forms the customer assigns to this event
+
+**Common event detection:**
+When `Type="Common"` is present, the customer's convention is to use a
+single Common event for non-visit-dependent forms (AE, CM, DV, etc.)
+rather than creating a dedicated event per module. Record this as:
+```
+"customer_soe_pattern": "COMMON_EVENT"
+```
+
+When no Common event exists and AE/CM/DV appear at specific named events:
+```
+"customer_soe_pattern": "PER_MODULE_EVENTS"
+```
+
+Apply `customer_soe_pattern` consistently when assigning forms to events
+in the new study specification — replicate the customer's architecture,
+don't impose a different pattern.
+
+### ODM-2: Extract Form Templates
+
+For each `<FormDef>` element:
+```xml
+<FormDef OID="F_AE" Name="Adverse Events" Repeating="Yes">
+  <ItemGroupRef ItemGroupOID="IG_AE_MAIN" Mandatory="Yes"/>
+</FormDef>
+```
+
+Build a form index: `{ form_oid → { name, repeating, item_groups } }`
+
+### ODM-3: Extract Item Group and Item Definitions
+
+For each `<ItemGroupDef>`:
+```xml
+<ItemGroupDef OID="IG_AE_MAIN" Name="AE" Repeating="Yes">
+  <ItemRef ItemOID="I_AE_AETERM" Mandatory="Yes" OrderNumber="1"/>
+  <ItemRef ItemOID="I_AE_AESTDAT" Mandatory="No" OrderNumber="2"/>
+</ItemGroupDef>
+```
+
+For each `<ItemDef>`:
+```xml
+<ItemDef OID="I_AE_AETERM" Name="AETERM" DataType="text">
+  <Question><TranslatedText>Adverse Event Term</TranslatedText></Question>
+  <RangeCheck Comparator="NE" SoftHard="Soft"><CheckValue></CheckValue></RangeCheck>
+</ItemDef>
+```
+
+Map ODM DataType → XLSForm type:
+
+| ODM DataType | XLSForm type |
+|---|---|
+| `text` | `text` |
+| `integer` | `integer` |
+| `float` | `decimal` |
+| `date` | `date` |
+| `datetime` | `dateTime` |
+| `boolean` | `select_one yn` |
+| `string` | `text` |
+| item with CodeListRef | `select_one [list]` or `select_multiple [list]` |
+
+Map OID to XLSForm columns:
+- ItemGroupDef OID → `bind::oc:itemgroup` (strip `IG_` prefix for group name)
+- ItemDef Name → `name`
+- Question TranslatedText → `label`
+- Mandatory="Yes" → `required: yes`
+
+### ODM-4: Extract Code Lists
+
+For each `<CodeList>`:
+```xml
+<CodeList OID="CL_SEV" Name="Severity" DataType="text">
+  <CodeListItem CodedValue="1"><Decode><TranslatedText>Mild</TranslatedText></Decode></CodeListItem>
+  <CodeListItem CodedValue="2"><Decode><TranslatedText>Moderate</TranslatedText></Decode></CodeListItem>
+  <CodeListItem CodedValue="3"><Decode><TranslatedText>Severe</TranslatedText></Decode></CodeListItem>
+</CodeList>
+```
+
+Build a choices index: `{ codelist_oid → [ { name: coded_value, label: translated_text } ] }`
+
+Use these as the `choices` sheet content for each form. Prefer customer's
+coded values and labels over CDASH defaults — the customer has already
+deployed these and data entry staff know them.
+
+### ODM-5: Apply OID Naming Convention
+
+The customer's existing OIDs reveal their naming convention:
+- If ItemDef OIDs follow `I_{FORM}_{FIELD}` → replicate this pattern
+- If ItemGroupDef OIDs follow `IG_{FORM}_{GROUP}` → replicate this pattern
+- Use the customer's existing form OIDs for forms that are being carried forward
+- For new forms required by the protocol but not in the ODM, apply the same
+  pattern derived from the existing OIDs
+
+Record the detected convention in the study spec:
+```
+"customer_oid_pattern": "I_{FORM}_{FIELD} | IG_{FORM}_{GROUP} | custom"
+```
+
+### ODM-6: Match Protocol Forms to ODM Forms
+
+For each form the protocol requires:
+1. Search the ODM FormDef index by CDASH domain or form name
+2. If found: use ODM item definitions as the base (Priority 2)
+3. Extend with any protocol-required fields not in the ODM form
+4. If not found: fall through to Priority 3 (CDASH defaults)
+
+Tag rows:
+- `"library_source": "CUSTOMER_ODM_EXACT"` — form found, all fields present
+- `"library_source": "CUSTOMER_ODM_EXTENDED"` — form found, extended with protocol fields
+- `"library_source": "CDASH_DEFAULT_NO_ODM_MATCH"` — no matching ODM form
+
+---
+
 ## Confidence Level Summary
 
 | Source | Row Confidence | library_source tag |
@@ -268,6 +416,9 @@ When the protocol requires fields beyond what the xlsx form contains:
 | Customer XLSX, extended field | FLAGGED | EXTENDED_FROM_PROTOCOL |
 | Customer XLSX, name deviation | FLAGGED | CUSTOMER_XLSX_EXACT/PARTIAL |
 | No library match, CDASH fallback | MEDIUM | CDASH_DEFAULT_NO_LIBRARY_MATCH |
+| Customer ODM XML, exact match | HIGH | CUSTOMER_ODM_EXACT |
+| Customer ODM XML, extended field | FLAGGED | CUSTOMER_ODM_EXTENDED |
+| No ODM form match, CDASH fallback | MEDIUM | CDASH_DEFAULT_NO_ODM_MATCH |
 
 ---
 
@@ -389,7 +540,7 @@ For each unique CRF record:
 - complexity (Simple / Average / Complex — from Step 5 of Protocol Summary)
 - has_repeating_group (Yes / No)
 - is_epro (Yes / No)
-- priority_source (PDF_LIBRARY / XLSX_STANDARD / CDASH_DEFAULT)
+- priority_source (XLSX_STANDARD / ODM_XML / PDF_LIBRARY / CDASH_DEFAULT)
 - cdash_alignment (FULL / PARTIAL / NONE) — always populated; based on Claude's
   CDASH domain knowledge regardless of whether a library was provided.
   FULL = all key fields map to standard CDASH names for this domain.
@@ -719,6 +870,8 @@ directly by the `edc-builder` skill.
     "input_mode": "PROTOCOL_ONLY | PROTOCOL_WITH_PDF_LIBRARY | PROTOCOL_WITH_XLSX_STANDARD | PROTOCOL_WITH_BOTH_LIBRARIES",
     "library_files_provided": [],
     "library_file_types": [],
+    "customer_soe_pattern": "COMMON_EVENT | PER_MODULE_EVENTS | UNKNOWN",
+    "customer_oid_pattern": "I_{FORM}_{FIELD} | custom | UNKNOWN",
     "conventions_applied": {
       "_comment": "Full schema in references/conventions.md §'Surfacing in the Study Specification'.",
       "version": "1",
@@ -777,7 +930,7 @@ directly by the `edc-builder` skill.
           "readonly": "", "repeat_count": "", "bind__oc_external": "",
           "choice_filter": "",
           "completion_status": "COMPLETE | FLAGGED | PLACEHOLDER",
-          "library_source": "CDASH_DEFAULT | CUSTOMER_XLSX_EXACT | CUSTOMER_XLSX_PARTIAL | CUSTOMER_PDF | EXTENDED_FROM_PROTOCOL | CDASH_DEFAULT_NO_LIBRARY_MATCH",
+          "library_source": "CDASH_DEFAULT | CUSTOMER_XLSX_EXACT | CUSTOMER_XLSX_PARTIAL | CUSTOMER_PDF | CUSTOMER_ODM_EXACT | CUSTOMER_ODM_EXTENDED | EXTENDED_FROM_PROTOCOL | CDASH_DEFAULT_NO_LIBRARY_MATCH | CDASH_DEFAULT_NO_ODM_MATCH",
           "pdf_original_label": "", "cdash_standard_name": "",
           "cdash_name_deviation": false,
           "cdash_name_confidence": "HIGH | MEDIUM | UNCERTAIN",

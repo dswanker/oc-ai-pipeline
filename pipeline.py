@@ -231,6 +231,31 @@ def _xlsform_zip(build_json):
     return zip_buf.getvalue()
 
 
+def _detect_oc_standard_type(file_bytes):
+    """
+    Detect whether the file in the oc_standard column is an ODM XML or a
+    ZIP of XLSForms. Returns 'ODM_XML', 'XLSFORM_ZIP', or 'UNKNOWN'.
+    """
+    if not file_bytes:
+        return 'UNKNOWN'
+    # ZIP magic bytes: PK\x03\x04
+    if file_bytes[:4] == b'PK\x03\x04':
+        return 'XLSFORM_ZIP'
+    # XML: starts with BOM or <?xml or <ODM
+    head = file_bytes[:200].lstrip()
+    if (head.startswith(b'<?xml') or head.startswith(b'<ODM') or
+            head.startswith(b'\xef\xbb\xbf<?xml')):
+        return 'ODM_XML'
+    # Try decoding as text and check for ODM signature
+    try:
+        text = file_bytes[:500].decode('utf-8', errors='ignore')
+        if '<ODM' in text or 'xmlns:odm' in text.lower():
+            return 'ODM_XML'
+    except Exception:
+        pass
+    return 'UNKNOWN'
+
+
 def _read_zip_xlsforms(zip_bytes):
     """Read a ZIP of XLSForm xlsx files. Returns forms dict."""
     import openpyxl
@@ -1079,10 +1104,30 @@ async def run_pipeline(item_id):
             await append_log(item_id, "Protocol Analysis started.")
 
             extra_parts = []
-            if crf_pdf:
-                extra_parts.append("Customer CRF Library (PDF) attached — use as Priority 1.")
             if oc_zip:
-                extra_parts.append("Customer OC4 XLSForm Standards (ZIP) attached — use as Priority 2.")
+                oc_file_type = _detect_oc_standard_type(oc_zip)
+                if oc_file_type == 'ODM_XML':
+                    extra_parts.append(
+                        "Customer OpenClinica Study ODM XML attached — use as Priority 1 "
+                        "(most authoritative source; reflects what customer has built in OC). "
+                        "Extract: (a) StudyEventDef structure to understand the customer's "
+                        "schedule-of-events pattern — note any StudyEventDef with "
+                        "Type='Common' which indicates the customer uses a Common event for "
+                        "non-visit-dependent forms like AE and CM rather than per-module "
+                        "events; (b) FormDef/ItemGroupDef/ItemDef to use as form templates; "
+                        "(c) CodeLists as choice list baselines; "
+                        "(d) existing OIDs as the naming convention to follow."
+                    )
+                else:
+                    extra_parts.append(
+                        "Customer OC4 XLSForm Standards (ZIP) attached — use as Priority 1 "
+                        "(most authoritative source; reflects what customer has built in OC)."
+                    )
+            if crf_pdf:
+                extra_parts.append(
+                    "Customer CRF Library (PDF) attached — use as Priority 2 "
+                    "(fallback for any forms not found in the Priority 1 source)."
+                )
             # ─── Trainer retrieval: fetch similar past pairs as few-shot examples ──
             # Gated by the per-row "Send to Trainer" checkbox on the AI Testing
             # Estimations board. Default unchecked → skip entirely. Checked →
@@ -1374,19 +1419,12 @@ async def run_pipeline(item_id):
             # ── Chain C: EDC Build → DVS ──────────────────────────────────────
             build_zip_holder  = [None]   # mutable container for async closure
             build_json_holder = [{"forms": {}}]
-            # Event set by chain_c when its EDC build (and DVS) is complete.
-            # chain_e waits on this instead of triggering a duplicate build.
-            edc_build_event   = asyncio.Event()
 
             async def chain_c():
                 if not _want("study build zip"):
-                    edc_build_event.set()   # not running — unblock chain_e
                     return
                 print("Chain C: EDC Build starting...", flush=True)
-                try:
-                    await _run_edc_and_dvs()
-                finally:
-                    edc_build_event.set()   # always unblock chain_e
+                await _run_edc_and_dvs()
                 print("Chain C complete.", flush=True)
 
             async def _run_edc_and_dvs():
@@ -1546,25 +1584,18 @@ async def run_pipeline(item_id):
                 if not struct_json:
                     print("Chain E: skipped — no struct_json available", flush=True)
                     return
-                # Build Preview needs the EDC zip from chain_c.
-                # If chain_c is running it, wait for it — don't trigger a
-                # duplicate build (which would also double-upload the DVS).
-                # If chain_c is not selected, run the build inline ourselves.
+                # Build Preview needs the EDC zip from chain_c. If chain_c isn't
+                # producing one (chain_c gated off), trigger the build inline.
                 if not build_zip_holder[0]:
-                    if _want("study build zip"):
-                        print("Chain E: waiting for Chain C EDC build…",
-                              flush=True)
-                        await edc_build_event.wait()
-                    else:
-                        print("Chain E: building EDC zip (chain_c not selected)…",
-                              flush=True)
-                        try:
-                            await _run_edc_and_dvs()
-                        except Exception as e:
-                            print(f"Chain E: EDC build failed: {e}", flush=True)
-                            await append_log(item_id,
-                                f"Build Preview skipped — EDC build failed: {e}")
-                            return
+                    print("Chain E: building EDC zip first (chain_c not selected)…",
+                          flush=True)
+                    try:
+                        await _run_edc_and_dvs()
+                    except Exception as e:
+                        print(f"Chain E: EDC build failed: {e}", flush=True)
+                        await append_log(item_id,
+                            f"Build Preview skipped — EDC build failed: {e}")
+                        return
                 if not build_zip_holder[0]:
                     print("Chain E: skipped — EDC zip unavailable", flush=True)
                     await append_log(item_id,
