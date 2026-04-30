@@ -271,250 +271,6 @@ When the protocol requires fields beyond what the xlsx form contains:
 
 ---
 
-## Step 0: Protocol Data-Item Census + Form Definition Lookup Hierarchy (FOUNDATIONAL — RUN FIRST)
-
-**This step runs before Step 1. It is the most important step in this skill.**
-Every other step assumes Step 0 has been completed in full. See
-`references/conventions.md` §0 for the authoritative spec.
-
-Step 0 has three phases that run in order:
-
-- **0.A — Protocol Data-Item Census** (which fields must exist)
-- **0.B — Form Definition Lookup Hierarchy** (how each field is encoded)
-- **0.C — Reconciliation** (where the two phases combine, and where
-  placeholders come from)
-
-Skipping or shortcutting any phase produces an incomplete build that
-silently omits protocol-required data. **Do not skip.**
-
----
-
-### Step 0.A — Protocol Data-Item Census
-
-Before defining any form, perform a complete pass over the protocol that
-enumerates every data item the protocol implies must be captured anywhere
-in the build, regardless of which form will host it.
-
-**Sections to scan in every protocol:**
-
-- Subject Recruitment / Screening / Informed Consent
-- Eligibility Criteria (inclusion/exclusion)
-- Demographics
-- Index Procedure / Intervention details
-- Schedule of Assessments table
-- Endpoint definitions (primary, secondary, safety, exploratory)
-- Investigator obligations and reporting requirements
-- Withdrawal / Discontinuation
-- Adverse Event reporting
-- Deviation reporting
-- Glossary / definitions / abbreviations
-
-**Sentence patterns that imply data items:**
-
-Look for *"subject must / will / shall provide / sign / confirm /
-report / be evaluated for / undergo X"*. Examples (Agilis):
-
-| Protocol prose | Implied item | Target form |
-|----------------|--------------|-------------|
-| §5.2 *"approved by the center's IRB/EC"* | Site IRB/EC version | ICF |
-| §5.2 *"language … understandable to the patient"* | Consent language | ICF |
-| §5.2 *"sign and date the Informed Consent form"* | Consent date + Y/N pre-procedure flag | ICF |
-| header *"Ver. A"* | Protocol version consented to | ICF |
-| §5.2.2.1 *"HIPAA authorization … from the subject"* | HIPAA authorization Y/N | ICF or IE |
-| §6 device-handling text | Device serial number, lot, expiration | DEVICE / PROC |
-| §7 withdrawal categories | Withdrawal reason | DS |
-| Schedule of Assessments columns | Per-visit capture for each item | varies |
-
-**Output of 0.A — `protocol_data_item_census`:**
-
-Each row:
-```json
-{
-  "item_id":         "ICF_LANG",
-  "form_target":     "ICF",
-  "description":     "Consent language",
-  "source_section":  "§5.2 Informed Consent",
-  "source_quote":    "language that is understandable to the patient",
-  "type_hint":       "select_one",
-  "choice_hint":     []
-}
-```
-
-The full census becomes part of `study_meta.protocol_data_item_census`.
-
----
-
-### Step 0.B — Form Definition Lookup Hierarchy
-
-For every form the protocol requires, walk this hierarchy in order. Stop
-at the first level that has a match. The matched level becomes the form's
-`definition_source`.
-
-### Level 1 — Customer OC4 XLSForm Standard(s) — HIGHEST PRIORITY
-
-Customer-wide reusable XLSForm templates maintained at the customer /
-sponsor level (e.g., Abbott's institutional house standards across all
-their studies).
-
-- **Where to look:** the location is configured per-customer. The
-  `customer_id` from the protocol upload determines the path. If a
-  `references/customer_standards/{customer_id}/` directory exists in the
-  skill's environment, search there first. If no customer standards
-  directory is present for this customer, log "no level-1 source available"
-  and proceed to level 2.
-- **Match key:** form_id / CDASH domain / explicit form_name token.
-- **When matched:** copy the customer OC4 standard form *as-authored* —
-  its field names, choice lists, group structure, settings, briefdescription
-  coverage, style, and required_message coverage. Set
-  `definition_source = customer_oc4_standard`.
-
-### Level 2 — Customer CRF Library — MIDDLE PRIORITY
-
-Study-specific CRF library files supplied with the protocol upload.
-This includes:
-- The CRF Case Book PDF (e.g., `Agilis_RF_TSP_EFS_CRF_Case_Book_vA.pdf`)
-- Per-form XLSForm files when supplied (e.g., `CIP-10601_*.xls`)
-
-- **Match key:** filename token / CDASH domain / form_name token.
-  Examples: `CIP-10601_Inclusion_Exclusion.xls` → IE;
-  `CIP-10601_Medical_History.xls` → MH; Case Book section
-  "Medical History" → MH.
-- **When matched:** copy the customer library form *as-authored*. Set
-  `definition_source = customer_crf_library`.
-
-### Level 3 — CDASH Default — LOWEST PRIORITY FALLBACK
-
-The CDASH-mapped default the skill knows from `references/cdash-domain-library.md`.
-
-- Used only when neither customer source has a match.
-- **When applied:** generate the form per Steps 3–5 below using
-  `references/conventions.md` §3, §4, §5, §13, §14 (which apply *only* at
-  this level). Set `definition_source = cdash_default`.
-
-### Critical principles
-
-1. **Match success at any level = success.** All three are valid outcomes;
-   level 1 is simply the highest authority when available. Conventions
-   §3, §4, §5, §13, §14 do **not** override customer-supplied content.
-
-2. **Customer source content is verbatim.** When sourcing from level 1 or
-   2, copy the entire customer form structure (field names, choice list
-   casing, group naming, style, etc.) without applying CDASH conventions.
-
-3. **Every form gets a `definition_source` field in the spec.**
-
-4. **Surfacing.** The `study_meta.conventions_applied` block adds
-   `definition_source_distribution` (see conventions.md §0).
-
----
-
-### Step 0.C — Reconciliation: Census × Hierarchy → Placeholders
-
-After 0.A produces the census and 0.B produces each form's base structure,
-reconcile the two for every form.
-
-**For each protocol-implied item in the census whose `form_target` is this form:**
-
-1. Does the form's chosen source already include a field that matches
-   this item? → use the source's encoding **as-is**.
-
-2. Does another hierarchy level have an encoding for this item even though
-   the chosen source lacks it? → carry the encoding forward as a
-   protocol-extension field, tagged
-   `library_source: PROTOCOL_EXTENSION`,
-   `completion_status: FLAGGED`.
-
-3. **Does no hierarchy level provide an encoding?** → **emit a placeholder
-   field**. The form must include the item; how to encode it awaits human
-   review or a future level-1 source contribution.
-
-**Placeholder field requirements:**
-
-| Attribute | Value |
-|-----------|-------|
-| `name` | Best-effort generated (CDASH-style for `cdash_default` forms; sponsor-style for `customer_*` forms). Suffix `_TBD` is acceptable. |
-| `type` | From census `type_hint` (`text` is the default when uncertain) |
-| `label` | Verbatim or close paraphrase of the protocol-implied wording |
-| `library_source` | `PROTOCOL_INFERRED_PLACEHOLDER` |
-| `completion_status` | `FLAGGED` |
-| `bind::oc:briefdescription` | Short phrase describing the placeholder |
-| `relevant` / choice list | Empty unless `choice_hint` was populated |
-
-**Surfacing:**
-
-Add to `review_flags.placeholders_for_human_completion`:
-```json
-{"form": "ICF", "name": "RFICLANG_TBD",
- "source_section": "§5.2 Informed Consent",
- "source_quote": "language … understandable to the patient",
- "reason": "Protocol implies field but no hierarchy source provided encoding"}
-```
-
-Add to `conventions_applied.protocol_inferred_placeholders` (counts per form +
-total).
-
-**Conventions §3-§5/§13/§14 apply to placeholders** because placeholders
-are level-3 generated content by definition (no hierarchy source had them).
-
----
-
-### Worked example — Agilis (ABT-CIP-10601)
-
-**0.A Census** (selected — full census includes ~50+ items across all forms):
-
-| item_id | form | source | description |
-|---------|------|--------|-------------|
-| ICF_DATE | ICF | §5.2 | Date of consent |
-| ICF_LANG | ICF | §5.2 | Consent language |
-| ICF_SITE | ICF | §5.2 | Site IRB/EC version |
-| ICF_PRTV | ICF | header | Protocol version consented |
-| ICF_PRIOR | ICF | §5.2 | Signed prior to investigation procedures |
-| HIPAA_AUTH | IE | §5.2.2.1 | HIPAA authorization Y/N |
-| ... | ... | ... | ... |
-
-**0.B Hierarchy walk:**
-
-For Agilis, level 1 (Abbott OC4 standards) is not configured; level 2
-(Case Book) provides ICF? **No** — Case Book has no ICF section.
-Level 2 provides IE/MH/DM_BL/PROC/etc. Level 3 (CDASH defaults) provides
-the rest.
-
-**0.C Reconciliation for ICF specifically:**
-
-| Census item | Encoding source | Resulting field |
-|-------------|------------------|------------------|
-| ICF_DATE | level 3 CDASH | `RFICDAT` (date, required) |
-| ICF_LANG | none → placeholder | `RFICLANG_TBD` (select_one, FLAGGED) |
-| ICF_SITE | none → placeholder | `RFICSITV_TBD` (select_one, FLAGGED) |
-| ICF_PRTV | none → placeholder | `RFICPRTV_TBD` (select_one, FLAGGED) |
-| ICF_PRIOR | none → placeholder | `RFICPRIOR_TBD` (select_one NY, FLAGGED) |
-
-Result: 5-field ICF form, with 4 placeholders flagged for human completion.
-
-The `review_flags.placeholders_for_human_completion` block lists all
-4 placeholders with their protocol section + quote, so the human reviewer
-sees exactly what the protocol required and can either fill the placeholder
-in, mark N/A, or escalate to the customer for a level-1 source contribution.
-
-### Common pitfalls
-
-1. **Treating protocol prose as background, not specification.** The
-   skill must extract data items from prose, not just from the Schedule of
-   Assessments table.
-
-2. **Conflating "library has the form" with "library has every field
-   the protocol requires."** A level-2 match resolves form structure but
-   does not exempt the skill from running 0.C. The census still applies.
-
-3. **Silent omission.** Never skip a census item just because no source
-   has it. Emit a placeholder. Silent omission is a §0 violation.
-
-4. **Over-promoting placeholders.** A placeholder is `FLAGGED`, not
-   `COMPLETE`. Don't quietly fill it with invented choice values. The
-   skill is explicit about the gap.
-
----
-
 ## Step 1: Extract the Study Visit Schedule
 
 Before defining any forms, map the complete visit schedule.
@@ -535,9 +291,6 @@ Use this naming convention for event OIDs:
 - `SE_EOT` — end of treatment
 - `SE_CTL{label}` — control group specific visits
 - `SE_UNSCH` — unscheduled visit
-- `SE_COMMON` — **Common (unscheduled) event** for reactive safety / admin
-  forms (AE, CM, DV; conditionally DD). Type is `Common`, not `Visit-Based`
-  — see `references/conventions.md` §7.
 
 ### 1b: Generate Timepoint CSV Content
 Output the full content of `{study_id}_tpt.csv` with columns: `event,timepoint`
@@ -599,25 +352,8 @@ Before finalising the CRF list, apply every rule in
 **Source 4 — Infrastructure forms (always include):**
 - ICF — Informed Consent — screening only (per `references/conventions.md` §1)
 - DOV — Date of Visit — every visit
+- DV — Protocol Deviation Log — ongoing
 - SPELIG — Sponsor Eligibility Review — screening only
-
-**Source 5 — Common-event forms (per `references/conventions.md` §7):**
-
-These forms always sit in the `SE_COMMON` Common event, not visit-scheduled:
-- AE — Adverse Event
-- CM — Concomitant Medications
-- DV — Protocol Deviation Log
-
-These forms sit in `SE_COMMON` only if the protocol requires them:
-- DD — Device Deficiency (medical-device studies only — include only when the
-  protocol explicitly requires Device Deficiency reporting)
-
-These forms stay visit-scheduled (do **not** place in `SE_COMMON`):
-- PREGPART — pregnancy reporting (place at the visits the protocol designates,
-  typically screening + each treatment visit + EOS for FOCBP populations)
-
-When defining `SE_COMMON`, set `event_type: Common`, `isRepeating: true`, and
-omit start/end dates (Common events have no schedule — see Minimal_board_json.md).
 
 ### Step 2b: Build the CRF Master Table
 
@@ -626,13 +362,23 @@ Produce the complete CRF Master Table before writing any form definitions.
 For each unique CRF record:
 - form_id, form_title, form_category, cdash_domain
 - arm_applicability (TREATMENT / CONTROL / BOTH)
-- visits_assigned (complete list of event OIDs — use `SE_COMMON` for §7 forms)
+- visits_assigned (complete list of event OIDs)
 - reuse_count
 - complexity (Simple / Average / Complex — from Step 5 of Protocol Summary)
 - has_repeating_group (Yes / No)
 - is_epro (Yes / No)
 - priority_source (PDF_LIBRARY / XLSX_STANDARD / CDASH_DEFAULT)
-- library_match_status (EXACT / PARTIAL / NO_MATCH)
+- cdash_alignment (FULL / PARTIAL / NONE) — always populated; based on Claude's
+  CDASH domain knowledge regardless of whether a library was provided.
+  FULL = all key fields map to standard CDASH names for this domain.
+  PARTIAL = domain recognised but custom fields, non-standard names, or
+  protocol-specific deviations exist.
+  NONE = entirely custom form with no applicable CDASH domain.
+- library_match (EXACT / PARTIAL / NO_MATCH / N/A) — only meaningful when a
+  customer library was provided. Set to "N/A — No library provided" in Mode 1.
+  When a library IS provided: EXACT = customer has a matching form with
+  equivalent field structure; PARTIAL = matching form exists but with gaps or
+  deviations; NO_MATCH = no equivalent form found in customer library.
 - notes
 
 **Completeness check:** Every assessment row in every SoA table must
@@ -642,22 +388,14 @@ map to at least one CRF. Flag any unmapped assessment.
 For every form, list every event OID where it appears. This drives
 the timepoint CSV, relevant expressions, and visit window constraints.
 
-For forms governed by convention §7, visits_assigned is exactly `["SE_COMMON"]`
-(plus PREGPART exception — keep visit-scheduled). Do not assign AE/CM/DV/DD
-to specific visits even if the SoA table lists them column-by-column; the SoA
-expresses *when reporting may be triggered*, not *when a scheduled visit form
-must be completed*.
-
 ### Step 2d: Define Each Form
 Only after the complete CRF Master Table is built, define each form.
 Process in this order:
-1. Infrastructure forms (ICF, DOV, SPELIG)
+1. Infrastructure forms (ICF, DOV, SPELIG, DV)
 2. Screening/baseline CDASH forms (DM, IE, MH)
-3. Visit-scheduled clinical assessment forms (VS, PE, LB, PSA, EX, EC, PR)
-4. Common-event forms — visits_assigned = `["SE_COMMON"]` per §7
-   (AE, CM, DV; conditionally DD if protocol requires)
-5. Biospecimen forms (BE, BE_CTL, BES)
-6. Disposition and visit-scheduled safety forms (DS, PREGPART)
+3. Clinical assessment forms (VS, PE, LB, PSA, AE, CM, EX, EC, PR)
+4. Biospecimen forms (BE, BE_CTL, BES)
+5. Disposition and safety forms (DS, PREGPART)
 
 For each form, apply the Form Source Priority rules above to determine
 which source (PDF library, XLSForm standard, or CDASH) to use as base,
@@ -703,75 +441,6 @@ bind__oc_itemgroup: [DOMAIN] | calculation: ${TPTCALC} | readonly: yes
 
 ---
 
-## Step 3.5: Apply Pattern-Based Conventions (§20–§28)
-
-After Step 3 establishes the basic survey-row patterns, apply nine
-pattern-detection conventions that auto-derive form structure from
-content. Read `references/conventions.md` §20–§28 for the full
-specifications.
-
-### Auto-detection pass
-
-For every form's survey, walk the rows in order and apply detections:
-
-**§20 Forms-Completion Safety-Net Group.** When a form is the longest /
-most encounter-defining for its visit (typically MH for baseline, PROC
-for procedure visit), append a final group containing one `select_one YN`
-trigger per related form (`{FORM}AE_YN`, `{FORM}DV_YN`, `{FORM}DS_YN`)
-with paired notes per §22.
-
-**§21 Header Group Pattern.** The first `begin group` of every form is
-named `group0` with empty `label`, contains date and identification
-fields only.
-
-**§22 Reminder Notes Gated by Y/N.** Detect `note` rows immediately
-following a `select_one YN` row where the note label contains "If yes"
-or similar conditional preface. Auto-add `relevant: ${preceding_yn}='Y'`.
-
-**§23 Source-Label Disambiguation.** Detect labels matching `"If yes"` /
-`"If applicable"` etc. on fields with `relevant` clauses. Rewrite the
-label to incorporate parent question context (e.g.,
-`"1.5.1. If yes, type of VT"`). Emit `review_flags.protocol_ambiguous`.
-
-**§24 Source Ambiguity → Clinical Reasoning.** Detect ambiguous source
-renderings (e.g., `o`-marker lists). Default to lossless interpretation
-(typically `select_multiple` for plausibly-co-occurring values). Emit
-`review_flags.choice_list_review`.
-
-**§25 Eligibility Verdict 3-State.** When generating an eligibility-style
-verdict field, use 3-state vocabulary (`Eligible` / `Ineligible` /
-`Not yet calculated`). Emit pair: `{FORM}ELIG_CALC` (calculate) +
-`{FORM}ELIG` (text, readonly).
-
-**§26 Value+Unit Pair Layout (`w2`).** Detect `decimal`/`integer` field
-followed by `select_one` with unit-flavored list_name or field name.
-Apply `appearance: w2` to numeric, `appearance: horizontal w2` to unit.
-
-**§27 Sentinel-Value Exclusivity Constraint.** Detect `select_multiple`
-fields whose choice list contains sentinel value (`DECLINED`, `UNKNOWN`,
-`NONE`, `N_A`, `REFUSED`). Auto-generate exclusivity constraint and
-message. `OTHER` is NOT a sentinel.
-
-**§28 Decimal Precision Constraint.** Detect `decimal` fields by name
-pattern (HEIGHT, WEIGHT, TEMP, BP, etc.) and apply precision constraint
-per the precision table in `conventions.md` §28.
-
-### Order of operations
-
-Apply detections in the order above. §22, §23 depend on `relevant`
-clauses being already populated. §27 and §28 depend on choice lists and
-field types being already established (Step 3 + Step 4).
-
-### Surfacing
-
-Each convention surfaces in its own `conventions_applied.<key>` block
-(see specific block names in `conventions.md` §20–§28). Auto-applied
-detections that produced flags (§23, §24) populate `review_flags.*`
-buckets. Reviewer can verify each pattern detection by walking the
-applied list against the source.
-
----
-
 ## Step 4: CDASH Domain Field Rules
 
 Read `references/cdash-domain-library.md` for the complete field list per domain.
@@ -796,46 +465,6 @@ Read `references/cdash-domain-library.md` for the complete field list per domain
   `instance('clinicaldata')/ODM/ClinicalData/SubjectData/StudyEventData[@StudyEventOID='{EVENT_OID}']/FormData[@FormOID='{FORM_ID}']/ItemGroupData[@ItemGroupOID='{FORM_ID}.{CDASH_DOMAIN}']/ItemData[@ItemOID='{FORM_ID}.{FIELD_NAME}']/@Value`
 - Mark COMPLETE when source form and field are defined in this spec
 - Mark FLAGGED only when source form/field is itself a PLACEHOLDER
-- Per `references/conventions.md` §15, populate `crossform_references` on
-  the form's settings sheet whenever any cross-form calculate row exists.
-
-**Build conventions §8–§19 (per `references/conventions.md`):**
-
-These are applied to every form in addition to the CDASH domain rules above.
-Each must be tracked in `study_meta.conventions_applied` for surfacing.
-
-- **§8** — Never emit `bind::oc:required-type: strict` or
-  `bind::oc:constraint-type: strict` unless protocol mandates or customer
-  library carries it.
-- **§9** — Use `Date` type for definite events (consent, visit, dose admin,
-  enrollment); `PDate` for recall-based events (med start/end, AE start/end,
-  MH onset, prior procedure dates). Flag any PDate field referenced by a
-  cross-form calculation.
-- **§10** — Apply `appearance: minimal autocomplete` to `select_one` /
-  `select_multiple` lists with **5+ choices on Participate forms** or
-  **20+ choices on site-staff forms**.
-- **§11** — When a single choice list's combined `label`+`name` exceeds
-  3,500 characters, externalize to `{study_id}_{list_name}.csv` via
-  `search()` with `appearance: minimal autocomplete`.
-- **§12** — Build-time check, not a default. Count survey rows per form
-  (excluding `note`, `calculate`, group markers). Flag site forms over 200
-  items and Participate forms over 50 items.
-- **§13** — Populate `bind::oc:briefdescription` on every survey row of type
-  `text`, `integer`, `decimal`, `date`, `select_one`, `select_multiple`,
-  `calculate`. Use CDASH standard label or first 3-5 words of question text.
-- **§14** — Populate the `style` column on the settings sheet for every
-  form: blank (Simple-single) for short site forms, `theme-grid` for dense
-  tabular forms, `pages` for long site forms or all Participate forms.
-- **§15** — Auto-populate `crossform_references` on settings sheet from the
-  `cross_form_dependencies` graph.
-- **§16** — All fields in one repeating logical record share a single
-  `bind::oc:itemgroup` value (the CDASH domain code), even when split across
-  multiple `begin group`/`end group` blocks for visual layout.
-- **§17** — `appearance: likert` only when choice list ≤5 options AND every
-  label ≤20 characters. Otherwise vertical radio (site) or `minimal` (Participate).
-- **§18** — VAS scale fields render with vertical appearance keyword
-  (e.g., `appearance: vas vertical` or `appearance: distress vertical`).
-- **§19** — `appearance: table-list` only when every choice label ≤15 characters.
 
 ---
 
@@ -1101,8 +730,9 @@ directly by the `edc-builder` skill.
       "reuse_count": null,
       "complexity": "Simple | Average | Complex",
       "priority_source": "PDF_LIBRARY | XLSX_STANDARD | CDASH_DEFAULT",
+      "cdash_alignment": "FULL | PARTIAL | NONE",
       "library_match": {
-        "status": "EXACT | PARTIAL | NO_MATCH | PROTOCOL_ONLY",
+        "status": "EXACT | PARTIAL | NO_MATCH | N/A — No library provided",
         "source_type": "PDF | XLSX | NONE",
         "source_file": "",
         "fields_from_library": 0,
@@ -1348,7 +978,8 @@ PROTOCOL SUMMARY REVIEW REQUIRED
 1. COMPLETE any fields marked [NOT SPECIFIED — PLEASE COMPLETE]
    (Number of Sites is most critical for pricing)
 2. VERIFY all CRF complexity classifications (especially Medium/Low confidence)
-3. REVIEW any forms where library match was PARTIAL
+3. REVIEW any forms where CDASH Alignment is PARTIAL or NONE
+4a. REVIEW any forms where Library Match is PARTIAL or NO_MATCH (only applicable when a customer library was provided)
 4. CONFIRM conditional branching points are complete
 5. ADD corrections to references/crf-categorization-examples.md
    so future runs improve automatically

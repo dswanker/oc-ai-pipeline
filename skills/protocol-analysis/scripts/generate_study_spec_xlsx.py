@@ -171,8 +171,8 @@ def build_index_sheet(wb, data):
 
     inv_headers = ["#", "Form ID", "Form Title", "Category", "CDASH Domain",
                    "Arm", "Complexity", "Repeating", "ePRO",
-                   "Re-uses", "Survey Tab", "Status"]
-    inv_cols = [3, 10, 22, 12, 12, 12, 10, 9, 6, 8, 18, 16]
+                   "Re-uses", "CDASH Alignment", "Library Match", "Survey Tab", "Status"]
+    inv_cols = [3, 10, 22, 12, 12, 12, 10, 9, 6, 8, 14, 14, 18, 16]
 
     hdr_row = inv_row + 1
     for col, (h, w) in enumerate(zip(inv_headers, inv_cols), start=1):
@@ -189,6 +189,12 @@ def build_index_sheet(wb, data):
         n_flagged = sum(1 for s in form.get("survey", [])
                         if s.get("completion_status") in ("FLAGGED", "PLACEHOLDER"))
         status_str = "✓ Ready" if n_flagged == 0 else f"⚠ {n_flagged} items need review"
+        # CDASH Alignment — always populated
+        cdash_align = form.get("cdash_alignment", "")
+        # Library Match — N/A when no library provided
+        lm_status = lm.get("status", "")
+        lib_match_display = (lm_status if lm_status and lm_status != "PROTOCOL_ONLY"
+                             else "N/A — No library provided")
         row_vals = [
             str(i),
             form.get("form_id", ""),
@@ -200,6 +206,8 @@ def build_index_sheet(wb, data):
             "Yes" if form.get("has_repeating_group") else "No",
             "Yes" if form.get("is_epro") else "No",
             str(form.get("reuse_count", 0) or 0),
+            cdash_align,
+            lib_match_display,
             f"{form.get('form_id','')}_survey",
             status_str,
         ]
@@ -210,8 +218,8 @@ def build_index_sheet(wb, data):
             c.alignment = wrap_align()
             bg = GREY_LIGHT_HEX if i % 2 == 0 else WHITE_HEX
             c.fill = fill(bg)
-        # colour status cell
-        status_cell = ws.cell(row=r, column=12)
+        # colour status cell (column 14 after adding CDASH Alignment + Library Match)
+        status_cell = ws.cell(row=r, column=14)
         if "⚠" in status_str:
             status_cell.fill = fill(AMBER_HEX)
             status_cell.font = Font(name="Arial", bold=True, color="7D5A00", size=8)
@@ -598,7 +606,8 @@ def build_settings_sheet(wb, form):
         ("is_epro",          str(form.get("is_epro", False))),
         ("reuse_count",      str(form.get("reuse_count", 0))),
         ("pricing_summary_source", str(form.get("pricing_summary_source", False))),
-        ("library_match_status", lm.get("status", "PROTOCOL_ONLY")),
+        ("cdash_alignment",      form.get("cdash_alignment", "—")),
+        ("library_match_status", (lm.get("status", "") or "N/A — No library provided")),
         ("library_source_type",  lm.get("source_type", "NONE")),
         ("visits_assigned",  ", ".join(form.get("visits_assigned", []))),
     ]
