@@ -54,6 +54,7 @@ from pypdf import PdfWriter, PdfReader
 from .sanitize import sanitize_xlsform_bytes, get_form_settings_bytes
 from .study_spec_parser import parse_study_spec_bytes
 from .interactive import build_interactive_zip
+from .mock_data import generate_mock_js
 
 
 # Paths to vendored static assets (transformer.js + grid.css + scaffold.html)
@@ -418,7 +419,9 @@ def render_build_preview_from_spec(struct_json: dict, edc_zip_bytes: bytes,
         bytes of the merged Build Preview PDF.
     """
     study_spec = _struct_json_to_study_spec(struct_json)
-    return _render_with_study_spec(study_spec, edc_zip_bytes, protocol_id_for_filename)
+    return _render_with_study_spec(study_spec, edc_zip_bytes,
+                                   protocol_id_for_filename,
+                                   struct_json=struct_json)
 
 
 def render_build_preview(study_spec_pdf_bytes: bytes, edc_zip_bytes: bytes,
@@ -445,7 +448,8 @@ def render_build_preview(study_spec_pdf_bytes: bytes, edc_zip_bytes: bytes,
 
 
 def _render_with_study_spec(study_spec: dict, edc_zip_bytes: bytes,
-                            protocol_id_for_filename: str = 'study') -> bytes:
+                            protocol_id_for_filename: str = 'study',
+                            struct_json: dict = None) -> bytes:
     """
     Internal: render the PDF given an already-parsed study_spec dict and the
     EDC zip. Both entry points (PDF-based and dict-based) flow through here.
@@ -620,12 +624,21 @@ def _render_with_study_spec(study_spec: dict, edc_zip_bytes: bytes,
         result_bytes = out.getvalue()
 
         # Build interactive HTML ZIP from the raw (un-annotated) form HTML
-        study_spec_for_zip = study_spec  # already has events/form_to_events
+        # Phase 2: generate mock data JS from struct_json (if available)
+        mock_db_js = ''
+        if struct_json:
+            try:
+                mock_db_js = generate_mock_js(struct_json, study_spec)
+            except Exception as _e:
+                print(f'[build_preview] mock_data generation warning: {_e}',
+                      flush=True)
+
         html_zip_bytes = build_interactive_zip(
             forms_with_html,
-            study_spec_for_zip,
+            study_spec,
             protocol_id_for_filename,
             grid_css,
+            mock_db_js=mock_db_js,
         )
 
         elapsed = time.time() - t_start
