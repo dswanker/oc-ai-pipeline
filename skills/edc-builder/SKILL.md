@@ -33,43 +33,6 @@ any form.** It contains:
 - Cross-form XPath patterns
 - Hard check syntax
 - Once() pattern for repeating groups
-
-**Consult `references/openclinica-oc4-docs.md` when a build question
-isn't answered by `xlsform-build-rules.md`.** It's a curated index into
-the OpenClinica 4 user documentation at https://docs.openclinica.com/oc4/
-with guidance on which doc page addresses which build decision (valid
-functions, form logic, CDASH library, OID conventions, go-live
-checklist, etc.).
-
-Order of precedence:
-1. `xlsform-build-rules.md` — distilled, stable, authoritative for build
-2. `openclinica-oc4-docs.md` — index into live OC4 docs; use for edge
-   cases the rules file doesn't cover, then fetch the live page
-
----
-
-## OpenClinica OID Naming Conventions (MUST FOLLOW)
-
-Per OpenClinica's "Locating Object Identifiers in a Study" reference,
-every identifier follows a strict prefix convention:
-
-| Object     | Prefix | Example                              |
-|------------|--------|--------------------------------------|
-| Study      | `S_`   | `S_PrTK05`                           |
-| Event      | `SE_`  | `SE_SCREENING`, `SE_WEEK_1`          |
-| Form       | `F_`   | `F_DEMO`, `F_VS`, `F_ICF`            |
-| Item Group | `IG_`  | `IG_DEMO_DM` (pattern `IG_<FORM>_<GRP>`) |
-| Item       | `I_`   | `I_DEMO_SUBJID` (pattern `I_<FORM>_<FIELD>`) |
-
-Inside XLSForms, the item group reference uses dotted notation:
-
-- `bind::oc:itemgroup` column value: `F_<FORM>.<GROUP>` — e.g. `F_DEMO.DM`
-- Cross-form ItemOID reference: `F_<FORM>.<FIELD>` — e.g. `F_DEMO.SUBJID`
-
-The Study Specification JSON input to this skill uses `form_id = "F_<n>"`
-(with F_ prefix). The settings sheet of each XLSForm must also have
-`form_id: F_<n>`. Never strip or replace the `F_` prefix.
-
 - File naming conventions
 - Critical build rules
 
@@ -91,7 +54,12 @@ Open the XLSX using openpyxl. Read in this order:
 5. **Per form** — for each form listed in INDEX:
    - `[FORMID]_survey` tab: rows 4+ (rows 1-3 are banner/legend/headers)
      - Column A = ACTION (blank / DELETE / ADD)
-     - Columns B onwards = XLSForm fields
+     - Column B = NOTES_FOR_AI — reviewer's optional explanation of changes.
+       **Read this column first for every sheet.** Use the notes as context
+       when deciding how to process ACTION=DELETE/ADD rows and modified cells.
+       A note on a row with blank ACTION means the reviewer modified that row
+       in place — apply their edit and use the note to understand intent.
+     - Columns C onwards = XLSForm fields
      - Skip rows where ACTION = DELETE
      - Include rows where ACTION = ADD or blank
    - `[FORMID]_choices` tab: rows 3+ (row 1 = title banner, row 2 = headers)
@@ -210,10 +178,9 @@ The script:
 5. Saves as `{form_id}.xlsx` (or variant name for forms sharing form_id)
 
 **File naming:**
-- Standard: `{form_id}.xlsx` → e.g., `F_AE.xlsx`, `F_VS.xlsx`
-  (form_id carries the `F_` prefix per the OpenClinica OID convention)
+- Standard: `{form_id}.xlsx` → e.g., `AE.xlsx`, `VS.xlsx`
 - Variants (same form_id, different designs):
-  `{FORMID}_{VARIANT}.xlsx` → e.g., `F_IE_TRT.xlsx`, `F_IE_CTL.xlsx`
+  `{FORMID}_{VARIANT}.xlsx` → e.g., `IE_TRT.xlsx`, `IE_CTL.xlsx`
 - The filename uses the XLSX tab form_id prefix, not the settings form_id
 
 ---

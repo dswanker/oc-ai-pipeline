@@ -143,11 +143,13 @@ def build_index_sheet(wb, data):
     instructions = [
         "1. REVIEW each form tab (named [FORMID]_survey, [FORMID]_choices, [FORMID]_settings)",
         "2. In the survey tab: FLAGGED rows are amber, PLACEHOLDER rows are red — these need your attention",
-        "3. To ADD a field: insert a new row and fill in type, name, label, and any other columns needed",
-        "4. To DELETE a field: clear the entire row or add 'DELETE' in the ACTION column",
+        "3. To ADD a field: insert a new row, set ACTION = ADD, fill in type, name, label and other columns",
+        "4. To DELETE a field: set ACTION = DELETE in column A",
+        "5. To MODIFY a field: just edit the cell values. Leave ACTION blank. Optionally explain why in NOTES_FOR_AI (column B)",
         "5. To CHANGE a field property: edit the relevant cell directly (constraint, relevant, label, etc.)",
         "6. To ADD a choice: go to the [FORMID]_choices tab and add a new row",
-        "7. ACTION column: leave blank (no change), write 'DELETE' (remove this row), or 'ADD' (new row)",
+        "7. ACTION column (col A): blank = keep, DELETE = remove, ADD = new row inserted by reviewer",
+        "8. NOTES_FOR_AI column (col B): optional free text — tell Claude why you made a change. Pre-populated with flag reasons for FLAGGED rows.",
         "8. When done: save this file and upload it back to Claude to regenerate all 3 outputs (PDF, JSON, XLSX)",
         "9. The [FORMID]_meta tab is READ-ONLY — it shows technical metadata for reference only",
     ]
@@ -243,7 +245,8 @@ def build_index_sheet(wb, data):
 
 # ── Survey sheet ──────────────────────────────────────────────────────────────
 SURVEY_EDITABLE_COLS = [
-    ("ACTION",           "Leave blank = no change | DELETE = remove row | ADD = new row", 12),
+    ("ACTION",           "Leave blank = keep as-is (edit cells freely) | DELETE = remove row | ADD = new row added by reviewer. No MODIFY value needed — just edit cells and leave ACTION blank; optionally explain in NOTES_FOR_AI.", 12),
+    ("NOTES_FOR_AI",     "Optional. Explain why you changed, added, or deleted this row. Claude reads this on the next run.", 32),
     ("type",             "XLSForm field type (e.g. text, integer, select_one NY)", 18),
     ("name",             "Machine-readable field ID (no spaces)", 18),
     ("label",            "User-visible question text", 32),
@@ -260,7 +263,6 @@ SURVEY_EDITABLE_COLS = [
     ("bind::oc:external","External data source: clinicaldata / labranges / tpt", 20),
     ("choice_filter",    "Filter choices based on expression", 24),
     ("DEPENDENCIES",     "Auto-derived: [FormOID].[ItemOID] cross-form references (read-only)", 32),
-    ("REVIEW_NOTES",     "Your review notes or change instructions", 30),
 ]
 
 def build_survey_sheet(wb, form):
@@ -289,7 +291,7 @@ def build_survey_sheet(wb, form):
         ("GREEN = COMPLETE", GREEN_LIGHT_HEX, "1A6B3A"),
         ("AMBER = FLAGGED — needs review", AMBER_HEX, "7D5A00"),
         ("RED = PLACEHOLDER — must be completed", RED_LIGHT_HEX, "8B1A1A"),
-        ("YELLOW = ACTION required (edited by reviewer)", YELLOW_HEX, "5A4000"),
+        ("YELLOW = FLAGGED by Claude — see NOTES_FOR_AI for reason", YELLOW_HEX, "5A4000"),
     ]
     for i, (txt, bg, fg) in enumerate(legend_items):
         col = i * 3 + 1
@@ -328,7 +330,9 @@ def build_survey_sheet(wb, form):
             if key == "ACTION":
                 c.value = ""
                 c.fill = fill(WHITE_HEX)
-            elif key == "REVIEW_NOTES":
+            elif key == "NOTES_FOR_AI":
+                # Pre-populate with Claude's flag_reason so the reviewer
+                # can see why a row was flagged, then overwrite with their own note
                 c.value = row.get("flag_reason", "") or ""
                 c.fill = fill(AMBER_HEX) if row.get("flag_reason") else fill(WHITE_HEX)
             elif key == "DEPENDENCIES":
@@ -357,7 +361,7 @@ def build_survey_sheet(wb, form):
         ws.row_dimensions[row_i].height = 14
 
     # Freeze header
-    ws.freeze_panes = "B4"
+    ws.freeze_panes = "C4"   # Freeze ACTION + NOTES_FOR_AI; scroll starts at col C
 
     # Add validation for ACTION column
     dv = DataValidation(type="list", formula1='"ADD,DELETE,"', allow_blank=True)
@@ -370,7 +374,7 @@ def build_survey_sheet(wb, form):
         formula1='"text,integer,decimal,date,select_one,select_multiple,note,calculate,begin group,end group,begin repeat,end repeat"',
         allow_blank=True
     )
-    dv_type.sqref = f"B4:B{len(survey)+10}"
+    dv_type.sqref = f"C4:C{len(survey)+10}"
     ws.add_data_validation(dv_type)
 
     return sheet_name
@@ -378,14 +382,14 @@ def build_survey_sheet(wb, form):
 
 # ── Choices sheet ─────────────────────────────────────────────────────────────
 CHOICES_EDITABLE_COLS = [
-    ("ACTION",      "Leave blank | DELETE | ADD", 10),
+    ("ACTION",      "Leave blank = keep as-is | DELETE = remove | ADD = new row. Edit cells freely without setting MODIFY.", 10),
+    ("NOTES_FOR_AI","Optional. Explain changes to Claude.", 28),
     ("list_name",   "Choice list identifier (no spaces)", 16),
     ("label",       "User-visible option text", 28),
     ("name",        "Machine-readable option value (no spaces)", 20),
     ("source",      "STANDARD or PROTOCOL_SPECIFIC", 18),
     ("filter_column","Column name used for choice_filter", 14),
     ("filter_value", "Value for choice_filter matching", 20),
-    ("REVIEW_NOTES", "Your notes", 28),
 ]
 
 def build_choices_sheet(wb, form):
@@ -1022,7 +1026,7 @@ def build_timepoint_sheet(wb, tpt_csv):
     c.alignment = Alignment(horizontal="left", vertical="center")
     ws.row_dimensions[1].height = 18
 
-    for col, h in enumerate(["event", "timepoint", "REVIEW_NOTES"], start=1):
+    for col, h in enumerate(["event", "timepoint", "NOTES_FOR_AI"], start=1):
         c = ws.cell(row=2, column=col, value=h)
         c.font = hdr_font(color=WHITE_HEX, size=8)
         c.fill = fill(MID_BLUE_HEX)

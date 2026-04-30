@@ -1069,12 +1069,60 @@ async def run_pipeline(item_id):
         # ── Steps 1-2: Study Specification ────────────────────────────────────
         struct_json = None
 
+        # Holds NOTES_FOR_AI content extracted from the edited XLSX — injected
+        # into the prompt so Claude understands what the reviewer changed and why.
+        reviewer_notes_block = ""
+
         if edited_spec_xlsx:
             # Path A: User uploaded edited Study Spec XLSX
             await append_log(item_id, "Edited Study Specification XLSX detected.")
             print("Path A: reading edited Study Spec XLSX...", flush=True)
             import openpyxl
             wb = openpyxl.load_workbook(io.BytesIO(edited_spec_xlsx))
+
+            # ── Extract NOTES_FOR_AI from all survey/choices sheets ───────────
+            notes_collected = []
+            for sheet_name in wb.sheetnames:
+                if not (sheet_name.endswith('_survey') or sheet_name.endswith('_choices')):
+                    continue
+                ws = wb[sheet_name]
+                rows = list(ws.iter_rows(values_only=True))
+                if not rows:
+                    continue
+                # Find ACTION col (A=0) and NOTES_FOR_AI col (B=1) — fixed positions
+                # but verify by reading header row (row index 2 = row 3 in 1-indexed)
+                header_row_idx = None
+                for ri, row in enumerate(rows):
+                    if row and str(row[0] or '').strip().upper() == 'ACTION':
+                        header_row_idx = ri
+                        break
+                if header_row_idx is None:
+                    continue
+                notes_col_idx = 1   # column B = index 1
+                action_col_idx = 0  # column A = index 0
+                for row in rows[header_row_idx + 1:]:
+                    if not row or len(row) <= notes_col_idx:
+                        continue
+                    action = str(row[action_col_idx] or '').strip().upper()
+                    note   = str(row[notes_col_idx] or '').strip()
+                    if note and note.lower() not in ('notes_for_ai', 'notes for ai'):
+                        field_name = str(row[2] or '').strip() if len(row) > 2 else ''
+                        prefix = f"[{sheet_name}][{action or 'MODIFIED'}]"
+                        if field_name:
+                            prefix += f" {field_name}:"
+                        notes_collected.append(f"{prefix} {note}")
+
+            if notes_collected:
+                reviewer_notes_block = (
+                    "\n\nREVIEWER NOTES FROM EDITED STUDY SPECIFICATION:\n"
+                    + "\n".join(f"  • {n}" for n in notes_collected)
+                    + "\nApply these notes when interpreting ACTION=DELETE/ADD rows "
+                    "and when regenerating any affected forms."
+                )
+                print(f"Path A: extracted {len(notes_collected)} reviewer notes "
+                      f"from edited XLSX", flush=True)
+
+            # ── Try to extract embedded JSON ──────────────────────────────────
             for sheet_name in wb.sheetnames:
                 if 'json' in sheet_name.lower() or 'spec' in sheet_name.lower():
                     ws = wb[sheet_name]
@@ -1104,6 +1152,8 @@ async def run_pipeline(item_id):
             await append_log(item_id, "Protocol Analysis started.")
 
             extra_parts = []
+            if reviewer_notes_block:
+                extra_parts.append(reviewer_notes_block.strip())
             if oc_zip:
                 oc_file_type = _detect_oc_standard_type(oc_zip)
                 if oc_file_type == 'ODM_XML':

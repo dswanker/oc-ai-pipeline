@@ -1114,14 +1114,21 @@ been edited by a human reviewer:
 
 1. Detect that the input is an edited XLSX (has INDEX, TIMEPOINTS, and
    [FORMID]_survey tab structure)
-2. Read all changes:
+2. **Read column B (NOTES_FOR_AI) first** — before processing any other column.
+   These are the reviewer's explanations of what they changed and why.
+   Use them to understand context and intent for every ACTION=DELETE/ADD row
+   and every modified cell in that form. They are optional — many rows will
+   have no note. Never require a note to be present; just use them when there.
+3. Read all changes per form:
    - ACTION = DELETE → remove row from form definition
-   - ACTION = ADD → add as new survey row
-   - Edited cell values → update the corresponding field
-   - REVIEW_NOTES → include in change_log section of output JSON
-3. Validate changes (no blank required columns, no orphaned group pairs)
-4. Regenerate all five outputs with changes applied
-5. Add `change_log` to the JSON documenting what was changed
+   - ACTION = ADD → add as new survey row (reviewer inserted this row)
+   - ACTION = blank + edited cells → reviewer modified this row in place;
+     use the new cell values. NOTES_FOR_AI explains why.
+   - Edited cell values with no ACTION → update the corresponding field
+4. Validate changes (no blank required columns, no orphaned group pairs)
+5. Regenerate all five outputs with changes applied
+6. Add `change_log` to the JSON documenting what was changed, referencing
+   NOTES_FOR_AI content where provided
 
 ---
 
