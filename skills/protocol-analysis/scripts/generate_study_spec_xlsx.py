@@ -189,6 +189,17 @@ def build_index_sheet(wb, data):
         n_flagged = sum(1 for s in form.get("survey", [])
                         if s.get("completion_status") in ("FLAGGED", "PLACEHOLDER"))
         status_str = "✓ Ready" if n_flagged == 0 else f"⚠ {n_flagged} items need review"
+        # Category display mapping
+        _cat_map = {
+            "CDASH_CLINICAL":  "CDASH",
+            "CDASH":           "CDASH",
+            "CDASH_SAFETY":    "CDASH_SAFETY",
+            "CDASH_COMPANION": "CDASH_COMPANION",
+            "INFRASTRUCTURE":  "INFRA",
+            "CUSTOM":          "CUSTOM",
+        }
+        _cat_display = _cat_map.get(form.get("form_category", ""),
+                                    form.get("form_category", ""))
         # CDASH Alignment — always populated
         cdash_align = form.get("cdash_alignment", "")
         # Library Match — N/A when no library provided
@@ -199,7 +210,7 @@ def build_index_sheet(wb, data):
             str(i),
             form.get("form_id", ""),
             form.get("form_title", ""),
-            form.get("form_category", "").replace("CDASH_CLINICAL", "CDASH").replace("INFRASTRUCTURE", "INFRA"),
+            _cat_display,
             form.get("cdash_domain", "") or "—",
             form.get("arm_applicability", ""),
             form.get("complexity", ""),
@@ -218,7 +229,7 @@ def build_index_sheet(wb, data):
             c.alignment = wrap_align()
             bg = GREY_LIGHT_HEX if i % 2 == 0 else WHITE_HEX
             c.fill = fill(bg)
-        # colour status cell (column 14 after adding CDASH Alignment + Library Match)
+        # colour status cell (col 14 after CDASH Alignment + Library Match)
         status_cell = ws.cell(row=r, column=14)
         if "⚠" in status_str:
             status_cell.fill = fill(AMBER_HEX)

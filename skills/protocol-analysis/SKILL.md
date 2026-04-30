@@ -325,7 +325,8 @@ Common CDASH domain mappings:
 - Laboratory Assessments → LB; PSA separate if at different visits
 - Adverse Events → AE; Concomitant Medications → CM
 - Concomitant Procedures → PR_CONCOM (always separate from study drug PR)
-- Study Drug Administration → EX; Prodrug/Companion Drug → EC
+- Study Drug Administration (IMP) → EX, category: CDASH
+- Prodrug / Companion Drug Administration → EX or EC structure, category: CDASH_COMPANION (not plain CDASH)
 - Patient Diary / ePRO → separate ePRO CRF per diary instrument
 - Biospecimen → BS/BE (split by arm if field sets differ)
 - Disposition → DS; Pregnancy Reporting → PREGPART
@@ -349,18 +350,39 @@ Before finalising the CRF list, apply every rule in
 - Same CDASH domain code ≠ same CRF (different field sets = different forms)
 - Biospecimen forms that differ by arm → 2 separate unique CRFs
 
-**Source 4 — Infrastructure forms (always include):**
+**Source 4 — Standard forms (always include):**
 - ICF — Informed Consent — screening only (per `references/conventions.md` §1)
 - DOV — Date of Visit — every visit
 - DV — Protocol Deviation Log — ongoing
 - SPELIG — Sponsor Eligibility Review — screening only
+
+**Form Category Taxonomy — apply exactly:**
+
+| Category | When to use | Examples |
+|---|---|---|
+| `CDASH` | Form maps to a recognised CDISC CDASH domain with standard field names | AE, MH, LB, VS, CM, EX, DM, DS, DV, PR, PE, IE, EC |
+| `CDASH_SAFETY` | CDASH domain but safety-specific (repeating, SAE fields, NCI-CTCAE grading) | AE repeating log, SAE form, AESAE |
+| `CDASH_COMPANION` | Built on a CDASH domain (usually EX) but applies to a non-IMP drug such as a prodrug, companion drug, or concomitant therapy. Reviewer should verify field set matches sponsor naming conventions. | Valacyclovir Administration (EX), Prodrug Administration (EC) |
+| `INFRASTRUCTURE` | Operational forms with no clinical data and no applicable CDASH domain. Required for OC study operation but not for clinical analysis. | DOV (Date of Visit), SPELIG (Sponsor Eligibility Review) |
+| `CUSTOM` | No applicable CDASH domain exists. Form design is entirely protocol- or sponsor-specific. | Biospecimen Collection, Biomarker Sampling, Study-specific Disease Assessment, ICF |
+
+**Critical categorisation rules:**
+- DV (Protocol Deviations) is **CDASH**, not INFRASTRUCTURE — it has a defined CDASH DV domain
+  with standard fields (DVTERM, DVCAT, DVSTDAT, etc.) and collects real compliance data.
+- ICF (Informed Consent) is **CUSTOM** — there is no CDASH IC domain; the form is entirely
+  sponsor-defined.
+- DOV and SPELIG are **INFRASTRUCTURE** — they serve operational OC functions only.
+- Any prodrug or companion drug administration form is **CDASH_COMPANION**, not plain CDASH —
+  this signals to the reviewer that EX field naming should be verified for non-IMP context.
+- Biospecimen collection is **CUSTOM** — there is no CDASH domain for logistics of sample
+  collection. (PC/MB domains cover analyte results, not collection procedures.)
 
 ### Step 2b: Build the CRF Master Table
 
 Produce the complete CRF Master Table before writing any form definitions.
 
 For each unique CRF record:
-- form_id, form_title, form_category, cdash_domain
+- form_id, form_title, form_category (CDASH / CDASH_SAFETY / CDASH_COMPANION / INFRASTRUCTURE / CUSTOM), cdash_domain
 - arm_applicability (TREATMENT / CONTROL / BOTH)
 - visits_assigned (complete list of event OIDs)
 - reuse_count
@@ -391,8 +413,9 @@ the timepoint CSV, relevant expressions, and visit window constraints.
 ### Step 2d: Define Each Form
 Only after the complete CRF Master Table is built, define each form.
 Process in this order:
-1. Infrastructure forms (ICF, DOV, SPELIG, DV)
-2. Screening/baseline CDASH forms (DM, IE, MH)
+1. Infrastructure forms (DOV, SPELIG)
+2. Custom standard forms (ICF)
+3. Screening/baseline CDASH forms (DM, IE, MH, DV)
 3. Clinical assessment forms (VS, PE, LB, PSA, AE, CM, EX, EC, PR)
 4. Biospecimen forms (BE, BE_CTL, BES)
 5. Disposition and safety forms (DS, PREGPART)
@@ -721,7 +744,7 @@ directly by the `edc-builder` skill.
     {
       "form_id": "",
       "form_title": "",
-      "form_category": "CDASH_CLINICAL | INFRASTRUCTURE",
+      "form_category": "CDASH | CDASH_SAFETY | CDASH_COMPANION | INFRASTRUCTURE | CUSTOM",
       "cdash_domain": "",
       "visits_assigned": [],
       "has_repeating_group": false,
