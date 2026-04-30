@@ -231,6 +231,56 @@ def _xlsform_zip(build_json):
     return zip_buf.getvalue()
 
 
+def _convert_to_pdf(file_bytes: bytes, filename: str) -> bytes:
+    """
+    Convert a document file to PDF bytes for Claude ingestion.
+    Supports: .docx, .doc (via LibreOffice)
+    Returns PDF bytes, or empty bytes if conversion fails.
+    """
+    import subprocess, tempfile, shutil, os
+    ext = (filename.rsplit('.', 1)[-1] if '.' in filename else '').lower()
+    if ext not in ('docx', 'doc'):
+        return b''
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            src_path = os.path.join(tmpdir, f'protocol.{ext}')
+            with open(src_path, 'wb') as f:
+                f.write(file_bytes)
+            result = subprocess.run(
+                ['libreoffice', '--headless', '--convert-to', 'pdf',
+                 '--outdir', tmpdir, src_path],
+                capture_output=True, timeout=90, text=True
+            )
+            pdf_path = os.path.join(tmpdir, f'protocol.pdf')
+            if os.path.exists(pdf_path):
+                with open(pdf_path, 'rb') as f:
+                    pdf = f.read()
+                print(f"Converted {filename} → PDF ({len(pdf):,} bytes)", flush=True)
+                return pdf
+            else:
+                print(f"LibreOffice conversion failed for {filename}: "
+                      f"{result.stderr[:200]}", flush=True)
+                return b''
+    except Exception as e:
+        print(f"_convert_to_pdf error: {e}", flush=True)
+        return b''
+
+
+def _extract_docx_as_text(file_bytes: bytes) -> str:
+    """
+    Extract plain text from a .docx file using python-docx.
+    Fallback when LibreOffice is unavailable.
+    """
+    try:
+        import io
+        from docx import Document
+        doc = Document(io.BytesIO(file_bytes))
+        return '\n'.join(p.text for p in doc.paragraphs if p.text.strip())
+    except Exception as e:
+        print(f"_extract_docx_as_text error: {e}", flush=True)
+        return ''
+
+
 def _detect_oc_standard_type(file_bytes):
     """
     Detect whether the file in the oc_standard column is an ODM XML or a
@@ -1038,16 +1088,52 @@ async def run_pipeline(item_id):
         from monday_client import get_asset_url
 
         async def _get_protocol_pdf():
+            """
+            Download the protocol document and return it as PDF bytes.
+            Supports: .pdf (direct), .docx / .doc (converted via LibreOffice),
+            Google Docs export URLs (public/shared docs only).
+            """
             if edited_spec_xlsx:
                 return b""  # Skip — we already have struct via edited XLSX
             assets = await get_asset_url(item_id)
-            for asset in assets:
-                if (asset.get("name") or "").lower().endswith(".pdf"):
-                    url = asset.get("public_url") or asset.get("url")
-                    if url:
-                        pdf = await download_file(url)
+            if not assets:
+                return b""
+
+            # Priority: PDF > DOCX > DOC
+            pdf_asset  = next((a for a in assets
+                               if (a.get("name") or "").lower().endswith(".pdf")), None)
+            docx_asset = next((a for a in assets
+                               if (a.get("name") or "").lower().endswith((".docx", ".doc"))),
+                              None)
+
+            # ── PDF path ──────────────────────────────────────────────────
+            if pdf_asset:
+                url = pdf_asset.get("public_url") or pdf_asset.get("url")
+                if url:
+                    pdf = await download_file(url)
+                    if pdf:
+                        return pdf
+
+            # ── Word document path ────────────────────────────────────────
+            if docx_asset:
+                fname = docx_asset.get("name", "protocol.docx")
+                url   = docx_asset.get("public_url") or docx_asset.get("url")
+                if url:
+                    print(f"Downloading Word doc: {fname}", flush=True)
+                    docx_bytes = await download_file(url)
+                    if docx_bytes:
+                        # Try LibreOffice conversion first
+                        pdf = await asyncio.get_event_loop().run_in_executor(
+                            None, lambda: _convert_to_pdf(docx_bytes, fname))
                         if pdf:
                             return pdf
+                        # Fallback: extract text and return as UTF-8 encoded
+                        # fake-PDF (pipeline will detect and pass as extra_text)
+                        text = await asyncio.get_event_loop().run_in_executor(
+                            None, lambda: _extract_docx_as_text(docx_bytes))
+                        if text:
+                            # Return text bytes tagged so pipeline knows it's text
+                            return b"%%DOCX_TEXT%%" + text.encode("utf-8")
             return b""
 
         protocol_pdf, crf_pdf, oc_zip = await asyncio.gather(
@@ -1055,7 +1141,13 @@ async def run_pipeline(item_id):
             download_file(crf_url)    if crf_url    else _noop_bytes(),
             download_file(oc_std_url) if oc_std_url else _noop_bytes(),
         )
-        print(f"Protocol PDF: {len(protocol_pdf) if protocol_pdf else 0} bytes | "
+        _proto_desc = (
+            f"{len(protocol_pdf):,} bytes PDF" if protocol_pdf and
+            not protocol_pdf.startswith(b"%%DOCX_TEXT%%")
+            else f"{len(protocol_pdf) - 14:,} chars text (Word doc)"
+            if protocol_pdf else "0 bytes"
+        )
+        print(f"Protocol: {_proto_desc} | "
               f"CRF: {len(crf_pdf) if crf_pdf else 0} | "
               f"OC ZIP: {len(oc_zip) if oc_zip else 0}", flush=True)
 
@@ -1141,6 +1233,68 @@ async def run_pipeline(item_id):
             if struct_json is None:
                 await append_log(item_id, "Could not extract JSON from edited XLSX — running fresh analysis.")
 
+        # ── Read AI Instructions from edited XLSX (if present) ──────────────
+        ai_instructions_block = ""
+        if edited_spec_xlsx:
+            try:
+                import openpyxl as _opx
+                _wb = _opx.load_workbook(io.BytesIO(edited_spec_xlsx), data_only=True)
+                if "AI_INSTRUCTIONS" in _wb.sheetnames:
+                    _ws = _wb["AI_INSTRUCTIONS"]
+                    _rows = list(_ws.iter_rows(values_only=True))
+                    _study_instrs  = []
+                    _form_instrs   = []
+                    _in_s1 = _in_s2 = False
+                    for _row in _rows:
+                        if not _row or not any(v for v in _row if v):
+                            continue
+                        _cell0 = str(_row[0] or "").strip().upper()
+                        if "SECTION 1" in _cell0:
+                            _in_s1, _in_s2 = True, False; continue
+                        if "SECTION 2" in _cell0:
+                            _in_s1, _in_s2 = False, True; continue
+                        if "SECTION 3" in _cell0 or "VERSION HISTORY" in _cell0:
+                            _in_s1 = _in_s2 = False; continue
+                        if _cell0 in ("PRIORITY", "FORM OID", "VERSION"):
+                            continue   # skip header rows
+                        if _in_s1:
+                            _instr = str(_row[1] or "").strip()
+                            _pri   = str(_row[0] or "").strip()
+                            if _instr and _instr.lower() != "instruction":
+                                _study_instrs.append(
+                                    f"[{_pri.upper() or 'MEDIUM'}] {_instr}")
+                        elif _in_s2:
+                            _foid  = str(_row[0] or "").strip()
+                            _instr = str(_row[1] or "").strip()
+                            if _foid and _instr and _instr.lower() != "instruction":
+                                _form_instrs.append(f"  {_foid}: {_instr}")
+
+                    parts = []
+                    if _study_instrs:
+                        parts.append("STUDY-LEVEL INSTRUCTIONS FROM HUMAN REVIEWER "
+                                     "(apply to the entire study):\n" +
+                                     "\n".join(f"  • {i}" for i in _study_instrs))
+                    if _form_instrs:
+                        parts.append("FORM-SPECIFIC INSTRUCTIONS FROM HUMAN REVIEWER:\n" +
+                                     "\n".join(_form_instrs))
+                    if parts:
+                        ai_instructions_block = (
+                            "\n\n══════════════════════════════════════════\n"
+                            "AI INSTRUCTIONS — HIGHEST PRIORITY — APPLY BEFORE ALL OTHER INPUTS\n"
+                            "══════════════════════════════════════════\n" +
+                            "\n\n".join(parts) +
+                            "\n══════════════════════════════════════════\n"
+                        )
+                        n_si = len(_study_instrs)
+                        n_fi = len(_form_instrs)
+                        print(f"AI Instructions: {n_si} study-level, "
+                              f"{n_fi} form-specific", flush=True)
+                        await append_log(item_id,
+                            f"AI Instructions read: {n_si} study-level, "
+                            f"{n_fi} form-specific.")
+            except Exception as _ai_exc:
+                print(f"AI Instructions read error: {_ai_exc}", flush=True)
+
         # Fresh analysis if needed and not already populated
         # B7: will hold the optional JSON-upload coroutine, to be awaited
         # concurrently with the chains at the main asyncio.gather below.
@@ -1152,6 +1306,8 @@ async def run_pipeline(item_id):
             await append_log(item_id, "Protocol Analysis started.")
 
             extra_parts = []
+            if ai_instructions_block:
+                extra_parts.insert(0, ai_instructions_block.strip())
             if reviewer_notes_block:
                 extra_parts.append(reviewer_notes_block.strip())
             if oc_zip:
@@ -1211,10 +1367,23 @@ async def run_pipeline(item_id):
                           flush=True)
 
             print("Step 1: Claude extracting Study Spec JSON...", flush=True)
+            # Handle DOCX-as-text fallback: protocol arrived as text, not PDF
+            _docx_text_marker = b"%%DOCX_TEXT%%"
+            if protocol_pdf and protocol_pdf.startswith(_docx_text_marker):
+                docx_text = protocol_pdf[len(_docx_text_marker):].decode("utf-8",
+                                                                          errors="replace")
+                print(f"Protocol is Word text ({len(docx_text):,} chars) — "
+                      f"passing as extra_text", flush=True)
+                _pdf_arg   = None
+                _text_args = [docx_text] + (extra_parts or [])
+            else:
+                _pdf_arg   = protocol_pdf or None
+                _text_args = extra_parts or []
+
             struct_text = await call_claude(
                 EDC_STRUCTURE_PROMPT,
-                pdf_bytes  = protocol_pdf or None,
-                extra_text = "\n".join(extra_parts) if extra_parts else None,
+                pdf_bytes  = _pdf_arg,
+                extra_text = "\n".join(_text_args) if _text_args else None,
             )
             try:
                 struct_json = extract_json(

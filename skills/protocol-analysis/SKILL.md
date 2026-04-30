@@ -1114,7 +1114,17 @@ been edited by a human reviewer:
 
 1. Detect that the input is an edited XLSX (has INDEX, TIMEPOINTS, and
    [FORMID]_survey tab structure)
-2. **Read column B (NOTES_FOR_AI) first** — before processing any other column.
+2. **Read the AI_INSTRUCTIONS tab FIRST** — before any other tab.
+   This tab has three sections:
+   - **Section 1 (Study-Level):** High/Medium/Low priority instructions
+     that apply to the whole study (e.g., "Place AE in its own visit",
+     "Add DOV form to every visit with show-if logic").
+   - **Section 2 (Form-Specific):** Instructions scoped to a named form OID.
+   - **Section 3 (Version History):** Read-only audit trail — ignore.
+   These instructions are the HIGHEST PRIORITY input. Apply them before
+   reading any survey rows, choices, or NOTES_FOR_AI cells. If an
+   instruction conflicts with an existing survey row, the instruction wins.
+3. **Read column B (NOTES_FOR_AI) next** — before processing any other column.
    These are the reviewer's explanations of what they changed and why.
    Use them to understand context and intent for every ACTION=DELETE/ADD row
    and every modified cell in that form. They are optional — many rows will

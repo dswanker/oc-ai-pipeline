@@ -1109,11 +1109,209 @@ def build_review_flags_sheet(wb, flags):
 
 
 # ── Main builder ──────────────────────────────────────────────────────────────
+
+# ── AI Instructions sheet ─────────────────────────────────────────────────────
+
+def build_ai_instructions_sheet(wb, data: dict):
+    """
+    Build the AI_INSTRUCTIONS sheet — a human-editable tab where the reviewer
+    can give Claude structural instructions that apply to the next pipeline run.
+
+    Sections:
+      1. Study-Level Instructions  — apply to the whole study
+      2. Form-Specific Instructions — apply to named forms
+      3. Version History           — append-only audit trail (pipeline manages)
+
+    The pipeline reads this sheet before passing the edited XLSX to Claude and
+    injects the instructions as the highest-priority prompt block.
+    """
+    ws = wb.create_sheet(title="AI_INSTRUCTIONS")
+    ws.sheet_properties.tabColor = "FF9800"   # orange — stands out
+
+    # ── Column widths ─────────────────────────────────────────────────────
+    col_widths = {"A": 14, "B": 72, "C": 18, "D": 32}
+    for col, w in col_widths.items():
+        ws.column_dimensions[col].width = w
+
+    row = 1
+
+    # ── Title banner ──────────────────────────────────────────────────────
+    ws.merge_cells(f"A{row}:D{row}")
+    c = ws.cell(row=row, column=1,
+                value="AI INSTRUCTIONS — Human-to-Claude guidance for next pipeline run")
+    c.font = hdr_font(size=11, color=WHITE_HEX)
+    c.fill = fill("FF9800")
+    c.alignment = Alignment(horizontal="left", vertical="center")
+    ws.row_dimensions[row].height = 22
+    row += 1
+
+    # Intro text
+    ws.merge_cells(f"A{row}:D{row}")
+    c = ws.cell(row=row, column=1,
+                value=("Instructions in this tab are read by the pipeline before Claude "
+                       "processes the study. They take priority over all other inputs. "
+                       "Add instructions in Sections 1 and 2, then upload this file "
+                       "to the 'Edited Study Specification XLSX' column in monday.com "
+                       "and re-run."))
+    c.font = Font(name="Arial", size=8, italic=True, color="5c4a00")
+    c.fill = fill("FFF8E1")
+    c.alignment = Alignment(wrap_text=True, horizontal="left", vertical="center")
+    ws.row_dimensions[row].height = 28
+    row += 2
+
+    # ── Section 1: Study-Level Instructions ──────────────────────────────
+    ws.merge_cells(f"A{row}:D{row}")
+    c = ws.cell(row=row, column=1, value="SECTION 1 — STUDY-LEVEL INSTRUCTIONS")
+    c.font = hdr_font(color=WHITE_HEX, size=9)
+    c.fill = fill(DARK_BLUE_HEX)
+    c.alignment = Alignment(horizontal="left", vertical="center")
+    ws.row_dimensions[row].height = 16
+    row += 1
+
+    # Section 1 headers
+    s1_hdrs = [("PRIORITY", 14), ("INSTRUCTION", 72), ("STATUS", 18), ("NOTES", 32)]
+    for col_i, (h, _) in enumerate(s1_hdrs, start=1):
+        c = ws.cell(row=row, column=col_i, value=h)
+        c.font = hdr_font(color=WHITE_HEX, size=8)
+        c.fill = fill(MID_BLUE_HEX)
+        c.border = thin_border()
+        c.alignment = wrap_align("center")
+    ws.row_dimensions[row].height = 14
+    _s1_header_row = row
+    row += 1
+
+    # Priority dropdown
+    from openpyxl.worksheet.datavalidation import DataValidation
+    dv_priority = DataValidation(
+        type="list", formula1='"High,Medium,Low"', allow_blank=True)
+
+    # 8 blank instruction rows
+    s1_start = row
+    example_instructions = [
+        ("High",   "Place AE, CM, and DV in their own dedicated visits — do not use a Common event for these forms.", "", ""),
+        ("Medium", "Add a DOV (Date of Visit) form to every scheduled visit. Include VISYN (was visit done?) and show all other forms in that visit only when VISYN = Yes.", "", ""),
+        ("",       "", "", ""),
+        ("",       "", "", ""),
+        ("",       "", "", ""),
+        ("",       "", "", ""),
+        ("",       "", "", ""),
+        ("",       "", "", ""),
+    ]
+    for i, (pri, instr, status, notes) in enumerate(example_instructions):
+        r = row + i
+        is_example = bool(instr)
+        bg = "FFF8E1" if is_example else WHITE_HEX
+        vals = [pri, instr, status, notes]
+        for col_i, val in enumerate(vals, start=1):
+            c = ws.cell(row=r, column=col_i, value=val)
+            c.font = Font(name="Arial", size=8,
+                          italic=is_example, color="5c4a00" if is_example else "000000")
+            c.fill = fill(bg)
+            c.border = thin_border()
+            c.alignment = wrap_align()
+        ws.row_dimensions[r].height = 14
+    s1_end = row + len(example_instructions) - 1
+    row = s1_end + 1
+
+    # Add priority dropdown to section 1
+    dv_priority.sqref = f"A{s1_start}:A{s1_end + 20}"
+    ws.add_data_validation(dv_priority)
+
+    row += 1  # spacer
+
+    # ── Section 2: Form-Specific Instructions ─────────────────────────────
+    ws.merge_cells(f"A{row}:D{row}")
+    c = ws.cell(row=row, column=1, value="SECTION 2 — FORM-SPECIFIC INSTRUCTIONS")
+    c.font = hdr_font(color=WHITE_HEX, size=9)
+    c.fill = fill(DARK_BLUE_HEX)
+    c.alignment = Alignment(horizontal="left", vertical="center")
+    ws.row_dimensions[row].height = 16
+    row += 1
+
+    s2_hdrs = [("FORM OID", 14), ("INSTRUCTION", 72), ("STATUS", 18), ("NOTES", 32)]
+    for col_i, (h, _) in enumerate(s2_hdrs, start=1):
+        c = ws.cell(row=row, column=col_i, value=h)
+        c.font = hdr_font(color=WHITE_HEX, size=8)
+        c.fill = fill(MID_BLUE_HEX)
+        c.border = thin_border()
+        c.alignment = wrap_align("center")
+    ws.row_dimensions[row].height = 14
+    row += 1
+
+    # Populate with one row per form as a starting point (blank instruction)
+    forms = data.get("forms", [])
+    for form in forms:
+        fid = form.get("form_id", "")
+        c = ws.cell(row=row, column=1, value=fid)
+        c.font = body_font(bold=True, size=8)
+        c.fill = fill(GREY_LIGHT_HEX)
+        c.border = thin_border()
+        c.alignment = wrap_align()
+        for col_i in [2, 3, 4]:
+            c = ws.cell(row=row, column=col_i, value="")
+            c.font = body_font(size=8)
+            c.fill = fill(WHITE_HEX)
+            c.border = thin_border()
+            c.alignment = wrap_align()
+        ws.row_dimensions[row].height = 13
+        row += 1
+
+    # Extra blank rows for new forms
+    for _ in range(5):
+        for col_i in range(1, 5):
+            c = ws.cell(row=row, column=col_i, value="")
+            c.border = thin_border()
+            c.fill = fill(WHITE_HEX)
+        ws.row_dimensions[row].height = 13
+        row += 1
+
+    row += 1  # spacer
+
+    # ── Section 3: Version History (append-only) ──────────────────────────
+    ws.merge_cells(f"A{row}:D{row}")
+    c = ws.cell(row=row, column=1,
+                value="SECTION 3 — VERSION HISTORY  (pipeline-managed, do not edit)")
+    c.font = hdr_font(color=WHITE_HEX, size=9)
+    c.fill = fill("888888")
+    c.alignment = Alignment(horizontal="left", vertical="center")
+    ws.row_dimensions[row].height = 16
+    row += 1
+
+    vh_hdrs = ["VERSION", "DATE", "STUDY INSTRUCTIONS", "FORM INSTRUCTIONS", "SUMMARY"]
+    vh_widths = [14, 12, 18, 18, 40]
+    for col_i, (h, w) in enumerate(zip(vh_hdrs, vh_widths), start=1):
+        c = ws.cell(row=row, column=col_i, value=h)
+        c.font = hdr_font(color=WHITE_HEX, size=8)
+        c.fill = fill(GREY_MID_HEX)
+        c.border = thin_border()
+        c.alignment = wrap_align("center")
+        ws.column_dimensions[get_column_letter(col_i)].width = w
+    ws.row_dimensions[row].height = 14
+    row += 1
+
+    # Seed with one "initial generation" row
+    study_meta = data.get("study_meta", {})
+    version = study_meta.get("generated_date", "")[:10] or "Initial"
+    seed_vals = [version, "", "0", "0", "Initial generation — no AI instructions provided"]
+    for col_i, val in enumerate(seed_vals, start=1):
+        c = ws.cell(row=row, column=col_i, value=val)
+        c.font = body_font(size=8, color="555555")
+        c.fill = fill(GREY_LIGHT_HEX)
+        c.border = thin_border()
+        c.alignment = wrap_align()
+    ws.row_dimensions[row].height = 13
+
+    ws.freeze_panes = "A2"
+
+
 def build_edc_xlsx(data: dict, output_path: str):
     wb = Workbook()
 
     # INDEX sheet (uses default active sheet)
     build_index_sheet(wb, data)
+
+    # AI Instructions sheet — second tab so it's immediately visible
+    build_ai_instructions_sheet(wb, data)
 
     # Supporting sheets
     build_timepoint_sheet(wb, data.get("timepoint_csv", {}))
