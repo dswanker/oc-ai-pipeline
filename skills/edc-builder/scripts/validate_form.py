@@ -39,6 +39,83 @@ def _try_import_pyxform():
         return None, None, f"pyxform not installed: {e}"
 
 
+def _strip_oc8_phantom_end_groups(xlsx_path):
+    """
+    Return a temp xlsx path with OC-8 phantom end group rows removed.
+
+    OpenClinica requires a non-standard XLSForm pattern for repeating forms:
+        begin repeat NAME
+        end group          ← "phantom" — no matching begin group
+        end repeat
+
+    pyxform rejects this because it cannot find a begin_group to match the
+    end_group. OC's own validator accepts it. We strip the phantom rows before
+    passing to pyxform so validation/conversion succeeds.
+
+    Caller is responsible for deleting the returned temp file.
+    Returns (temp_path, was_modified).
+    """
+    try:
+        import openpyxl, tempfile, shutil
+        wb = openpyxl.load_workbook(xlsx_path, data_only=True)
+        if 'survey' not in wb.sheetnames:
+            return xlsx_path, False
+
+        ws = wb['survey']
+        rows = list(ws.iter_rows(values_only=True))
+        if not rows:
+            return xlsx_path, False
+
+        headers = [str(h).strip() if h is not None else '' for h in rows[0]]
+        try:
+            type_col = headers.index('type')
+        except ValueError:
+            return xlsx_path, False
+
+        # Stack-based scan — identify phantom end group rows
+        # A phantom end group is an 'end group' row encountered when the
+        # innermost open block is a repeat (not a group).
+        stack = []          # 'group' or 'repeat'
+        phantom_rows = set()
+        for i, row in enumerate(rows[1:], start=1):
+            t = str(row[type_col] or '').strip().lower() if type_col < len(row) else ''
+            if t == 'begin group':
+                stack.append('group')
+            elif t == 'begin repeat':
+                stack.append('repeat')
+            elif t == 'end group':
+                if stack and stack[-1] == 'repeat':
+                    phantom_rows.add(i)   # OC-8 phantom — skip for pyxform
+                elif stack:
+                    stack.pop()
+            elif t == 'end repeat':
+                if stack and stack[-1] == 'repeat':
+                    stack.pop()
+
+        if not phantom_rows:
+            return xlsx_path, False
+
+        # Write a cleaned copy to a temp file
+        tmp = tempfile.NamedTemporaryFile(suffix='.xlsx', delete=False)
+        tmp.close()
+        shutil.copy2(xlsx_path, tmp.name)
+
+        wb2 = openpyxl.load_workbook(tmp.name)
+        ws2 = wb2['survey']
+        # Delete rows in reverse order so indices stay valid
+        data_rows = list(ws2.iter_rows())
+        for row_idx in sorted(phantom_rows, reverse=True):
+            # row_idx is 0-based in data_rows (row 0 = header row 1 in sheet)
+            sheet_row = row_idx + 1   # openpyxl rows are 1-indexed
+            ws2.delete_rows(sheet_row)
+        wb2.save(tmp.name)
+        return tmp.name, True
+
+    except Exception:
+        # If anything goes wrong, fall back to original file
+        return xlsx_path, False
+
+
 def validate_xlsform(xlsx_path, form_id=None):
     """
     Validate a single XLSForm at xlsx_path.
@@ -71,6 +148,12 @@ def validate_xlsform(xlsx_path, form_id=None):
         result["errors"].append(f"File does not exist: {xlsx_path}")
         return result
 
+    # Strip OC-8 phantom end group rows before pyxform sees them.
+    # pyxform rejects the OC-required phantom end group between begin repeat
+    # and end repeat; stripping it lets pyxform convert the form correctly
+    # while the real xlsx (sent to OC) retains the required structure.
+    clean_path, was_stripped = _strip_oc8_phantom_end_groups(xlsx_path)
+
     # Run the conversion. xls2xform_convert needs an output XML path even
     # though we don't care about the converted XML — it's required.
     tmp_xml = None
@@ -80,7 +163,7 @@ def validate_xlsform(xlsx_path, form_id=None):
         tmp_xml = tmp.name
 
         warnings = xls2xform_convert(
-            xlsform_path=xlsx_path,
+            xlsform_path=clean_path,
             xform_path=tmp_xml,
             validate=False,        # Phase 1: no Java/ODK Validate dependency
             pretty_print=False,
@@ -105,6 +188,12 @@ def validate_xlsform(xlsx_path, form_id=None):
         logger.exception(f"validate_xlsform: unexpected error on {form_id}")
 
     finally:
+        # Clean up the stripped temp xlsx if we created one
+        if was_stripped and clean_path != xlsx_path and os.path.exists(clean_path):
+            try:
+                os.unlink(clean_path)
+            except OSError:
+                pass
         # Always clean up the temp XML file
         if tmp_xml and os.path.exists(tmp_xml):
             try:
