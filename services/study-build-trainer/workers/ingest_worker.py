@@ -623,9 +623,6 @@ class IngestWorker:
         """Best-effort cleanup on unexpected failure."""
         try:
             await self.monday.set_ingest_status(item_id, "failed")
-            await self.monday.set_decision_needed(
-                item_id, "investigate_ingest_failure"
-            )
             await self.monday.set_long_text(
                 item_id, "human_notes",
                 f"Ingest failed: {type(exc).__name__}: {exc}"[:1000],
