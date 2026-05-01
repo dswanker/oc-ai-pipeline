@@ -2,42 +2,42 @@
 Ingest worker — runs one ingest job to completion.
 
 Phase 1 scope: protocol IS required. CT.gov fallback is deferred.
-The flow is deterministic and has three terminal states:
+The flow is deterministic and has these terminal states:
   * indexed
   * awaiting_human (curator must supply something)
   * awaiting_build_completion (auto-stubbed by pipeline; no form yet)
+  * missing_odm_xml / missing_xls_forms / missing_both_files
+      (trigger fired but required files not uploaded)
   * failed (something blew up; curator should investigate)
 
-Happy path (curator-supplied row, both halves present):
+Happy path (both ODM XML and XLSForm ZIP present):
 
     1. Fetch row from monday.
-    2. Validate inputs. If form_design missing AND protocol present
-       → Awaiting Build Completion (this is the auto-stub path).
+    2. Validate inputs. Both form_design (ODM XML) AND final_xls_forms
+       (XLSForm ZIP) must be present. If either is missing, set the
+       appropriate "Missing..." status and stop — no work is done.
+       If no form at all but protocol present → Awaiting Build Completion.
        If protocol missing entirely → Awaiting Human / Supply Protocol.
     3. Status → parsing_form.
-    4. Cache all files (form_design + protocol + analysis JSON) into
-       corpus/files/<pair_hash>/.
-    5. Parse form_design → ParsedForm.
-    6. Extract fingerprint from form (sponsor, indication, etc).
-       Apply curator-supplied "Sponsor/Client" as override.
-    7. Get protocol-analysis JSON. If curator uploaded one, use it.
-       Otherwise call the protocol-analysis skill against the
-       protocol PDF.
-    8. Format the analysis JSON canonically; embed.
-    9. Index in the vector store under pair_hash = "row_<item_id>".
-   10. Write fingerprint summary, indexed_pair_hash, index_date back
-       to monday. Set status=indexed, trigger=dont_send, clear
-       decision_needed.
+    4. Cache all files (form_design + final_xls_forms + protocol +
+       analysis JSON) into corpus/files/<pair_hash>/.
+    5. Parse form_design (ODM XML) → ParsedForm.
+    6. Extract fingerprint from form.
+    7. Get protocol-analysis JSON (cached or fresh from skill).
+    8. Status → generating_predicted_build.
+       [Future: generate predicted EDC build from protocol here]
+    9. Status → comparing_builds.
+       [Future: run accuracy scorer against actual files here]
+   10. Embed analysis JSON.
+   11. Index in the vector store under pair_hash = "row_<item_id>".
+   12. Write fingerprint summary, indexed_pair_hash, index_date, and
+       status → indexed back to monday.
 
-Each step is a private method so failures are localized. Any uncaught
-exception in any step lands in `_handle_failure`, which sets monday
-to a clearly-described failed state and writes a diagnostic message
-to human_notes.
+Each step is a private method so failures are localized.
 
-Test seam: ``IngestWorker`` accepts every collaborator (monday client,
-parsers, fingerprint extractor, protocol-analysis client, embedder,
-vector store) via its constructor. Production code uses
-``app.deps.get_*`` dependency providers; tests inject fakes.
+Test seam: ``IngestWorker`` accepts every collaborator via its
+constructor. Production code uses ``app.deps.get_*`` dependency
+providers; tests inject fakes.
 """
 from __future__ import annotations
 
@@ -103,20 +103,12 @@ except ImportError:  # pragma: no cover
 
 
 def make_pair_hash(item_id: int) -> str:
-    """Deterministic pair_hash from monday item_id.
-
-    Phase 1 design choice: tie identity to the monday row, not the
-    file content. Re-ingesting the same row overwrites cleanly. If we
-    later need content-hash semantics (e.g. to detect "the form was
-    re-uploaded with corrections"), we can extend this without
-    churning the existing index keys.
-    """
+    """Deterministic pair_hash from monday item_id."""
     return f"row_{item_id}"
 
 
 def fingerprint_summary_text(fp: StudyFingerprint) -> str:
-    """One-line summary of a StudyFingerprint, for the Fingerprint
-    long-text column on monday."""
+    """One-line summary of a StudyFingerprint for the Fingerprint column."""
     parts: list[str] = []
     if fp.sponsor:
         parts.append(f"sponsor: {fp.sponsor}")
@@ -162,9 +154,6 @@ class IngestWorker:
     async def process(self, job: IngestJob) -> None:
         """Run one job. Mutates job.state. Returns None."""
         if job.kind != IngestJobKind.START:
-            # HUMAN_RESPONSE flow not used in Phase 1 (no CT.gov branch
-            # that requires resumption). Curator just re-flips Trigger
-            # on the row, which produces a fresh START job.
             raise ValueError(
                 f"IngestWorker handles START jobs only (got {job.kind})"
             )
@@ -178,22 +167,29 @@ class IngestWorker:
 
         try:
             await self._run(job, item_id, log_ctx)
+        except _MissingFiles as exc:
+            # Validation failure — human forgot to upload a required
+            # file before flipping Trigger. Set the descriptive status
+            # so they know exactly what to fix. Job is not "failed"
+            # (no bug), just incomplete.
+            job.state = IngestJobState.AWAITING_HUMAN
+            await self.monday.set_ingest_status(item_id, exc.status_key)
+            await self.monday.set_long_text(
+                item_id, "human_notes", exc.message
+            )
+            logger.info(
+                "ingest.missing_files",
+                status=exc.status_key, reason=exc.message, **log_ctx,
+            )
         except _AwaitingHuman as exc:
-            # Expected outcome — curator action needed. Set the
-            # appropriate monday state and END here. Job state is
-            # AWAITING_HUMAN, not FAILED.
             job.state = IngestJobState.AWAITING_HUMAN
             await self._set_awaiting_human(item_id, exc.decision_key, exc.message)
             logger.info("ingest.awaiting_human", reason=exc.message, **log_ctx)
         except _AwaitingBuildCompletion as exc:
-            # Auto-stub from pipeline. Form not yet uploaded by human.
-            # Don't try to do anything else — wait.
             job.state = IngestJobState.AWAITING_HUMAN
             await self._set_awaiting_build_completion(item_id, exc.message)
             logger.info("ingest.awaiting_build_completion", **log_ctx)
         except Exception as exc:  # noqa: BLE001
-            # Unexpected failure — surface clearly, don't crash the
-            # worker so the queue can keep going.
             logger.exception("ingest.failed", **log_ctx)
             job.state = IngestJobState.FAILED
             job.error = str(exc)
@@ -211,21 +207,27 @@ class IngestWorker:
         item = await self.monday.get_item(item_id)
         logger.info("ingest.row_loaded", name=item.name, **log_ctx)
 
-        # 2. Validate inputs and decide branch
+        # 2. Validate inputs — check both required files are present.
+        #    This is the first gate: if files are missing the job stops
+        #    here with a descriptive status. The human re-uploads and
+        #    re-triggers; no heavy work is wasted.
         self._validate_inputs(item)
 
         # 3. Status → parsing_form
         await self.monday.set_ingest_status(item_id, "parsing_form")
 
-        # 4. Cache all files locally
+        # 4. Cache all files locally (ODM XML, XLSForm ZIP, protocol PDF,
+        #    analysis JSON if present)
         pair_hash = make_pair_hash(item_id)
         cached = await self.monday.cache_files_for_pair(item, pair_hash)
 
         if "form_design" not in cached:
-            # Should be caught by validation, but defense-in-depth.
-            raise RuntimeError("form_design failed to download")
+            raise RuntimeError("form_design (ODM XML) failed to download")
+        if "final_xls_forms" not in cached:
+            raise RuntimeError("final_xls_forms (XLSForm ZIP) failed to download")
 
-        # 5. Parse form_design
+        # 5. Parse ODM XML → ParsedForm (used for structural layers:
+        #    Study, Events, Form placement)
         form_design_path = cached["form_design"]
         parsed = await self._parse_form(form_design_path)
         logger.info(
@@ -235,7 +237,7 @@ class IngestWorker:
             **log_ctx,
         )
 
-        # 6. Extract fingerprint
+        # 6. Extract fingerprint from parsed ODM structure
         fp = await self._extract_fingerprint(parsed, item)
         logger.info(
             "ingest.fingerprint",
@@ -243,14 +245,36 @@ class IngestWorker:
             confidence=fp.extraction_confidence, **log_ctx,
         )
 
-        # 7. Get the analysis JSON — curator-supplied or freshly generated
+        # 7. Get the analysis JSON (for embedding / retrieval)
         analysis_dict = await self._get_analysis_json(cached, item, log_ctx)
 
-        # 8. Embed
+        # 8. Status → generating_predicted_build
+        #    [Phase 2: run edc-builder skill on protocol PDF here to
+        #    produce a predicted EDC ZIP for comparison]
+        await self.monday.set_ingest_status(item_id, "generating_predicted_build")
+        logger.info("ingest.generating_predicted_build", **log_ctx)
+        # TODO(phase2): predicted_zip_path = await self._generate_predicted_build(
+        #     cached, item_id, log_ctx
+        # )
+
+        # 9. Status → comparing_builds
+        #    [Phase 2: run accuracy scorer here and write score + PDF
+        #    to the accuracy columns on the monday row]
+        await self.monday.set_ingest_status(item_id, "comparing_builds")
+        logger.info("ingest.comparing_builds", **log_ctx)
+        # TODO(phase2): await self._run_accuracy_comparison(
+        #     actual_xml=cached["form_design"],
+        #     actual_xls=cached["final_xls_forms"],
+        #     predicted_zip=predicted_zip_path,
+        #     item_id=item_id,
+        # )
+
+        # 10. Embed
         query_vec = await self.embedder.embed_protocol_analysis(analysis_dict)
         logger.info("ingest.embedded", dim=len(query_vec), **log_ctx)
 
-        # 9. Index
+        # 11. Index
+        xlsforms_path = cached["final_xls_forms"]
         await self.vector_store.add(IndexInput(
             pair_hash=pair_hash,
             embedding=query_vec,
@@ -267,7 +291,7 @@ class IngestWorker:
         ))
         logger.info("ingest.indexed", pair_hash=pair_hash, **log_ctx)
 
-        # 10. Write back to monday
+        # 12. Write back to monday
         await self._write_back_metadata(item_id, fp, pair_hash)
 
         job.state = IngestJobState.DONE
@@ -278,38 +302,75 @@ class IngestWorker:
     @staticmethod
     def _validate_inputs(item: CorpusItem) -> None:
         """
-        Decide the branch based on which files are attached.
+        Gate on required files before doing any work.
 
-        Three valid happy entrypoints:
-          * Both form_design AND (protocol OR analysis JSON) → ingest.
-          * No form_design, but protocol present (auto-stub) → wait
-            for human to upload form.
-          * Anything else → curator action needed.
+        For full ingest, BOTH files are required:
+          * form_design   — ODM XML (actual build, structural layers)
+          * final_xls_forms — XLSForm ZIP (actual build, form layers)
+
+        Special cases that short-circuit before the file check:
+          * No form_design AND no final_xls_forms, but protocol present
+            → auto-stub from pipeline; wait for human to upload both.
+          * No protocol and no analysis JSON → curator needs to supply.
+
+        If only ONE of the two required files is missing, we set a
+        descriptive status so the human knows exactly what to add.
         """
-        has_form = bool(item.files_by_column.get("form_design"))
+        has_xml      = bool(item.files_by_column.get("form_design"))
+        has_xls      = bool(item.files_by_column.get("final_xls_forms"))
         has_protocol = bool(item.files_by_column.get("protocol"))
         has_analysis = bool(item.files_by_column.get("protocol_analysis_json"))
 
-        if not has_form and has_protocol:
-            # Auto-stub from pipeline (or curator who's still working
-            # on the form upload). Wait for them.
+        # Auto-stub: pipeline created this row; human hasn't uploaded
+        # form files yet. Wait quietly.
+        if not has_xml and not has_xls and has_protocol:
             raise _AwaitingBuildCompletion(
-                "Form Design not yet uploaded; protocol is present."
+                "Neither ODM XML nor XLSForm ZIP uploaded yet; "
+                "protocol is present. Upload both files and re-trigger."
             )
 
-        if not has_form:
-            raise _AwaitingHuman(
-                decision_key="supply_form_design"
-                    if "supply_form_design" in _DECISION_KEYS_AVAILABLE
-                    else "supply_protocol",
-                message="No Form Design attached.",
-            )
-
+        # No protocol context at all — can't do anything useful.
         if not has_protocol and not has_analysis:
             raise _AwaitingHuman(
                 decision_key="supply_protocol",
                 message="No protocol or protocol-analysis JSON attached.",
             )
+
+        # Both files missing (but protocol is present — e.g. human
+        # row created manually without form files).
+        if not has_xml and not has_xls:
+            raise _MissingFiles(
+                status_key="missing_both_files",
+                message=(
+                    "Both ODM XML and XLSForm ZIP are required before "
+                    "triggering ingest. Please upload both files and "
+                    "re-set Trigger to 'Send to Trainer'."
+                ),
+            )
+
+        # Only ODM XML missing.
+        if not has_xml:
+            raise _MissingFiles(
+                status_key="missing_odm_xml",
+                message=(
+                    "ODM XML file is missing. Please upload the study's "
+                    "ODM XML export to the 'Form Design' column and "
+                    "re-set Trigger to 'Send to Trainer'."
+                ),
+            )
+
+        # Only XLSForm ZIP missing.
+        if not has_xls:
+            raise _MissingFiles(
+                status_key="missing_xls_forms",
+                message=(
+                    "XLSForm ZIP is missing. Please upload the final "
+                    "EDC build ZIP to the 'Final XLS Forms' column and "
+                    "re-set Trigger to 'Send to Trainer'."
+                ),
+            )
+
+        # Both files present — all good, fall through to ingest.
 
     async def _parse_form(self, form_path: Path) -> ParsedForm:
         """Pick a parser based on filename and run it."""
@@ -323,12 +384,7 @@ class IngestWorker:
         parsed: ParsedForm,
         item: CorpusItem,
     ) -> StudyFingerprint:
-        """Run the fingerprint extractor.
-
-        Curator-supplied "Sponsor/Client" is passed as a ground-truth
-        override per the design. Any other curator overrides could be
-        wired here (none today).
-        """
+        """Run the fingerprint extractor with optional curator overrides."""
         overrides: dict[str, Any] = {}
         if item.sponsor_client:
             overrides["sponsor"] = item.sponsor_client
@@ -346,16 +402,8 @@ class IngestWorker:
     ) -> dict[str, Any]:
         """Return the protocol-analysis JSON.
 
-        Two paths:
-          * Curator (or pipeline auto-stub) attached the JSON → load
-            from disk. This is the cheap path.
-          * Only the protocol PDF is present → call the
-            protocol-analysis skill on the PDF, parse the response.
-            Cache the result for re-use.
-
-        We never re-run the skill if a JSON is present. Single source
-        of truth: the JSON is what gets indexed regardless of how it
-        was produced.
+        Uses cached JSON if available; otherwise calls the
+        protocol-analysis skill on the protocol PDF.
         """
         if "protocol_analysis_json" in cached:
             json_path = cached["protocol_analysis_json"]
@@ -367,10 +415,7 @@ class IngestWorker:
                     "ingest.analysis_json_parse_failed",
                     path=str(json_path), error=str(exc), **log_ctx,
                 )
-                # Fall through to running it ourselves; the curator's
-                # JSON was malformed.
 
-        # No usable JSON. Run protocol-analysis on the protocol PDF.
         if "protocol" not in cached:
             raise RuntimeError(
                 "Cannot produce analysis JSON: no protocol PDF cached."
@@ -379,15 +424,12 @@ class IngestWorker:
         logger.info("ingest.running_protocol_analysis", **log_ctx)
         response_text = await self.run_protocol_analysis(pdf_bytes)
 
-        # The skill should return JSON-shaped text. Be defensive
-        # about markdown fences and stray prose.
         analysis_dict = _extract_json_from_text(response_text)
         if not analysis_dict:
             raise RuntimeError(
                 "Protocol analysis ran but returned no parseable JSON."
             )
 
-        # Cache it so subsequent re-ingests skip the API call.
         cache_path = cached["protocol"].parent / "analysis.generated.json"
         cache_path.write_text(json.dumps(analysis_dict, indent=2))
         logger.info("ingest.analysis_cached", path=str(cache_path), **log_ctx)
@@ -421,12 +463,9 @@ class IngestWorker:
         decision_key: str,
         message: str,
     ) -> None:
-        """Mark the row as requiring curator action."""
         await self.monday.set_decision_needed(item_id, decision_key)
         await self.monday.set_long_text(item_id, "human_notes", message)
         await self.monday.set_ingest_status(item_id, "awaiting_human")
-        # Trigger stays at "send_to_trainer" so curator can flip it
-        # again after addressing whatever's missing.
 
     async def _set_awaiting_build_completion(
         self,
@@ -452,7 +491,6 @@ class IngestWorker:
                 f"Ingest failed: {type(exc).__name__}: {exc}"[:1000],
             )
         except Exception:  # noqa: BLE001
-            # If we can't even talk to monday, don't crash the worker.
             logger.exception(
                 "ingest.failure_handler_failed", item_id=item_id
             )
@@ -466,6 +504,20 @@ _DECISION_KEYS_AVAILABLE = frozenset({
     "supply_form_design",
     "investigate_ingest_failure",
 })
+
+
+@dataclass
+class _MissingFiles(Exception):
+    """One or both required files absent when trigger fired.
+
+    This is not a crash — it's a validation gate. The human needs to
+    upload the missing file(s) and re-trigger.
+    """
+    status_key: str   # one of: missing_odm_xml, missing_xls_forms, missing_both_files
+    message: str
+
+    def __str__(self) -> str:
+        return self.message
 
 
 @dataclass
@@ -491,27 +543,17 @@ class _AwaitingBuildCompletion(Exception):
 
 
 def _extract_json_from_text(text: str) -> dict[str, Any] | None:
-    """
-    Pull the first JSON object out of a free-text response.
-
-    Handles:
-      * Pure JSON ({"foo": "bar"})
-      * JSON wrapped in ```json ... ``` fences
-      * JSON wrapped in bare ``` ... ``` fences
-      * JSON preceded or followed by free-text prose
-    """
+    """Pull the first JSON object out of a free-text response."""
     import re
 
     s = text.strip()
 
-    # 1) Try whole-string parse
     if s.startswith("{"):
         try:
             return json.loads(s)
         except json.JSONDecodeError:
             pass
 
-    # 2) Try ```json ... ``` fence
     m = re.search(r"```json\s*(.+?)```", s, re.DOTALL)
     if m:
         try:
@@ -519,7 +561,6 @@ def _extract_json_from_text(text: str) -> dict[str, Any] | None:
         except json.JSONDecodeError:
             pass
 
-    # 3) Try bare ``` ... ``` fence containing an object
     m = re.search(r"```\s*(\{.+?\})\s*```", s, re.DOTALL)
     if m:
         try:
@@ -527,7 +568,6 @@ def _extract_json_from_text(text: str) -> dict[str, Any] | None:
         except json.JSONDecodeError:
             pass
 
-    # 4) Try the first balanced {...} block in the text
     depth = 0
     start = -1
     for i, ch in enumerate(s):
@@ -553,9 +593,8 @@ def _extract_json_from_text(text: str) -> dict[str, Any] | None:
 
 async def process_job(job: IngestJob) -> None:
     """
-    Module-level shim so workers/queue.py can `from workers.ingest_worker
-    import process_job` — matching the existing import. Wires up
-    real dependencies via app.deps.
+    Module-level shim so workers/queue.py can import process_job.
+    Wires up real dependencies via app.deps.
     """
     from app.deps import (
         get_embedder,

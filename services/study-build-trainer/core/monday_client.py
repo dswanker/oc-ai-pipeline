@@ -85,10 +85,11 @@ CORPUS_BOARD_ID = 18410424473
 # created and do not change unless a column is deleted and recreated.
 COL: dict[str, str] = {
     # File columns
-    "form_design":             "file_mm2tr9gs",
+    "form_design":             "file_mm2tr9gs",   # ODM XML (actual build)
+    "final_xls_forms":         "file_mm2yv234",   # Final XLSForm ZIP (actual build)
     "protocol":                "file_mm2tjj47",
     "protocol_analysis_json":  "file_mm2tc0md",
-    "ctgov_protocol_pdf":      "file_mm2tw9nr",  # unused (CT.gov deferred)
+    "ctgov_protocol_pdf":      "file_mm2tw9nr",   # unused (CT.gov deferred)
     # Status columns
     "trigger":                 "color_mm2tw612",
     "ingest_status":           "color_mm2t8mek",
@@ -108,20 +109,30 @@ COL: dict[str, str] = {
 }
 
 # Trigger labels. Keys are stable internal names; values are the label
-# strings as they appear in the monday UI. Setting a status by label
-# requires the label string exactly.
+# strings as they appear in the monday UI.
 TRIGGER_LABELS: dict[str, str] = {
     "send_to_trainer": "Send to Trainer",
     "dont_send":       "Don't Send",
 }
 
 # Ingest Status labels.
+# NOTE: The new labels (missing_odm_xml, missing_xls_forms,
+# missing_both_files, generating_predicted_build, comparing_builds)
+# must be added to the monday column settings before they can be set.
 INGEST_STATUS_LABELS: dict[str, str] = {
     "not_started":               "Not Started",
     "parsing_form":              "Parsing Form",
-    "searching_ctgov":           "Searching CT.gov",  # currently unreachable
+    "searching_ctgov":           "Searching CT.gov",      # currently unreachable
     "awaiting_human":            "Awaiting Human",
     "awaiting_build_completion": "Awaiting Build Completion",
+    # ── New validation states ──
+    "missing_odm_xml":           "Missing ODM XML",
+    "missing_xls_forms":         "Missing XLS Forms",
+    "missing_both_files":        "Missing Both Files",
+    # ── New processing states ──
+    "generating_predicted_build": "Generating Predicted Build",
+    "comparing_builds":           "Comparing Builds",
+    # ── Terminal states ──
     "indexed":                   "Indexed",
     "failed":                    "Failed",
 }
@@ -129,8 +140,8 @@ INGEST_STATUS_LABELS: dict[str, str] = {
 # Decision Needed labels (set when human input is required).
 DECISION_LABELS: dict[str, str] = {
     "supply_protocol":            "Supply Protocol",
-    "review_ctgov_match":         "Review CT.gov Match",  # unused
-    "supply_form_design":         "Supply Form Design",  # unused
+    "review_ctgov_match":         "Review CT.gov Match",   # unused
+    "supply_form_design":         "Supply Form Design",    # unused
     "investigate_ingest_failure": "Investigate Failure",
 }
 
@@ -165,7 +176,7 @@ class CorpusItem:
     fingerprint: str | None = None
     indexed_pair_hash: str | None = None
 
-    # File columns: a list of {"asset_id", "name", "url"} per column.
+    # File columns: a list of {"asset_id", "name"} per column.
     # monday returns these inside the column's `value` JSON. The list
     # is empty if no file is uploaded.
     files_by_column: dict[str, list[dict[str, str]]] = field(default_factory=dict)
@@ -204,9 +215,6 @@ class MondayClient:
         self._http_client = http_client
         self._owned_client = http_client is None
         self.board_id = board_id
-        # Local cache root for downloaded files. Per design: each
-        # ingested pair gets its own folder under this root, keyed
-        # by pair_hash.
         if files_root is None:
             files_root = Path(__file__).resolve().parent.parent / "corpus" / "files"
         self._files_root = Path(files_root)
@@ -314,17 +322,18 @@ class MondayClient:
             v = col_values.get(COL[col_key])
             if not v:
                 return None
-            # Status columns expose the chosen label as `text`; preferred
-            # because parsing the index out of `value` JSON requires
-            # reading the column's settings to resolve indices→labels.
             return v.get("text") or None
 
-        # File columns: pull list of {asset_id, name, url} from the
-        # column's `value` JSON. monday returns this as a JSON-encoded
-        # string in `value`.
+        # File columns: pull list of {asset_id, name} from the
+        # column's `value` JSON. Includes the new final_xls_forms col.
         files_by_column: dict[str, list[dict[str, str]]] = {}
-        for col_key in ("form_design", "protocol", "protocol_analysis_json",
-                        "ctgov_protocol_pdf"):
+        for col_key in (
+            "form_design",
+            "final_xls_forms",           # NEW — Final XLSForm ZIP
+            "protocol",
+            "protocol_analysis_json",
+            "ctgov_protocol_pdf",
+        ):
             v = col_values.get(COL[col_key])
             if not v:
                 continue
@@ -418,7 +427,6 @@ class MondayClient:
         """Set a plain-text column."""
         if col_key not in COL:
             raise ValueError(f"Unknown column key {col_key!r}")
-        # Plain text columns accept the bare string when JSON-encoded
         await self._set_column_value(
             item_id, COL[col_key], json.dumps(text)
         )
@@ -470,8 +478,6 @@ class MondayClient:
         import httpx
 
         dest_path.parent.mkdir(parents=True, exist_ok=True)
-        # monday asset URLs are signed S3 (or similar) and need NO
-        # auth header. Direct GET with redirect-following.
         async with httpx.AsyncClient(timeout=120, follow_redirects=True) as c:
             response = await c.get(url)
         if response.status_code != 200:
@@ -485,14 +491,17 @@ class MondayClient:
         self,
         item: CorpusItem,
         pair_hash: str,
-        column_keys: tuple[str, ...] = ("form_design", "protocol", "protocol_analysis_json"),
+        column_keys: tuple[str, ...] = (
+            "form_design",
+            "final_xls_forms",
+            "protocol",
+            "protocol_analysis_json",
+        ),
     ) -> dict[str, Path]:
         """Download all files for a pair into the corpus cache.
 
         Returns a mapping ``column_key -> local_path`` for files that
-        actually existed and downloaded successfully. Missing files
-        are silently omitted from the returned dict (caller decides
-        what's required).
+        actually existed and downloaded successfully.
         """
         pair_dir = self._files_root / pair_hash
         out: dict[str, Path] = {}
@@ -500,9 +509,6 @@ class MondayClient:
             entries = item.files_by_column.get(col_key) or []
             if not entries:
                 continue
-            # Only download the first file in each column. monday's
-            # file columns can hold multiple, but our convention is
-            # one file per column on this board.
             asset = entries[0]
             asset_id = asset.get("asset_id") or ""
             url = item.asset_urls.get(asset_id)
@@ -512,8 +518,6 @@ class MondayClient:
                     item_id=item.item_id, col=col_key, asset_id=asset_id,
                 )
                 continue
-            # Preserve the original filename when possible so the
-            # downstream parser can use the extension to dispatch.
             filename = asset.get("name") or f"{col_key}.bin"
             dest = pair_dir / filename
             byte_count = await self.download_asset(url, dest)
@@ -541,10 +545,6 @@ class MondayClient:
 
         import httpx
 
-        # multipart/form-data with the GraphQL mutation in `query`,
-        # `null` placeholder in variables, and a `map` linking the
-        # file part. Pattern lifted directly from the pipeline's
-        # monday_client.py — known good.
         mutation_query = (
             "mutation ($file: File!) {"
             f' add_file_to_column(item_id: {item_id}, '
@@ -592,14 +592,7 @@ class MondayClient:
         source_pipeline_item: str | None = None,
         ingest_status_key: str = "awaiting_build_completion",
     ) -> int:
-        """Create a new corpus board row. Returns the new item_id.
-
-        Used by the pipeline's auto-stub flow: when the pipeline starts
-        processing a protocol, it calls this to create a stub row with
-        the protocol attached and Ingest Status set to "Awaiting Build
-        Completion." The human will later upload the approved form
-        design and flip Trigger to "Send to Trainer."
-        """
+        """Create a new corpus board row. Returns the new item_id."""
         column_values: dict[str, Any] = {}
         if sponsor_client:
             column_values[COL["sponsor_client"]] = sponsor_client
