@@ -1851,28 +1851,55 @@ async def run_pipeline(item_id):
                 try:
                     from build_preview import render_build_preview_from_spec
                     loop = asyncio.get_event_loop()
-                    pdf_bytes, html_zip_bytes = await loop.run_in_executor(
+
+                    # Defensive unpack — render returns (pdf_bytes, html_zip_bytes)
+                    # Use indexed access to avoid ValueError if shape is unexpected.
+                    _render_out = await loop.run_in_executor(
                         None,
                         lambda: render_build_preview_from_spec(
                             struct_json, build_zip_holder[0], protocol_num),
                     )
-                    # Upload PDF and interactive ZIP to the same column —
-                    # monday.com supports multiple files per column.
-                    await upload_file(item_id, COL["build_preview"],
-                        f"{protocol_num}_Build_Preview_{version}.pdf",
-                        pdf_bytes)
-                    await upload_file(item_id, COL["build_preview"],
-                        f"{protocol_num}_Form_Simulator_{version}.zip",
-                        html_zip_bytes)
+                    print(f"Chain E: render returned type={type(_render_out).__name__} "
+                          f"len={len(_render_out) if hasattr(_render_out,'__len__') else 'N/A'}",
+                          flush=True)
+
+                    # Accept tuple, list, or plain bytes (legacy fallback)
+                    if isinstance(_render_out, (tuple, list)) and len(_render_out) >= 2:
+                        pdf_bytes      = _render_out[0]
+                        html_zip_bytes = _render_out[1]
+                    elif isinstance(_render_out, (tuple, list)) and len(_render_out) == 1:
+                        pdf_bytes      = _render_out[0]
+                        html_zip_bytes = b""
+                    else:
+                        pdf_bytes      = _render_out if isinstance(_render_out, bytes) else b""
+                        html_zip_bytes = b""
+
+                    # Upload PDF
+                    if pdf_bytes:
+                        await upload_file(item_id, COL["build_preview"],
+                            f"{protocol_num}_Build_Preview_{version}.pdf",
+                            pdf_bytes)
+
+                    # Upload interactive ZIP to the same column if produced
+                    if html_zip_bytes:
+                        await upload_file(item_id, COL["build_preview"],
+                            f"{protocol_num}_Form_Simulator_{version}.zip",
+                            html_zip_bytes)
+
                     await append_log(item_id,
                         f"Build Preview complete — PDF {len(pdf_bytes):,} bytes "
-                        f"+ Simulator ZIP {len(html_zip_bytes):,} bytes uploaded.")
+                        + (f"+ Simulator ZIP {len(html_zip_bytes):,} bytes" if html_zip_bytes else ""))
                     print(f"Chain E complete — PDF {len(pdf_bytes):,}b "
                           f"+ ZIP {len(html_zip_bytes):,}b",
                           flush=True)
                 except Exception as e:
-                    print(f"Chain E error: {e}", flush=True)
-                    traceback.print_exc()
+                    import io as _io
+                    _tb_buf = _io.StringIO()
+                    traceback.print_exc(file=_tb_buf)
+                    _tb_str = _tb_buf.getvalue()
+                    # Print each line separately so Railway doesn't truncate
+                    for _line in _tb_str.splitlines():
+                        print(f"[chain_e_tb] {_line}", flush=True)
                     await append_log(item_id, f"Build Preview error: {e}")
 
             # ── Launch all four chains in parallel ─────────────────────────────
