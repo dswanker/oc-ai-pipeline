@@ -63,7 +63,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=builder /opt/venv /opt/venv
 
 WORKDIR /app
-COPY ../../skills /skillsy
+COPY ../../skills /skills
 COPY . /app
 
 # Create the HuggingFace cache directory on the volume mount path so
