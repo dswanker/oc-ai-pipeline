@@ -436,6 +436,21 @@ class IngestWorker:
                     path=str(json_path), error=str(exc), **log_ctx,
                 )
 
+
+        # Check for previously generated analysis JSON on disk (Railway volume).
+        # This avoids re-running the expensive skill on every re-trigger.
+        if "protocol" in cached:
+            disk_cache = cached["protocol"].parent / "analysis.generated.json"
+            if disk_cache.exists():
+                try:
+                    data = json.loads(disk_cache.read_text(encoding="utf-8"))
+                    if data:
+                        logger.info("ingest.analysis_loaded_from_disk",
+                                    path=str(disk_cache), **log_ctx)
+                        return data
+                except (json.JSONDecodeError, OSError):
+                    pass  # Fall through to re-generate
+
         if "protocol" not in cached:
             raise RuntimeError(
                 "Cannot produce analysis JSON: no protocol PDF cached."
