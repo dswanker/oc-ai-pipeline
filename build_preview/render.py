@@ -116,7 +116,28 @@ def expand_itemsets(form_html: str, choices: dict) -> str:
             )
         return ''.join(rendered)
 
-    return pattern.sub(replacer, form_html)
+    form_html = pattern.sub(replacer, form_html)
+
+    # ── Pattern 2: <option class="itemset-template"> → <option> elements ──
+    # For select_one appearance:minimal, Enketo uses <option class="itemset-template">
+    # inside the <select>.  expand_itemsets's label pass never sees these.
+    option_pat = re.compile(
+        r'<option\s+class="itemset-template"\s+[^>]*'
+        r'data-items-path="instance\(\'([^\']+)\'\)/root/item"[^>]*>.*?</option>',
+        re.DOTALL,
+    )
+
+    def option_replacer(m):
+        list_id = m.group(1)
+        opts = choices.get(list_id, [])
+        if not opts:
+            return m.group(0)   # keep template if list unknown
+        parts = []
+        for opt in opts:
+            parts.append('<option value="' + opt['name'] + '">' + opt['label'] + '</option>')
+        return ''.join(parts)
+
+    return option_pat.sub(option_replacer, form_html)
 
 
 # --------- annotation pass -------------------------------------------------

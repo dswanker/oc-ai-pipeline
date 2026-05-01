@@ -50,12 +50,14 @@ body {
 }
 
 /* ── Branch visibility — overrides Enketo grid.css .disabled rule ────── */
-.or-branch:not(.disabled) {
+/* Only show branches that have NEITHER .disabled NOR .pre-init            */
+.or-branch:not(.disabled):not(.pre-init) {
   display: block !important;
   opacity: 1 !important;
   height: auto !important;
 }
-.or-branch.disabled {
+.or-branch.disabled,
+.or-branch.pre-init {
   display: none !important;
 }
 
@@ -70,22 +72,25 @@ body {
 }
 
 /* ── Constraint / required messages ──────────────────────────────────── */
+/* !important hides all messages regardless of grid.css .active class rules */
 .or-constraint-msg, .or-required-msg {
-  display: none;
+  display: none !important;
+}
+/* JS adds .sim-error to show — two-class specificity + !important beats one-class */
+.or-constraint-msg.sim-error {
+  display: inline-block !important;
   font-size: 11px; font-weight: 500;
-  padding: 3px 10px 3px 8px;
-  margin-top: 4px; border-radius: 0 3px 3px 0;
+  padding: 3px 10px 3px 8px; margin-top: 4px; border-radius: 0 3px 3px 0;
+  color: #b54708; background: #fff7ed; border-left: 3px solid #fb923c;
 }
-.or-constraint-msg {
-  color: #b54708; background: #fff7ed;
-  border-left: 3px solid #fb923c;
+.or-constraint-msg.sim-error::before { content: "⚠ "; }
+.or-required-msg.sim-error {
+  display: inline-block !important;
+  font-size: 11px; font-weight: 500;
+  padding: 3px 10px 3px 8px; margin-top: 4px; border-radius: 0 3px 3px 0;
+  color: #991b1b; background: #fef2f2; border-left: 3px solid #f87171;
 }
-.or-constraint-msg::before { content: "⚠ "; }
-.or-required-msg {
-  color: #991b1b; background: #fef2f2;
-  border-left: 3px solid #f87171;
-}
-.or-required-msg::before { content: "✱ Required"; }
+.or-required-msg.sim-error::before { content: "✱ Required — "; }
 
 /* ── Calculations / preloads (auto-filled) ────────────────────────────── */
 #or-calculated-items, #or-preload-items { display: none !important; }
@@ -309,7 +314,12 @@ function evalXPath(expr, curEl) {
     }
   );
 
-  // ── Replace ${field} with value ───────────────────────────────────────
+  // ── Replace ${field} shorthand and /data/FIELD full paths ─────────────
+  // Enketo HTML uses /data/FIELDNAME in data-relevant/data-constraint;
+  // XLSForm uses ${FIELDNAME}.  Handle both.
+  expr = expr.replace(/\/data\/([A-Za-z_][A-Za-z0-9_]*)/g, function (_, name) {
+    return JSON.stringify(getVal(name));
+  });
   expr = expr.replace(/\$\{([^}]+)\}/g, function (_, name) {
     return JSON.stringify(getVal(name.trim()));
   });
@@ -335,17 +345,18 @@ function evalXPath(expr, curEl) {
     .replace(/\bdiv\b/g, '/')   // XPath div → JS /
     .replace(/\bmod\b/g, '%');  // XPath mod → JS %
 
-  // ── XPath equality: = → ===  (XPath = is NOT JS =) ──────────────────
+  // ── XPath equality: = → ==  (XPath = does type coercion like JS ==) ────
+  // Use == not === so "1" == 1 is true, matching XPath semantics.
   // Protect multi-char operators first so we don't corrupt !=, >=, <=
   expr = expr
     .replace(/!=/g, '\x00NEQ\x00')
     .replace(/>=/g, '\x00GTE\x00')
     .replace(/<=/g, '\x00LTE\x00');
-  // Replace standalone = (not already ===) with ===
-  expr = expr.replace(/([^!<>=])=(?!=)/g, '$1===');
-  // Restore multi-char operators
+  // Replace standalone = with == (type-coercing, faithful to XPath)
+  expr = expr.replace(/([^!<>=])=(?!=)/g, '$1==');
+  // Restore multi-char operators (also type-coercing)
   expr = expr
-    .replace(/\x00NEQ\x00/g, '!==')
+    .replace(/\x00NEQ\x00/g, '!=')
     .replace(/\x00GTE\x00/g, '>=')
     .replace(/\x00LTE\x00/g, '<=');
 
@@ -445,11 +456,12 @@ function checkConstraint(inputEl) {
   var msgEl = q.querySelector('.or-constraint-msg');
   if (!cAttr || !msgEl) return;
   if (!inputEl.value && inputEl.type !== 'checkbox' && inputEl.type !== 'radio') {
-    msgEl.style.display = 'none'; return;
+    msgEl.classList.remove('sim-error'); return;
   }
   var passes = evalXPath(cAttr, inputEl);
   if (passes === null) return;  // can't evaluate — don't flag
-  msgEl.style.display = passes ? 'none' : 'inline-block';
+  // Class-based toggle beats grid.css specificity better than inline style
+  msgEl.classList.toggle('sim-error', !passes);
   q.classList.toggle('field-invalid', !passes);
 }
 
@@ -463,7 +475,7 @@ function checkRequired(inputEl) {
   if (reqAttr === 'true()' || reqAttr === '1' || reqAttr === 'true') {
     var empty = !inputEl.value ||
       ((inputEl.type === 'checkbox' || inputEl.type === 'radio') && !inputEl.checked);
-    msgEl.style.display = empty ? 'inline-block' : 'none';
+    msgEl.classList.toggle('sim-error', empty);
   }
 }
 
@@ -517,6 +529,63 @@ function initEventContext() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// 6b. POPULATE SELECT DROPDOWNS FROM EXPANDED ITEMSET LABELS
+// ═══════════════════════════════════════════════════════════════════════════
+
+function populateSelectsFromLabels() {
+  // For select_one appearance:minimal — Enketo uses a <select> element that
+  // its own JS runtime populates from itemsets.  We don't have that runtime,
+  // so expand_itemsets() produces <label> radio-button elements instead.
+  // This function copies those labels into the <select> as <option> elements.
+  document.querySelectorAll('select').forEach(function (sel) {
+    if (sel.options.length > 1) return;  // already has choices
+    var wrapper = sel.parentElement;
+    if (!wrapper) return;
+
+    var labels = wrapper.querySelectorAll('label:not(.itemset-template)');
+    var added = 0;
+    labels.forEach(function (lbl) {
+      var inp = lbl.querySelector('input[type="radio"], input[type="checkbox"]');
+      var txtEl = lbl.querySelector('.option-label, span[lang]');
+      if (!inp || !inp.value) return;
+      var opt = document.createElement('option');
+      opt.value = inp.value;
+      opt.text = (txtEl ? txtEl.textContent.trim() : inp.value) || inp.value;
+      if (opt.text) { sel.appendChild(opt); added++; }
+    });
+
+    if (added > 0) {
+      // Sync select → radio inputs so getVal() works via DOM
+      sel.addEventListener('change', function () {
+        labels.forEach(function (lbl) {
+          var inp = lbl.querySelector('input[type="radio"]');
+          if (inp) inp.checked = (inp.value === sel.value);
+        });
+        updateVisibility();
+        runCalculations();
+        checkConstraint(sel);
+      });
+    }
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 6c. CHECK CONSTRAINTS / REQUIRED FOR PRE-POPULATED FIELDS AT PAGE LOAD
+// ═══════════════════════════════════════════════════════════════════════════
+
+function checkAllConstraints() {
+  document.querySelectorAll('input, select, textarea').forEach(function (el) {
+    if (el.type === 'radio' || el.type === 'checkbox') {
+      if (!el.checked) return;
+    } else {
+      if (!el.value) return;
+    }
+    checkConstraint(el);
+    checkRequired(el);
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // 7.  WIRE-UP
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -543,9 +612,11 @@ document.querySelectorAll('.or-constraint-msg, .or-required-msg')
 
 // Initialise
 initEventContext();
+populateSelectsFromLabels();   // populate <select> options from expanded labels
 prePopulateFromStore();
 runCalculations();
 updateVisibility();
+checkAllConstraints();         // validate any pre-populated values
 
 // Debug handle
 window.__sim = {
