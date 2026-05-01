@@ -422,39 +422,50 @@ class IngestWorker:
     ) -> dict[str, Any]:
         """Return the protocol-analysis JSON.
 
-        Uses cached JSON if available; otherwise calls the
-        protocol-analysis skill on the protocol PDF.
+        Priority order:
+        1. Disk cache on the Railway volume (analysis.generated.json) — most
+           authoritative, survives redeploys, never corrupted by a bad upload.
+        2. Monday column file — only if > 5 KB (rejects tiny/corrupt uploads).
+        3. Re-generate by calling the protocol-analysis skill.
         """
-        if "protocol_analysis_json" in cached:
-            json_path = cached["protocol_analysis_json"]
-            text = json_path.read_text(encoding="utf-8")
-            try:
-                return json.loads(text)
-            except json.JSONDecodeError as exc:
-                logger.warning(
-                    "ingest.analysis_json_parse_failed",
-                    path=str(json_path), error=str(exc), **log_ctx,
-                )
-
-
-        # Check for previously generated analysis JSON on disk (Railway volume).
-        # This avoids re-running the expensive skill on every re-trigger.
+        # ── 1. Disk cache (always wins if present and valid) ─────────────────
         if "protocol" in cached:
             disk_cache = cached["protocol"].parent / "analysis.generated.json"
             if disk_cache.exists():
                 try:
                     data = json.loads(disk_cache.read_text(encoding="utf-8"))
-                    if data:
+                    if data and len(data) > 5:
                         logger.info("ingest.analysis_loaded_from_disk",
                                     path=str(disk_cache), **log_ctx)
-                        # Upload to monday column if not already there
                         await self._upload_analysis_json(
                             item, data, disk_cache.read_bytes(), log_ctx
                         )
                         return data
                 except (json.JSONDecodeError, OSError):
-                    pass  # Fall through to re-generate
+                    pass
 
+        # ── 2. Monday column file — only if substantial (> 5 KB) ────────────
+        if "protocol_analysis_json" in cached:
+            json_path = cached["protocol_analysis_json"]
+            try:
+                if json_path.stat().st_size > 5_000:
+                    data = json.loads(json_path.read_text(encoding="utf-8"))
+                    if data and len(data) > 5:
+                        logger.info("ingest.analysis_loaded_from_monday",
+                                    path=str(json_path), **log_ctx)
+                        if "protocol" in cached:
+                            disk_cache = cached["protocol"].parent / "analysis.generated.json"
+                            disk_cache.write_text(json.dumps(data, indent=2))
+                        return data
+                else:
+                    logger.warning("ingest.analysis_monday_file_too_small",
+                                   bytes=json_path.stat().st_size,
+                                   path=str(json_path), **log_ctx)
+            except (json.JSONDecodeError, OSError) as exc:
+                logger.warning("ingest.analysis_json_parse_failed",
+                               path=str(json_path), error=str(exc), **log_ctx)
+
+        # ── 3. Re-generate from protocol PDF ─────────────────────────────────
         if "protocol" not in cached:
             raise RuntimeError(
                 "Cannot produce analysis JSON: no protocol PDF cached."
