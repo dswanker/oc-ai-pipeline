@@ -752,6 +752,11 @@ def _build_scorecard_sheet(ws, layer_scores: dict, overall: float,
     # Overall score band
     row += 1
     # Overall score band — split into label (cols 1-3) and value (cols 4-5)
+    # Calculate the formula reference BEFORE writing cells
+    score_start_row = row + 4  # actual data rows start after blank + header
+    score_end_row   = score_start_row + len(layer_scores) - 1
+    overall_cell    = f"=AVERAGE(C{score_start_row}:C{score_end_row})"
+
     ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=3)
     c = ws.cell(row=row, column=1)
     c.value = "OVERALL ACCURACY SCORE"
