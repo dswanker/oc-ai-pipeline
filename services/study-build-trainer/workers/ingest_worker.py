@@ -468,6 +468,21 @@ class IngestWorker:
         cache_path = cached["protocol"].parent / "analysis.generated.json"
         cache_path.write_text(json.dumps(analysis_dict, indent=2))
         logger.info("ingest.analysis_cached", path=str(cache_path), **log_ctx)
+
+        # Upload to the monday protocol_analysis_json column so it's
+        # visible on the corpus row and available for future downloads.
+        try:
+            protocol = (analysis_dict.get("study_meta", {}).get("protocol_number")
+                        or "analysis")
+            await self.monday.upload_file_to_column(
+                item_id, "protocol_analysis_json",
+                f"{protocol}_analysis.json",
+                cache_path.read_bytes(),
+            )
+            logger.info("ingest.analysis_uploaded_to_monday", **log_ctx)
+        except Exception as e:
+            logger.warning("ingest.analysis_upload_failed", error=str(e), **log_ctx)
+
         return analysis_dict
 
     def _generate_predicted_build(
