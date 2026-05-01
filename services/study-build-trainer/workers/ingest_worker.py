@@ -493,14 +493,14 @@ class IngestWorker:
             return
         try:
             protocol = (analysis_dict.get("study_meta", {}).get("protocol_number")
+                        or item.name
                         or "analysis")
             await self.monday.upload_file_to_column(
                 item.item_id, "protocol_analysis_json",
                 f"{protocol}_analysis.json",
                 json_bytes,
             )
-            logger.info("ingest.analysis_uploaded_to_monday",
-                        item_id=item.item_id, **log_ctx)
+            logger.info("ingest.analysis_uploaded_to_monday", **log_ctx)
         except Exception as e:
             logger.warning("ingest.analysis_upload_failed",
                            error=str(e), **log_ctx)

@@ -47,6 +47,21 @@ from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.datavalidation import DataValidation
 
 
+def _safe_val(v) -> str:
+    """
+    Safely convert a worksheet cell value to a plain string.
+    Handles openpyxl MergedCell objects (non-top-left cells of a merged range)
+    which appear when iterating over worksheets with merged cells.
+    """
+    try:
+        from openpyxl.cell.cell import MergedCell
+        if isinstance(v, MergedCell):
+            return ""
+    except ImportError:
+        pass
+    return str(v).strip() if v is not None else ""
+
+
 # ── Brand colours (mirror pricing XLSX palette) ──────────────────────────────
 
 OC_DARK   = "1B3A6B"
@@ -268,8 +283,8 @@ def _parse_xlsform_zip(zip_bytes: bytes) -> dict:
                     ws   = wb["settings"]
                     rows = list(ws.values)
                     if len(rows) >= 2:
-                        hdrs = [str(h).strip() if h else "" for h in rows[0]]
-                        vals = [str(v).strip() if v else "" for v in rows[1]]
+                        hdrs = [_safe_val(h) for h in rows[0]]
+                        vals = [_safe_val(v) for v in rows[1]]
                         settings   = dict(zip(hdrs, vals))
                         form_id    = settings.get("form_id", "")
                         form_title = settings.get("form_title", "")
@@ -736,25 +751,21 @@ def _build_scorecard_sheet(ws, layer_scores: dict, overall: float,
 
     # Overall score band
     row += 1
-    ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=5)
-    # Use formula to average the layer score cells (populated below)
-    # Layer scores go into column C, rows 8-14 (7 layers)
-    score_start_row = row + 4  # actual data rows start here
-    score_end_row   = score_start_row + len(layer_scores) - 1
-    overall_cell    = f"=AVERAGE(C{score_start_row}:C{score_end_row})"
-
+    # Overall score band — split into label (cols 1-3) and value (cols 4-5)
+    ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=3)
     c = ws.cell(row=row, column=1)
-    c.value = f"OVERALL ACCURACY SCORE"
+    c.value = "OVERALL ACCURACY SCORE"
     c.font  = _fn(bold=True, color=WHITE, size=13)
     c.fill  = _fl(OC_TEAL)
     c.alignment = _al(h="left")
 
-    # Put the actual % in column E (wide enough)
-    ws.cell(row=row, column=5).value     = overall_cell
-    ws.cell(row=row, column=5).font      = _fn(bold=True, color=WHITE, size=13)
-    ws.cell(row=row, column=5).fill      = _fl(OC_TEAL)
-    ws.cell(row=row, column=5).alignment = _al(h="right")
-    ws.cell(row=row, column=5).number_format = '0.0"%"'
+    ws.merge_cells(start_row=row, start_column=4, end_row=row, end_column=5)
+    score_cell = ws.cell(row=row, column=4)
+    score_cell.value        = overall_cell
+    score_cell.font         = _fn(bold=True, color=WHITE, size=13)
+    score_cell.fill         = _fl(OC_TEAL)
+    score_cell.alignment    = _al(h="right")
+    score_cell.number_format = '0.0"%"'
     ws.row_dimensions[row].height = 26
     row += 1
 
