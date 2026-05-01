@@ -447,6 +447,10 @@ class IngestWorker:
                     if data:
                         logger.info("ingest.analysis_loaded_from_disk",
                                     path=str(disk_cache), **log_ctx)
+                        # Upload to monday column if not already there
+                        await self._upload_analysis_json(
+                            item, data, disk_cache.read_bytes(), log_ctx
+                        )
                         return data
                 except (json.JSONDecodeError, OSError):
                     pass  # Fall through to re-generate
@@ -468,22 +472,38 @@ class IngestWorker:
         cache_path = cached["protocol"].parent / "analysis.generated.json"
         cache_path.write_text(json.dumps(analysis_dict, indent=2))
         logger.info("ingest.analysis_cached", path=str(cache_path), **log_ctx)
+        await self._upload_analysis_json(
+            item, analysis_dict, cache_path.read_bytes(), log_ctx
+        )
+        return analysis_dict
 
-        # Upload to the monday protocol_analysis_json column so it's
-        # visible on the corpus row and available for future downloads.
+    async def _upload_analysis_json(
+        self,
+        item: CorpusItem,
+        analysis_dict: dict[str, Any],
+        json_bytes: bytes,
+        log_ctx: dict[str, Any],
+    ) -> None:
+        """Upload analysis JSON to the monday protocol_analysis_json column.
+        Non-fatal — logs a warning if it fails.
+        Skips if the column already has a file attached to avoid duplicates.
+        """
+        # Skip if already uploaded
+        if item.files_by_column.get("protocol_analysis_json"):
+            return
         try:
             protocol = (analysis_dict.get("study_meta", {}).get("protocol_number")
                         or "analysis")
             await self.monday.upload_file_to_column(
-                item_id, "protocol_analysis_json",
+                item.item_id, "protocol_analysis_json",
                 f"{protocol}_analysis.json",
-                cache_path.read_bytes(),
+                json_bytes,
             )
-            logger.info("ingest.analysis_uploaded_to_monday", **log_ctx)
+            logger.info("ingest.analysis_uploaded_to_monday",
+                        item_id=item.item_id, **log_ctx)
         except Exception as e:
-            logger.warning("ingest.analysis_upload_failed", error=str(e), **log_ctx)
-
-        return analysis_dict
+            logger.warning("ingest.analysis_upload_failed",
+                           error=str(e), **log_ctx)
 
     def _generate_predicted_build(
         self,
@@ -568,7 +588,10 @@ class IngestWorker:
         import os
         import tempfile
 
-        core_dir = os.path.dirname(os.path.abspath(__file__))
+        # core_dir is the core/ directory — NOT the workers/ directory
+        # where ingest_worker.py lives.
+        workers_dir = os.path.dirname(os.path.abspath(__file__))
+        core_dir    = os.path.join(os.path.dirname(workers_dir), "core")
         if core_dir not in sys.path:
             sys.path.insert(0, core_dir)
         from generate_accuracy_report import generate_accuracy_report
