@@ -218,7 +218,12 @@ class MondayClient:
         self._owned_client = http_client is None
         self.board_id = board_id
         if files_root is None:
-            files_root = Path(__file__).resolve().parent.parent / "corpus" / "files"
+            # Default to the Railway persistent volume so cached files survive
+            # container redeploys. The volume is mounted at /data (same place
+            # HF_HOME lives). Fall back to a local path for unit tests.
+            import os
+            data_root = os.environ.get("CORPUS_FILES_ROOT", "/data/corpus/files")
+            files_root = Path(data_root)
         self._files_root = Path(files_root)
 
     # ── HTTP plumbing ────────────────────────────────────────────
