@@ -364,7 +364,7 @@ function evalXPath(expr, curEl) {
     /* jshint evil: true */
     return Function('"use strict"; return (' + expr + ')')(); // eslint-disable-line
   } catch (e) {
-    return true;  // Safe default: show field on unknown expression
+    return null;  // null = failed to evaluate; callers handle this explicitly
   }
 }
 
@@ -376,7 +376,9 @@ function updateVisibility() {
   document.querySelectorAll('.or-branch').forEach(function (branch) {
     var expr = branch.getAttribute('data-relevant');
     if (!expr) return;
-    branch.style.display = evalXPath(expr, null) ? '' : 'none';
+    var _vis = evalXPath(expr, null);
+    if (_vis === null) return;
+    branch.style.display = _vis ? '' : 'none';
   });
 }
 
@@ -387,13 +389,14 @@ function runCalculations() {
     if (!expr) return;
     try {
       var val = evalXPath(expr, el);
-      if (val === true || val === false) return;
-      var target = el.querySelector('input') || el;
-      if (target.type !== 'radio' && target.type !== 'checkbox') {
-        if (String(target.value) !== String(val)) {
-          target.value = val != null ? String(val) : '';
-          target.classList.add('sim-autofilled');
-        }
+      if (val === null || val === undefined) return;
+      var target = el.querySelector('input, select, textarea') || el;
+      if (target.type === 'radio' || target.type === 'checkbox') return;
+      var strVal = (val === true) ? 'true' : (val === false) ? 'false'
+                 : (val != null ? String(val) : '');
+      if (target.value !== strVal) {
+        target.value = strVal;
+        target.classList.add('sim-autofilled');
       }
     } catch (e) {}
   });
@@ -410,8 +413,9 @@ function checkConstraint(inputEl) {
     msgEl.style.display = 'none'; return;
   }
   var passes = evalXPath(cAttr, inputEl);
-  msgEl.style.display = (passes === true) ? 'none' : 'inline-block';
-  q.classList.toggle('field-invalid', passes !== true);
+  if (passes === null) return;  // can't evaluate — don't flag
+  msgEl.style.display = passes ? 'none' : 'inline-block';
+  q.classList.toggle('field-invalid', !passes);
 }
 
 function checkRequired(inputEl) {

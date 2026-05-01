@@ -580,15 +580,20 @@ def _render_with_study_spec(study_spec: dict, edc_zip_bytes: bytes,
                     choices = parse_choices_from_model(result['model'])
                     raw_form_html = expand_itemsets(result['form'], choices)
 
-                    # Collect raw HTML (before annotation) for interactive ZIP
+                    # Annotate: hoists data-relevant to .or-branch containers
+                    # and reveals calculated-items fieldset (CSS hides it again
+                    # for interactive, but the data-relevant hoist is needed so
+                    # our JS updateVisibility() can find the attribute).
+                    form_html = annotate_form_html(raw_form_html)
+
+                    # Collect annotated HTML for interactive ZIP.
+                    # We use the annotated version so data-relevant is on the
+                    # .or-branch containers where our JS expects it.
+                    # INTERACTIVE_CSS overrides the PDF annotation styles.
                     forms_with_html.append({
                         'fm':       fm,
-                        'raw_html': raw_form_html,
+                        'raw_html': form_html,   # annotated
                     })
-
-                    # Annotate for PDF (forces all branches visible, shows
-                    # constraint text as static annotations)
-                    form_html = annotate_form_html(raw_form_html)
 
                     page_html = (
                         f'<!doctype html><html><head><meta charset="utf-8">'
