@@ -106,6 +106,8 @@ COL: dict[str, str] = {
     "sponsor_client":          "text_mm2tw420",
     # Date columns
     "index_date":              "date_mm2tn53m",
+    "accuracy_score":          "numeric_mm2y10gd",
+    "accuracy_report":         "file_mm2yq3cp",
 }
 
 # Trigger labels. Keys are stable internal names; values are the label
@@ -439,7 +441,13 @@ class MondayClient:
         await self._set_column_value(
             item_id, COL[col_key], json.dumps({"date": date_str})
         )
-
+    async def set_number(self, item_id: int, col_key: str, value: float) -> None:
+        """Set a numbers column."""
+        if col_key not in COL:
+            raise ValueError(f"Unknown column key {col_key!r}")
+        await self._set_column_value(
+            item_id, COL[col_key], json.dumps(value)
+        )
     async def _set_status(self, item_id: int, col_id: str, label: str) -> None:
         await self._set_column_value(
             item_id, col_id, json.dumps({"label": label})

@@ -1,12 +1,16 @@
 """
-POST /webhook/monday — entry point from the monday corpus board.
+POST /webhook/monday — entry point from monday boards.
 
-monday fires this webhook when configured columns change on the
-"Study Build Trainer — Corpus" board (board ID in settings). We
-expect notifications for two columns:
+Handles webhooks from two boards:
 
-  - Trigger              (color_mm2tw612) — human kicks off ingest
-  - Human Decision       (color_mm2th07z) — human responds to a question
+  1. Study Build Trainer — Corpus (board 18410424473)
+     Columns we watch:
+       - Trigger         (color_mm2tw612) — human kicks off ingest
+       - Human Decision  (color_mm2th07z) — human responds to a question
+
+  2. Convention Rulebook (board 18411236453)
+     Columns we watch:
+       - Submit Trigger  (color_mm2y41kb) — human submits appendix for review
 
 Per the concurrency lessons in TODO/TODO-concurrency-queueing.md, this
 handler MUST return immediately (HTTP 202) and dispatch real work to a
@@ -14,6 +18,8 @@ background task. Long-running work in a sync webhook handler will time
 out monday's webhook delivery (~30s).
 """
 from __future__ import annotations
+
+import asyncio
 
 import structlog
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request
@@ -45,6 +51,20 @@ class MondayWebhookEvent(BaseModel):
 class MondayWebhookPayload(BaseModel):
     event: MondayWebhookEvent | None = None
     challenge: str | None = None  # monday's webhook handshake
+
+
+# ── Column ID constants ───────────────────────────────────────────────────────
+
+# Corpus board columns
+CORPUS_TRIGGER_COL       = "color_mm2tw612"
+CORPUS_HUMAN_DECISION_COL = "color_mm2th07z"
+
+# Convention Rulebook board columns
+CONVENTION_TRIGGER_COL   = "color_mm2y41kb"
+CONVENTION_SUBMIT_LABEL  = "Submit for Review"
+
+# Convention Rulebook board ID
+CONVENTION_BOARD_ID      = 18411236453
 
 
 @router.post("/monday", status_code=202)
@@ -81,19 +101,34 @@ async def monday_webhook(
         column_id=event.columnId,
     )
 
-    # 2. Determine intent. Two columns trigger trainer action:
-    #    - Trigger column            → start ingest
-    #    - Human Decision column     → resume paused ingest
-    #
-    # Column IDs come from the board (see top of file).
-    TRIGGER_COL = "color_mm2tw612"
-    HUMAN_DECISION_COL = "color_mm2th07z"
+    # ── Convention Rulebook board ─────────────────────────────────────────────
+    # Check this first so it doesn't fall through to the corpus logic.
+    if event.columnId == CONVENTION_TRIGGER_COL:
+        # Only fire when the label changes to "Submit for Review"
+        new_label = ""
+        if isinstance(event.value, dict):
+            new_label = (event.value.get("label") or {}).get("text", "")
 
-    if event.columnId == TRIGGER_COL:
+        if new_label == CONVENTION_SUBMIT_LABEL and event.pulseId is not None:
+            logger.info(
+                "convention.webhook.received",
+                item_id=event.pulseId,
+                label=new_label,
+            )
+            from workers.convention_worker import process_convention_job
+            asyncio.create_task(process_convention_job(int(event.pulseId)))
+            return {"status": "queued", "board": "convention_rulebook"}
+
+        # Label changed to something else (e.g. "Awaiting Human") — ignore
+        logger.info("convention.webhook.ignored", label=new_label)
+        return {"status": "ignored"}
+
+    # ── Corpus board ──────────────────────────────────────────────────────────
+    if event.columnId == CORPUS_TRIGGER_COL:
         # Verify it actually changed to "Send to Trainer" (label id 0).
         # TODO: parse event.value to confirm new label is "Send to Trainer".
         kind = IngestJobKind.START
-    elif event.columnId == HUMAN_DECISION_COL:
+    elif event.columnId == CORPUS_HUMAN_DECISION_COL:
         kind = IngestJobKind.HUMAN_RESPONSE
     else:
         # Not a column we care about — accept but ignore.

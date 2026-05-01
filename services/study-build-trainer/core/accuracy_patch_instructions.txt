@@ -1,0 +1,238 @@
+"""
+PATCH INSTRUCTIONS
+==================
+
+Two files need changes:
+
+1. monday_client.py — add accuracy column IDs to COL dict and add helper methods
+2. ingest_worker.py — wire accuracy scorer into the comparing_builds phase
+
+─────────────────────────────────────────────────────────────────────────────
+CHANGE 1: monday_client.py — add to COL dict (after "index_date" line)
+─────────────────────────────────────────────────────────────────────────────
+
+Find this block in COL:
+    # Date columns
+    "index_date":              "date_mm2tn53m",
+}
+
+Replace with:
+    # Date columns
+    "index_date":              "date_mm2tn53m",
+    # Accuracy columns (added for Phase 2 scorer)
+    "accuracy_score":          "numeric_mm2y10gd",
+    "accuracy_report":         "file_mm2yq3cp",
+}
+
+─────────────────────────────────────────────────────────────────────────────
+CHANGE 2: monday_client.py — add set_number method after set_date method
+─────────────────────────────────────────────────────────────────────────────
+
+Find this method:
+    async def set_date(self, item_id: int, col_key: str, when: date) -> None:
+
+Add this NEW method directly after set_date's closing line:
+
+    async def set_number(self, item_id: int, col_key: str, value: float) -> None:
+        \"\"\"Set a numbers column.\"\"\"
+        if col_key not in COL:
+            raise ValueError(f"Unknown column key {col_key!r}")
+        await self._set_column_value(
+            item_id, COL[col_key], json.dumps(value)
+        )
+
+─────────────────────────────────────────────────────────────────────────────
+CHANGE 3: ingest_worker.py — fill in the comparing_builds TODO stub
+─────────────────────────────────────────────────────────────────────────────
+
+Find this block (steps 8-9 in _run):
+
+        # 8. Status → generating_predicted_build
+        await self.monday.set_ingest_status(item_id, "generating_predicted_build")
+        logger.info("ingest.generating_predicted_build", **log_ctx)
+        # TODO(phase2): predicted_zip_path = await self._generate_predicted_build(
+        #     cached, item_id, log_ctx
+        # )
+
+        # 9. Status → comparing_builds
+        await self.monday.set_ingest_status(item_id, "comparing_builds")
+        logger.info("ingest.comparing_builds", **log_ctx)
+        # TODO(phase2): await self._run_accuracy_comparison(
+        #     actual_xml=cached["form_design"],
+        #     actual_xls=cached["final_xls_forms"],
+        #     predicted_zip=predicted_zip_path,
+        #     item_id=item_id,
+        # )
+
+Replace with:
+
+        # 8. Status → generating_predicted_build
+        #    Run the same edc-builder skill the pipeline uses to produce
+        #    a predicted EDC ZIP from the protocol PDF + cached analysis JSON.
+        await self.monday.set_ingest_status(item_id, "generating_predicted_build")
+        logger.info("ingest.generating_predicted_build", **log_ctx)
+        predicted_edc_zip: bytes | None = None
+        try:
+            predicted_edc_zip = await self._generate_predicted_build(
+                analysis_dict, pair_hash, log_ctx
+            )
+        except Exception as e:
+            logger.warning("ingest.predicted_build_failed",
+                           error=str(e), **log_ctx)
+            # Non-fatal: we can still index; just can't score.
+
+        # 9. Status → comparing_builds
+        await self.monday.set_ingest_status(item_id, "comparing_builds")
+        logger.info("ingest.comparing_builds", **log_ctx)
+        if predicted_edc_zip and "form_design" in cached and "final_xls_forms" in cached:
+            try:
+                accuracy = await self._run_accuracy_comparison(
+                    actual_xml=cached["form_design"],
+                    actual_xls=cached["final_xls_forms"],
+                    analysis_dict=analysis_dict,
+                    predicted_edc_zip=predicted_edc_zip,
+                    item_id=item_id,
+                    pair_hash=pair_hash,
+                    log_ctx=log_ctx,
+                )
+                logger.info("ingest.accuracy_scored",
+                            overall_pct=accuracy["overall_pct"],
+                            diff_count=accuracy["diff_count"], **log_ctx)
+            except Exception as e:
+                logger.warning("ingest.accuracy_failed",
+                               error=str(e), **log_ctx)
+                # Non-fatal — continue to indexing.
+
+─────────────────────────────────────────────────────────────────────────────
+CHANGE 4: ingest_worker.py — add new methods to IngestWorker class
+─────────────────────────────────────────────────────────────────────────────
+
+Add these two methods to IngestWorker, directly before _write_back_metadata:
+
+    async def _generate_predicted_build(
+        self,
+        analysis_dict: dict[str, Any],
+        pair_hash: str,
+        log_ctx: dict[str, Any],
+    ) -> bytes:
+        \"\"\"
+        Generate a predicted EDC build ZIP from the cached analysis JSON.
+        Uses the same edc-builder local runner the pipeline uses.
+        Returns zip bytes.
+        \"\"\"
+        import sys, os, tempfile
+
+        skills_dir = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "..", "..", "skills"
+        )
+        edc_scripts = os.path.join(skills_dir, "edc-builder", "scripts")
+        if edc_scripts not in sys.path:
+            sys.path.insert(0, edc_scripts)
+
+        from build_xlsforms  import build_all_xlsforms, write_timepoint_csv, write_labranges_csv
+        from build_checklist import build_checklist_pdf, build_checklist_xlsx
+        from build_package   import build_package
+
+        protocol = (analysis_dict.get("study_meta", {}).get("protocol_number")
+                    or "STUDY")
+        build_log = {
+            "forms_built": [], "forms_skipped": [], "build_errors": [],
+            "build_warnings": [], "placeholder_applied": [], "oid_placeholders": [],
+        }
+
+        loop = asyncio.get_event_loop()
+
+        def _build():
+            with tempfile.TemporaryDirectory() as tmp:
+                forms_dir     = os.path.join(tmp, "forms")
+                csv_dir       = os.path.join(tmp, "csv")
+                checklist_dir = os.path.join(tmp, "checklist")
+                package_dir   = os.path.join(tmp, "package")
+                for d in (forms_dir, csv_dir, checklist_dir, package_dir):
+                    os.makedirs(d, exist_ok=True)
+
+                build_all_xlsforms(analysis_dict, forms_dir, build_log)
+                write_timepoint_csv(
+                    analysis_dict.get("timepoint_csv", {}),
+                    os.path.join(csv_dir, f"{protocol}_tpt.csv"), build_log
+                )
+                write_labranges_csv(
+                    analysis_dict.get("labranges_csv", {}),
+                    os.path.join(csv_dir, f"{protocol}_labranges.csv"), build_log
+                )
+                build_checklist_pdf(
+                    analysis_dict, build_log,
+                    os.path.join(checklist_dir, f"{protocol}_Build_Checklist.pdf")
+                )
+                build_checklist_xlsx(
+                    analysis_dict, build_log,
+                    os.path.join(checklist_dir, f"{protocol}_Build_Checklist.xlsx")
+                )
+                zip_path = build_package(
+                    analysis_dict, build_log,
+                    forms_dir, csv_dir, checklist_dir, package_dir
+                )
+                return open(zip_path, "rb").read()
+
+        zip_bytes = await loop.run_in_executor(None, _build)
+        logger.info("ingest.predicted_build_generated",
+                    bytes=len(zip_bytes), **log_ctx)
+        return zip_bytes
+
+    async def _run_accuracy_comparison(
+        self,
+        actual_xml: Path,
+        actual_xls: Path,
+        analysis_dict: dict[str, Any],
+        predicted_edc_zip: bytes,
+        item_id: int,
+        pair_hash: str,
+        log_ctx: dict[str, Any],
+    ) -> dict[str, Any]:
+        \"\"\"
+        Run the accuracy scorer and write results back to monday.
+
+        Returns the scorer result dict with overall_pct and diff_count.
+        \"\"\"
+        import sys, os, tempfile
+
+        # Import scorer (lives alongside this file)
+        scorer_dir = os.path.dirname(os.path.abspath(__file__))
+        if scorer_dir not in sys.path:
+            sys.path.insert(0, scorer_dir)
+        from generate_accuracy_report import generate_accuracy_report
+
+        loop = asyncio.get_event_loop()
+
+        def _score():
+            with tempfile.TemporaryDirectory() as tmp:
+                out_path = os.path.join(tmp, "accuracy_report.xlsx")
+                result   = generate_accuracy_report(
+                    actual_xml_bytes        = actual_xml.read_bytes(),
+                    actual_xls_bytes        = actual_xls.read_bytes(),
+                    predicted_spec_json     = analysis_dict,
+                    predicted_edc_zip_bytes = predicted_edc_zip,
+                    output_path             = out_path,
+                )
+                xlsx_bytes = open(out_path, "rb").read()
+                return result, xlsx_bytes
+
+        result, xlsx_bytes = await loop.run_in_executor(None, _score)
+
+        # Write score to Accuracy Score column
+        await self.monday.set_number(
+            item_id, "accuracy_score", result["overall_pct"]
+        )
+
+        # Upload report XLSX to Accuracy Report column
+        protocol = (analysis_dict.get("study_meta", {}).get("protocol_number")
+                    or pair_hash)
+        await self.monday.upload_file_to_column(
+            item_id, "accuracy_report",
+            f"{protocol}_Accuracy_Report.xlsx", xlsx_bytes,
+        )
+        logger.info("ingest.accuracy_report_uploaded",
+                    item_id=item_id, bytes=len(xlsx_bytes), **log_ctx)
+
+        return result
+"""

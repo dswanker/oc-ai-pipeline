@@ -24,10 +24,10 @@ Happy path (both ODM XML and XLSForm ZIP present):
     5. Parse form_design (ODM XML) → ParsedForm.
     6. Extract fingerprint from form.
     7. Get protocol-analysis JSON (cached or fresh from skill).
-    8. Status → generating_predicted_build.
-       [Future: generate predicted EDC build from protocol here]
-    9. Status → comparing_builds.
-       [Future: run accuracy scorer against actual files here]
+    8. Status → generating_predicted_build. Run edc-builder skill to
+       produce a predicted EDC ZIP for comparison.
+    9. Status → comparing_builds. Run accuracy scorer and write score
+       + XLSX report to the accuracy columns on the monday row.
    10. Embed analysis JSON.
    11. Index in the vector store under pair_hash = "row_<item_id>".
    12. Write fingerprint summary, indexed_pair_hash, index_date, and
@@ -41,6 +41,7 @@ providers; tests inject fakes.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
@@ -249,25 +250,53 @@ class IngestWorker:
         analysis_dict = await self._get_analysis_json(cached, item, log_ctx)
 
         # 8. Status → generating_predicted_build
-        #    [Phase 2: run edc-builder skill on protocol PDF here to
-        #    produce a predicted EDC ZIP for comparison]
+        #    Run the edc-builder skill (same code the pipeline uses) to
+        #    produce a predicted EDC ZIP from the cached analysis JSON.
         await self.monday.set_ingest_status(item_id, "generating_predicted_build")
         logger.info("ingest.generating_predicted_build", **log_ctx)
-        # TODO(phase2): predicted_zip_path = await self._generate_predicted_build(
-        #     cached, item_id, log_ctx
-        # )
+        predicted_edc_zip: bytes | None = None
+        try:
+            loop = asyncio.get_event_loop()
+            predicted_edc_zip = await loop.run_in_executor(
+                None, lambda: self._generate_predicted_build(analysis_dict, log_ctx)
+            )
+        except Exception as e:
+            logger.warning("ingest.predicted_build_failed", error=str(e), **log_ctx)
 
         # 9. Status → comparing_builds
-        #    [Phase 2: run accuracy scorer here and write score + PDF
-        #    to the accuracy columns on the monday row]
+        #    Run accuracy scorer and write score + XLSX to monday.
         await self.monday.set_ingest_status(item_id, "comparing_builds")
         logger.info("ingest.comparing_builds", **log_ctx)
-        # TODO(phase2): await self._run_accuracy_comparison(
-        #     actual_xml=cached["form_design"],
-        #     actual_xls=cached["final_xls_forms"],
-        #     predicted_zip=predicted_zip_path,
-        #     item_id=item_id,
-        # )
+        if (predicted_edc_zip
+                and "form_design" in cached
+                and "final_xls_forms" in cached):
+            try:
+                loop = asyncio.get_event_loop()
+                accuracy = await loop.run_in_executor(
+                    None,
+                    lambda: self._score_accuracy(
+                        cached["form_design"],
+                        cached["final_xls_forms"],
+                        analysis_dict,
+                        predicted_edc_zip,
+                        pair_hash,
+                    ),
+                )
+                await self.monday.set_number(
+                    item_id, "accuracy_score", accuracy["overall_pct"]
+                )
+                protocol = (analysis_dict.get("study_meta", {})
+                            .get("protocol_number", pair_hash))
+                await self.monday.upload_file_to_column(
+                    item_id, "accuracy_report",
+                    f"{protocol}_Accuracy_Report.xlsx",
+                    accuracy["xlsx_bytes"],
+                )
+                logger.info("ingest.accuracy_scored",
+                            overall_pct=accuracy["overall_pct"],
+                            diff_count=accuracy["diff_count"], **log_ctx)
+            except Exception as e:
+                logger.warning("ingest.accuracy_failed", error=str(e), **log_ctx)
 
         # 10. Embed
         query_vec = await self.embedder.embed_protocol_analysis(analysis_dict)
@@ -305,16 +334,8 @@ class IngestWorker:
         Gate on required files before doing any work.
 
         For full ingest, BOTH files are required:
-          * form_design   — ODM XML (actual build, structural layers)
+          * form_design     — ODM XML (actual build, structural layers)
           * final_xls_forms — XLSForm ZIP (actual build, form layers)
-
-        Special cases that short-circuit before the file check:
-          * No form_design AND no final_xls_forms, but protocol present
-            → auto-stub from pipeline; wait for human to upload both.
-          * No protocol and no analysis JSON → curator needs to supply.
-
-        If only ONE of the two required files is missing, we set a
-        descriptive status so the human knows exactly what to add.
         """
         has_xml      = bool(item.files_by_column.get("form_design"))
         has_xls      = bool(item.files_by_column.get("final_xls_forms"))
@@ -336,8 +357,7 @@ class IngestWorker:
                 message="No protocol or protocol-analysis JSON attached.",
             )
 
-        # Both files missing (but protocol is present — e.g. human
-        # row created manually without form files).
+        # Both files missing (but protocol is present).
         if not has_xml and not has_xls:
             raise _MissingFiles(
                 status_key="missing_both_files",
@@ -370,7 +390,7 @@ class IngestWorker:
                 ),
             )
 
-        # Both files present — all good, fall through to ingest.
+        # Both files present — fall through to ingest.
 
     async def _parse_form(self, form_path: Path) -> ParsedForm:
         """Pick a parser based on filename and run it."""
@@ -434,6 +454,111 @@ class IngestWorker:
         cache_path.write_text(json.dumps(analysis_dict, indent=2))
         logger.info("ingest.analysis_cached", path=str(cache_path), **log_ctx)
         return analysis_dict
+
+    def _generate_predicted_build(
+        self,
+        analysis_dict: dict[str, Any],
+        log_ctx: dict[str, Any],
+    ) -> bytes:
+        """
+        Generate a predicted EDC build ZIP from the cached analysis JSON.
+        Uses the edc-builder scripts directly (same as pipeline.run_edc_build).
+        Returns zip bytes. Synchronous — call via run_in_executor.
+        """
+        import sys
+        import os
+        import tempfile
+
+        skills_dir = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "..", "..", "skills"
+        )
+        edc_scripts = os.path.join(skills_dir, "edc-builder", "scripts")
+        if edc_scripts not in sys.path:
+            sys.path.insert(0, edc_scripts)
+
+        from build_xlsforms  import build_all_xlsforms, write_timepoint_csv, write_labranges_csv
+        from build_checklist import build_checklist_pdf, build_checklist_xlsx
+        from build_package   import build_package
+
+        protocol = (analysis_dict.get("study_meta", {}).get("protocol_number")
+                    or "STUDY")
+        build_log = {
+            "forms_built": [], "forms_skipped": [], "build_errors": [],
+            "build_warnings": [], "placeholder_applied": [], "oid_placeholders": [],
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            forms_dir     = os.path.join(tmp, "forms")
+            csv_dir       = os.path.join(tmp, "csv")
+            checklist_dir = os.path.join(tmp, "checklist")
+            package_dir   = os.path.join(tmp, "package")
+            for d in (forms_dir, csv_dir, checklist_dir, package_dir):
+                os.makedirs(d, exist_ok=True)
+
+            build_all_xlsforms(analysis_dict, forms_dir, build_log)
+            write_timepoint_csv(
+                analysis_dict.get("timepoint_csv", {}),
+                os.path.join(csv_dir, f"{protocol}_tpt.csv"), build_log,
+            )
+            write_labranges_csv(
+                analysis_dict.get("labranges_csv", {}),
+                os.path.join(csv_dir, f"{protocol}_labranges.csv"), build_log,
+            )
+            build_checklist_pdf(
+                analysis_dict, build_log,
+                os.path.join(checklist_dir, f"{protocol}_Build_Checklist.pdf"),
+            )
+            build_checklist_xlsx(
+                analysis_dict, build_log,
+                os.path.join(checklist_dir, f"{protocol}_Build_Checklist.xlsx"),
+            )
+            zip_path  = build_package(
+                analysis_dict, build_log,
+                forms_dir, csv_dir, checklist_dir, package_dir,
+            )
+            zip_bytes = open(zip_path, "rb").read()
+
+        logger.info("ingest.predicted_build_generated",
+                    bytes=len(zip_bytes), **log_ctx)
+        return zip_bytes
+
+    def _score_accuracy(
+        self,
+        actual_xml: Path,
+        actual_xls: Path,
+        analysis_dict: dict[str, Any],
+        predicted_edc_zip: bytes,
+        pair_hash: str,
+    ) -> dict[str, Any]:
+        """
+        Run the accuracy scorer and return results + XLSX bytes.
+        Synchronous — call via run_in_executor.
+        """
+        import sys
+        import os
+        import tempfile
+
+        core_dir = os.path.dirname(os.path.abspath(__file__))
+        if core_dir not in sys.path:
+            sys.path.insert(0, core_dir)
+        from generate_accuracy_report import generate_accuracy_report
+
+        protocol = (analysis_dict.get("study_meta", {}).get("protocol_number")
+                    or pair_hash)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out_path = os.path.join(tmp, "accuracy_report.xlsx")
+            result   = generate_accuracy_report(
+                actual_xml_bytes        = actual_xml.read_bytes(),
+                actual_xls_bytes        = actual_xls.read_bytes(),
+                predicted_spec_json     = analysis_dict,
+                predicted_edc_zip_bytes = predicted_edc_zip,
+                output_path             = out_path,
+                study_name              = protocol,
+            )
+            result["xlsx_bytes"] = open(out_path, "rb").read()
+
+        return result
 
     async def _write_back_metadata(
         self,
@@ -508,12 +633,8 @@ _DECISION_KEYS_AVAILABLE = frozenset({
 
 @dataclass
 class _MissingFiles(Exception):
-    """One or both required files absent when trigger fired.
-
-    This is not a crash — it's a validation gate. The human needs to
-    upload the missing file(s) and re-trigger.
-    """
-    status_key: str   # one of: missing_odm_xml, missing_xls_forms, missing_both_files
+    """One or both required files absent when trigger fired."""
+    status_key: str
     message: str
 
     def __str__(self) -> str:
