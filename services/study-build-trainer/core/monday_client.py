@@ -438,7 +438,7 @@ class MondayClient:
         )
 
     async def _clear_status(self, item_id: int, col_id: str) -> None:
-        await self._set_column_value(item_id, col_id, json.dumps(None))
+        await self._set_column_value(item_id, col_id, json.dumps({}))
 
     async def _set_column_value(
         self,
