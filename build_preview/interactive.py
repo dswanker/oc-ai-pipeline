@@ -49,6 +49,16 @@ body {
   box-shadow: 0 1px 4px rgba(0,0,0,0.12);
 }
 
+/* ── Branch visibility — overrides Enketo grid.css .disabled rule ────── */
+.or-branch:not(.disabled) {
+  display: block !important;
+  opacity: 1 !important;
+  height: auto !important;
+}
+.or-branch.disabled {
+  display: none !important;
+}
+
 /* ── Relevance chips ──────────────────────────────────────────────────── */
 .or-branch[data-relevant]:not([data-relevant=""])::before {
   content: "Show if: " attr(data-relevant);
@@ -325,6 +335,20 @@ function evalXPath(expr, curEl) {
     .replace(/\bdiv\b/g, '/')   // XPath div → JS /
     .replace(/\bmod\b/g, '%');  // XPath mod → JS %
 
+  // ── XPath equality: = → ===  (XPath = is NOT JS =) ──────────────────
+  // Protect multi-char operators first so we don't corrupt !=, >=, <=
+  expr = expr
+    .replace(/!=/g, '\x00NEQ\x00')
+    .replace(/>=/g, '\x00GTE\x00')
+    .replace(/<=/g, '\x00LTE\x00');
+  // Replace standalone = (not already ===) with ===
+  expr = expr.replace(/([^!<>=])=(?!=)/g, '$1===');
+  // Restore multi-char operators
+  expr = expr
+    .replace(/\x00NEQ\x00/g, '!==')
+    .replace(/\x00GTE\x00/g, '>=')
+    .replace(/\x00LTE\x00/g, '<=');
+
   // ── XPath functions → JS ─────────────────────────────────────────────
   // selected(expr, 'val')
   expr = expr.replace(
@@ -377,8 +401,19 @@ function updateVisibility() {
     var expr = branch.getAttribute('data-relevant');
     if (!expr) return;
     var _vis = evalXPath(expr, null);
-    if (_vis === null) return;
-    branch.style.display = _vis ? '' : 'none';
+    if (_vis === null) return;   // failed to evaluate — keep current state
+
+    if (_vis) {
+      // Show: remove Enketo's disabled/pre-init classes.
+      // Enketo grid.css uses .disabled { display:none !important } so we
+      // MUST remove the class — setting style.display alone is not enough.
+      branch.classList.remove('disabled', 'pre-init');
+      branch.style.display = '';
+    } else {
+      // Hide: add disabled class so grid.css hides it
+      branch.classList.add('disabled');
+      branch.style.display = 'none';
+    }
   });
 }
 
