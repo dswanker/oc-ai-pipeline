@@ -428,10 +428,10 @@ class IngestWorker:
         2. Monday column file — only if > 5 KB (rejects tiny/corrupt uploads).
         3. Re-generate by calling the protocol-analysis skill.
         """
-        # ── 1. Disk cache (always wins if present and valid) ─────────────────
+        # ── 1. Disk cache (always wins if present, valid, and substantial) ───
         if "protocol" in cached:
             disk_cache = cached["protocol"].parent / "analysis.generated.json"
-            if disk_cache.exists():
+            if disk_cache.exists() and disk_cache.stat().st_size > 5_000:
                 try:
                     data = json.loads(disk_cache.read_text(encoding="utf-8"))
                     if data and len(data) > 5:
@@ -725,47 +725,95 @@ class _AwaitingBuildCompletion(Exception):
 
 
 def _extract_json_from_text(text: str) -> dict[str, Any] | None:
-    """Pull the first JSON object out of a free-text response."""
+    """
+    Pull the analysis JSON from a free-text Claude response.
+
+    Handles these response shapes:
+    - Bare JSON object:  { "study_meta": ... }
+    - Bare JSON array:   [ { "form_id": ... }, ... ]  → wraps in {"forms": [...]}
+    - Fenced block:      ```json\n{...}\n```
+    - Multiple objects:  {...}\n{...}\n  → collects all, merges into one dict
+    """
     import re
 
     s = text.strip()
 
-    if s.startswith("{"):
-        try:
-            return json.loads(s)
-        except json.JSONDecodeError:
-            pass
+    # ── 1. Try the whole string as valid JSON (object or array) ──────────────
+    try:
+        data = json.loads(s)
+        if isinstance(data, list):
+            return {"forms": data}
+        if isinstance(data, dict) and len(data) > 1:
+            return data
+    except json.JSONDecodeError:
+        pass
 
+    # ── 2. Fenced ```json ... ``` block ─────────────────────────────────────
     m = re.search(r"```json\s*(.+?)```", s, re.DOTALL)
     if m:
         try:
-            return json.loads(m.group(1).strip())
+            data = json.loads(m.group(1).strip())
+            if isinstance(data, list):
+                return {"forms": data}
+            if isinstance(data, dict):
+                return data
         except json.JSONDecodeError:
             pass
 
-    m = re.search(r"```\s*(\{.+?\})\s*```", s, re.DOTALL)
+    # ── 3. Fenced ``` ... ``` block (no language tag) ────────────────────────
+    m = re.search(r"```\s*(\{.+?}|\[.+?])\s*```", s, re.DOTALL)
     if m:
         try:
-            return json.loads(m.group(1).strip())
+            data = json.loads(m.group(1).strip())
+            if isinstance(data, list):
+                return {"forms": data}
+            if isinstance(data, dict):
+                return data
         except json.JSONDecodeError:
             pass
 
+    # ── 4. Walk the string collecting ALL top-level JSON objects/arrays ──────
+    # Merge everything found into one dict. This handles responses where Claude
+    # emits one JSON block per form or one block per section.
+    collected: dict[str, Any] = {}
     depth = 0
     start = -1
+    bracket_depth = 0
+
     for i, ch in enumerate(s):
-        if ch == "{":
-            if depth == 0:
+        if ch in ("{", "["):
+            if depth == 0 and bracket_depth == 0:
                 start = i
-            depth += 1
-        elif ch == "}":
-            depth -= 1
-            if depth == 0 and start >= 0:
+            if ch == "{":
+                depth += 1
+            else:
+                bracket_depth += 1
+        elif ch in ("}", "]"):
+            if ch == "}":
+                depth -= 1
+            else:
+                bracket_depth -= 1
+            if depth == 0 and bracket_depth == 0 and start >= 0:
                 snippet = s[start:i + 1]
                 try:
-                    return json.loads(snippet)
+                    data = json.loads(snippet)
+                    if isinstance(data, list):
+                        collected.setdefault("forms", []).extend(data)
+                    elif isinstance(data, dict):
+                        # Single-key dicts with form-level keys get collected
+                        # into a forms list; multi-key dicts are merged at top level
+                        if len(data) <= 6 and "form_id" in data:
+                            collected.setdefault("forms", []).append(data)
+                        else:
+                            collected.update(data)
                 except json.JSONDecodeError:
                     pass
                 start = -1
+
+    if collected and len(collected) > 1:
+        return collected
+    if collected:
+        return collected
 
     return None
 
