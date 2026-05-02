@@ -440,7 +440,7 @@ def score_study(actual_odm: dict, predicted: dict) -> tuple[float, list[DiffRow]
         diffs.append(DiffRow("Study", "Study Name",
                              predicted["study_name"], actual_odm["study_name"]))
 
-    return _score(matched, total), diffs
+    return _score(matched, total), matched, total, diffs
 
 
 def score_events(actual_odm: dict, predicted: dict) -> tuple[float, list[DiffRow]]:
@@ -464,7 +464,7 @@ def score_events(actual_odm: dict, predicted: dict) -> tuple[float, list[DiffRow
         diffs.append(DiffRow("Events", f"Extra event: {ev}",
                              ev, "— not in actual —"))
 
-    return _score(matched, total), diffs
+    return _score(matched, total), matched, total, diffs
 
 
 def score_form_placement(actual_odm: dict, predicted: dict) -> tuple[float, list[DiffRow]]:
@@ -502,7 +502,7 @@ def score_form_placement(actual_odm: dict, predicted: dict) -> tuple[float, list
             "— not in actual —",
         ))
 
-    return _score(matched, total), diffs
+    return _score(matched, total), matched, total, diffs
 
 
 def score_forms(actual_xls: dict, predicted_xls: dict) -> tuple[float, list[DiffRow]]:
@@ -532,7 +532,7 @@ def score_forms(actual_xls: dict, predicted_xls: dict) -> tuple[float, list[Diff
         diffs.append(DiffRow("Forms", f"Extra form: {fid} ({p_title})",
                              fid, "— not in actual —"))
 
-    return _score(matched, total), diffs
+    return _score(matched, total), matched, total, diffs
 
 
 def score_items(actual_xls: dict, predicted_xls: dict) -> tuple[float, list[DiffRow]]:
@@ -587,7 +587,7 @@ def score_items(actual_xls: dict, predicted_xls: dict) -> tuple[float, list[Diff
                 "— not in actual —",
             ))
 
-    return _score(matched, total), diffs
+    return _score(matched, total), matched, total, diffs
 
 
 def score_choices(actual_xls: dict, predicted_xls: dict) -> tuple[float, list[DiffRow]]:
@@ -647,7 +647,7 @@ def score_choices(actual_xls: dict, predicted_xls: dict) -> tuple[float, list[Di
                 f"{val}: {p_vals[val]}", "— not in actual —",
             ))
 
-    return _score(matched, total), diffs
+    return _score(matched, total), matched, total, diffs
 
 
 def score_logic(actual_xls: dict, predicted_xls: dict) -> tuple[float, list[DiffRow]]:
@@ -713,7 +713,7 @@ def score_logic(actual_xls: dict, predicted_xls: dict) -> tuple[float, list[Diff
                     "AI added logic not in actual build",
                 ))
 
-    return _score(matched, total), diffs
+    return _score(matched, total), matched, total, diffs
 
 
 # ── XLSX builder ──────────────────────────────────────────────────────────────
@@ -1043,54 +1043,29 @@ def generate_accuracy_report(
     all_diffs: list[DiffRow] = []
 
     def _run(fn, *args):
-        score, diffs = fn(*args)
+        result = fn(*args)
+        score, matched, total, diffs = result
         all_diffs.extend(diffs)
-        return score, diffs
+        return score, matched, total
 
-    study_score, _  = _run(score_study, actual_odm, predicted)
-    event_score, _  = _run(score_events, actual_odm, predicted)
-    place_score, _  = _run(score_form_placement, actual_odm, predicted)
-    form_score,  _  = _run(score_forms, actual_xls, predicted_xls)
-    item_score,  _  = _run(score_items, actual_xls, predicted_xls)
-    choice_score, _ = _run(score_choices, actual_xls, predicted_xls)
-    logic_score,  _ = _run(score_logic, actual_xls, predicted_xls)
+    study_score,  study_matched,  study_total  = _run(score_study, actual_odm, predicted)
+    event_score,  event_matched,  event_total  = _run(score_events, actual_odm, predicted)
+    place_score,  place_matched,  place_total  = _run(score_form_placement, actual_odm, predicted)
+    form_score,   form_matched,   form_total   = _run(score_forms, actual_xls, predicted_xls)
+    item_score,   item_matched,   item_total   = _run(score_items, actual_xls, predicted_xls)
+    choice_score, choice_matched, choice_total = _run(score_choices, actual_xls, predicted_xls)
+    logic_score,  logic_matched,  logic_total  = _run(score_logic, actual_xls, predicted_xls)
 
-    def _counts(fn, *args):
-        """Re-run to get matched/total counts."""
-        _, d = fn(*args)
-        return d
-
-    # Build layer_scores with matched/total — rescore individually
-    # (simpler to just track totals inline)
-    layer_scores = {}
-
-    def _layer(name, score_fn, *args):
-        score_val, diffs_list = score_fn(*args)
-        # Count from diffs: total = diffs where element doesn't start with "Extra"
-        # This is approximate; use the raw score for display
-        # (matched and total are tracked internally in each scorer)
-        # For simplicity, store just the score and diff count per layer
-        diff_count = sum(1 for d in all_diffs if d.layer == name)
-        return {"score": score_val, "matched": "—", "total": "—"}
 
     layer_scores = {
-        "Study":          {"score": study_score,  "matched": "—", "total": 2},
-        "Events":         {"score": event_score,  "matched": "—",
-                           "total": len(actual_odm["events"])},
-        "Form Placement": {"score": place_score,  "matched": "—",
-                           "total": sum(len(ev["forms"])
-                                       for ev in actual_odm["events"].values())},
-        "Forms":          {"score": form_score,   "matched": "—",
-                           "total": len(actual_xls)},
-        "Items":          {"score": item_score,   "matched": "—", "total": "—"},
-        "Choices":        {"score": choice_score, "matched": "—", "total": "—"},
-        "Logic":          {"score": logic_score,  "matched": "—", "total": "—"},
+        "Study":          {"score": study_score,  "matched": study_matched,  "total": study_total},
+        "Events":         {"score": event_score,  "matched": event_matched,  "total": event_total},
+        "Form Placement": {"score": place_score,  "matched": place_matched,  "total": place_total},
+        "Forms":          {"score": form_score,   "matched": form_matched,   "total": form_total},
+        "Items":          {"score": item_score,   "matched": item_matched,   "total": item_total},
+        "Choices":        {"score": choice_score, "matched": choice_matched, "total": choice_total},
+        "Logic":          {"score": logic_score,  "matched": logic_matched,  "total": logic_total},
     }
-
-    # Fill in matched from scores (matched = round(score/100 * total))
-    for name, data in layer_scores.items():
-        if isinstance(data["total"], int) and data["total"] > 0:
-            data["matched"] = round(data["score"] / 100 * data["total"])
 
     overall = round(sum(d["score"] for d in layer_scores.values()) / len(layer_scores), 1)
 
