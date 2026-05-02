@@ -536,15 +536,21 @@ def score_forms(actual_xls: dict, predicted_xls: dict) -> tuple[float, list[Diff
 
 
 def score_items(actual_xls: dict, predicted_xls: dict) -> tuple[float, list[DiffRow]]:
-    """Score item-level match across all forms."""
+    """Score item-level match across all forms.
+    Caps diff rows at 30 per form so a single complex form (e.g. Biospecimen
+    with 500+ custom items) doesn't swamp the diff sheet and hide other layers.
+    Scoring still uses ALL items — only the diff row display is capped.
+    """
     diffs   = []
     total   = 0
     matched = 0
+    MAX_DIFFS_PER_FORM = 30
 
     DATA_TYPES = {"text", "integer", "decimal", "date", "datetime",
                   "time", "select_one", "select_multiple", "note", "calculate"}
 
     for fid in sorted(actual_xls.keys()):
+        form_diff_count = 0
         a_items = {
             r["name"]: r for r in actual_xls[fid]["survey"]
             if r["name"] and r["type"].split(" ")[0].lower() in DATA_TYPES
@@ -561,31 +567,43 @@ def score_items(actual_xls: dict, predicted_xls: dict) -> tuple[float, list[Diff
             a = a_items[name]
             if name in p_items:
                 p = p_items[name]
-                # Check data type match
                 a_type = a["type"].split(" ")[0].lower()
                 p_type = p["type"].split(" ")[0].lower()
                 if a_type == p_type:
                     matched += 1
-                else:
+                elif form_diff_count < MAX_DIFFS_PER_FORM:
                     diffs.append(DiffRow(
                         "Items", f"{fid}.{name} — data type",
                         f"{p_type}",
                         f"{a_type}",
                         "Data type differs",
                     ))
-            else:
+                    form_diff_count += 1
+            elif form_diff_count < MAX_DIFFS_PER_FORM:
                 diffs.append(DiffRow(
                     "Items", f"{fid}.{name}",
                     "— missing —",
                     f"{name} ({a['type']})",
                 ))
+                form_diff_count += 1
+
+        if form_diff_count >= MAX_DIFFS_PER_FORM:
+            diffs.append(DiffRow(
+                "Items", f"{fid} — (capped)",
+                f"… {len(a_items) - MAX_DIFFS_PER_FORM}+ more diffs",
+                "See full form comparison",
+                f"Diff capped at {MAX_DIFFS_PER_FORM} rows per form",
+            ))
 
         for name in sorted(set(p_items) - set(a_items)):
+            if form_diff_count >= MAX_DIFFS_PER_FORM:
+                break
             diffs.append(DiffRow(
                 "Items", f"Extra: {fid}.{name}",
                 f"{name} ({p_items[name]['type']})",
                 "— not in actual —",
             ))
+            form_diff_count += 1
 
     return _score(matched, total), matched, total, diffs
 
