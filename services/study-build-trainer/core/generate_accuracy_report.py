@@ -609,10 +609,12 @@ def score_items(actual_xls: dict, predicted_xls: dict) -> tuple[float, list[Diff
 
 
 def score_choices(actual_xls: dict, predicted_xls: dict) -> tuple[float, list[DiffRow]]:
-    """Score choice list match."""
+    """Score choice list match. Caps diffs at 20 per list to prevent large
+    custom choice lists from dominating the diff sheet."""
     diffs   = []
     total   = 0
     matched = 0
+    MAX_DIFFS_PER_LIST = 20
 
     # Aggregate choice lists across all forms
     def _agg(xls):
@@ -630,13 +632,17 @@ def score_choices(actual_xls: dict, predicted_xls: dict) -> tuple[float, list[Di
 
     for ln in sorted(actual_lists.keys()):
         a_vals = actual_lists[ln]
+        list_diff_count = 0
         if ln not in predicted_lists:
-            total   += len(a_vals)
-            for val, lbl in a_vals.items():
-                diffs.append(DiffRow(
-                    "Choices", f"{ln} — entire list missing",
-                    "— missing —", f"{val}: {lbl}",
-                ))
+            total += len(a_vals)
+            for val, lbl in sorted(a_vals.items()):
+                if list_diff_count >= MAX_DIFFS_PER_LIST:
+                    diffs.append(DiffRow("Choices", f"{ln} — (capped)",
+                        f"…{len(a_vals)-MAX_DIFFS_PER_LIST}+ more", "See full list", "Capped"))
+                    break
+                diffs.append(DiffRow("Choices", f"{ln} — entire list missing",
+                    "— missing —", f"{val}: {lbl}"))
+                list_diff_count += 1
             continue
 
         p_vals = predicted_lists[ln]
@@ -644,26 +650,23 @@ def score_choices(actual_xls: dict, predicted_xls: dict) -> tuple[float, list[Di
             total += 1
             if val in p_vals:
                 matched += 1
-                # Flag label mismatches
                 a_lbl = a_vals[val].strip().lower()
                 p_lbl = p_vals[val].strip().lower()
-                if a_lbl != p_lbl and a_lbl and p_lbl:
-                    diffs.append(DiffRow(
-                        "Choices", f"{ln}.{val} — label",
-                        p_vals[val], a_vals[val],
-                        "Label differs",
-                    ))
-            else:
-                diffs.append(DiffRow(
-                    "Choices", f"{ln}.{val}",
-                    "— missing —", f"{val}: {a_vals[val]}",
-                ))
+                if a_lbl != p_lbl and a_lbl and p_lbl and list_diff_count < MAX_DIFFS_PER_LIST:
+                    diffs.append(DiffRow("Choices", f"{ln}.{val} — label",
+                        p_vals[val], a_vals[val], "Label differs"))
+                    list_diff_count += 1
+            elif list_diff_count < MAX_DIFFS_PER_LIST:
+                diffs.append(DiffRow("Choices", f"{ln}.{val}",
+                    "— missing —", f"{val}: {a_vals[val]}"))
+                list_diff_count += 1
 
         for val in sorted(set(p_vals) - set(a_vals)):
-            diffs.append(DiffRow(
-                "Choices", f"Extra: {ln}.{val}",
-                f"{val}: {p_vals[val]}", "— not in actual —",
-            ))
+            if list_diff_count >= MAX_DIFFS_PER_LIST:
+                break
+            diffs.append(DiffRow("Choices", f"Extra: {ln}.{val}",
+                f"{val}: {p_vals[val]}", "— not in actual —"))
+            list_diff_count += 1
 
     return _score(matched, total), matched, total, diffs
 
@@ -729,6 +732,19 @@ def score_logic(actual_xls: dict, predicted_xls: dict) -> tuple[float, list[Diff
                     _logic_summary(p_survey[name]),
                     "— no logic —",
                     "AI added logic not in actual build",
+                ))
+
+        # Also show predicted fields that have logic but don't exist in actual.
+        # These are AI-generated logic expressions with no counterpart — visible
+        # in AI Generated column so reviewers can see what Claude produced.
+        for name in sorted(set(p_survey.keys()) - set(a_survey.keys())):
+            p = p_survey[name]
+            if _has_logic(p):
+                diffs.append(DiffRow(
+                    "Logic", f"{fid}.{name} — AI-only field with logic",
+                    _logic_summary(p),
+                    "— field not in actual —",
+                    "AI generated logic on a field not in the actual build",
                 ))
 
     return _score(matched, total), matched, total, diffs
@@ -1070,9 +1086,11 @@ def generate_accuracy_report(
     event_score,  event_matched,  event_total  = _run(score_events, actual_odm, predicted)
     place_score,  place_matched,  place_total  = _run(score_form_placement, actual_odm, predicted)
     form_score,   form_matched,   form_total   = _run(score_forms, actual_xls, predicted_xls)
+    # Logic runs before Items/Choices so its diffs appear first in the sheet
+    # (Items and Choices can generate hundreds of rows that push Logic off the end)
+    logic_score,  logic_matched,  logic_total  = _run(score_logic, actual_xls, predicted_xls)
     item_score,   item_matched,   item_total   = _run(score_items, actual_xls, predicted_xls)
     choice_score, choice_matched, choice_total = _run(score_choices, actual_xls, predicted_xls)
-    logic_score,  logic_matched,  logic_total  = _run(score_logic, actual_xls, predicted_xls)
 
 
     layer_scores = {
