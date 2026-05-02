@@ -249,6 +249,13 @@ class IngestWorker:
         # 7. Get the analysis JSON (for embedding / retrieval)
         analysis_dict = await self._get_analysis_json(cached, item, log_ctx)
 
+        # 7b. Get/generate per-form XLSForm specs (survey + choices per form).
+        #     Cached to disk so re-triggers are fast. Merged into analysis_dict
+        #     so build_all_xlsforms can produce real XLSForm files.
+        analysis_dict = await self._get_form_specs_and_merge(
+            analysis_dict, cached, log_ctx
+        )
+
         # 8. Status → generating_predicted_build
         #    Run the edc-builder skill (same code the pipeline uses) to
         #    produce a predicted EDC ZIP from the cached analysis JSON.
@@ -516,6 +523,52 @@ class IngestWorker:
             logger.warning("ingest.analysis_upload_failed",
                            error=str(e), **log_ctx)
 
+    async def _get_form_specs_and_merge(
+        self,
+        analysis_dict: dict[str, Any],
+        cached: dict[str, Path],
+        log_ctx: dict[str, Any],
+    ) -> dict[str, Any]:
+        """
+        Generate per-form XLSForm specs (survey + choices) and merge
+        them into analysis_dict. Caches to disk as form_specs.generated.json
+        so re-triggers don't repeat the expensive multi-form Claude calls.
+        """
+        from core.form_specs_client import (
+            generate_form_specs,
+            merge_form_specs_into_analysis,
+        )
+
+        # Disk cache path (same directory as the analysis JSON)
+        cache_path: Path | None = None
+        if "protocol" in cached:
+            cache_path = cached["protocol"].parent / "form_specs.generated.json"
+
+        # ── Load from disk cache if valid ────────────────────────────────────
+        if cache_path and cache_path.exists() and cache_path.stat().st_size > 1_000:
+            try:
+                specs = json.loads(cache_path.read_text(encoding="utf-8"))
+                if specs:
+                    logger.info("ingest.form_specs_loaded_from_disk",
+                                forms=len(specs), **log_ctx)
+                    return merge_form_specs_into_analysis(analysis_dict, specs)
+            except (json.JSONDecodeError, OSError):
+                pass
+
+        # ── Generate via Claude (Sonnet, one call per form) ──────────────────
+        forms = analysis_dict.get("forms", [])
+        logger.info("ingest.generating_form_specs", form_count=len(forms), **log_ctx)
+        try:
+            specs = await generate_form_specs(analysis_dict)
+            if cache_path and specs:
+                cache_path.write_text(json.dumps(specs, indent=2))
+                logger.info("ingest.form_specs_cached",
+                            path=str(cache_path), forms=len(specs), **log_ctx)
+            return merge_form_specs_into_analysis(analysis_dict, specs)
+        except Exception as e:
+            logger.warning("ingest.form_specs_failed", error=str(e), **log_ctx)
+            return analysis_dict  # proceed without specs — XLSForms will be empty
+
     def _generate_predicted_build(
         self,
         analysis_dict: dict[str, Any],
@@ -525,6 +578,9 @@ class IngestWorker:
         Generate a predicted EDC build ZIP from the cached analysis JSON.
         Uses the edc-builder scripts directly (same as pipeline.run_edc_build).
         Returns zip bytes. Synchronous — call via run_in_executor.
+
+        NOTE: form_specs (survey/choices per form) must already be merged into
+        analysis_dict before calling this. See _get_form_specs_and_merge.
         """
         import sys
         import os
