@@ -44,7 +44,7 @@ choices rows: [{{"list_name","name","label"}}]
 Rules:
 - CDASH variable names (AETERM, AESTDAT, VSPERF, LBDAT, etc.)
 - Start with TPTCALC (calculate) + TPT (text, timepoint label)  
-- Wrap data fields in begin group/end group, OID pattern IG_{domain}_{domain}
+- Wrap data fields in begin group/end group, OID pattern IG_{cdash}_{cdash}
 - Perf question first (VSPERF/LBPERF), then date, then results
 - select_one fields: include all standard coded choices (UPPERCASE list names)
 - relevant logic on conditional fields
