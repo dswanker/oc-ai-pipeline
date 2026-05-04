@@ -91,7 +91,7 @@ async def run_protocol_analysis(
     client=None,
     api_key: str | None = None,
     model: str = "claude-opus-4-6",
-    max_tokens: int = 8000,
+    max_tokens: int = 16000,
     max_retries: int = 3,
     initial_wait_seconds: int = 60,
 ) -> str:
