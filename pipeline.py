@@ -8,7 +8,7 @@ from customer_conventions_client import (
     merge_conventions,
     build_conventions_prompt_block,
 )
-from prompts import EDC_STRUCTURE_PROMPT, PRICING_SUMMARY_PROMPT, PRICING_MODEL_PROMPT, EDC_BUILD_PROMPT, DVS_PROMPT
+from prompts import EDC_STRUCTURE_PROMPT, PRICING_SUMMARY_PROMPT, PRICING_QUOTE_PROMPT, EDC_BUILD_PROMPT, DVS_PROMPT
 
 STATUS = {
     "not_started":            "Not Started",
@@ -141,7 +141,7 @@ async def run_pipeline(item_id):
         await asyncio.sleep(15)
 
         print("Calling Claude for Pricing Quote...", flush=True)
-        r2 = await run_skill(PRICING_MODEL_PROMPT, pdf_bytes=summary_pdf if summary_pdf else None)
+        r2 = await run_skill(PRICING_QUOTE_PROMPT, pdf_bytes=summary_pdf if summary_pdf else None)
         quote_pdf  = extract_b64(r2, "PDF")
         quote_xlsx = extract_b64(r2, "XLSX")
         if quote_pdf:  await upload_file(item_id, COL["pricing_quote"], f"{protocol_num}_Quote.pdf",  quote_pdf)
