@@ -88,7 +88,16 @@ def _check_monday_response(r, op_name):
                                f"{body.get('error_message', '')[:300]}")
 
 async def get_item(item_id):
-    q = "query($i:[ID!]){items(ids:$i){id name column_values{id value text}}}"
+    # Fetch item column values plus the board's column metadata (id+title) so
+    # callers can identify columns by their human-readable titles. The titles
+    # are merged into each column_value dict before returning. This keeps the
+    # call shape backwards-compatible — existing code reading {id, value, text}
+    # continues to work unchanged; new code can read .title when needed.
+    q = ("query($i:[ID!]){items(ids:$i){"
+         "id name "
+         "column_values{id value text} "
+         "board{columns{id title}}"
+         "}}")
     print(f"GET_ITEM: calling Monday API for item {item_id}", flush=True)
     async with httpx.AsyncClient(timeout=30) as c:
         r = await c.post(MONDAY_API_URL, headers=get_headers(), json={"query": q, "variables": {"i": [item_id]}})
@@ -100,7 +109,13 @@ async def get_item(item_id):
     items = resp["data"]["items"]
     if not items:
         raise Exception(f"No item found with id {item_id}")
-    return items[0]
+    item = items[0]
+    # Merge column titles into each column_value dict
+    title_by_id = {c["id"]: c.get("title", "")
+                   for c in (item.get("board") or {}).get("columns", []) or []}
+    for cv in item.get("column_values", []) or []:
+        cv["title"] = title_by_id.get(cv.get("id"), "")
+    return item
 
 async def get_asset_url(item_id):
     q = "query($i:[ID!]){items(ids:$i){assets{id name url public_url}}}"

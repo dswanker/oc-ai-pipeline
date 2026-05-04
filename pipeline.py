@@ -85,6 +85,65 @@ async def _noop_bytes():
     return None
 
 
+# ── Customer Convention Questions (CQ) ─────────────────────────────────────────
+# Customers can supply convention preferences via columns on the AI Hub board
+# whose titles start with "CQ " (preferred, full question becomes the key) or
+# "CQ_" (legacy underscore form). The pipeline reads ALL such columns
+# dynamically — adding a new question to the board requires zero code changes,
+# the next pipeline run picks it up automatically.
+#
+# These customer answers are injected into the EDC structure prompt as part of
+# extra_parts, so Claude sees them when generating the Study Spec JSON. The
+# Study Spec then flows through the rest of the pipeline (build, DVS, etc.),
+# so conventions injected here propagate to all downstream stages.
+
+CQ_PREFIX_NEW    = "CQ "    # human-readable: "CQ How do you want X?"
+CQ_PREFIX_LEGACY = "CQ_"    # short identifier: "CQ_How_Do_You_Want_X"
+
+
+def _strip_cq_prefix(title: str) -> str:
+    """Remove the CQ prefix and normalize the question text for use as a key."""
+    if title.startswith(CQ_PREFIX_NEW):
+        return title[len(CQ_PREFIX_NEW):].strip()
+    if title.startswith(CQ_PREFIX_LEGACY):
+        return title[len(CQ_PREFIX_LEGACY):].replace("_", " ").strip()
+    return title
+
+
+def _extract_customer_conventions(cols: dict) -> dict:
+    """
+    Extract customer convention answers from the cols dict (column_id -> column).
+    Recognizes columns whose title starts with 'CQ ' or 'CQ_'. Empty answers
+    are skipped. Returns dict[question_text -> answer_text].
+    """
+    out = {}
+    for col_id, col in cols.items():
+        title = (col.get("title") or "").strip()
+        is_cq = (title.startswith(CQ_PREFIX_NEW)
+                 or title.startswith(CQ_PREFIX_LEGACY)
+                 or col_id.startswith(CQ_PREFIX_LEGACY))
+        if not is_cq:
+            continue
+        answer = (col.get("text") or "").strip()
+        if not answer:
+            continue
+        out[_strip_cq_prefix(title)] = answer
+    return out
+
+
+def _build_customer_conventions_block(conventions: dict) -> str:
+    """Format customer conventions as a prompt-ready text block. Empty when no answers."""
+    if not conventions:
+        return ""
+    lines = [
+        "Customer Convention Preferences (apply these when generating the Study Spec):",
+    ]
+    for question, answer in conventions.items():
+        lines.append(f"  - Q: {question}")
+        lines.append(f"    A: {answer}")
+    return "\n".join(lines)
+
+
 def _xl_header_row(ws, headers, bg="1B3A6B", fg="FFFFFF"):
     fill = PatternFill("solid", fgColor=bg)
     font = Font(name="Arial", bold=True, color=fg, size=10)
@@ -1310,6 +1369,20 @@ async def run_pipeline(item_id):
                 extra_parts.insert(0, ai_instructions_block.strip())
             if reviewer_notes_block:
                 extra_parts.append(reviewer_notes_block.strip())
+            # Customer Convention Questions (CQ_* / 'CQ ' columns).
+            # Read dynamically from the cols dict — any column with a CQ prefix
+            # is picked up automatically. New questions require zero code change.
+            customer_conventions = _extract_customer_conventions(cols)
+            if customer_conventions:
+                cq_block = _build_customer_conventions_block(customer_conventions)
+                extra_parts.append(cq_block)
+                print(f"Customer conventions: {len(customer_conventions)} answer(s) provided",
+                      flush=True)
+                await append_log(item_id,
+                    f"Customer conventions: {len(customer_conventions)} answer(s) "
+                    f"injected into Study Spec generation.")
+            else:
+                print("Customer conventions: none provided", flush=True)
             if oc_zip:
                 oc_file_type = _detect_oc_standard_type(oc_zip)
                 if oc_file_type == 'ODM_XML':
