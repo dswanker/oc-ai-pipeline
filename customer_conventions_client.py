@@ -1,18 +1,24 @@
 """
 Customer Conventions Client.
 
-Reads `CQ_*` columns from the monday item to extract customer-provided
-convention answers, and merges them with the Convention Rulebook at
-build time. Customer answers always supersede rulebook conventions.
+Reads CQ-prefixed columns from the monday item to extract customer-provided
+convention answers, and merges them with the Convention Rulebook at build
+time. Customer answers always supersede rulebook conventions on conflicts.
 
-Extensibility: adding new questions to the monday board only requires
-adding a new column with a `CQ_` prefix. The pipeline picks them up
-automatically — no code change, no deployment needed.
+Two title formats are supported, both with prefix "CQ":
+  * Preferred (new):  "CQ How would you like X organized?"  ← title IS the question
+  * Legacy:           "CQ_How_Would_You_Like_X_Organized"   ← short identifier form
 
-Storage: customer conventions are persisted to
-  /data/customer_conventions/<item_id>.json
-on the Railway volume so they survive redeploys and are available on
-re-triggers without re-fetching from monday.
+The new format is richer for the AI because the full question text becomes
+part of the prompt context. Both formats remain valid so existing columns
+keep working — rename at your leisure in the monday UI.
+
+Extensibility contract: adding new questions to the monday board only requires
+adding a new column with a CQ prefix. The pipeline picks them up automatically
+— no code change, no deployment.
+
+Storage: customer answers persist to /data/customer_conventions/<item_id>.json
+on the Railway volume so they survive redeploys and re-triggers.
 """
 from __future__ import annotations
 
@@ -29,21 +35,37 @@ except ImportError:
     logger = logging.getLogger(__name__)
 
 
-# Storage root on the Railway persistent volume
 CUSTOMER_CONVENTIONS_ROOT = Path(
     os.environ.get("CUSTOMER_CONVENTIONS_ROOT", "/data/customer_conventions")
 )
-
-# Rulebook conventions location (where the trainer writes approved conventions)
 RULEBOOK_PATH = Path(
     os.environ.get("RULEBOOK_PATH", "/data/rulebook/conventions.json")
 )
 
-# Prefix that identifies customer-provided convention question columns.
-# This is the entire extensibility contract: any column with this prefix is a
-# convention question. Add a new column with this prefix in monday → pipeline
-# picks it up on the next run, no code change required.
-CONVENTION_QUESTION_PREFIX = "CQ_"
+CQ_PREFIX_NEW    = "CQ "   # human-readable: "CQ How do you want X?"
+CQ_PREFIX_LEGACY = "CQ_"   # short identifier: "CQ_How_Do_You_Want_X"
+
+
+def _strip_cq_prefix(title: str) -> str:
+    """
+    Remove the CQ prefix and normalize the question text for use as a dict key.
+    Legacy underscore titles get converted to space-separated phrases so the
+    prompt block reads naturally regardless of which format the column uses.
+    """
+    if title.startswith(CQ_PREFIX_NEW):
+        return title[len(CQ_PREFIX_NEW):].strip()
+    if title.startswith(CQ_PREFIX_LEGACY):
+        return title[len(CQ_PREFIX_LEGACY):].replace("_", " ").strip()
+    return title
+
+
+def _is_convention_column(title: str, col_id: str) -> bool:
+    """True if the column is a customer convention question."""
+    return (
+        title.startswith(CQ_PREFIX_NEW)
+        or title.startswith(CQ_PREFIX_LEGACY)
+        or col_id.startswith(CQ_PREFIX_LEGACY)
+    )
 
 
 def extract_customer_conventions(
@@ -52,31 +74,22 @@ def extract_customer_conventions(
     """
     Extract customer-provided convention answers from a monday item's columns.
 
-    Args:
-        columns: Mapping of column_id -> {"title": str, "value": str|None, ...}
-                 as returned by monday's items_page query.
-
     Returns:
-        Dict of question_title -> answer_text. Empty answers are skipped so
-        absent answers fall through to the rulebook defaults at merge time.
-
-    Recognition rule: any column whose title OR id starts with `CQ_`.
+        Dict of question_text -> answer_text. The CQ prefix is stripped from
+        each title so the question itself becomes the key — giving Claude the
+        full question as context when conventions are injected into prompts.
+        Empty answers are skipped (absent → fall through to rulebook).
     """
     out: dict[str, str] = {}
     for col_id, col in columns.items():
         title = (col.get("title") or "").strip()
-        is_question = (
-            title.startswith(CONVENTION_QUESTION_PREFIX)
-            or col_id.startswith(CONVENTION_QUESTION_PREFIX)
-        )
-        if not is_question:
+        if not _is_convention_column(title, col_id):
             continue
         value = (col.get("value") or "").strip()
         if not value:
-            continue  # absent answer — let rulebook fill in
-        # Use the title as the canonical key. This keeps the convention dict
-        # readable and stable across column-id changes.
-        out[title] = value
+            continue
+        question = _strip_cq_prefix(title)
+        out[question] = value
     return out
 
 
@@ -94,10 +107,8 @@ def save_customer_conventions(
         "conventions": conventions,
     }
     path.write_text(json.dumps(payload, indent=2))
-    logger.info(
-        "customer_conventions.saved",
-        item_id=item_id, count=len(conventions), path=str(path),
-    )
+    logger.info("customer_conventions.saved",
+                item_id=item_id, count=len(conventions), path=str(path))
     return path
 
 
@@ -114,12 +125,7 @@ def load_customer_conventions(item_id: int) -> dict[str, str]:
 
 
 def load_rulebook_conventions() -> dict[str, Any]:
-    """
-    Load approved conventions from the Convention Rulebook.
-
-    Returns an empty dict if the rulebook file doesn't exist yet (e.g. before
-    any conventions have been submitted via the trainer).
-    """
+    """Load approved conventions from the Convention Rulebook (empty if missing)."""
     if not RULEBOOK_PATH.exists():
         return {}
     try:
@@ -134,22 +140,10 @@ def merge_conventions(
     rulebook: dict[str, Any],
     customer: dict[str, str],
 ) -> dict[str, Any]:
-    """
-    Merge rulebook conventions with customer-provided answers.
-
-    Customer answers always supersede rulebook entries on key conflicts.
-    Returns a flat dict suitable for injecting into prompts at build time.
-
-    Output structure:
-        {
-            "from_rulebook": {...},     # baseline conventions
-            "from_customer": {...},     # customer answers (override layer)
-            "effective":     {...},     # merged result, customer wins
-        }
-    """
+    """Merge rulebook with customer answers — customer wins on conflicts."""
     effective: dict[str, Any] = {}
     effective.update(rulebook or {})
-    effective.update(customer or {})  # customer wins
+    effective.update(customer or {})
     return {
         "from_rulebook": rulebook or {},
         "from_customer": customer or {},
@@ -158,13 +152,7 @@ def merge_conventions(
 
 
 def build_conventions_prompt_block(merged: dict[str, Any]) -> str:
-    """
-    Format merged conventions as a prompt-ready block for injection into
-    Claude calls (form spec generation, EDC structure, etc.).
-
-    Returns empty string if there are no effective conventions, so callers
-    can safely concatenate.
-    """
+    """Format merged conventions as a prompt-ready block for Claude calls."""
     eff = merged.get("effective", {})
     if not eff:
         return ""
