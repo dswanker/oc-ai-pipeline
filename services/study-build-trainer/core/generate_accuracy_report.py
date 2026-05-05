@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import io
 import json
+import re
 import zipfile
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
@@ -410,14 +411,88 @@ class DiffRow:
     layer:    str
     element:  str
     ai_value: str
-    hu_value: str   # human/actual value
-    note:     str = ""
+    hu_value: str          # human/actual value
+    note:     str = ""     # human-fillable notes
+    match_info: str = ""   # scorer-written: normalized/fuzzy match details
 
 
 def _score(matched: int, total: int) -> float:
     if total == 0:
         return 100.0
     return round(100.0 * matched / total, 1)
+
+
+# ── Normalized + fuzzy matching helpers ───────────────────────────────────────
+# Used by Forms / Items / Choices scorers to relax matching beyond exact-string.
+# Strategy per layer (incremental rollout):
+#   - Forms layer: normalized + fuzzy at threshold 0.75
+#   - Items / Choices: planned (separate patches)
+# Match credit tiers:
+#   1.0  exact          — original strings identical
+#   1.0  normalized     — equal after stripping prefixes/separators/case
+#   <1.0 fuzzy          — rapidfuzz ratio above threshold; partial credit
+#   miss                — below threshold; reported as unmatched
+
+FUZZY_FORMS_THRESHOLD = 0.75
+
+# Common form-OID prefixes seen in OpenClinica builds. Stripped before comparison.
+_OID_PREFIX_RX = re.compile(r"^(?:f_|form_|ig_)+", re.IGNORECASE)
+
+
+def _norm_oid(s: str) -> str:
+    """Normalize an identifier for comparison.
+    Lowercase, strip whitespace, remove common form prefixes (F_, FORM_, IG_),
+    collapse separators (_, -, space) so AETERM, AE_TERM, AE-TERM all match.
+    Returns the normalized string. Empty input returns empty.
+    """
+    if not s:
+        return ""
+    out = s.strip().lower()
+    out = _OID_PREFIX_RX.sub("", out)
+    out = re.sub(r"[_\-\s]+", "", out)
+    return out
+
+
+try:
+    from rapidfuzz import fuzz as _rapidfuzz_fuzz
+    _HAVE_RAPIDFUZZ = True
+except ImportError:
+    _HAVE_RAPIDFUZZ = False
+
+
+def _fuzzy_score(a: str, b: str) -> float:
+    """Return similarity score in 0.0-1.0. Uses rapidfuzz when available,
+    falls back to difflib so missing dependency degrades gracefully."""
+    if not a or not b:
+        return 0.0
+    if _HAVE_RAPIDFUZZ:
+        # token_set_ratio handles word-order and substring variations well
+        return _rapidfuzz_fuzz.token_set_ratio(a, b) / 100.0
+    from difflib import SequenceMatcher
+    return SequenceMatcher(None, a, b).ratio()
+
+
+def _best_fuzzy_match(target: str, candidates: list[str], threshold: float
+                      ) -> tuple[str | None, float]:
+    """Find the candidate with highest similarity to target.
+    Returns (candidate, score) if score >= threshold, else (None, best_score).
+    Comparison is done on normalized forms; original string is returned.
+    Empty target/candidates -> (None, 0.0).
+    """
+    if not target or not candidates:
+        return None, 0.0
+    norm_target = _norm_oid(target)
+    if not norm_target:
+        return None, 0.0
+    best_cand = None
+    best_score = 0.0
+    for cand in candidates:
+        score = _fuzzy_score(norm_target, _norm_oid(cand))
+        if score > best_score:
+            best_score, best_cand = score, cand
+    if best_score >= threshold:
+        return best_cand, best_score
+    return None, best_score
 
 
 def score_study(actual_odm: dict, predicted: dict) -> tuple[float, list[DiffRow]]:
@@ -506,33 +581,112 @@ def score_form_placement(actual_odm: dict, predicted: dict) -> tuple[float, list
 
 
 def score_forms(actual_xls: dict, predicted_xls: dict) -> tuple[float, list[DiffRow]]:
-    """Score form-level match by form_id."""
-    actual_ids    = set(actual_xls.keys())
-    predicted_ids = set(predicted_xls.keys())
+    """Score form-level match by form_id.
+
+    Match tiers (from strongest to weakest):
+      1. EXACT     — actual form_id == predicted form_id verbatim
+      2. NORMALIZED — equal after _norm_oid (strips F_/FORM_/IG_ prefixes,
+                      lowercase, collapses separators). Full credit (1.0).
+      3. FUZZY     — rapidfuzz token_set_ratio >= FUZZY_FORMS_THRESHOLD.
+                      Partial credit equal to the similarity score.
+      4. MISS      — no candidate >= threshold. Reports the best near-miss
+                      in match_info for reviewer context.
+
+    A predicted form may only be claimed by one actual form. The first actual
+    form (sorted) gets the strongest available match.
+    """
+    actual_ids    = sorted(actual_xls.keys())
+    predicted_ids = list(predicted_xls.keys())
     diffs         = []
     total         = len(actual_ids)
-    matched       = 0
+    matched_score = 0.0   # fractional sum (allows partial credit for fuzzy)
+    claimed       = set()  # predicted_ids already matched to an actual
 
-    for fid in sorted(actual_ids):
+    # Pre-build normalized index of predicted ids for fast tier-2 lookups
+    pred_by_norm: dict[str, list[str]] = {}
+    for pid in predicted_ids:
+        pred_by_norm.setdefault(_norm_oid(pid), []).append(pid)
+
+    for fid in actual_ids:
         a_title = actual_xls[fid]["form_title"]
-        if fid in predicted_ids:
-            matched += 1
+
+        # Tier 1: exact
+        if fid in predicted_xls and fid not in claimed:
+            claimed.add(fid)
+            matched_score += 1.0
             p_title = predicted_xls[fid]["form_title"]
-            if a_title.strip().lower() != p_title.strip().lower() and a_title and p_title:
+            if (a_title.strip().lower() != p_title.strip().lower()
+                    and a_title and p_title):
                 diffs.append(DiffRow(
                     "Forms", f"Title mismatch: {fid}",
                     p_title, a_title,
+                    match_info="exact",
                 ))
-        else:
-            diffs.append(DiffRow("Forms", f"Form: {fid} ({a_title})",
-                                 "— missing —", fid))
+            continue
 
-    for fid in sorted(predicted_ids - actual_ids):
-        p_title = predicted_xls[fid]["form_title"]
-        diffs.append(DiffRow("Forms", f"Extra form: {fid} ({p_title})",
-                             fid, "— not in actual —"))
+        # Tier 2: normalized equality
+        norm = _norm_oid(fid)
+        norm_candidates = [c for c in pred_by_norm.get(norm, [])
+                           if c not in claimed]
+        if norm_candidates:
+            matched_pid = norm_candidates[0]
+            claimed.add(matched_pid)
+            matched_score += 1.0
+            p_title = predicted_xls[matched_pid]["form_title"]
+            diffs.append(DiffRow(
+                "Forms", f"Form: {fid}",
+                matched_pid, fid,
+                match_info=f"normalized → {matched_pid}",
+            ))
+            continue
 
-    return _score(matched, total), matched, total, diffs
+        # Tier 3: fuzzy
+        unclaimed = [pid for pid in predicted_ids if pid not in claimed]
+        best_pid, best_score = _best_fuzzy_match(
+            fid, unclaimed, FUZZY_FORMS_THRESHOLD,
+        )
+        if best_pid is not None:
+            claimed.add(best_pid)
+            matched_score += best_score   # partial credit
+            p_title = predicted_xls[best_pid]["form_title"]
+            diffs.append(DiffRow(
+                "Forms", f"Form: {fid} ({a_title})",
+                best_pid, fid,
+                match_info=f"fuzzy {best_score:.2f} → {best_pid}",
+            ))
+            continue
+
+        # Tier 4: miss — report best near-miss for reviewer context
+        miss_info = ""
+        if unclaimed:
+            _, near_score = _best_fuzzy_match(fid, unclaimed, 0.0)
+            if near_score > 0:
+                # Find the actual nearest candidate (below threshold)
+                near_cand = max(unclaimed,
+                                key=lambda c: _fuzzy_score(_norm_oid(fid),
+                                                            _norm_oid(c)))
+                miss_info = (f"no match >= {FUZZY_FORMS_THRESHOLD}; "
+                             f"best={near_cand} ({near_score:.2f})")
+        diffs.append(DiffRow(
+            "Forms", f"Form: {fid} ({a_title})",
+            "— missing —", fid,
+            match_info=miss_info,
+        ))
+
+    # Forms in predicted that no actual claimed
+    for pid in sorted(set(predicted_ids) - claimed):
+        p_title = predicted_xls[pid]["form_title"]
+        diffs.append(DiffRow(
+            "Forms", f"Extra form: {pid} ({p_title})",
+            pid, "— not in actual —",
+        ))
+
+    # Round score so it stays an int-like 0-100 percentage
+    pct = 100.0 if total == 0 else round(100.0 * matched_score / total, 1)
+    # Note: matched is reported as int for the scorecard; we round the
+    # weighted matched_score for display purposes.
+    matched_int = int(round(matched_score))
+    return pct, matched_int, total, diffs
 
 
 def score_items(actual_xls: dict, predicted_xls: dict) -> tuple[float, list[DiffRow]]:
@@ -867,13 +1021,14 @@ def _build_diff_sheet(ws, diffs: list[DiffRow]):
       2. Element / Field
       3. AI Generated
       4. Human Approved
-      5. Notes (Human)          ← human fills in
-      6. Convention              ← dropdown: This customer only / All customers / Skip
-      7. Claude Questions        ← Claude writes questions on re-submission
-      8. Human Response          ← human answers Claude's questions
+      5. Match Info             ← scorer-written: normalized/fuzzy match details
+      6. Notes (Human)          ← human fills in
+      7. Convention             ← dropdown: This customer only / All customers / Skip
+      8. Claude Questions       ← Claude writes questions on re-submission
+      9. Human Response         ← human answers Claude's questions
     """
-    NC = 8
-    _cw(ws, [18, 30, 32, 32, 28, 22, 34, 34])
+    NC = 9
+    _cw(ws, [18, 30, 32, 32, 28, 28, 22, 34, 34])
     row = 1
 
     # Title
@@ -889,9 +1044,11 @@ def _build_diff_sheet(ws, diffs: list[DiffRow]):
     ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=NC)
     c = ws.cell(row=row, column=1,
                 value=("Each row is a mismatch between AI prediction and human-approved build. "
-                       "Fill in Notes + Convention, then upload to the Convention Rulebook board "
-                       "and set Submit Trigger → Submit for Review. Claude will write questions "
-                       "in column G if any rows need clarification — answer in column H and re-submit."))
+                       "Match Info (col E) shows whether the scorer matched the row exactly, via "
+                       "name normalization, or via fuzzy matching. Fill in Notes + Convention, "
+                       "then upload to the Convention Rulebook board and set Submit Trigger → "
+                       "Submit for Review. Claude will write questions in column H if any rows "
+                       "need clarification — answer in column I and re-submit."))
     c.font      = _fn(size=9, italic=True, color="555555")
     c.fill      = _fl(GREY_L)
     c.alignment = _al()
@@ -906,6 +1063,7 @@ def _build_diff_sheet(ws, diffs: list[DiffRow]):
         "Element / Field",
         "AI Generated",
         "Human Approved",
+        "Match Info",
         "Notes (Human)",
         "Convention",
         "Claude Questions",
@@ -914,7 +1072,7 @@ def _build_diff_sheet(ws, diffs: list[DiffRow]):
     for col, hdr in enumerate(headers, start=1):
         bg = OC_MID
         # Highlight the two Q&A columns differently
-        if col in (7, 8):
+        if col in (8, 9):
             bg = OC_DARK
         _hdr_cell(ws, row, col, hdr, bg=bg)
     ws.row_dimensions[row].height = 18
@@ -922,22 +1080,22 @@ def _build_diff_sheet(ws, diffs: list[DiffRow]):
     row += 1
 
     # Column header notes row — sub-header explaining each input column
-    ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=4)
+    ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=5)
     c = ws.cell(row=row, column=1,
                 value="← Generated by scorer — do not edit")
     c.font      = _fn(size=7, italic=True, color="888888")
     c.fill      = _fl(GREY_L)
     c.alignment = _al(h="center")
 
-    ws.merge_cells(start_row=row, start_column=5, end_row=row, end_column=6)
-    c = ws.cell(row=row, column=5,
+    ws.merge_cells(start_row=row, start_column=6, end_row=row, end_column=7)
+    c = ws.cell(row=row, column=6,
                 value="← Human fills these before submitting")
     c.font      = _fn(size=7, italic=True, color=OC_DARK)
     c.fill      = _fl("FFFDE7")
     c.alignment = _al(h="center")
 
-    ws.merge_cells(start_row=row, start_column=7, end_row=row, end_column=8)
-    c = ws.cell(row=row, column=7,
+    ws.merge_cells(start_row=row, start_column=8, end_row=row, end_column=9)
+    c = ws.cell(row=row, column=8,
                 value="← Q&A between Claude and Human (multi-round)")
     c.font      = _fn(size=7, italic=True, color=WHITE)
     c.fill      = _fl(OC_DARK)
@@ -961,7 +1119,7 @@ def _build_diff_sheet(ws, diffs: list[DiffRow]):
 
         if diff.layer != current_layer:
             current_layer = diff.layer
-            # Layer group header — spans all 8 columns
+            # Layer group header — spans all 9 columns
             ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=NC)
             c = ws.cell(row=row, column=1, value=f"  {diff.layer.upper()}")
             c.font      = _fn(bold=True, color=WHITE, size=9)
@@ -970,7 +1128,7 @@ def _build_diff_sheet(ws, diffs: list[DiffRow]):
             ws.row_dimensions[row].height = 16
             row += 1
 
-        # Columns 1-4: scorer-generated, read-only visually
+        # Columns 1-5: scorer-generated, read-only visually
         _data_cell(ws, row, 1, diff.layer, bg=bg, bold=True, color=OC_DARK, size=8)
         _data_cell(ws, row, 2, diff.element, bg=bg, size=8)
         _data_cell(ws, row, 3, diff.ai_value, bg=bg, size=8,
@@ -978,26 +1136,30 @@ def _build_diff_sheet(ws, diffs: list[DiffRow]):
         _data_cell(ws, row, 4, diff.hu_value, bg=bg, size=8,
                    color=RED_C if "missing" in diff.hu_value.lower() else "000000")
 
-        # Column 5: Notes — pale yellow, human fills in
-        _data_cell(ws, row, 5, diff.note, bg="FFFDE7" if not diff.note else AMBER,
+        # Column 5: Match Info — scorer-written, italic gray
+        _data_cell(ws, row, 5, diff.match_info, bg=bg,
                    italic=True, color="555555", size=8)
 
-        # Column 6: Convention dropdown — pale yellow, human fills in
-        c = ws.cell(row=row, column=6, value="")
+        # Column 6: Notes — pale yellow, human fills in
+        _data_cell(ws, row, 6, diff.note, bg="FFFDE7" if not diff.note else AMBER,
+                   italic=True, color="555555", size=8)
+
+        # Column 7: Convention dropdown — pale yellow, human fills in
+        c = ws.cell(row=row, column=7, value="")
         c.font      = _fn(size=8)
         c.fill      = _fl("FFFDE7")
         c.alignment = _al()
         c.border    = _bd()
 
-        # Column 7: Claude Questions — light blue, Claude writes here on re-submission
-        c = ws.cell(row=row, column=7, value="")
+        # Column 8: Claude Questions — light blue, Claude writes here on re-submission
+        c = ws.cell(row=row, column=8, value="")
         c.font      = _fn(size=8, italic=True, color="003366")
         c.fill      = _fl("E8F4FD")   # pale blue — Claude's territory
         c.alignment = _al()
         c.border    = _bd()
 
-        # Column 8: Human Response — pale green, human answers Claude's questions
-        c = ws.cell(row=row, column=8, value="")
+        # Column 9: Human Response — pale green, human answers Claude's questions
+        c = ws.cell(row=row, column=9, value="")
         c.font      = _fn(size=8)
         c.fill      = _fl("F0FFF0")   # pale green — human response
         c.alignment = _al()
@@ -1006,7 +1168,7 @@ def _build_diff_sheet(ws, diffs: list[DiffRow]):
         ws.row_dimensions[row].height = 20
         row += 1
 
-    # Convention dropdown validation on column F
+    # Convention dropdown validation on column G (was F before adding Match Info)
     dv = DataValidation(
         type="list",
         formula1=CONVENTION_OPTIONS,
@@ -1016,7 +1178,7 @@ def _build_diff_sheet(ws, diffs: list[DiffRow]):
         error="Choose: 'This customer only', 'All customers', or 'Skip — not a convention'",
     )
     ws.add_data_validation(dv)
-    dv.sqref = f"F{data_start_row}:F{row}"
+    dv.sqref = f"G{data_start_row}:G{row}"
 
     # Footer
     row += 1
