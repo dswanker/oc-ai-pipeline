@@ -1182,7 +1182,7 @@ def score_choices(actual_xls: dict, predicted_xls: dict,
     """
     diffs   = []
     total   = 0
-    matched = 0
+    matched_score = 0.0   # fractional sum (allows partial credit for fuzzy-label)
     MAX_DIFFS_PER_LIST = 20
 
     # Aggregate choice lists across all forms
@@ -1229,13 +1229,54 @@ def score_choices(actual_xls: dict, predicted_xls: dict,
                 list_diff_count += 1
             continue
 
-        # List paired — compare values inside it
+        # List paired — compare values inside it.
+        # Patch 4 added value-level matching tiers. Within a paired list:
+        #   1. Exact code match              full credit
+        #   2. Exact label match (case-i)    full credit, when codes differ
+        #   3. Fuzzy label match >= 0.75     partial credit
+        #   4. Miss                          no credit
+        # Tracking claimed_p prevents a predicted value from being matched
+        # to two actual values via different tiers.
         p_vals = predicted_lists[paired_pln]
+        claimed_p: set = set()
         first = True
+
+        def _find_label_match(
+            target_label: str, p_vals_d: dict, already_claimed: set,
+            threshold: float = 0.75,
+        ):
+            """Find best label match in p_vals_d for target_label.
+            Returns (pval, score, tier) or (None, best_score, '')."""
+            if not target_label:
+                return None, 0.0, ""
+            t_norm = target_label.strip().lower()
+            if not t_norm:
+                return None, 0.0, ""
+            # Tier 2: exact label (case-insensitive)
+            for pv, pl in p_vals_d.items():
+                if pv in already_claimed or not pl:
+                    continue
+                if pl.strip().lower() == t_norm:
+                    return pv, 1.0, "exact-label"
+            # Tier 3: fuzzy label
+            best_pv, best_sc = None, 0.0
+            for pv, pl in p_vals_d.items():
+                if pv in already_claimed or not pl:
+                    continue
+                sc = _fuzzy_score(t_norm, pl.strip().lower())
+                if sc > best_sc:
+                    best_sc, best_pv = sc, pv
+            if best_sc >= threshold:
+                return best_pv, best_sc, "fuzzy-label"
+            return None, best_sc, ""
+
         for val in sorted(a_vals.keys()):
             total += 1
-            if val in p_vals:
-                matched += 1
+
+            # Tier 1: exact code
+            if val in p_vals and val not in claimed_p:
+                claimed_p.add(val)
+                matched_score += 1.0
                 a_lbl = a_vals[val].strip().lower()
                 p_lbl = p_vals[val].strip().lower()
                 if (a_lbl != p_lbl and a_lbl and p_lbl
@@ -1248,8 +1289,31 @@ def score_choices(actual_xls: dict, predicted_xls: dict,
                     ))
                     first = False
                     list_diff_count += 1
-            elif list_diff_count < MAX_DIFFS_PER_LIST:
-                # Show pairing context if list was renamed
+                continue
+
+            # Tier 2/3: label match
+            matched_pv, lbl_sc, lbl_tier = _find_label_match(
+                a_vals[val], p_vals, claimed_p,
+            )
+            if matched_pv is not None:
+                claimed_p.add(matched_pv)
+                matched_score += lbl_sc
+                if list_diff_count < MAX_DIFFS_PER_LIST:
+                    elem = (f"{ln}.{val}" if ln == paired_pln
+                            else f"{ln}.{val} (paired with {paired_pln})")
+                    info_first = (tier_label + " | ") if first and tier_label else ""
+                    diffs.append(DiffRow(
+                        "Choices", elem,
+                        f"{matched_pv}: {p_vals[matched_pv]}",
+                        f"{val}: {a_vals[val]}",
+                        match_info=f"{info_first}{lbl_tier} {lbl_sc:.2f} → {matched_pv}",
+                    ))
+                    first = False
+                    list_diff_count += 1
+                continue
+
+            # Tier 4: miss
+            if list_diff_count < MAX_DIFFS_PER_LIST:
                 elem = (f"{ln}.{val}" if ln == paired_pln
                         else f"{ln}.{val} (paired with {paired_pln})")
                 diffs.append(DiffRow(
@@ -1260,7 +1324,8 @@ def score_choices(actual_xls: dict, predicted_xls: dict,
                 first = False
                 list_diff_count += 1
 
-        for val in sorted(set(p_vals) - set(a_vals)):
+        # Extras: predicted values not claimed by any tier
+        for val in sorted(set(p_vals) - claimed_p):
             if list_diff_count >= MAX_DIFFS_PER_LIST:
                 break
             elem = (f"Extra: {ln}.{val}" if ln == paired_pln
@@ -1271,7 +1336,7 @@ def score_choices(actual_xls: dict, predicted_xls: dict,
             ))
             list_diff_count += 1
 
-    return _score(matched, total), matched, total, diffs
+    return _score(int(round(matched_score)), total), int(round(matched_score)), total, diffs
 
 
 def score_logic(actual_xls: dict, predicted_xls: dict) -> tuple[float, list[DiffRow]]:
