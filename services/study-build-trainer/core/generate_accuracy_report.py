@@ -1063,6 +1063,14 @@ def _pair_choice_lists(actual_lists: dict, predicted_lists: dict,
     A predicted list may only be claimed once. First actual (sorted) wins.
     Tier_label is the human-readable string for the Match Info column;
     the empty-string and 'no match — best: ...' messages communicate misses.
+
+    Performance: embeddings for ALL lists on both sides are batched into at
+    most 2 calls to embed_fn. After that, all semantic comparisons use
+    pre-computed vectors with a pure-Python cosine — no further embed_fn
+    invocations. This avoids the per-list-create-new-event-loop pattern in
+    the worker that previously OOM'd the trainer container on large studies
+    (CRS-135 has 107 actual choice lists; the old implementation triggered
+    100+ embed calls each spinning up a new event loop and thread).
     """
     pairings: dict = {}
     claimed: set  = set()
@@ -1075,6 +1083,33 @@ def _pair_choice_lists(actual_lists: dict, predicted_lists: dict,
     for pln in predicted_keys:
         pred_by_norm.setdefault(_norm_oid(pln), []).append(pln)
 
+    # ── Pre-compute embeddings ONCE for both sides ──────────────────────────
+    # If embed_fn is None or fails on either side, semantic tier is silently
+    # disabled. Tiers 1-4 still run.
+    pred_vecs:   dict[str, list[float]] = {}
+    actual_vecs: dict[str, list[float]] = {}
+    if embed_fn is not None and predicted_keys and actual_keys:
+        try:
+            pred_texts = [_list_embed_text(pln, predicted_lists[pln])
+                          for pln in predicted_keys]
+            vecs = embed_fn(pred_texts)
+            if vecs and len(vecs) == len(predicted_keys):
+                for pln, v in zip(predicted_keys, vecs):
+                    pred_vecs[pln] = v
+        except Exception:
+            pred_vecs = {}
+        if pred_vecs:
+            try:
+                actual_texts = [_list_embed_text(ln, actual_lists[ln])
+                                for ln in actual_keys]
+                vecs = embed_fn(actual_texts)
+                if vecs and len(vecs) == len(actual_keys):
+                    for ln, v in zip(actual_keys, vecs):
+                        actual_vecs[ln] = v
+            except Exception:
+                actual_vecs = {}
+
+    # ── Per-list pairing loop ───────────────────────────────────────────────
     for ln in actual_keys:
         a_vals = actual_lists[ln]
         a_value_set = set(a_vals.keys())
@@ -1125,22 +1160,29 @@ def _pair_choice_lists(actual_lists: dict, predicted_lists: dict,
             )
             continue
 
-        # Tier 5: semantic embedding match (optional)
-        if embed_fn is not None and unclaimed:
-            target_text = _list_embed_text(ln, a_vals)
-            cand_texts  = {pln: _list_embed_text(pln, predicted_lists[pln])
-                           for pln in unclaimed}
-            sem_pln, sem_score = _best_semantic_match(
-                target_text, cand_texts, embed_fn, CHOICE_LIST_SEMANTIC_THRESHOLD,
-            )
-            if sem_pln is not None:
-                claimed.add(sem_pln)
+        # Tier 5: semantic embedding match (uses pre-computed vectors)
+        if pred_vecs and ln in actual_vecs and unclaimed:
+            target_vec = actual_vecs[ln]
+            best_sem_pln = None
+            best_sem_score = 0.0
+            for pln in unclaimed:
+                if pln not in pred_vecs:
+                    continue
+                sim = _cosine_similarity(target_vec, pred_vecs[pln])
+                if sim > best_sem_score:
+                    best_sem_pln, best_sem_score = pln, sim
+            if (best_sem_pln is not None
+                    and best_sem_score >= CHOICE_LIST_SEMANTIC_THRESHOLD):
+                claimed.add(best_sem_pln)
                 pairings[ln] = (
-                    sem_pln, f"semantic {sem_score:.2f} → {sem_pln}", sem_score,
+                    best_sem_pln,
+                    f"semantic {best_sem_score:.2f} → {best_sem_pln}",
+                    best_sem_score,
                 )
                 continue
 
-        # Tier 6: miss — capture best near-misses across all 3 modalities
+        # Tier 6: miss — capture near-misses across all 3 modalities (using
+        # cached vectors; never calls embed_fn here)
         miss_parts = []
         unclaimed_now = [pln for pln in predicted_keys if pln not in claimed]
         if unclaimed_now:
@@ -1159,13 +1201,15 @@ def _pair_choice_lists(actual_lists: dict, predicted_lists: dict,
             if best_jac > 0:
                 miss_parts.append(f"value-overlap {best_jac:.2f}")
 
-            if embed_fn is not None:
-                target_text = _list_embed_text(ln, a_vals)
-                cand_texts  = {pln: _list_embed_text(pln, predicted_lists[pln])
-                               for pln in unclaimed_now}
-                _, near_sem = _best_semantic_match(
-                    target_text, cand_texts, embed_fn, 0.0,
-                )
+            if pred_vecs and ln in actual_vecs:
+                target_vec = actual_vecs[ln]
+                near_sem = 0.0
+                for pln in unclaimed_now:
+                    if pln not in pred_vecs:
+                        continue
+                    sim = _cosine_similarity(target_vec, pred_vecs[pln])
+                    if sim > near_sem:
+                        near_sem = sim
                 if near_sem > 0:
                     miss_parts.append(f"semantic {near_sem:.2f}")
         miss_info = ("no match — best: " + ", ".join(miss_parts)) if miss_parts else ""
