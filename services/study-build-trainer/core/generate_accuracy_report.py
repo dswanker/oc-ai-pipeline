@@ -38,7 +38,7 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from openpyxl import Workbook
 from openpyxl.styles import (
@@ -530,6 +530,133 @@ def _best_fuzzy_match(target: str, candidates: list[str], threshold: float
     return None, best_score
 
 
+# ── Title fuzzy + semantic matching helpers ───────────────────────────────────
+# When OID-based matching fails (Tiers 1-3), the matcher tries to bridge naming
+# conventions by comparing form titles. Two strategies:
+#
+#   Tier 4 — Title fuzzy: rapidfuzz token_set_ratio on the form_title strings.
+#       Catches "Subject demographics" ↔ "Demographics and Baseline Characteristics".
+#       Threshold 0.65, credit factor 0.85 (less confident than OID match).
+#
+#   Tier 5 — Semantic: cosine similarity of sentence embeddings of "OID — title".
+#       Catches "DNBP — Diagnostic Nerve Block Procedure" ↔ "PROC — Procedures",
+#       which fuzzy strings cannot bridge.
+#       Threshold 0.70, credit factor 0.75 (least confident; semantic guesses
+#       benefit most from human review).
+#
+# The embedder is optional — if no embed_fn is passed to score_forms, Tier 5
+# is silently skipped. Tier 4 always runs as long as form_titles exist.
+
+TITLE_FUZZY_THRESHOLD     = 0.65
+TITLE_FUZZY_CREDIT_FACTOR = 0.85   # confidence discount
+
+SEMANTIC_THRESHOLD        = 0.70
+SEMANTIC_CREDIT_FACTOR    = 0.75   # confidence discount
+
+# Type for a sync embedder: takes texts, returns one float vector per text.
+EmbedFn = Callable[[list[str]], list[list[float]]] | None
+
+
+def _norm_title(s: str) -> str:
+    """Normalize a free-text title for comparison: lowercase, collapse
+    whitespace and punctuation. Less aggressive than _norm_oid because
+    titles are natural language."""
+    if not s:
+        return ""
+    out = s.strip().lower()
+    out = re.sub(r"\s+", " ", out)
+    return out
+
+
+def _title_fuzzy_score(a: str, b: str) -> float:
+    """Similarity in 0.0-1.0 of two free-text titles. Reuses _fuzzy_score
+    on normalized titles."""
+    return _fuzzy_score(_norm_title(a), _norm_title(b))
+
+
+def _best_title_match(target_title: str,
+                      candidate_titles: dict[str, str],
+                      threshold: float,
+                      ) -> tuple[str | None, float]:
+    """Find the candidate form_id whose title best matches target_title.
+    Args:
+      target_title: title of the form we're looking for a match for
+      candidate_titles: {form_id: title} for unclaimed predicted forms
+      threshold: minimum similarity to qualify as a match
+    Returns:
+      (best_form_id, score) where score >= threshold, else (None, best_score).
+    """
+    if not target_title or not candidate_titles:
+        return None, 0.0
+    best_id = None
+    best_score = 0.0
+    for cand_id, cand_title in candidate_titles.items():
+        if not cand_title:
+            continue
+        score = _title_fuzzy_score(target_title, cand_title)
+        if score > best_score:
+            best_score, best_id = score, cand_id
+    if best_score >= threshold:
+        return best_id, best_score
+    return None, best_score
+
+
+def _cosine_similarity(v1: list[float], v2: list[float]) -> float:
+    """Cosine similarity of two vectors. Assumes vectors may be unnormalized;
+    handles the normalization inline. Returns 0.0 for any zero-length vector."""
+    if not v1 or not v2 or len(v1) != len(v2):
+        return 0.0
+    dot = sum(a * b for a, b in zip(v1, v2))
+    n1  = sum(a * a for a in v1) ** 0.5
+    n2  = sum(b * b for b in v2) ** 0.5
+    if n1 == 0.0 or n2 == 0.0:
+        return 0.0
+    return dot / (n1 * n2)
+
+
+def _form_embed_text(form_id: str, form_title: str) -> str:
+    """Canonical text representation of a form for embedding.
+    Combines OID and title so the embedder sees both signals."""
+    fid = (form_id or "").strip()
+    ttl = (form_title or "").strip()
+    if fid and ttl:
+        return f"{fid} — {ttl}"
+    return fid or ttl
+
+
+def _best_semantic_match(target_text: str,
+                         candidate_texts: dict[str, str],
+                         embed_fn: EmbedFn,
+                         threshold: float,
+                         ) -> tuple[str | None, float]:
+    """Find the candidate form_id whose embedding is closest to target's.
+    Returns (None, 0.0) if embed_fn is None or any other failure.
+    Falls through silently on errors so the scorer never crashes when
+    semantic matching is unavailable.
+    """
+    if embed_fn is None or not target_text or not candidate_texts:
+        return None, 0.0
+    cand_ids   = list(candidate_texts.keys())
+    cand_texts = [candidate_texts[cid] for cid in cand_ids]
+    try:
+        all_vecs = embed_fn([target_text] + cand_texts)
+    except Exception:
+        # Embedder unavailable mid-run — degrade silently
+        return None, 0.0
+    if not all_vecs or len(all_vecs) != 1 + len(cand_texts):
+        return None, 0.0
+    target_vec = all_vecs[0]
+    best_id    = None
+    best_score = 0.0
+    for cid, vec in zip(cand_ids, all_vecs[1:]):
+        sim = _cosine_similarity(target_vec, vec)
+        if sim > best_score:
+            best_score, best_id = sim, cid
+    if best_score >= threshold:
+        return best_id, best_score
+    return None, best_score
+
+
 def score_study(actual_odm: dict, predicted: dict) -> tuple[float, list[DiffRow]]:
     diffs   = []
     matched = 0
@@ -615,20 +742,37 @@ def score_form_placement(actual_odm: dict, predicted: dict) -> tuple[float, list
     return _score(matched, total), matched, total, diffs
 
 
-def score_forms(actual_xls: dict, predicted_xls: dict) -> tuple[float, list[DiffRow]]:
+def score_forms(actual_xls: dict, predicted_xls: dict,
+                embed_fn: EmbedFn = None,
+                ) -> tuple[float, list[DiffRow]]:
     """Score form-level match by form_id.
 
     Match tiers (from strongest to weakest):
-      1. EXACT     — actual form_id == predicted form_id verbatim
-      2. NORMALIZED — equal after _norm_oid (strips F_/FORM_/IG_ prefixes,
-                      lowercase, collapses separators). Full credit (1.0).
-      3. FUZZY     — rapidfuzz token_set_ratio >= FUZZY_FORMS_THRESHOLD.
-                      Partial credit equal to the similarity score.
-      4. MISS      — no candidate >= threshold. Reports the best near-miss
-                      in match_info for reviewer context.
+      1. EXACT       — actual form_id == predicted form_id verbatim
+      2. NORMALIZED  — equal after _norm_oid (strips F_/FORM_/IG_ prefixes,
+                       lowercase, collapses separators). Full credit (1.0).
+      3. FUZZY       — rapidfuzz token_set_ratio on OIDs >= FUZZY_FORMS_THRESHOLD.
+                       Partial credit equal to similarity score.
+      4. TITLE       — fuzzy match on form_title text >= TITLE_FUZZY_THRESHOLD.
+                       Partial credit = score * TITLE_FUZZY_CREDIT_FACTOR.
+      5. SEMANTIC    — cosine similarity of "OID — title" embeddings >=
+                       SEMANTIC_THRESHOLD. Requires embed_fn; silently skipped
+                       when embed_fn is None.
+                       Partial credit = score * SEMANTIC_CREDIT_FACTOR.
+      6. MISS        — no candidate qualifies. Reports best near-misses in
+                       match_info for reviewer context.
 
     A predicted form may only be claimed by one actual form. The first actual
     form (sorted) gets the strongest available match.
+
+    Args:
+      actual_xls:    parsed XLSForm zip from human-approved build
+      predicted_xls: parsed XLSForm zip from Claude-generated predicted build
+      embed_fn:      optional sync embedding function. Takes a list of strings,
+                     returns one float-vector per string. When None, Tier 5
+                     is skipped silently. Failures inside embed_fn are caught
+                     and treated as "no semantic match" so the scorer never
+                     crashes on embedder unavailability.
     """
     actual_ids    = sorted(actual_xls.keys())
     predicted_ids = list(predicted_xls.keys())
@@ -675,7 +819,7 @@ def score_forms(actual_xls: dict, predicted_xls: dict) -> tuple[float, list[Diff
             ))
             continue
 
-        # Tier 3: fuzzy
+        # Tier 3: fuzzy on OID
         unclaimed = [pid for pid in predicted_ids if pid not in claimed]
         best_pid, best_score = _best_fuzzy_match(
             fid, unclaimed, FUZZY_FORMS_THRESHOLD,
@@ -691,17 +835,79 @@ def score_forms(actual_xls: dict, predicted_xls: dict) -> tuple[float, list[Diff
             ))
             continue
 
-        # Tier 4: miss — report best near-miss for reviewer context
-        miss_info = ""
-        if unclaimed:
-            _, near_score = _best_fuzzy_match(fid, unclaimed, 0.0)
-            if near_score > 0:
-                # Find the actual nearest candidate (below threshold)
-                near_cand = max(unclaimed,
+        # Tier 4: title fuzzy match
+        unclaimed_titles = {pid: predicted_xls[pid]["form_title"]
+                            for pid in predicted_ids if pid not in claimed}
+        title_pid, title_score = _best_title_match(
+            a_title, unclaimed_titles, TITLE_FUZZY_THRESHOLD,
+        )
+        if title_pid is not None:
+            claimed.add(title_pid)
+            credit = title_score * TITLE_FUZZY_CREDIT_FACTOR
+            matched_score += credit
+            p_title = predicted_xls[title_pid]["form_title"]
+            # Truncate titles for the match_info display so the cell stays readable
+            a_show = (a_title[:35] + "…") if len(a_title) > 36 else a_title
+            p_show = (p_title[:35] + "…") if len(p_title) > 36 else p_title
+            diffs.append(DiffRow(
+                "Forms", f"Form: {fid} ({a_title})",
+                title_pid, fid,
+                match_info=(f'title-match {title_score:.2f} → {title_pid} '
+                            f'("{p_show}" ≈ "{a_show}")'),
+            ))
+            continue
+
+        # Tier 5: semantic embedding match (optional)
+        unclaimed_for_semantic = {
+            pid: _form_embed_text(pid, predicted_xls[pid]["form_title"])
+            for pid in predicted_ids if pid not in claimed
+        }
+        sem_pid, sem_score = _best_semantic_match(
+            _form_embed_text(fid, a_title),
+            unclaimed_for_semantic,
+            embed_fn,
+            SEMANTIC_THRESHOLD,
+        )
+        if sem_pid is not None:
+            claimed.add(sem_pid)
+            credit = sem_score * SEMANTIC_CREDIT_FACTOR
+            matched_score += credit
+            p_title = predicted_xls[sem_pid]["form_title"]
+            diffs.append(DiffRow(
+                "Forms", f"Form: {fid} ({a_title})",
+                sem_pid, fid,
+                match_info=(f'semantic {sem_score:.2f} → {sem_pid} '
+                            f'({p_title})'),
+            ))
+            continue
+
+        # Tier 6: miss — report best near-misses for reviewer context
+        miss_parts = []
+        unclaimed_now = [pid for pid in predicted_ids if pid not in claimed]
+        if unclaimed_now:
+            _, near_oid = _best_fuzzy_match(fid, unclaimed_now, 0.0)
+            if near_oid > 0:
+                near_cand = max(unclaimed_now,
                                 key=lambda c: _fuzzy_score(_norm_oid(fid),
                                                             _norm_oid(c)))
-                miss_info = (f"no match >= {FUZZY_FORMS_THRESHOLD}; "
-                             f"best={near_cand} ({near_score:.2f})")
+                miss_parts.append(f"oid {near_cand} ({near_oid:.2f})")
+            # Best title near-miss
+            t_titles = {pid: predicted_xls[pid]["form_title"]
+                        for pid in unclaimed_now}
+            _, near_title = _best_title_match(a_title, t_titles, 0.0)
+            if near_title > 0:
+                miss_parts.append(f"title {near_title:.2f}")
+            # Best semantic near-miss (only if embedder available)
+            if embed_fn is not None:
+                t_semantic = {pid: _form_embed_text(pid, predicted_xls[pid]["form_title"])
+                              for pid in unclaimed_now}
+                _, near_sem = _best_semantic_match(
+                    _form_embed_text(fid, a_title),
+                    t_semantic, embed_fn, 0.0,
+                )
+                if near_sem > 0:
+                    miss_parts.append(f"semantic {near_sem:.2f}")
+        miss_info = ("no match — best: " + ", ".join(miss_parts)) if miss_parts else ""
         diffs.append(DiffRow(
             "Forms", f"Form: {fid} ({a_title})",
             "— missing —", fid,
@@ -1240,6 +1446,7 @@ def generate_accuracy_report(
     predicted_edc_zip_bytes: bytes,
     output_path: str,
     study_name: str = "",
+    embed_fn: EmbedFn = None,
 ) -> dict:
     """
     Generate accuracy report XLSX.
@@ -1251,6 +1458,10 @@ def generate_accuracy_report(
       predicted_edc_zip_bytes: EDC Build ZIP (from edc-builder skill)
       output_path:             Where to write the .xlsx file
       study_name:              Display name for header
+      embed_fn:                Optional sync embedding function used by the
+                               Forms layer's semantic-match tier. Takes a list
+                               of strings, returns one float-vector per string.
+                               When None, semantic matching is skipped.
 
     Returns:
       {
@@ -1282,7 +1493,7 @@ def generate_accuracy_report(
     study_score,  study_matched,  study_total  = _run(score_study, actual_odm, predicted)
     event_score,  event_matched,  event_total  = _run(score_events, actual_odm, predicted)
     place_score,  place_matched,  place_total  = _run(score_form_placement, actual_odm, predicted)
-    form_score,   form_matched,   form_total   = _run(score_forms, actual_xls, predicted_xls)
+    form_score,   form_matched,   form_total   = _run(score_forms, actual_xls, predicted_xls, embed_fn)
     # Logic runs before Items/Choices so its diffs appear first in the sheet
     # (Items and Choices can generate hundreds of rows that push Logic off the end)
     logic_score,  logic_matched,  logic_total  = _run(score_logic, actual_xls, predicted_xls)

@@ -653,6 +653,7 @@ class IngestWorker:
         """
         import sys
         import os
+        import asyncio
         import tempfile
 
         # core_dir is the core/ directory — NOT the workers/ directory
@@ -666,6 +667,28 @@ class IngestWorker:
         protocol = (analysis_dict.get("study_meta", {}).get("protocol_number")
                     or pair_hash)
 
+        # Build a sync wrapper around the trainer's async Embedder so the
+        # accuracy scorer (which runs in a thread executor and is sync) can
+        # invoke semantic-match Tier 5 in score_forms. The wrapper creates
+        # a private event loop for each batch — safe because we're already
+        # in a worker thread, not the main FastAPI loop. If the embedder is
+        # missing or any embed call fails, we pass embed_fn=None so the
+        # scorer silently skips the semantic tier (Tiers 1-4 still run).
+        embed_fn = None
+        if getattr(self, "embedder", None) is not None:
+            embedder = self.embedder
+            def _sync_embed(texts: list[str]) -> list[list[float]]:
+                try:
+                    loop = asyncio.new_event_loop()
+                    try:
+                        return loop.run_until_complete(embedder.embed_batch(texts))
+                    finally:
+                        loop.close()
+                except Exception:
+                    # Embedder failure → degrade silently
+                    return []
+            embed_fn = _sync_embed
+
         with tempfile.TemporaryDirectory() as tmp:
             out_path = os.path.join(tmp, "accuracy_report.xlsx")
             result   = generate_accuracy_report(
@@ -675,6 +698,7 @@ class IngestWorker:
                 predicted_edc_zip_bytes = predicted_edc_zip,
                 output_path             = out_path,
                 study_name              = protocol,
+                embed_fn                = embed_fn,
             )
             result["xlsx_bytes"] = open(out_path, "rb").read()
 
