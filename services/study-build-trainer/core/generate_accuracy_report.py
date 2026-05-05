@@ -1003,9 +1003,193 @@ def score_items(actual_xls: dict, predicted_xls: dict) -> tuple[float, list[Diff
     return _score(matched, total), matched, total, diffs
 
 
-def score_choices(actual_xls: dict, predicted_xls: dict) -> tuple[float, list[DiffRow]]:
-    """Score choice list match. Caps diffs at 20 per list to prevent large
-    custom choice lists from dominating the diff sheet."""
+# ── Choice list pairing helpers ───────────────────────────────────────────────
+# The Choices layer aggregates {list_name: {value: label}} across all forms,
+# then needs to pair each actual list to a predicted list before comparing
+# values inside. Naming-convention drift (RACE_OPT vs RACE) used to collapse
+# entire lists to "missing." This pairing layer relaxes that.
+#
+# Tier ladder for list-name pairing (mirrors Forms but adds set-overlap):
+#   1. EXACT          list_name verbatim
+#   2. NORMALIZED     equal under _norm_oid
+#   3. FUZZY          rapidfuzz token_set_ratio on list_name >= 0.75
+#   4. VALUE-OVERLAP  Jaccard on the SET of value codes >= 0.50.
+#                     Two lists named differently but containing the same
+#                     codes (e.g. {Y,N} vs {Y,N}) almost certainly match.
+#   5. SEMANTIC       cosine sim of "list_name + value labels" embeddings
+#                     >= 0.70. Optional; needs embed_fn.
+#
+# Once a list pair is chosen, value-level comparison runs as before:
+# matched += (val in paired_list); the "credit" comes from how many values
+# inside the paired list actually align. This means a wrong pairing hurts
+# the score automatically — you don't need partial-credit math at the list
+# level.
+
+CHOICE_LIST_FUZZY_THRESHOLD     = 0.75
+CHOICE_LIST_JACCARD_THRESHOLD   = 0.50
+CHOICE_LIST_SEMANTIC_THRESHOLD  = 0.70
+
+
+def _jaccard_overlap(a: set, b: set) -> float:
+    """Jaccard coefficient |a∩b|/|a∪b|. Returns 0 for empty sets."""
+    union = a | b
+    if not union:
+        return 0.0
+    return len(a & b) / len(union)
+
+
+def _list_embed_text(list_name: str, values: dict) -> str:
+    """Canonical text rep of a choice list for embedding.
+    Combines list_name with up to 20 sorted value/label pairs so the
+    embedder sees both the structural tag and the semantic content."""
+    parts = [list_name]
+    if values:
+        for v, lbl in sorted(values.items())[:20]:
+            if lbl and lbl != v:
+                parts.append(f"{v}: {lbl}")
+            else:
+                parts.append(v)
+    return " | ".join(parts)
+
+
+def _pair_choice_lists(actual_lists: dict, predicted_lists: dict,
+                       embed_fn: EmbedFn = None,
+                       ) -> dict:
+    """For each actual list_name, find the best matching predicted list_name.
+
+    Returns:
+      {actual_ln: (predicted_ln_or_None, tier_label, score)}
+
+    A predicted list may only be claimed once. First actual (sorted) wins.
+    Tier_label is the human-readable string for the Match Info column;
+    the empty-string and 'no match — best: ...' messages communicate misses.
+    """
+    pairings: dict = {}
+    claimed: set  = set()
+
+    actual_keys    = sorted(actual_lists.keys())
+    predicted_keys = list(predicted_lists.keys())
+
+    # Pre-build normalized index of predicted list names for Tier 2
+    pred_by_norm: dict[str, list[str]] = {}
+    for pln in predicted_keys:
+        pred_by_norm.setdefault(_norm_oid(pln), []).append(pln)
+
+    for ln in actual_keys:
+        a_vals = actual_lists[ln]
+        a_value_set = set(a_vals.keys())
+
+        # Tier 1: exact list_name
+        if ln in predicted_lists and ln not in claimed:
+            claimed.add(ln)
+            pairings[ln] = (ln, "exact", 1.0)
+            continue
+
+        # Tier 2: normalized list_name
+        norm = _norm_oid(ln)
+        norm_candidates = [c for c in pred_by_norm.get(norm, [])
+                           if c not in claimed]
+        if norm_candidates:
+            pln = norm_candidates[0]
+            claimed.add(pln)
+            pairings[ln] = (pln, f"normalized → {pln}", 1.0)
+            continue
+
+        # Tier 3: fuzzy on list_name
+        unclaimed = [pln for pln in predicted_keys if pln not in claimed]
+        best_pln, best_score = _best_fuzzy_match(
+            ln, unclaimed, CHOICE_LIST_FUZZY_THRESHOLD,
+        )
+        if best_pln is not None:
+            claimed.add(best_pln)
+            pairings[ln] = (
+                best_pln, f"fuzzy {best_score:.2f} → {best_pln}", best_score,
+            )
+            continue
+
+        # Tier 4: value-set overlap (Jaccard on value codes)
+        best_overlap_pln = None
+        best_overlap_score = 0.0
+        for pln in unclaimed:
+            p_value_set = set(predicted_lists[pln].keys())
+            overlap = _jaccard_overlap(a_value_set, p_value_set)
+            if overlap > best_overlap_score:
+                best_overlap_pln, best_overlap_score = pln, overlap
+        if (best_overlap_pln is not None
+                and best_overlap_score >= CHOICE_LIST_JACCARD_THRESHOLD):
+            claimed.add(best_overlap_pln)
+            pairings[ln] = (
+                best_overlap_pln,
+                f"value-overlap {best_overlap_score:.2f} → {best_overlap_pln}",
+                best_overlap_score,
+            )
+            continue
+
+        # Tier 5: semantic embedding match (optional)
+        if embed_fn is not None and unclaimed:
+            target_text = _list_embed_text(ln, a_vals)
+            cand_texts  = {pln: _list_embed_text(pln, predicted_lists[pln])
+                           for pln in unclaimed}
+            sem_pln, sem_score = _best_semantic_match(
+                target_text, cand_texts, embed_fn, CHOICE_LIST_SEMANTIC_THRESHOLD,
+            )
+            if sem_pln is not None:
+                claimed.add(sem_pln)
+                pairings[ln] = (
+                    sem_pln, f"semantic {sem_score:.2f} → {sem_pln}", sem_score,
+                )
+                continue
+
+        # Tier 6: miss — capture best near-misses across all 3 modalities
+        miss_parts = []
+        unclaimed_now = [pln for pln in predicted_keys if pln not in claimed]
+        if unclaimed_now:
+            _, near_oid = _best_fuzzy_match(ln, unclaimed_now, 0.0)
+            if near_oid > 0:
+                near_cand = max(unclaimed_now,
+                    key=lambda c: _fuzzy_score(_norm_oid(ln), _norm_oid(c)))
+                miss_parts.append(f"oid {near_cand} ({near_oid:.2f})")
+
+            best_jac = 0.0
+            for pln in unclaimed_now:
+                p_set = set(predicted_lists[pln].keys())
+                jac = _jaccard_overlap(a_value_set, p_set)
+                if jac > best_jac:
+                    best_jac = jac
+            if best_jac > 0:
+                miss_parts.append(f"value-overlap {best_jac:.2f}")
+
+            if embed_fn is not None:
+                target_text = _list_embed_text(ln, a_vals)
+                cand_texts  = {pln: _list_embed_text(pln, predicted_lists[pln])
+                               for pln in unclaimed_now}
+                _, near_sem = _best_semantic_match(
+                    target_text, cand_texts, embed_fn, 0.0,
+                )
+                if near_sem > 0:
+                    miss_parts.append(f"semantic {near_sem:.2f}")
+        miss_info = ("no match — best: " + ", ".join(miss_parts)) if miss_parts else ""
+        pairings[ln] = (None, miss_info, 0.0)
+
+    return pairings
+
+
+def score_choices(actual_xls: dict, predicted_xls: dict,
+                  embed_fn: EmbedFn = None,
+                  ) -> tuple[float, list[DiffRow]]:
+    """Score choice list match. Caps diffs at 20 per list.
+
+    List-level pairing tiers (see _pair_choice_lists for full ladder):
+      1. Exact list_name       3. Fuzzy list_name      5. Semantic
+      2. Normalized list_name  4. Value-set overlap
+
+    Once paired, value-level comparison runs as before (exact name+label
+    match). A future patch may add value-level fuzzy/semantic matching.
+
+    Args:
+      embed_fn: optional sync embedder for Tier 5. None disables semantic
+                pairing; Tiers 1-4 still run.
+    """
     diffs   = []
     total   = 0
     matched = 0
@@ -1025,42 +1209,76 @@ def score_choices(actual_xls: dict, predicted_xls: dict) -> tuple[float, list[Di
     actual_lists    = _agg(actual_xls)
     predicted_lists = _agg(predicted_xls)
 
+    pairings = _pair_choice_lists(actual_lists, predicted_lists, embed_fn)
+
     for ln in sorted(actual_lists.keys()):
         a_vals = actual_lists[ln]
         list_diff_count = 0
-        if ln not in predicted_lists:
+        paired_pln, tier_label, _score_val = pairings[ln]
+
+        if paired_pln is None:
+            # Unpaired — count all values as miss; show pairing info on first
+            # diff row only so the cell stays compact.
             total += len(a_vals)
+            first = True
             for val, lbl in sorted(a_vals.items()):
                 if list_diff_count >= MAX_DIFFS_PER_LIST:
-                    diffs.append(DiffRow("Choices", f"{ln} — (capped)",
-                        f"…{len(a_vals)-MAX_DIFFS_PER_LIST}+ more", "See full list", "Capped"))
+                    diffs.append(DiffRow(
+                        "Choices", f"{ln} — (capped)",
+                        f"…{len(a_vals)-MAX_DIFFS_PER_LIST}+ more",
+                        "See full list",
+                        match_info="Capped",
+                    ))
                     break
-                diffs.append(DiffRow("Choices", f"{ln} — entire list missing",
-                    "— missing —", f"{val}: {lbl}"))
+                diffs.append(DiffRow(
+                    "Choices", f"{ln} — entire list missing",
+                    "— missing —", f"{val}: {lbl}",
+                    match_info=tier_label if first else "",
+                ))
+                first = False
                 list_diff_count += 1
             continue
 
-        p_vals = predicted_lists[ln]
+        # List paired — compare values inside it
+        p_vals = predicted_lists[paired_pln]
+        first = True
         for val in sorted(a_vals.keys()):
             total += 1
             if val in p_vals:
                 matched += 1
                 a_lbl = a_vals[val].strip().lower()
                 p_lbl = p_vals[val].strip().lower()
-                if a_lbl != p_lbl and a_lbl and p_lbl and list_diff_count < MAX_DIFFS_PER_LIST:
-                    diffs.append(DiffRow("Choices", f"{ln}.{val} — label",
-                        p_vals[val], a_vals[val], "Label differs"))
+                if (a_lbl != p_lbl and a_lbl and p_lbl
+                        and list_diff_count < MAX_DIFFS_PER_LIST):
+                    diffs.append(DiffRow(
+                        "Choices", f"{ln}.{val} — label",
+                        p_vals[val], a_vals[val],
+                        note="Label differs",
+                        match_info=tier_label if first else "",
+                    ))
+                    first = False
                     list_diff_count += 1
             elif list_diff_count < MAX_DIFFS_PER_LIST:
-                diffs.append(DiffRow("Choices", f"{ln}.{val}",
-                    "— missing —", f"{val}: {a_vals[val]}"))
+                # Show pairing context if list was renamed
+                elem = (f"{ln}.{val}" if ln == paired_pln
+                        else f"{ln}.{val} (paired with {paired_pln})")
+                diffs.append(DiffRow(
+                    "Choices", elem,
+                    "— missing —", f"{val}: {a_vals[val]}",
+                    match_info=tier_label if first else "",
+                ))
+                first = False
                 list_diff_count += 1
 
         for val in sorted(set(p_vals) - set(a_vals)):
             if list_diff_count >= MAX_DIFFS_PER_LIST:
                 break
-            diffs.append(DiffRow("Choices", f"Extra: {ln}.{val}",
-                f"{val}: {p_vals[val]}", "— not in actual —"))
+            elem = (f"Extra: {ln}.{val}" if ln == paired_pln
+                    else f"Extra: {paired_pln}.{val} (paired with {ln})")
+            diffs.append(DiffRow(
+                "Choices", elem,
+                f"{val}: {p_vals[val]}", "— not in actual —",
+            ))
             list_diff_count += 1
 
     return _score(matched, total), matched, total, diffs
@@ -1498,7 +1716,7 @@ def generate_accuracy_report(
     # (Items and Choices can generate hundreds of rows that push Logic off the end)
     logic_score,  logic_matched,  logic_total  = _run(score_logic, actual_xls, predicted_xls)
     item_score,   item_matched,   item_total   = _run(score_items, actual_xls, predicted_xls)
-    choice_score, choice_matched, choice_total = _run(score_choices, actual_xls, predicted_xls)
+    choice_score, choice_matched, choice_total = _run(score_choices, actual_xls, predicted_xls, embed_fn)
 
 
     layer_scores = {
