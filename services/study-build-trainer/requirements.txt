@@ -72,3 +72,4 @@ watchfiles==1.1.1
 websockets==16.0
 reportlab
 rapidfuzz==3.10.1
+xlrd==2.0.1

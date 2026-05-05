@@ -249,7 +249,9 @@ def _parse_odm(xml_bytes: bytes) -> dict:
 
 def _parse_xlsform_zip(zip_bytes: bytes) -> dict:
     """
-    Parse a ZIP of XLSForm .xlsx files.
+    Parse a ZIP of XLSForm files. Supports both modern .xlsx (openpyxl)
+    and legacy .xls (xlrd) workbooks. Apple resource-fork garbage in
+    __MACOSX/ is skipped.
 
     Returns:
       {
@@ -262,17 +264,54 @@ def _parse_xlsform_zip(zip_bytes: bytes) -> dict:
       }
     """
     import openpyxl
+    try:
+        import xlrd
+        _have_xlrd = True
+    except ImportError:
+        _have_xlrd = False
+
+    def _read_sheets_openpyxl(content: bytes) -> dict[str, list[list]]:
+        """Return {sheet_name: rows} from an .xlsx workbook."""
+        wb = openpyxl.load_workbook(io.BytesIO(content), data_only=True, read_only=True)
+        out = {sn: list(wb[sn].values) for sn in wb.sheetnames}
+        wb.close()
+        return out
+
+    def _read_sheets_xlrd(content: bytes) -> dict[str, list[list]]:
+        """Return {sheet_name: rows} from a legacy .xls workbook."""
+        wb = xlrd.open_workbook(file_contents=content)
+        out = {}
+        for sn in wb.sheet_names():
+            sh = wb.sheet_by_name(sn)
+            rows = []
+            for r in range(sh.nrows):
+                rows.append([sh.cell_value(r, c) for c in range(sh.ncols)])
+            out[sn] = rows
+        return out
 
     result = {}
     try:
         with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
             for name in zf.namelist():
-                if not name.endswith(".xlsx") or name.startswith("__"):
+                # Skip macOS resource forks and other non-data zip entries
+                if name.startswith("__") or "/__MACOSX/" in name or "/._" in name \
+                        or Path(name).name.startswith("._"):
                     continue
+
+                lower = name.lower()
+                if lower.endswith(".xlsx"):
+                    reader = _read_sheets_openpyxl
+                elif lower.endswith(".xls"):
+                    if not _have_xlrd:
+                        # xlrd not available — skip with no error so the rest of
+                        # the zip still parses. Caller sees fewer forms than expected.
+                        continue
+                    reader = _read_sheets_xlrd
+                else:
+                    continue
+
                 try:
-                    wb = openpyxl.load_workbook(
-                        io.BytesIO(zf.read(name)), data_only=True, read_only=True
-                    )
+                    sheets = reader(zf.read(name))
                 except Exception:
                     continue
 
@@ -280,9 +319,8 @@ def _parse_xlsform_zip(zip_bytes: bytes) -> dict:
                 settings   = {}
                 form_id    = ""
                 form_title = ""
-                if "settings" in wb.sheetnames:
-                    ws   = wb["settings"]
-                    rows = list(ws.values)
+                if "settings" in sheets:
+                    rows = sheets["settings"]
                     if len(rows) >= 2:
                         hdrs = [_safe_val(h) for h in rows[0]]
                         vals = [_safe_val(v) for v in rows[1]]
@@ -301,9 +339,8 @@ def _parse_xlsform_zip(zip_bytes: bytes) -> dict:
 
                 # survey
                 survey = []
-                if "survey" in wb.sheetnames:
-                    ws   = wb["survey"]
-                    rows = list(ws.values)
+                if "survey" in sheets:
+                    rows = sheets["survey"]
                     if rows:
                         hdrs = [str(h).strip().lower() if h else "" for h in rows[0]]
                         for row in rows[1:]:
@@ -323,9 +360,8 @@ def _parse_xlsform_zip(zip_bytes: bytes) -> dict:
 
                 # choices
                 choices = []
-                if "choices" in wb.sheetnames:
-                    ws   = wb["choices"]
-                    rows = list(ws.values)
+                if "choices" in sheets:
+                    rows = sheets["choices"]
                     if rows:
                         hdrs = [str(h).strip().lower() if h else "" for h in rows[0]]
                         for row in rows[1:]:
@@ -340,7 +376,6 @@ def _parse_xlsform_zip(zip_bytes: bytes) -> dict:
                                     "label":     d.get("label", ""),
                                 })
 
-                wb.close()
                 result[form_id.upper()] = {
                     "form_title": form_title,
                     "raw_form_id": raw_form_id,
