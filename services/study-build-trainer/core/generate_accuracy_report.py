@@ -1053,7 +1053,6 @@ def _list_embed_text(list_name: str, values: dict) -> str:
 
 
 def _pair_choice_lists(actual_lists: dict, predicted_lists: dict,
-                       embed_fn: EmbedFn = None,
                        ) -> dict:
     """For each actual list_name, find the best matching predicted list_name.
 
@@ -1062,15 +1061,17 @@ def _pair_choice_lists(actual_lists: dict, predicted_lists: dict,
 
     A predicted list may only be claimed once. First actual (sorted) wins.
     Tier_label is the human-readable string for the Match Info column;
-    the empty-string and 'no match — best: ...' messages communicate misses.
+    'no match — best: ...' messages communicate misses.
 
-    Performance: embeddings for ALL lists on both sides are batched into at
-    most 2 calls to embed_fn. After that, all semantic comparisons use
-    pre-computed vectors with a pure-Python cosine — no further embed_fn
-    invocations. This avoids the per-list-create-new-event-loop pattern in
-    the worker that previously OOM'd the trainer container on large studies
-    (CRS-135 has 107 actual choice lists; the old implementation triggered
-    100+ embed calls each spinning up a new event loop and thread).
+    Pairing tiers (semantic Tier 5 was removed in Patch 3.2 because batch
+    embedding of 100+ choice list strings caused OOM on the trainer
+    container — see Patch 3 commit history. If you want semantic matching
+    here in the future, the right approach is to chunk the embedding batch,
+    not retry the all-at-once approach):
+      1. EXACT          list_name verbatim
+      2. NORMALIZED     equal under _norm_oid
+      3. FUZZY          rapidfuzz token_set_ratio on list_name >= 0.75
+      4. VALUE-OVERLAP  Jaccard on the SET of value codes >= 0.50
     """
     pairings: dict = {}
     claimed: set  = set()
@@ -1082,32 +1083,6 @@ def _pair_choice_lists(actual_lists: dict, predicted_lists: dict,
     pred_by_norm: dict[str, list[str]] = {}
     for pln in predicted_keys:
         pred_by_norm.setdefault(_norm_oid(pln), []).append(pln)
-
-    # ── Pre-compute embeddings ONCE for both sides ──────────────────────────
-    # If embed_fn is None or fails on either side, semantic tier is silently
-    # disabled. Tiers 1-4 still run.
-    pred_vecs:   dict[str, list[float]] = {}
-    actual_vecs: dict[str, list[float]] = {}
-    if embed_fn is not None and predicted_keys and actual_keys:
-        try:
-            pred_texts = [_list_embed_text(pln, predicted_lists[pln])
-                          for pln in predicted_keys]
-            vecs = embed_fn(pred_texts)
-            if vecs and len(vecs) == len(predicted_keys):
-                for pln, v in zip(predicted_keys, vecs):
-                    pred_vecs[pln] = v
-        except Exception:
-            pred_vecs = {}
-        if pred_vecs:
-            try:
-                actual_texts = [_list_embed_text(ln, actual_lists[ln])
-                                for ln in actual_keys]
-                vecs = embed_fn(actual_texts)
-                if vecs and len(vecs) == len(actual_keys):
-                    for ln, v in zip(actual_keys, vecs):
-                        actual_vecs[ln] = v
-            except Exception:
-                actual_vecs = {}
 
     # ── Per-list pairing loop ───────────────────────────────────────────────
     for ln in actual_keys:
@@ -1160,29 +1135,8 @@ def _pair_choice_lists(actual_lists: dict, predicted_lists: dict,
             )
             continue
 
-        # Tier 5: semantic embedding match (uses pre-computed vectors)
-        if pred_vecs and ln in actual_vecs and unclaimed:
-            target_vec = actual_vecs[ln]
-            best_sem_pln = None
-            best_sem_score = 0.0
-            for pln in unclaimed:
-                if pln not in pred_vecs:
-                    continue
-                sim = _cosine_similarity(target_vec, pred_vecs[pln])
-                if sim > best_sem_score:
-                    best_sem_pln, best_sem_score = pln, sim
-            if (best_sem_pln is not None
-                    and best_sem_score >= CHOICE_LIST_SEMANTIC_THRESHOLD):
-                claimed.add(best_sem_pln)
-                pairings[ln] = (
-                    best_sem_pln,
-                    f"semantic {best_sem_score:.2f} → {best_sem_pln}",
-                    best_sem_score,
-                )
-                continue
-
-        # Tier 6: miss — capture near-misses across all 3 modalities (using
-        # cached vectors; never calls embed_fn here)
+        # Tier 5 (miss): capture near-misses across OID and value-overlap.
+        # Semantic near-miss removed in Patch 3.2.
         miss_parts = []
         unclaimed_now = [pln for pln in predicted_keys if pln not in claimed]
         if unclaimed_now:
@@ -1200,18 +1154,6 @@ def _pair_choice_lists(actual_lists: dict, predicted_lists: dict,
                     best_jac = jac
             if best_jac > 0:
                 miss_parts.append(f"value-overlap {best_jac:.2f}")
-
-            if pred_vecs and ln in actual_vecs:
-                target_vec = actual_vecs[ln]
-                near_sem = 0.0
-                for pln in unclaimed_now:
-                    if pln not in pred_vecs:
-                        continue
-                    sim = _cosine_similarity(target_vec, pred_vecs[pln])
-                    if sim > near_sem:
-                        near_sem = sim
-                if near_sem > 0:
-                    miss_parts.append(f"semantic {near_sem:.2f}")
         miss_info = ("no match — best: " + ", ".join(miss_parts)) if miss_parts else ""
         pairings[ln] = (None, miss_info, 0.0)
 
@@ -1224,15 +1166,19 @@ def score_choices(actual_xls: dict, predicted_xls: dict,
     """Score choice list match. Caps diffs at 20 per list.
 
     List-level pairing tiers (see _pair_choice_lists for full ladder):
-      1. Exact list_name       3. Fuzzy list_name      5. Semantic
+      1. Exact list_name       3. Fuzzy list_name
       2. Normalized list_name  4. Value-set overlap
 
     Once paired, value-level comparison runs as before (exact name+label
     match). A future patch may add value-level fuzzy/semantic matching.
 
     Args:
-      embed_fn: optional sync embedder for Tier 5. None disables semantic
-                pairing; Tiers 1-4 still run.
+      embed_fn: ACCEPTED FOR API STABILITY but NOT USED. Semantic Tier 5 was
+                disabled in Patch 3.2 because batched embedding of 100+
+                choice list strings caused OOM on the trainer container.
+                The argument is kept so generate_accuracy_report's call site
+                doesn't have to change. To re-enable semantic here in the
+                future, the right approach is to chunk the embedding batch.
     """
     diffs   = []
     total   = 0
@@ -1253,7 +1199,7 @@ def score_choices(actual_xls: dict, predicted_xls: dict,
     actual_lists    = _agg(actual_xls)
     predicted_lists = _agg(predicted_xls)
 
-    pairings = _pair_choice_lists(actual_lists, predicted_lists, embed_fn)
+    pairings = _pair_choice_lists(actual_lists, predicted_lists)
 
     for ln in sorted(actual_lists.keys()):
         a_vals = actual_lists[ln]
