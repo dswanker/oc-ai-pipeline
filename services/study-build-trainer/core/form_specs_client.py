@@ -56,61 +56,26 @@ namespaces:"oc=\\"http://openclinica.org/xforms\\" , OpenClinica=\\"http://openc
 survey rows: [{{"type","name","label","required","relevant","constraint","calculation","oc:itemgroupOID"}}]
 choices rows: [{{"list_name","name","label"}}]
 
-Rules (Patch 14.2 — protocol grounds CONTENT, CDASHIG grounds NAMING + LOGIC):
+Rules (Patch 14 makes these protocol-grounded rather than CDASHIG-default):
 - Generate one survey row for EACH protocol data point listed above. Do not
   skip data points the protocol asks for, even if they're unusual or non-CDASH.
-
-- VARIABLE NAMING IS CDASHIG-LATEST, NOT PROTOCOL TERMINOLOGY. The "name"
-  column in survey rows MUST follow LATEST CDASHIG variable conventions
-  (uppercase, domain-prefixed, no underscores). Use protocol terminology
-  ONLY in the "label" column. For example, if the protocol says "Pain score
-  at 30 days post-procedure", the variable name is NRSORRES (or NRS30DORRES
-  for the 30-day variant) and the LABEL is "Pain score at 30 days
-  post-procedure". Variable names that look like protocol jargon
-  (PAIN_30D_SCORE, BACK_PAIN_LEVEL) are wrong — those belong in the label.
-
-- When the data point clearly maps to a standard CDASH variable, use that
-  variable's LATEST CDASHIG name verbatim. Examples: AETERM, AESTDAT,
-  AEENDAT, AESEV, AESER, AEACN, AEOUT, CMTRT, CMDOSE, CMDOSU, CMINDC,
-  VSPERF, VSDAT, VSORRES, VSORRESU, VSPOS, LBPERF, LBDAT, LBORRES, LBSTAT,
-  MHTERM, MHSTDAT, MHENDAT, MHCAT, MHONGO. For PRO instruments use the
-  scale's standard variable codes (PHQ9_Q1..Q9, ODI_Q1..Q10, NRS_SCORE,
-  PCS_TOTAL, SF12_PCS, SF12_MCS, PGIC_OVERALL).
-
-- For data points that genuinely don't have a CDASH equivalent (e.g. a
-  study-specific procedural detail), invent a name following CDASH naming
-  patterns: uppercase, domain-prefixed, no underscores in normal cases.
-
-- CHOICES — ALWAYS POPULATE FOR select_one / select_multiple. When the
-  protocol lists values, use those. When the protocol DOESN'T list values
-  for a select_one field, fall back to LATEST CDISC controlled terminology:
-  AESEV={MILD, MODERATE, SEVERE}; AESER={Y, N};
-  AEACN={DOSE_NOT_CHANGED, DOSE_REDUCED, DRUG_INTERRUPTED, DRUG_WITHDRAWN,
-  NOT_APPLICABLE, UNKNOWN}; AEOUT={RECOVERED, RECOVERING, NOT_RECOVERED,
-  RECOVERED_WITH_SEQUELAE, FATAL, UNKNOWN}; YN={Y, N}; YNU={Y, N, UNKNOWN};
-  RACE per CDISC RACE codelist; SEX={M, F, U}; ETHNIC={HISPANIC,
-  NOT_HISPANIC, NOT_REPORTED, UNKNOWN}. Empty choice lists are a regression
-  — every select_one/select_multiple needs choices, either protocol-given
-  or CDISC-default.
-
-- LOGIC — ALWAYS POPULATE FOR CLINICAL CORRECTNESS. The relevant,
-  constraint, and calculation columns are not optional — they encode
-  clinical workflow that customers expect even when protocol doesn't
-  describe them explicitly:
-  * relevant: conditional display (e.g. AE detail fields shown only when
-    AE_OCCUR=Y; pregnancy-related fields shown only when SEX=F).
-  * constraint: data validation (e.g. AESTDAT <= AEENDAT; numeric ranges
-    for vital signs and lab values).
-  * calculation: derivations (e.g. AGE from DOB and visit date; BMI from
-    weight/height; PROMIS T-scores from raw item totals).
-  Aim for ~30-50% of survey rows to have at least one of these populated.
-  XLSForm builds with empty logic columns are incomplete.
-
+- For each data point, choose the variable name following LATEST CDASHIG
+  conventions when the data point maps to a standard CDASH variable. For
+  data points that don't have a CDASH equivalent (study-specific items),
+  invent a name following CDASH naming patterns (uppercase, domain-prefixed,
+  underscore-free e.g. AESPID style). Preserve the protocol's label verbatim
+  in the label field — labels are how the customer will recognize the field.
+- Choices for select_one/select_multiple data points: use the protocol's
+  listed values when provided. Map to LATEST CDISC controlled terminology
+  values (MILD/MODERATE/SEVERE etc.) when the protocol's values clearly
+  match a CDISC codelist; preserve as-given otherwise.
 - After covering all protocol data points, add CDASHIG "Highly Recommended"
-  variables for the domain when standard for the form (e.g. AESER for
-  serious AE flag on any AE form regardless of protocol mention; SUBJID
-  on every form). Don't pad with rarely-used CDASH variables the protocol
-  doesn't ask for.
+  variables for the domain ONLY if they're clearly required by the protocol
+  (e.g. AESER for serious AE flag if the protocol mentions SAE reporting).
+  Don't pad with CDASH defaults that the protocol doesn't ask for.
+- Use ONLY LATEST CDASHIG variable names for standard items (AETERM, AESTDAT,
+  AEENDAT, VSPERF, VSDAT, VSORRES, LBPERF, LBDAT, LBORRES, MHTERM, MHSTDAT).
+  Avoid deprecated older-version names (e.g. AESTDTC was superseded by AESTDAT).
 
 XLSForm structural rules:
 - Start with TPTCALC (calculate) + TPT (text, timepoint label)
