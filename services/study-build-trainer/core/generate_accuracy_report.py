@@ -398,10 +398,19 @@ def _extract_predicted(spec_json: dict) -> dict:
       {
         "study_oid":  str,
         "study_name": str,
-        "events":     {event_oid: True},         # set of known events
+        "events":     {event_oid: event_name_or_empty},  # name when available
         "placements": {(event_oid, form_id): True},
         "forms":      {form_id: {"form_title": str}},
       }
+
+    Patch 10: events dict now stores {oid: name} pairs (was {oid: True}).
+    Names come from the top-level study_events array which the model emits
+    alongside per-form visits_assigned. Without names on the predicted side,
+    _pair_events was comparing actual.name to predicted.oid (apples to oranges)
+    and missing nearly all matches except where the OID happened to embed a
+    substring of the name (e.g. SE_SCREENING contains "screening").
+    Backward-compat: tier 1 (exact OID) still works on dict keys; legacy
+    callers passing a set of OIDs are still accepted by _pair_events.
     """
     meta       = spec_json.get("study_meta", {})
     study_oid  = meta.get("study_oid", meta.get("protocol_number", ""))
@@ -410,6 +419,16 @@ def _extract_predicted(spec_json: dict) -> dict:
     events     = {}
     placements = {}
     forms_out  = {}
+
+    # Patch 10: read top-level study_events first so we capture event names.
+    # The model emits this array alongside per-form visits_assigned in
+    # protocol_analysis output. Form-level visits_assigned references these
+    # OIDs but doesn't repeat the names.
+    for ev_dict in spec_json.get("study_events", []) or []:
+        oid = str(ev_dict.get("oid", "")).strip()
+        name = (ev_dict.get("name") or "").strip()
+        if oid:
+            events[oid] = name  # name may be empty string if model omitted it
 
     form_list = spec_json.get("forms", [])
     if isinstance(form_list, dict):
@@ -427,7 +446,11 @@ def _extract_predicted(spec_json: dict) -> dict:
         for ev in visits:
             ev = str(ev).strip()
             if ev:
-                events[ev] = True
+                # If event wasn't in study_events array, register it with
+                # empty name (legacy fallback — preserves previous behavior
+                # for analyses that don't include the top-level array)
+                if ev not in events:
+                    events[ev] = ""
                 placements[(ev, form_id)] = True
 
     return {
@@ -685,68 +708,102 @@ def _pair_events(
 ) -> tuple[dict, set]:
     """Pair actual events to predicted-event keys via 4 tiers.
 
-    Patch 8: both Events and Form Placement need this. Actual side keys
-    are OpenClinica OIDs like SE_SCREEN; predicted side keys come from
-    the study-spec form.visits_assigned arrays which typically hold
-    visit names ('Screening', 'Visit 1'). Comparing them as raw strings
-    (as the prior implementation did) produced 0 matches — keys live in
-    completely different namespaces.
+    Patch 10 rebuilt this to compare actual.name to predicted.name (when
+    available). Patch 8 was comparing actual.name to predicted.oid because
+    _extract_predicted only kept OIDs — that produced ~0 matches except
+    where the OID happened to embed the name as a substring (e.g.
+    "Screening" fuzzy-matched to "SE_SCREENING" via 0.90 substring overlap).
+    Most Day-N visits failed this because "Day 7" doesn't substring-match
+    "SE_D7". Now that _extract_predicted populates {oid: name} the name
+    comparisons actually work.
 
     Args:
       actual_events: {ev_oid: {"name": str, "forms": [...]}}.
-      predicted_events: dict-or-set of predicted event keys.
+      predicted_events: either a dict {oid: name} (Patch 10 shape) or a
+        set/iterable of OIDs (legacy shape — names will be empty).
 
     Returns:
       (pairings, claimed_predicted) where:
         pairings = {actual_oid: (predicted_key_or_None, tier_label)}
         claimed_predicted = set of predicted keys that were paired.
     """
-    pred_keys = list(predicted_events)
+    # Normalize input shape: always work with a {oid: name_or_empty} dict
+    if isinstance(predicted_events, dict):
+        pred_data: dict = {pk: (predicted_events[pk] or "") if isinstance(predicted_events[pk], str) else ""
+                           for pk in predicted_events}
+    else:
+        pred_data = {pk: "" for pk in predicted_events}
+
+    pred_keys = list(pred_data)
     pairings: dict = {}
     claimed: set = set()
 
-    # Build normalized lookup once
-    pred_by_norm: dict[str, list[str]] = {}
-    pred_by_lower: dict[str, list[str]] = {}
-    for pk in pred_keys:
-        pred_by_norm.setdefault(_norm_oid(pk), []).append(pk)
-        pred_by_lower.setdefault(str(pk).strip().lower(), []).append(pk)
+    # Build lookups: by OID-normalized, by name-lowercased, by name-normalized.
+    # When the model didn't provide a name (legacy fallback), the OID itself
+    # is reused as the "name" string for matching purposes — preserves
+    # Patch 8's substring-fuzzy behavior for that edge case.
+    pred_by_oid_norm: dict[str, list[str]] = {}
+    pred_by_name_lower: dict[str, list[str]] = {}
+    pred_by_name_norm: dict[str, list[str]] = {}
+
+    for pk, pname in pred_data.items():
+        pred_by_oid_norm.setdefault(_norm_oid(pk), []).append(pk)
+        if pname:
+            pred_by_name_lower.setdefault(pname.strip().lower(), []).append(pk)
+            pred_by_name_norm.setdefault(_norm_oid(pname), []).append(pk)
 
     for ev_oid in sorted(actual_events.keys()):
         ev_name = actual_events[ev_oid].get("name", "") or ""
 
         # Tier 1: exact OID match
-        if ev_oid in pred_keys and ev_oid not in claimed:
+        if ev_oid in pred_data and ev_oid not in claimed:
             claimed.add(ev_oid)
             pairings[ev_oid] = (ev_oid, "exact")
             continue
 
-        # Tier 2: exact name match (case-insensitive)
+        # Tier 2: actual.name == predicted.name (case-insensitive).
+        # New in Patch 10 — was previously comparing name to OID-as-string.
         name_l = ev_name.strip().lower()
         if name_l:
-            cands = [c for c in pred_by_lower.get(name_l, []) if c not in claimed]
+            cands = [c for c in pred_by_name_lower.get(name_l, []) if c not in claimed]
             if cands:
                 pk = cands[0]
                 claimed.add(pk)
                 pairings[ev_oid] = (pk, f"exact-name → {pk}")
                 continue
 
-        # Tier 3: normalized name match (handles "Visit 1" ↔ "VISIT01")
+        # Tier 3a: normalized name match (handles "Day 7 Visit" ↔ "Day 7")
         if ev_name:
             norm_n = _norm_oid(ev_name)
-            cands = [c for c in pred_by_norm.get(norm_n, []) if c not in claimed]
+            cands = [c for c in pred_by_name_norm.get(norm_n, []) if c not in claimed]
+            if cands:
+                pk = cands[0]
+                claimed.add(pk)
+                pairings[ev_oid] = (pk, f"normalized-name → {pk}")
+                continue
+
+            # Tier 3b: normalized name vs normalized OID (legacy fallback —
+            # catches actual SE_FOLLOWUP / "Follow-up" ↔ predicted SE_FOLLOWUP
+            # when model didn't supply a name, also catches "Visit 1" ↔ "VISIT01").
+            cands = [c for c in pred_by_oid_norm.get(norm_n, []) if c not in claimed]
             if cands:
                 pk = cands[0]
                 claimed.add(pk)
                 pairings[ev_oid] = (pk, f"normalized → {pk}")
                 continue
 
-            # Tier 4: fuzzy name match
-            unclaimed = [pk for pk in pred_keys if pk not in claimed]
-            best_pk, best_sc = _best_fuzzy_match(
-                ev_name, unclaimed, threshold=0.75,
-            )
-            if best_pk is not None:
+            # Tier 4: fuzzy match. Compare against predicted name when
+            # available; fall back to OID-as-string for entries without name.
+            best_pk, best_sc = None, 0.0
+            for pk in pred_data:
+                if pk in claimed:
+                    continue
+                pname = pred_data.get(pk, "")
+                target = pname if pname else pk
+                sc = _fuzzy_score(ev_name, target)
+                if sc > best_sc:
+                    best_sc, best_pk = sc, pk
+            if best_pk is not None and best_sc >= 0.75:
                 claimed.add(best_pk)
                 pairings[ev_oid] = (best_pk, f"fuzzy {best_sc:.2f} → {best_pk}")
                 continue
