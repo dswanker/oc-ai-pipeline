@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from typing import Any
 
 try:
@@ -63,18 +64,67 @@ def _prompt(form: dict[str, Any]) -> str:
 
 
 def _parse_spec(text: str) -> dict[str, Any] | None:
-    """Strip markdown fences and parse JSON."""
+    """Tolerant JSON extractor for Sonnet form_spec responses.
+
+    Patch 6 made this multi-strategy because Sonnet occasionally adds
+    preamble ('Here's the JSON for AE:'), trailing prose, or wraps the
+    JSON in markdown fences anywhere in the response. The original parser
+    only handled fences at the very start of the string and failed silently
+    on every other shape, which dropped ~50% of form_specs on CRS-135.
+
+    Strategies, tried in order:
+      1. Markdown fence anywhere in the text  (```json ... ``` or ``` ... ```)
+      2. Whole-string as-is                   (clean responses, the happy path)
+      3. First balanced {...} block           (preamble/postamble cases)
+
+    Returns the parsed dict, or None if nothing parses.
+    """
+    if not text:
+        return None
     t = text.strip()
-    if t.startswith("```"):
-        parts = t.split("```")
-        t = parts[1] if len(parts) > 1 else t
-        if t.startswith("json"):
-            t = t[4:]
-        t = t.strip()
+
+    # Strategy 1: markdown fence anywhere
+    fence_match = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", t, re.DOTALL)
+    if fence_match:
+        try:
+            return json.loads(fence_match.group(1).strip())
+        except json.JSONDecodeError:
+            pass
+
+    # Strategy 2: try as-is (fast path for clean responses)
     try:
         return json.loads(t)
     except json.JSONDecodeError:
-        return None
+        pass
+
+    # Strategy 3: locate first balanced {...} block, scanning while
+    # respecting string boundaries and escapes
+    start = t.find("{")
+    if start >= 0:
+        depth, in_string, escape = 0, False, False
+        for i in range(start, len(t)):
+            c = t[i]
+            if escape:
+                escape = False
+                continue
+            if in_string:
+                if c == "\\":
+                    escape = True
+                elif c == '"':
+                    in_string = False
+                continue
+            if c == '"':
+                in_string = True
+            elif c == "{":
+                depth += 1
+            elif c == "}":
+                depth -= 1
+                if depth == 0:
+                    try:
+                        return json.loads(t[start:i + 1])
+                    except json.JSONDecodeError:
+                        break  # malformed even balanced — give up
+    return None
 
 
 async def _generate_one(
@@ -110,7 +160,16 @@ async def _generate_one(
                     choices=len(spec.get("choices", [])),
                 )
             else:
-                logger.warning("form_specs.parse_failed", form_id=form_id)
+                # Patch 6: log a preview of the response on parse failure so
+                # we can see what shape Sonnet actually returned. Without
+                # this, every failure was opaque.
+                preview = (text or "")[:300].replace("\n", "\\n")
+                logger.warning(
+                    "form_specs.parse_failed",
+                    form_id=form_id,
+                    text_len=len(text or ""),
+                    text_preview=preview,
+                )
             return form_id, spec
         except Exception as exc:
             logger.warning("form_specs.failed", form_id=form_id, error=str(exc))
@@ -123,7 +182,7 @@ async def generate_form_specs(
     client=None,
     api_key: str | None = None,
     model: str = "claude-sonnet-4-6",
-    max_tokens: int = 3000,
+    max_tokens: int = 8000,
     concurrency: int = 6,
 ) -> dict[str, Any]:
     """
