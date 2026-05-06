@@ -133,47 +133,132 @@ async def _generate_one(
     model: str,
     max_tokens: int,
     semaphore: asyncio.Semaphore,
+    *,
+    max_retries: int = 4,
+    initial_wait_seconds: int = 5,
 ) -> tuple[str, dict[str, Any] | None]:
-    """Generate spec for one form. Returns (form_id, spec_or_None)."""
+    """Generate spec for one form. Returns (form_id, spec_or_None).
+
+    Patch 12: retry on transient API errors (429 rate limit, 529 overloaded,
+    5xx server errors). The Anthropic SDK does its own 2 retries with
+    sub-second backoffs, but Anthropic's overload errors typically clear
+    in 30-60s — sub-second retries don't give the queue time to recover.
+    Result on CRS-135: ~5 of 30 forms fail per run (different forms each
+    run because failures are random), losing ~80-100 items.
+
+    Outer retry loop with exponential backoff (5s, 10s, 20s, 40s = 75s
+    worst-case wait) sits on top of the SDK's own retries. Total worst
+    case per form: 5 attempts × ~3 SDK retries each = 15 API calls,
+    bounded ~135s wallclock. Realistic case: 1-2 outer retries needed.
+
+    Holds the semaphore through retries — this is intentional. When all
+    workers hit overload, holding slots throttles concurrent load on
+    Anthropic until the queue recovers, which is exactly the behavior
+    we want.
+    """
     form_id = form.get("form_oid_short", "")
     if not form_id:
         return form_id, None
 
     async with semaphore:
         logger.info("form_specs.generating", form_id=form_id)
-        try:
-            response = await client.messages.create(
-                model=model,
-                max_tokens=max_tokens,
-                system=FORM_SPEC_SYSTEM,
-                messages=[{"role": "user", "content": _prompt(form)}],
-            )
-            text = "".join(
-                getattr(b, "text", "") or "" for b in response.content
-            )
-            spec = _parse_spec(text)
-            if spec:
-                logger.info(
-                    "form_specs.done",
-                    form_id=form_id,
-                    survey_rows=len(spec.get("survey", [])),
-                    choices=len(spec.get("choices", [])),
+        last_exc = None
+        for attempt in range(max_retries + 1):
+            try:
+                response = await client.messages.create(
+                    model=model,
+                    max_tokens=max_tokens,
+                    system=FORM_SPEC_SYSTEM,
+                    messages=[{"role": "user", "content": _prompt(form)}],
                 )
-            else:
-                # Patch 6: log a preview of the response on parse failure so
-                # we can see what shape Sonnet actually returned. Without
-                # this, every failure was opaque.
-                preview = (text or "")[:300].replace("\n", "\\n")
+                text = "".join(
+                    getattr(b, "text", "") or "" for b in response.content
+                )
+                spec = _parse_spec(text)
+                if spec:
+                    logger.info(
+                        "form_specs.done",
+                        form_id=form_id,
+                        survey_rows=len(spec.get("survey", [])),
+                        choices=len(spec.get("choices", [])),
+                        attempts=attempt + 1,
+                    )
+                else:
+                    # Patch 6: log a preview of the response on parse failure so
+                    # we can see what shape Sonnet actually returned. Without
+                    # this, every failure was opaque.
+                    preview = (text or "")[:300].replace("\n", "\\n")
+                    logger.warning(
+                        "form_specs.parse_failed",
+                        form_id=form_id,
+                        text_len=len(text or ""),
+                        text_preview=preview,
+                    )
+                return form_id, spec
+            except Exception as exc:
+                # Determine if this is a transient error worth retrying.
+                # We classify retryable based on Anthropic SDK exception class
+                # to avoid retrying on non-transient bugs (auth errors, code
+                # errors, etc.). Lazy-import to keep this module importable
+                # in test environments without the anthropic SDK.
+                try:
+                    from anthropic import (
+                        APIConnectionError, APITimeoutError, RateLimitError,
+                        InternalServerError, APIStatusError,
+                    )
+                    is_transient_class = isinstance(exc, (
+                        APIConnectionError, APITimeoutError,
+                        RateLimitError, InternalServerError,
+                    ))
+                    is_retryable_status = (
+                        isinstance(exc, APIStatusError)
+                        and getattr(exc, "status_code", None)
+                        in (429, 503, 529)
+                    )
+                    is_retryable = is_transient_class or is_retryable_status
+                except ImportError:
+                    # Fallback: retry on status codes we recognize even
+                    # without typed exceptions.
+                    status = getattr(exc, "status_code", None)
+                    is_retryable = status in (429, 503, 529) or (
+                        status is not None and 500 <= status < 600
+                    )
+
+                status = getattr(exc, "status_code", None)
+                if is_retryable and attempt < max_retries:
+                    wait = initial_wait_seconds * (2 ** attempt)
+                    logger.warning(
+                        "form_specs.retrying",
+                        form_id=form_id,
+                        attempt=attempt + 1,
+                        max_attempts=max_retries + 1,
+                        status=status,
+                        error_class=type(exc).__name__,
+                        wait_seconds=wait,
+                    )
+                    last_exc = exc
+                    await asyncio.sleep(wait)
+                    continue
+                # Non-retryable, or out of retries — log and give up
                 logger.warning(
-                    "form_specs.parse_failed",
+                    "form_specs.failed",
                     form_id=form_id,
-                    text_len=len(text or ""),
-                    text_preview=preview,
+                    error=str(exc),
+                    error_class=type(exc).__name__,
+                    status=status,
+                    attempts=attempt + 1,
                 )
-            return form_id, spec
-        except Exception as exc:
-            logger.warning("form_specs.failed", form_id=form_id, error=str(exc))
-            return form_id, None
+                return form_id, None
+        # Defensive: shouldn't reach here because the loop always returns,
+        # but keep this for safety against future refactors.
+        if last_exc is not None:
+            logger.warning(
+                "form_specs.failed",
+                form_id=form_id,
+                error=str(last_exc),
+                reason="exhausted_retries",
+            )
+        return form_id, None
 
 
 async def generate_form_specs(
