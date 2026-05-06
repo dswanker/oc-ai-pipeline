@@ -680,62 +680,210 @@ def score_study(actual_odm: dict, predicted: dict) -> tuple[float, list[DiffRow]
     return _score(matched, total), matched, total, diffs
 
 
+def _pair_events(
+    actual_events: dict, predicted_events: dict | set,
+) -> tuple[dict, set]:
+    """Pair actual events to predicted-event keys via 4 tiers.
+
+    Patch 8: both Events and Form Placement need this. Actual side keys
+    are OpenClinica OIDs like SE_SCREEN; predicted side keys come from
+    the study-spec form.visits_assigned arrays which typically hold
+    visit names ('Screening', 'Visit 1'). Comparing them as raw strings
+    (as the prior implementation did) produced 0 matches — keys live in
+    completely different namespaces.
+
+    Args:
+      actual_events: {ev_oid: {"name": str, "forms": [...]}}.
+      predicted_events: dict-or-set of predicted event keys.
+
+    Returns:
+      (pairings, claimed_predicted) where:
+        pairings = {actual_oid: (predicted_key_or_None, tier_label)}
+        claimed_predicted = set of predicted keys that were paired.
+    """
+    pred_keys = list(predicted_events)
+    pairings: dict = {}
+    claimed: set = set()
+
+    # Build normalized lookup once
+    pred_by_norm: dict[str, list[str]] = {}
+    pred_by_lower: dict[str, list[str]] = {}
+    for pk in pred_keys:
+        pred_by_norm.setdefault(_norm_oid(pk), []).append(pk)
+        pred_by_lower.setdefault(str(pk).strip().lower(), []).append(pk)
+
+    for ev_oid in sorted(actual_events.keys()):
+        ev_name = actual_events[ev_oid].get("name", "") or ""
+
+        # Tier 1: exact OID match
+        if ev_oid in pred_keys and ev_oid not in claimed:
+            claimed.add(ev_oid)
+            pairings[ev_oid] = (ev_oid, "exact")
+            continue
+
+        # Tier 2: exact name match (case-insensitive)
+        name_l = ev_name.strip().lower()
+        if name_l:
+            cands = [c for c in pred_by_lower.get(name_l, []) if c not in claimed]
+            if cands:
+                pk = cands[0]
+                claimed.add(pk)
+                pairings[ev_oid] = (pk, f"exact-name → {pk}")
+                continue
+
+        # Tier 3: normalized name match (handles "Visit 1" ↔ "VISIT01")
+        if ev_name:
+            norm_n = _norm_oid(ev_name)
+            cands = [c for c in pred_by_norm.get(norm_n, []) if c not in claimed]
+            if cands:
+                pk = cands[0]
+                claimed.add(pk)
+                pairings[ev_oid] = (pk, f"normalized → {pk}")
+                continue
+
+            # Tier 4: fuzzy name match
+            unclaimed = [pk for pk in pred_keys if pk not in claimed]
+            best_pk, best_sc = _best_fuzzy_match(
+                ev_name, unclaimed, threshold=0.75,
+            )
+            if best_pk is not None:
+                claimed.add(best_pk)
+                pairings[ev_oid] = (best_pk, f"fuzzy {best_sc:.2f} → {best_pk}")
+                continue
+
+        pairings[ev_oid] = (None, "")
+
+    return pairings, claimed
+
+
 def score_events(actual_odm: dict, predicted: dict) -> tuple[float, list[DiffRow]]:
-    """Score event-level match. Matches by OID."""
-    actual_ev    = set(actual_odm["events"].keys())
-    predicted_ev = set(predicted["events"].keys())
-    diffs        = []
+    """Score event-level match.
 
-    total   = len(actual_ev)
-    matched = 0
+    Patch 8 rebuilt this to handle the OID-vs-name namespace gap between
+    actual ODM events and predicted study-spec events. See _pair_events
+    docstring for the matching tiers.
+    """
+    actual_events    = actual_odm["events"]
+    predicted_events = predicted["events"]
+    diffs: list[DiffRow] = []
 
-    for ev in sorted(actual_ev):
-        name = actual_odm["events"][ev]["name"]
-        if ev in predicted_ev:
-            matched += 1
-        else:
-            diffs.append(DiffRow("Events", f"Event: {name} ({ev})",
-                                 "— missing —", ev))
+    pairings, claimed = _pair_events(actual_events, predicted_events)
 
-    for ev in sorted(predicted_ev - actual_ev):
-        diffs.append(DiffRow("Events", f"Extra event: {ev}",
-                             ev, "— not in actual —"))
+    total   = len(actual_events)
+    matched = sum(1 for (pk, _) in pairings.values() if pk is not None)
+
+    for ev_oid in sorted(actual_events.keys()):
+        pk, tier = pairings[ev_oid]
+        name = actual_events[ev_oid].get("name", "") or ev_oid
+        if pk is None:
+            diffs.append(DiffRow(
+                "Events", f"Event: {name} ({ev_oid})",
+                "— missing —", ev_oid,
+            ))
+        elif tier != "exact":
+            # Show the non-trivial pairing so reviewers can see how it matched
+            diffs.append(DiffRow(
+                "Events", f"Event: {name} ({ev_oid})",
+                str(pk), ev_oid,
+                note="Paired across naming convention",
+                match_info=tier,
+            ))
+
+    # Unclaimed predicted events shown as extras
+    for pk in sorted(set(predicted_events) - claimed, key=str):
+        diffs.append(DiffRow(
+            "Events", f"Extra event: {pk}",
+            str(pk), "— not in actual —",
+        ))
 
     return _score(matched, total), matched, total, diffs
 
 
 def score_form_placement(actual_odm: dict, predicted: dict) -> tuple[float, list[DiffRow]]:
-    """Score (event, form) assignment pairs."""
-    # Build actual placements from ODM
-    actual_pairs = set()
+    """Score (event, form) assignment pairs.
+
+    Patch 8 rebuilt this to:
+      1. Pair events across naming conventions (via _pair_events).
+      2. Pair forms with normalized OIDs (handles AE ↔ F_AE, the same
+         convention gap Patches 5/7 fixed elsewhere).
+    A placement matches if both its event AND its form pair successfully.
+    """
+    diffs: list[DiffRow] = []
+
+    # Step 1: pair events
+    event_pairings, _ = _pair_events(actual_odm["events"], predicted["events"])
+
+    # Step 2: build actual placements (no F_ stripping — we'll normalize
+    # both sides symmetrically below)
+    actual_pairs: set[tuple[str, str]] = set()
     for ev_oid, ev in actual_odm["events"].items():
         for form_oid in ev["forms"]:
-            # Normalise form OID: strip F_ prefix
-            fid = form_oid[2:].upper() if form_oid.upper().startswith("F_") else form_oid.upper()
-            actual_pairs.add((ev_oid, fid))
+            actual_pairs.add((ev_oid, str(form_oid).upper()))
 
-    predicted_pairs = set(predicted["placements"].keys())
-    diffs           = []
-    total           = len(actual_pairs)
-    matched         = 0
+    # Step 3: build a normalized lookup of predicted placements
+    # keyed by (predicted_event_key, normalized_form_id) → original (ev, form_id)
+    predicted_raw = set(predicted["placements"].keys())
+    pred_by_ev_normform: dict[tuple[str, str], list[tuple[str, str]]] = {}
+    for (p_ev, p_form) in predicted_raw:
+        key = (str(p_ev), _norm_oid(str(p_form)))
+        pred_by_ev_normform.setdefault(key, []).append((p_ev, p_form))
 
-    for (ev, fid) in sorted(actual_pairs):
-        if (ev, fid) in predicted_pairs:
-            matched += 1
-        else:
-            ev_name   = actual_odm["events"].get(ev, {}).get("name", ev)
+    total   = len(actual_pairs)
+    matched = 0
+    claimed_pred: set[tuple[str, str]] = set()
+
+    for (ev_oid, form_id) in sorted(actual_pairs):
+        paired_ev, ev_tier = event_pairings.get(ev_oid, (None, ""))
+        if paired_ev is None:
+            ev_name = actual_odm["events"].get(ev_oid, {}).get("name", ev_oid)
             diffs.append(DiffRow(
                 "Form Placement",
-                f"{fid} → {ev_name}",
+                f"{form_id} → {ev_name}",
                 "— missing —",
-                f"{fid} assigned to {ev}",
+                f"{form_id} assigned to {ev_oid}",
+                note="Event has no predicted counterpart",
+            ))
+            continue
+
+        # Try (paired_ev, normalized form_id) lookup
+        norm_form = _norm_oid(form_id)
+        cands = [
+            c for c in pred_by_ev_normform.get((str(paired_ev), norm_form), [])
+            if c not in claimed_pred
+        ]
+        if cands:
+            chosen = cands[0]
+            claimed_pred.add(chosen)
+            matched += 1
+            # Only emit a diff row when the pairing was non-trivial
+            if (chosen != (ev_oid, form_id)) and (ev_tier != "exact"
+                                                  or _norm_oid(chosen[1]) != _norm_oid(form_id)
+                                                  or chosen[1] != form_id):
+                ev_name = actual_odm["events"].get(ev_oid, {}).get("name", ev_oid)
+                diffs.append(DiffRow(
+                    "Form Placement",
+                    f"{form_id} → {ev_name}",
+                    f"{chosen[1]} → {chosen[0]}",
+                    f"{form_id} → {ev_oid}",
+                    note="Paired via OID/name normalization",
+                    match_info=ev_tier,
+                ))
+        else:
+            ev_name = actual_odm["events"].get(ev_oid, {}).get("name", ev_oid)
+            diffs.append(DiffRow(
+                "Form Placement",
+                f"{form_id} → {ev_name}",
+                "— missing —",
+                f"{form_id} assigned to {ev_oid}",
+                match_info=(f"event: {ev_tier}" if ev_tier != "exact" else ""),
             ))
 
-    for (ev, fid) in sorted(predicted_pairs - actual_pairs):
+    # Unclaimed predicted placements shown as extras
+    for (p_ev, p_form) in sorted(predicted_raw - claimed_pred, key=lambda x: (str(x[0]), str(x[1]))):
         diffs.append(DiffRow(
             "Form Placement",
-            f"Extra: {fid} → {ev}",
-            f"{fid} assigned to {ev}",
+            f"Extra: {p_form} → {p_ev}",
+            f"{p_form} assigned to {p_ev}",
             "— not in actual —",
         ))
 
