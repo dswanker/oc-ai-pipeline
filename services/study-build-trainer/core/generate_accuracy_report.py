@@ -1534,15 +1534,36 @@ def score_choices(actual_xls: dict, predicted_xls: dict,
     return _score(int(round(matched_score)), total), int(round(matched_score)), total, diffs
 
 
-def score_logic(actual_xls: dict, predicted_xls: dict) -> tuple[float, list[DiffRow]]:
-    """
-    Score logic match (relevant, constraint, calculation).
-    Checks presence, not exact XPath equality (which would be too strict).
-    An item gets credit if both actual and predicted have logic (or both don't).
+def score_logic(actual_xls: dict, predicted_xls: dict,
+                embed_fn: EmbedFn = None,
+                ) -> tuple[float, list[DiffRow]]:
+    """Score logic match (relevance / constraint / calculation presence).
+
+    Patch 7 (this version): rebuilt to mirror score_items's pairing
+    architecture so the same form/item naming-convention gaps that
+    Patch 5 fixed for items also fix Logic. Without this, Logic score
+    on CRS-135 stayed at ~0.8% even after Patch 6 expanded the
+    predicted side, because exact-form-id and exact-item-name lookups
+    silently missed everything paired by fuzzy/normalized/title.
+
+    Comparison rule (presence-only, not XPath equality, since that
+    would be far too strict against AI-generated XPaths):
+
+        Paired item, both have logic               full credit
+        Paired item, neither has logic             skipped (uncounted)
+        Paired item, one has logic, other doesn't  miss
+        Unpaired actual item with logic            miss
+
+    Predicted items claimed via label match are removed from the
+    "AI-only field with logic" extras list.
+
+    Args:
+      embed_fn: ACCEPTED FOR API STABILITY. Currently unused; semantic
+                Tier 5 disabled for the same reason as score_items.
     """
     diffs   = []
     total   = 0
-    matched = 0
+    matched_score = 0.0
 
     LOGIC_COLS = ("relevant", "constraint", "calculation")
     DATA_TYPES = {"text", "integer", "decimal", "date", "datetime",
@@ -1556,32 +1577,159 @@ def score_logic(actual_xls: dict, predicted_xls: dict) -> tuple[float, list[Diff
         for c in LOGIC_COLS:
             v = row.get(c, "").strip()
             if v:
-                parts.append(f"{c}: {v[:60]}{'…' if len(v)>60 else ''}")
+                parts.append(f"{c}: {v[:60]}{'…' if len(v) > 60 else ''}")
         return " | ".join(parts) or "—"
 
-    for fid in sorted(actual_xls.keys()):
-        a_survey = {
-            r["name"]: r for r in actual_xls[fid]["survey"]
+    def _filter_items(survey: list) -> dict:
+        return {
+            r["name"]: r for r in survey
             if r["name"] and r["type"].split(" ")[0].lower() in DATA_TYPES
         }
-        p_survey = {}
-        if fid in predicted_xls:
-            p_survey = {
-                r["name"]: r for r in predicted_xls[fid]["survey"]
-                if r["name"] and r["type"].split(" ")[0].lower() in DATA_TYPES
-            }
 
-        for name in sorted(a_survey.keys()):
-            a = a_survey[name]
-            if not _has_logic(a) and name not in p_survey:
-                continue  # neither has logic, skip
+    # ── Step 1: Pair forms (same 4-tier ladder as score_items) ───────────────
+    actual_fids    = sorted(actual_xls.keys())
+    predicted_fids = list(predicted_xls.keys())
+    form_pairings: dict = {}
+    claimed_pf: set = set()
+
+    pred_by_norm: dict[str, list[str]] = {}
+    for pfid in predicted_fids:
+        pred_by_norm.setdefault(_norm_oid(pfid), []).append(pfid)
+
+    for fid in actual_fids:
+        a_title = actual_xls[fid]["form_title"]
+
+        if fid in predicted_xls and fid not in claimed_pf:
+            claimed_pf.add(fid)
+            form_pairings[fid] = (fid, "exact")
+            continue
+
+        norm = _norm_oid(fid)
+        norm_cands = [c for c in pred_by_norm.get(norm, []) if c not in claimed_pf]
+        if norm_cands:
+            pfid = norm_cands[0]
+            claimed_pf.add(pfid)
+            form_pairings[fid] = (pfid, f"normalized → {pfid}")
+            continue
+
+        unclaimed = [pfid for pfid in predicted_fids if pfid not in claimed_pf]
+        best_pfid, best_sc = _best_fuzzy_match(
+            fid, unclaimed, FUZZY_FORMS_THRESHOLD,
+        )
+        if best_pfid is not None:
+            claimed_pf.add(best_pfid)
+            form_pairings[fid] = (best_pfid, f"fuzzy {best_sc:.2f} → {best_pfid}")
+            continue
+
+        unclaimed_titles = {pfid: predicted_xls[pfid]["form_title"]
+                            for pfid in predicted_fids if pfid not in claimed_pf}
+        title_pfid, title_sc = _best_title_match(
+            a_title, unclaimed_titles, TITLE_FUZZY_THRESHOLD,
+        )
+        if title_pfid is not None:
+            claimed_pf.add(title_pfid)
+            form_pairings[fid] = (
+                title_pfid, f"title-match {title_sc:.2f} → {title_pfid}"
+            )
+            continue
+
+        form_pairings[fid] = (None, "")
+
+    # ── Step 2: Item-level matching helper (same shape as score_items) ───────
+    def _find_item_match(
+        a_name: str, a_label: str, p_items: dict, claimed: set,
+    ) -> tuple[str | None, str]:
+        """Find best predicted item for (a_name, a_label).
+        Returns (pname, tier) or (None, '')."""
+        # Tier 1: exact name
+        if a_name in p_items and a_name not in claimed:
+            return a_name, "exact"
+        # Tier 2: normalized name
+        norm_n = _norm_oid(a_name)
+        for pn in p_items:
+            if pn in claimed:
+                continue
+            if _norm_oid(pn) == norm_n:
+                return pn, "normalized"
+        # Tier 3: exact label (case-insensitive)
+        if a_label:
+            t_norm = a_label.strip().lower()
+            if t_norm:
+                for pn, pr in p_items.items():
+                    if pn in claimed:
+                        continue
+                    pl = (pr.get("label") or "").strip().lower()
+                    if pl and pl == t_norm:
+                        return pn, "exact-label"
+                # Tier 4: fuzzy label
+                best_pn, best_sc = None, 0.0
+                for pn, pr in p_items.items():
+                    if pn in claimed:
+                        continue
+                    pl = (pr.get("label") or "").strip().lower()
+                    if not pl:
+                        continue
+                    sc = _fuzzy_score(t_norm, pl)
+                    if sc > best_sc:
+                        best_sc, best_pn = sc, pn
+                if best_sc >= 0.75:
+                    return best_pn, f"fuzzy-label {best_sc:.2f}"
+        return None, ""
+
+    # ── Step 3: Score logic across all forms ─────────────────────────────────
+    for fid in actual_fids:
+        paired_pfid, _form_tier_info = form_pairings[fid]
+        a_items = _filter_items(actual_xls[fid]["survey"])
+
+        if paired_pfid is None:
+            # Form unpaired: every actual item with logic is a miss
+            for name in sorted(a_items.keys()):
+                a = a_items[name]
+                if _has_logic(a):
+                    total += 1
+                    diffs.append(DiffRow(
+                        "Logic", f"{fid}.{name} — form unmatched",
+                        "— no logic —",
+                        _logic_summary(a),
+                        "Form has no predicted counterpart",
+                    ))
+            continue
+
+        p_items = _filter_items(predicted_xls[paired_pfid]["survey"])
+        claimed_p_items: set = set()
+
+        for name in sorted(a_items.keys()):
+            a = a_items[name]
+            a_label = a.get("label") or ""
+            a_logic = _has_logic(a)
+
+            matched_pn, _tier = _find_item_match(
+                name, a_label, p_items, claimed_p_items,
+            )
+
+            if matched_pn is None:
+                # Actual item has no predicted counterpart
+                if a_logic:
+                    total += 1
+                    diffs.append(DiffRow(
+                        "Logic", f"{fid}.{name} — item unmatched",
+                        "— no logic —",
+                        _logic_summary(a),
+                        "No predicted item paired with this actual item",
+                    ))
+                continue
+
+            # Item paired — claim and compare logic presence
+            claimed_p_items.add(matched_pn)
+            p = p_items[matched_pn]
+            p_logic = _has_logic(p)
+
+            if not a_logic and not p_logic:
+                continue  # neither has logic, uncounted (current behavior)
 
             total += 1
-            a_logic = _has_logic(a)
-            p_logic = _has_logic(p_survey.get(name, {}))
-
             if a_logic == p_logic:
-                matched += 1
+                matched_score += 1.0
             elif a_logic and not p_logic:
                 diffs.append(DiffRow(
                     "Logic", f"{fid}.{name} — missing logic",
@@ -1592,25 +1740,23 @@ def score_logic(actual_xls: dict, predicted_xls: dict) -> tuple[float, list[Diff
             else:
                 diffs.append(DiffRow(
                     "Logic", f"{fid}.{name} — extra logic",
-                    _logic_summary(p_survey[name]),
+                    _logic_summary(p),
                     "— no logic —",
                     "AI added logic not in actual build",
                 ))
 
-        # Also show predicted fields that have logic but don't exist in actual.
-        # These are AI-generated logic expressions with no counterpart — visible
-        # in AI Generated column so reviewers can see what Claude produced.
-        for name in sorted(set(p_survey.keys()) - set(a_survey.keys())):
-            p = p_survey[name]
+        # Predicted items not claimed by any tier — show those that have logic
+        for pn in sorted(set(p_items.keys()) - claimed_p_items):
+            p = p_items[pn]
             if _has_logic(p):
                 diffs.append(DiffRow(
-                    "Logic", f"{fid}.{name} — AI-only field with logic",
+                    "Logic", f"{fid}.{pn} — AI-only field with logic",
                     _logic_summary(p),
                     "— field not in actual —",
                     "AI generated logic on a field not in the actual build",
                 ))
 
-    return _score(matched, total), matched, total, diffs
+    return _score(int(round(matched_score)), total), int(round(matched_score)), total, diffs
 
 
 # ── XLSX builder ──────────────────────────────────────────────────────────────
@@ -1964,7 +2110,7 @@ def generate_accuracy_report(
     form_score,   form_matched,   form_total   = _run(score_forms, actual_xls, predicted_xls, embed_fn)
     # Logic runs before Items/Choices so its diffs appear first in the sheet
     # (Items and Choices can generate hundreds of rows that push Logic off the end)
-    logic_score,  logic_matched,  logic_total  = _run(score_logic, actual_xls, predicted_xls)
+    logic_score,  logic_matched,  logic_total  = _run(score_logic, actual_xls, predicted_xls, embed_fn)
     item_score,   item_matched,   item_total   = _run(score_items, actual_xls, predicted_xls, embed_fn)
     choice_score, choice_matched, choice_total = _run(score_choices, actual_xls, predicted_xls, embed_fn)
 
