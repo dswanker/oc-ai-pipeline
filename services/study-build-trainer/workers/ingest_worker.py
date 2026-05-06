@@ -490,6 +490,33 @@ class IngestWorker:
         cache_path = cached["protocol"].parent / "analysis.generated.json"
         cache_path.write_text(json.dumps(analysis_dict, indent=2))
         logger.info("ingest.analysis_cached", path=str(cache_path), **log_ctx)
+
+        # Patch 6 followup: when analysis is regenerated, the form_specs
+        # cache is automatically stale. Without this, deleting only
+        # analysis.generated.json (the workflow Dan uses to bust the
+        # cache from monday) leaves form_specs.generated.json behind,
+        # so the next run silently reuses the prior Sonnet outputs even
+        # though the analysis they were derived from has changed. Cascade
+        # the invalidation here so the existing monday-delete workflow
+        # cleanly busts both caches together.
+        form_specs_cache = cached["protocol"].parent / "form_specs.generated.json"
+        if form_specs_cache.exists():
+            try:
+                form_specs_cache.unlink()
+                logger.info(
+                    "ingest.form_specs_cache_invalidated",
+                    path=str(form_specs_cache),
+                    reason="analysis_regenerated",
+                    **log_ctx,
+                )
+            except OSError as exc:
+                logger.warning(
+                    "ingest.form_specs_cache_invalidate_failed",
+                    path=str(form_specs_cache),
+                    error=str(exc),
+                    **log_ctx,
+                )
+
         await self._upload_analysis_json(
             item, analysis_dict, cache_path.read_bytes(), log_ctx
         )
