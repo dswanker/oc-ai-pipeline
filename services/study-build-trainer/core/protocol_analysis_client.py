@@ -199,6 +199,11 @@ async def run_protocol_analysis(
             response = await client.messages.create(
                 model=model,
                 max_tokens=max_tokens,
+                temperature=0.0,  # Patch 13: deterministic output to reduce
+                                  # run-to-run variance. Pre-Patch 13 used the
+                                  # API default (~1.0), causing the same
+                                  # protocol to produce different event counts,
+                                  # OID conventions, and form lists each run.
                 messages=[{"role": "user", "content": content}],
             )
             text = "".join(

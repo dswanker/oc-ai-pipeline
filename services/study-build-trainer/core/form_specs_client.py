@@ -25,13 +25,21 @@ except ImportError:
 
 
 FORM_SPEC_SYSTEM = (
-    "You are an OpenClinica 4 EDC builder with deep CDASH knowledge. "
+    "You are an OpenClinica 4 EDC builder with deep knowledge of the "
+    "Clinical Data Acquisition Standards Harmonization Implementation "
+    "Guide (CDASHIG), published by CDISC. All variable names, domain "
+    "conventions, and value lists you produce MUST follow the LATEST "
+    "published CDASHIG version you have knowledge of — never legacy "
+    "names from earlier versions. CDASHIG evolves over time (v1.0, v1.1, "
+    "v2.0, v2.1, v2.2, and so on); use the most recent version "
+    "available in your training, not whichever variant happens to come "
+    "to mind first. "
     "Return ONLY valid JSON, no preamble, no markdown fences."
 )
 
 # Compact prompt — no verbose schema example, no repeated field values
 _PROMPT_TEMPLATE = """\
-Generate XLSForm content for this CRF:
+Generate XLSForm content for this CRF using the LATEST CDASHIG version's conventions:
 Form: {form_id} | {form_title} | CDASH: {cdash} | Repeating: {repeating} | ePRO: {epro}
 
 Return JSON with keys: form_id, form_title, settings, survey, choices.
@@ -43,8 +51,20 @@ survey rows: [{{"type","name","label","required","relevant","constraint","calcul
 choices rows: [{{"list_name","name","label"}}]
 
 Rules:
-- CDASH variable names (AETERM, AESTDAT, VSPERF, LBDAT, etc.)
-- Start with TPTCALC (calculate) + TPT (text, timepoint label)  
+- Use ONLY variable names from the LATEST CDASHIG version you know.
+  Examples of current naming: AETERM, AESTDAT, AEENDAT, VSPERF, VSDAT,
+  VSORRES, LBPERF, LBDAT, LBORRES, MHTERM, MHSTDAT. Do NOT use deprecated
+  names from older versions (e.g. AESTDTC was the older convention,
+  superseded by AESTDAT in current CDASHIG).
+- Follow the LATEST CDASHIG domain-level structure: each domain has a
+  defined set of "Highly Recommended", "Recommended", and "Optional"
+  variables. Include all "Highly Recommended" variables for the domain.
+  Include "Recommended" variables when the protocol clearly calls for
+  them.
+- Use current CDISC controlled terminology for select_one fields (e.g.
+  AESEV uses MILD, MODERATE, SEVERE; AEACN uses DOSE NOT CHANGED, DOSE
+  REDUCED, etc., per the most recent CDISC CT package you know).
+- Start with TPTCALC (calculate) + TPT (text, timepoint label)
 - Wrap data fields in begin group/end group, OID pattern IG_{cdash}_{cdash}
 - Perf question first (VSPERF/LBPERF), then date, then results
 - select_one fields: include all standard coded choices (UPPERCASE list names)
@@ -168,6 +188,16 @@ async def _generate_one(
                 response = await client.messages.create(
                     model=model,
                     max_tokens=max_tokens,
+                    temperature=0.0,  # Patch 13: deterministic output. The
+                                      # default temperature (~1.0) made Sonnet
+                                      # 4.6 produce wildly different choice
+                                      # lists per call (e.g. ODI form
+                                      # generated 67 choices in Run 14, 8 in
+                                      # Run 15, 24 in Run 16 — same prompt).
+                                      # temperature=0 pins the output for a
+                                      # given prompt, giving us stable
+                                      # baselines for measuring future
+                                      # patches.
                     system=FORM_SPEC_SYSTEM,
                     messages=[{"role": "user", "content": _prompt(form)}],
                 )
