@@ -196,14 +196,20 @@ async def run_protocol_analysis(
                 content_blocks=len(content),
                 model=model,
             )
+            # Note: Opus 4.7 deprecated the temperature parameter entirely
+            # (https://platform.claude.com/docs/en/about-claude/models/whats-new-claude-4-7).
+            # Setting temperature to ANY value — including 0 — returns 400.
+            # Adaptive thinking is the only supported thinking mode and Opus
+            # 4.7 samples adaptively without exposing temperature controls.
+            # We omit temperature here to stay compatible with Opus 4.7 and
+            # any future Anthropic models that follow the same pattern.
+            # (Patch 13 originally tried temperature=0.0 here; that broke
+            # the pipeline with 400s. Anthropic's docs note temperature=0
+            # never guaranteed determinism even on older models, so the
+            # tradeoff was always weaker than expected.)
             response = await client.messages.create(
                 model=model,
                 max_tokens=max_tokens,
-                temperature=0.0,  # Patch 13: deterministic output to reduce
-                                  # run-to-run variance. Pre-Patch 13 used the
-                                  # API default (~1.0), causing the same
-                                  # protocol to produce different event counts,
-                                  # OID conventions, and form lists each run.
                 messages=[{"role": "user", "content": content}],
             )
             text = "".join(
