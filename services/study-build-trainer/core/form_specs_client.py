@@ -39,8 +39,14 @@ FORM_SPEC_SYSTEM = (
 
 # Compact prompt — no verbose schema example, no repeated field values
 _PROMPT_TEMPLATE = """\
-Generate XLSForm content for this CRF using the LATEST CDASHIG version's conventions:
+Generate XLSForm content for this CRF using the LATEST CDASHIG version's conventions.
+
 Form: {form_id} | {form_title} | CDASH: {cdash} | Repeating: {repeating} | ePRO: {epro}
+
+PROTOCOL DATA POINTS — these are the specific items the protocol asks to capture
+on this form. Your survey output MUST cover all of these. Use them as the
+ground-truth list of fields the customer expects:
+{protocol_data_points_block}
 
 Return JSON with keys: form_id, form_title, settings, survey, choices.
 
@@ -50,27 +56,67 @@ namespaces:"oc=\\"http://openclinica.org/xforms\\" , OpenClinica=\\"http://openc
 survey rows: [{{"type","name","label","required","relevant","constraint","calculation","oc:itemgroupOID"}}]
 choices rows: [{{"list_name","name","label"}}]
 
-Rules:
-- Use ONLY variable names from the LATEST CDASHIG version you know.
-  Examples of current naming: AETERM, AESTDAT, AEENDAT, VSPERF, VSDAT,
-  VSORRES, LBPERF, LBDAT, LBORRES, MHTERM, MHSTDAT. Do NOT use deprecated
-  names from older versions (e.g. AESTDTC was the older convention,
-  superseded by AESTDAT in current CDASHIG).
-- Follow the LATEST CDASHIG domain-level structure: each domain has a
-  defined set of "Highly Recommended", "Recommended", and "Optional"
-  variables. Include all "Highly Recommended" variables for the domain.
-  Include "Recommended" variables when the protocol clearly calls for
-  them.
-- Use current CDISC controlled terminology for select_one fields (e.g.
-  AESEV uses MILD, MODERATE, SEVERE; AEACN uses DOSE NOT CHANGED, DOSE
-  REDUCED, etc., per the most recent CDISC CT package you know).
+Rules (Patch 14 makes these protocol-grounded rather than CDASHIG-default):
+- Generate one survey row for EACH protocol data point listed above. Do not
+  skip data points the protocol asks for, even if they're unusual or non-CDASH.
+- For each data point, choose the variable name following LATEST CDASHIG
+  conventions when the data point maps to a standard CDASH variable. For
+  data points that don't have a CDASH equivalent (study-specific items),
+  invent a name following CDASH naming patterns (uppercase, domain-prefixed,
+  underscore-free e.g. AESPID style). Preserve the protocol's label verbatim
+  in the label field — labels are how the customer will recognize the field.
+- Choices for select_one/select_multiple data points: use the protocol's
+  listed values when provided. Map to LATEST CDISC controlled terminology
+  values (MILD/MODERATE/SEVERE etc.) when the protocol's values clearly
+  match a CDISC codelist; preserve as-given otherwise.
+- After covering all protocol data points, add CDASHIG "Highly Recommended"
+  variables for the domain ONLY if they're clearly required by the protocol
+  (e.g. AESER for serious AE flag if the protocol mentions SAE reporting).
+  Don't pad with CDASH defaults that the protocol doesn't ask for.
+- Use ONLY LATEST CDASHIG variable names for standard items (AETERM, AESTDAT,
+  AEENDAT, VSPERF, VSDAT, VSORRES, LBPERF, LBDAT, LBORRES, MHTERM, MHSTDAT).
+  Avoid deprecated older-version names (e.g. AESTDTC was superseded by AESTDAT).
+
+XLSForm structural rules:
 - Start with TPTCALC (calculate) + TPT (text, timepoint label)
 - Wrap data fields in begin group/end group, OID pattern IG_{cdash}_{cdash}
 - Perf question first (VSPERF/LBPERF), then date, then results
-- select_one fields: include all standard coded choices (UPPERCASE list names)
+- select_one fields: UPPERCASE list names
 - relevant logic on conditional fields
-- Essential clinical fields only — no padding
 """
+
+
+def _format_data_points(form: dict[str, Any]) -> str:
+    """Render the form's protocol_data_points list as a compact bullet block.
+
+    Patch 14: protocol_analysis now extracts a per-form data-point list from
+    the protocol PDF. We render it here as input to form_specs so the model
+    grounds its survey rows in the protocol's actual data collection
+    requirements rather than CDASH defaults.
+
+    Returns "(none extracted from protocol — fall back to CDASHIG defaults)"
+    when the form lacks data points, which preserves the pre-Patch-14
+    behavior for back-compat with old analysis JSON.
+    """
+    points = form.get("protocol_data_points") or []
+    if not points:
+        return "  (none extracted from protocol — fall back to CDASHIG defaults)"
+
+    lines = []
+    for p in points:
+        if not isinstance(p, dict):
+            continue
+        label = (p.get("label") or "").strip()
+        ptype = (p.get("type") or "text").strip()
+        values = p.get("values") or []
+        line = f"  - {label} (type: {ptype})"
+        if values and isinstance(values, list):
+            sample = ", ".join(str(v) for v in values[:8])
+            if len(values) > 8:
+                sample += f", … +{len(values) - 8} more"
+            line += f"  [values: {sample}]"
+        lines.append(line)
+    return "\n".join(lines) if lines else "  (data points present but malformed)"
 
 
 def _prompt(form: dict[str, Any]) -> str:
@@ -80,6 +126,7 @@ def _prompt(form: dict[str, Any]) -> str:
         cdash=form.get("cdash_domain", "N/A"),
         repeating=form.get("repeating", "No"),
         epro=form.get("epro", "No"),
+        protocol_data_points_block=_format_data_points(form),
     )
 
 

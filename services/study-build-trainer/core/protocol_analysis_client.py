@@ -61,7 +61,14 @@ Required JSON structure:
       "complexity": "<Simple | Average | Complex>",
       "repeating": "<Yes | No>",
       "epro": "<Yes | No>",
-      "arm": "<BOTH | TREATMENT | CONTROL>"
+      "arm": "<BOTH | TREATMENT | CONTROL>",
+      "protocol_data_points": [
+        {
+          "label": "<descriptive label from protocol, e.g. 'Adverse event term/diagnosis'>",
+          "type": "<text | date | number | select_one | select_multiple | calculate>",
+          "values": ["<choice 1>", "<choice 2>"]
+        }
+      ]
     }
   ],
   "form_event_matrix": [
@@ -149,6 +156,30 @@ Rules:
 
 - form_event_matrix: one entry per form-event assignment (same data as visits_assigned,
   but flattened for easy lookup).
+
+- protocol_data_points (Patch 14): For EACH form, extract the specific data points
+  the protocol says should be captured on that form. Read the protocol's data
+  collection sections, schedule of assessments details, study endpoints, and any
+  case report form descriptions. For each data point:
+
+  * label: human-readable description of what's being captured (e.g. "AE start
+    date", "Severity grade", "Pain score 0-10"). Use the protocol's own wording
+    when available — these will be matched against the customer's CRF labels.
+  * type: one of text, date, number, select_one, select_multiple, calculate.
+  * values: for select_one/select_multiple, list the allowed choices in the
+    protocol's wording (e.g. ["Mild", "Moderate", "Severe"] for AE severity).
+    Omit or leave empty for free-text/date/numeric fields.
+
+  Aim for completeness — protocol data points drive form_specs's item generation,
+  so missing protocol items here means missing items in the predicted build.
+  Typical CRFs have 5-30 data points each.
+
+  When the protocol describes the same data point in multiple sections (e.g. SoA
+  table + Adverse Events section), include it once. When the protocol uses a
+  generic phrase like "vital signs" without listing specific measurements,
+  expand to standard components (systolic BP, diastolic BP, heart rate, etc.)
+  appropriate for the indication.
+
 - If a value is unknown, use null — never omit required fields.
 - Do not include XLSForm survey rows or choice lists — just structure.
 """.strip()
@@ -160,7 +191,7 @@ async def run_protocol_analysis(
     client=None,
     api_key: str | None = None,
     model: str = "claude-opus-4-7",
-    max_tokens: int = 16000,
+    max_tokens: int = 32000,
     max_retries: int = 3,
     initial_wait_seconds: int = 60,
 ) -> str:
