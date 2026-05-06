@@ -76,8 +76,36 @@ Rules:
 - study_events: extract ALL study events / visits from the Schedule of Assessments.
   Use SE_ prefix for OIDs (e.g. SE_BASELINE, SE_C1, SE_AE, SE_EOS).
   Match OID naming conventions: uppercase, underscores, no spaces.
+
+- CRITICAL — DO NOT COLLAPSE THE SCHEDULE OF EVENTS / SCHEDULE OF ASSESSMENTS TABLE.
+  Most protocols include a structured table (often called "Schedule of Events",
+  "Schedule of Assessments", or "Visit Schedule") that lists every visit, call,
+  and assessment timepoint as a separate row. Your study_events output MUST contain
+  one entry for every distinct row in that table. Never merge similar-looking rows
+  into a single event.
+
+  Concrete example: if the table lists "24 Hour Call", "48 Hour Call", "72 Hour
+  Call", "96 Hour Call", "120 Hour Call", and "144 Hour Call" as six separate rows,
+  you MUST emit six study_events (e.g. SE_CA24H, SE_CA48H, SE_CA72H, SE_CA96H,
+  SE_CA120H, SE_CA144H). Do NOT consolidate them into a single
+  "SE_PHONE_CALLS" or "SE_FOLLOWUP_CALLS" entry. Each timepoint needs its own
+  OID, name, and category — even when the assessments performed at each are
+  identical.
+
+  Sanity check before returning: count the visit/call/assessment rows in the
+  Schedule of Events table. Your study_events array length should match that
+  count (plus any unscheduled events like AE/Concomitant Med logs).
+
+- Do not invent visits that are not in the protocol. The Schedule of Events
+  table is the authoritative source — only emit what is listed there.
+
 - forms: extract ALL CRFs. Use F_ prefix for form_id, bare code for form_oid_short.
-  visits_assigned should list the SE_ OIDs where this form appears.
+  visits_assigned must list EVERY SE_ OID where this form is administered. If
+  the Schedule of Events table shows a form checkmarked at multiple visits or
+  calls, list all of them. For example, an AE form filled at every visit and
+  every call must list every SE_ OID for those events — not just one
+  representative SE_OID.
+
 - form_event_matrix: one entry per form-event assignment (same data as visits_assigned,
   but flattened for easy lookup).
 - If a value is unknown, use null — never omit required fields.
@@ -90,7 +118,7 @@ async def run_protocol_analysis(
     *,
     client=None,
     api_key: str | None = None,
-    model: str = "claude-opus-4-6",
+    model: str = "claude-opus-4-7",
     max_tokens: int = 16000,
     max_retries: int = 3,
     initial_wait_seconds: int = 60,
