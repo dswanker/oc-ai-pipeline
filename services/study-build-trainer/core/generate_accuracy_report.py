@@ -930,56 +930,248 @@ def score_forms(actual_xls: dict, predicted_xls: dict,
     return pct, matched_int, total, diffs
 
 
-def score_items(actual_xls: dict, predicted_xls: dict) -> tuple[float, list[DiffRow]]:
+def score_items(actual_xls: dict, predicted_xls: dict,
+                embed_fn: EmbedFn = None,
+                ) -> tuple[float, list[DiffRow]]:
     """Score item-level match across all forms.
-    Caps diff rows at 30 per form so a single complex form (e.g. Biospecimen
-    with 500+ custom items) doesn't swamp the diff sheet and hide other layers.
-    Scoring still uses ALL items — only the diff row display is capped.
+    Caps diff rows at 30 per form so a single complex form doesn't swamp
+    the diff sheet. Scoring still uses ALL items — only display is capped.
+
+    Patch 5 added two layers of matching tiers:
+      Form pairing (mirrors score_forms Tiers 1-4):
+        1. EXACT       form_id verbatim
+        2. NORMALIZED  equal under _norm_oid
+        3. FUZZY       rapidfuzz on form_id >= 0.75
+        4. TITLE       fuzzy on form_title >= 0.65
+        (Tier 5 SEMANTIC intentionally omitted: would double the embed_fn
+        load already incurred by score_forms. Re-enable when the worker
+        async pattern is refactored to allow more calls per run.)
+
+      Item matching within paired forms:
+        1. EXACT name        full credit (with type-mismatch noted)
+        2. NORMALIZED name   full credit (catches AETERM <-> AE_TERM)
+        3. EXACT label       full credit
+        4. FUZZY label >= 0.75   partial credit
+        5. MISS              no credit
+
+    Args:
+      embed_fn: ACCEPTED FOR API STABILITY. Currently unused (Tier 5 form
+                pairing not implemented here — see comment above).
     """
     diffs   = []
     total   = 0
-    matched = 0
+    matched_score = 0.0
     MAX_DIFFS_PER_FORM = 30
 
     DATA_TYPES = {"text", "integer", "decimal", "date", "datetime",
                   "time", "select_one", "select_multiple", "note", "calculate"}
 
-    for fid in sorted(actual_xls.keys()):
-        form_diff_count = 0
-        a_items = {
-            r["name"]: r for r in actual_xls[fid]["survey"]
+    def _filter_items(survey: list) -> dict:
+        """Build {name: row} dict, keeping only rows with valid data types."""
+        return {
+            r["name"]: r for r in survey
             if r["name"] and r["type"].split(" ")[0].lower() in DATA_TYPES
         }
-        p_items = {}
-        if fid in predicted_xls:
-            p_items = {
-                r["name"]: r for r in predicted_xls[fid]["survey"]
-                if r["name"] and r["type"].split(" ")[0].lower() in DATA_TYPES
-            }
+
+    # ── Step 1: Pair forms (Tiers 1-4 only, no semantic) ────────────────────
+    actual_fids    = sorted(actual_xls.keys())
+    predicted_fids = list(predicted_xls.keys())
+    form_pairings: dict = {}
+    claimed_pf: set = set()
+
+    pred_by_norm: dict[str, list[str]] = {}
+    for pfid in predicted_fids:
+        pred_by_norm.setdefault(_norm_oid(pfid), []).append(pfid)
+
+    for fid in actual_fids:
+        a_title = actual_xls[fid]["form_title"]
+
+        # Tier 1: exact form_id
+        if fid in predicted_xls and fid not in claimed_pf:
+            claimed_pf.add(fid)
+            form_pairings[fid] = (fid, "exact")
+            continue
+
+        # Tier 2: normalized form_id
+        norm = _norm_oid(fid)
+        norm_cands = [c for c in pred_by_norm.get(norm, []) if c not in claimed_pf]
+        if norm_cands:
+            pfid = norm_cands[0]
+            claimed_pf.add(pfid)
+            form_pairings[fid] = (pfid, f"normalized → {pfid}")
+            continue
+
+        # Tier 3: fuzzy on form_id
+        unclaimed = [pfid for pfid in predicted_fids if pfid not in claimed_pf]
+        best_pfid, best_sc = _best_fuzzy_match(
+            fid, unclaimed, FUZZY_FORMS_THRESHOLD,
+        )
+        if best_pfid is not None:
+            claimed_pf.add(best_pfid)
+            form_pairings[fid] = (best_pfid, f"fuzzy {best_sc:.2f} → {best_pfid}")
+            continue
+
+        # Tier 4: title fuzzy
+        unclaimed_titles = {pfid: predicted_xls[pfid]["form_title"]
+                            for pfid in predicted_fids if pfid not in claimed_pf}
+        title_pfid, title_sc = _best_title_match(
+            a_title, unclaimed_titles, TITLE_FUZZY_THRESHOLD,
+        )
+        if title_pfid is not None:
+            claimed_pf.add(title_pfid)
+            form_pairings[fid] = (
+                title_pfid, f"title-match {title_sc:.2f} → {title_pfid}"
+            )
+            continue
+
+        # Tier 5: miss
+        form_pairings[fid] = (None, "")
+
+    # ── Step 2: Score items within each (paired or unpaired) form ──────────
+    def _find_item_label_match(
+        target_label: str, p_items: dict, already_claimed: set,
+        threshold: float = 0.75,
+    ):
+        """Find best label match in p_items for target_label.
+        p_items is {name: row_dict}. Returns (pname, score, tier) or
+        (None, best, '')."""
+        if not target_label:
+            return None, 0.0, ""
+        t_norm = target_label.strip().lower()
+        if not t_norm:
+            return None, 0.0, ""
+        # Tier 3: exact label
+        for pn, pr in p_items.items():
+            if pn in already_claimed: continue
+            pl = (pr.get("label") or "").strip().lower()
+            if pl and pl == t_norm:
+                return pn, 1.0, "exact-label"
+        # Tier 4: fuzzy label
+        best_pn, best_sc = None, 0.0
+        for pn, pr in p_items.items():
+            if pn in already_claimed: continue
+            pl = (pr.get("label") or "").strip().lower()
+            if not pl: continue
+            sc = _fuzzy_score(t_norm, pl)
+            if sc > best_sc:
+                best_sc, best_pn = sc, pn
+        if best_sc >= threshold:
+            return best_pn, best_sc, "fuzzy-label"
+        return None, best_sc, ""
+
+    for fid in actual_fids:
+        paired_pfid, form_tier_info = form_pairings[fid]
+        a_items = _filter_items(actual_xls[fid]["survey"])
+        form_diff_count = 0
+
+        if paired_pfid is None:
+            # No paired predicted form — every item is a miss
+            total += len(a_items)
+            if a_items and form_diff_count < MAX_DIFFS_PER_FORM:
+                diffs.append(DiffRow(
+                    "Items", f"{fid} — form unmatched ({len(a_items)} items)",
+                    "— missing —",
+                    f"All {len(a_items)} items in {fid}",
+                    match_info="no form pair",
+                ))
+                form_diff_count += 1
+            continue
+
+        # Form is paired — build predicted items, match each actual item
+        p_items = _filter_items(predicted_xls[paired_pfid]["survey"])
+        # Build normalized-name index for Tier 2 lookups
+        p_by_norm_name: dict[str, list[str]] = {}
+        for pn in p_items:
+            p_by_norm_name.setdefault(_norm_oid(pn), []).append(pn)
+        claimed_p_items: set = set()
+        first = True
+
+        # Show form pairing tier on first diff row of this form
+        form_tier_prefix = (form_tier_info + " | ") if form_tier_info and form_tier_info != "exact" else ""
 
         for name in sorted(a_items.keys()):
             total += 1
             a = a_items[name]
-            if name in p_items:
+            a_label = a.get("label") or ""
+            a_type = a["type"].split(" ")[0].lower()
+
+            # Tier 1: exact name
+            if name in p_items and name not in claimed_p_items:
+                claimed_p_items.add(name)
                 p = p_items[name]
-                a_type = a["type"].split(" ")[0].lower()
                 p_type = p["type"].split(" ")[0].lower()
                 if a_type == p_type:
-                    matched += 1
-                elif form_diff_count < MAX_DIFFS_PER_FORM:
+                    matched_score += 1.0
+                else:
+                    matched_score += 0.5  # partial: name matched, type didn't
+                    if form_diff_count < MAX_DIFFS_PER_FORM:
+                        diffs.append(DiffRow(
+                            "Items", f"{fid}.{name} — data type",
+                            p_type, a_type,
+                            note="Data type differs",
+                            match_info=(form_tier_prefix + "exact") if first else "",
+                        ))
+                        first = False
+                        form_diff_count += 1
+                continue
+
+            # Tier 2: normalized name match
+            norm_n = _norm_oid(name)
+            norm_p_cands = [c for c in p_by_norm_name.get(norm_n, [])
+                            if c not in claimed_p_items]
+            if norm_p_cands:
+                pn = norm_p_cands[0]
+                claimed_p_items.add(pn)
+                p = p_items[pn]
+                p_type = p["type"].split(" ")[0].lower()
+                credit = 1.0 if a_type == p_type else 0.5
+                matched_score += credit
+                if form_diff_count < MAX_DIFFS_PER_FORM:
+                    type_note = "" if a_type == p_type else " (type differs)"
+                    elem = (f"{fid}.{name}" if name == pn
+                            else f"{fid}.{name} (matched {pn}{type_note})")
                     diffs.append(DiffRow(
-                        "Items", f"{fid}.{name} — data type",
-                        f"{p_type}",
-                        f"{a_type}",
-                        "Data type differs",
+                        "Items", elem,
+                        f"{pn} ({p_type})", f"{name} ({a_type})",
+                        match_info=(form_tier_prefix + f"normalized → {pn}") if first
+                                   else f"normalized → {pn}",
                     ))
+                    first = False
                     form_diff_count += 1
-            elif form_diff_count < MAX_DIFFS_PER_FORM:
+                continue
+
+            # Tier 3/4: label match
+            matched_pn, lbl_sc, lbl_tier = _find_item_label_match(
+                a_label, p_items, claimed_p_items,
+            )
+            if matched_pn is not None:
+                claimed_p_items.add(matched_pn)
+                p = p_items[matched_pn]
+                p_type = p["type"].split(" ")[0].lower()
+                # Credit factor: label match quality × type match
+                type_factor = 1.0 if a_type == p_type else 0.5
+                credit = lbl_sc * type_factor
+                matched_score += credit
+                if form_diff_count < MAX_DIFFS_PER_FORM:
+                    diffs.append(DiffRow(
+                        "Items", f"{fid}.{name}",
+                        f"{matched_pn} ({p_type}): {p.get('label','')}",
+                        f"{name} ({a_type}): {a_label}",
+                        match_info=(form_tier_prefix + f"{lbl_tier} {lbl_sc:.2f} → {matched_pn}")
+                                   if first else f"{lbl_tier} {lbl_sc:.2f} → {matched_pn}",
+                    ))
+                    first = False
+                    form_diff_count += 1
+                continue
+
+            # Tier 5: miss
+            if form_diff_count < MAX_DIFFS_PER_FORM:
                 diffs.append(DiffRow(
                     "Items", f"{fid}.{name}",
-                    "— missing —",
-                    f"{name} ({a['type']})",
+                    "— missing —", f"{name} ({a['type']})",
+                    match_info=form_tier_prefix.rstrip(" |") if first else "",
                 ))
+                first = False
                 form_diff_count += 1
 
         if form_diff_count >= MAX_DIFFS_PER_FORM:
@@ -987,20 +1179,23 @@ def score_items(actual_xls: dict, predicted_xls: dict) -> tuple[float, list[Diff
                 "Items", f"{fid} — (capped)",
                 f"… {len(a_items) - MAX_DIFFS_PER_FORM}+ more diffs",
                 "See full form comparison",
-                f"Diff capped at {MAX_DIFFS_PER_FORM} rows per form",
+                match_info="Capped",
             ))
 
-        for name in sorted(set(p_items) - set(a_items)):
+        # Extras: predicted items not claimed
+        for pn in sorted(set(p_items.keys()) - claimed_p_items):
             if form_diff_count >= MAX_DIFFS_PER_FORM:
                 break
+            elem = (f"Extra: {fid}.{pn}" if fid == paired_pfid
+                    else f"Extra: {paired_pfid}.{pn} (paired with {fid})")
             diffs.append(DiffRow(
-                "Items", f"Extra: {fid}.{name}",
-                f"{name} ({p_items[name]['type']})",
+                "Items", elem,
+                f"{pn} ({p_items[pn]['type']})",
                 "— not in actual —",
             ))
             form_diff_count += 1
 
-    return _score(matched, total), matched, total, diffs
+    return _score(int(round(matched_score)), total), int(round(matched_score)), total, diffs
 
 
 # ── Choice list pairing helpers ───────────────────────────────────────────────
@@ -1770,7 +1965,7 @@ def generate_accuracy_report(
     # Logic runs before Items/Choices so its diffs appear first in the sheet
     # (Items and Choices can generate hundreds of rows that push Logic off the end)
     logic_score,  logic_matched,  logic_total  = _run(score_logic, actual_xls, predicted_xls)
-    item_score,   item_matched,   item_total   = _run(score_items, actual_xls, predicted_xls)
+    item_score,   item_matched,   item_total   = _run(score_items, actual_xls, predicted_xls, embed_fn)
     choice_score, choice_matched, choice_total = _run(score_choices, actual_xls, predicted_xls, embed_fn)
 
 
