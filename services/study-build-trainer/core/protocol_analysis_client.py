@@ -238,26 +238,11 @@ async def run_protocol_analysis(
             # the pipeline with 400s. Anthropic's docs note temperature=0
             # never guaranteed determinism even on older models, so the
             # tradeoff was always weaker than expected.)
-            # Patch 14.1: switch to streaming API. With max_tokens=32000 and
-            # Opus 4.7's adaptive thinking, the Anthropic SDK projects request
-            # duration > 10 minutes and refuses non-streaming calls with:
-            #
-            #   ValueError: Streaming is required for operations that may take
-            #   longer than 10 minutes.
-            #
-            # Streaming reads the response incrementally so the client doesn't
-            # hold a single HTTP connection open for the full duration. The
-            # SDK's stream context manager + get_final_message() returns the
-            # same Message object shape as .create(), so downstream code that
-            # reads response.content[0].text is unchanged.
-            #
-            # See: https://github.com/anthropics/anthropic-sdk-python#long-requests
-            async with client.messages.stream(
+            response = await client.messages.create(
                 model=model,
                 max_tokens=max_tokens,
                 messages=[{"role": "user", "content": content}],
-            ) as stream:
-                response = await stream.get_final_message()
+            )
             text = "".join(
                 getattr(block, "text", "") or ""
                 for block in response.content
