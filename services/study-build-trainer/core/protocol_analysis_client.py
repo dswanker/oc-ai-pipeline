@@ -154,6 +154,41 @@ Rules:
   every call must list every SE_ OID for those events — not just one
   representative SE_OID.
 
+- form_oid_short naming (Patch 14.2 — important): use the conventional CDASH
+  short code when the form maps to a standard CDASH domain or instrument.
+  Customers consistently use these codes in their XLSForm builds, so picking
+  the right one is critical for form pairing. Reference list:
+
+  Standard CDASH domains:
+  AE (Adverse Events), CM (Concomitant Meds), DM (Demographics),
+  MH (Medical History), VS (Vital Signs), PE (Physical Exam),
+  IC (Informed Consent), DV (Protocol Deviations), DS (Disposition),
+  EX (Exposure), LB (Labs), EG (ECG), DA (Drug Accountability)
+
+  Standard PRO instruments and scales:
+  PHQ9 (Patient Health Questionnaire 9), SF12 (12-Item Short Form Survey),
+  ODI (Oswestry Disability Index), PCS (Pain Catastrophizing Scale),
+  PGIC (Patient Global Impression of Change), NRS (Numeric Rating Scale),
+  VAS (Visual Analog Scale), EQ5D (EuroQol 5-Dimension)
+
+  Common variants (when same scale collected at multiple timepoints with
+  different conventions, split into multiple forms):
+  NRSCUR (NRS at current visit), NRSDLY (NRS daily diary),
+  NRS30D (NRS at 30 days), PRMG (Pain Rating Multiple Generations),
+  RADIO (radiology assessment), EPRO (electronic patient-reported outcome),
+  PROMIS_29, PROMIS_8A, PROMIS_8B (PROMIS short forms)
+
+  When the protocol describes a clearly customer-specific form not in any
+  standard list (e.g. device malfunction logs, nerve block procedures,
+  treatment-day records, specific surgical procedures), use the protocol's
+  own naming or a faithful abbreviation. Examples: DNBP (Diagnostic Nerve
+  Block Procedure), MALF (Device Malfunction Log), TRTD (Treatment Day),
+  SPI (Spine Injections), SCR (Screening), SOCH (Social History).
+
+  RULE OF THUMB: if Google would return CDASH/CDISC documentation when you
+  search the form code, use that conventional code. Only invent new codes
+  for customer-specific items.
+
 - form_event_matrix: one entry per form-event assignment (same data as visits_assigned,
   but flattened for easy lookup).
 
