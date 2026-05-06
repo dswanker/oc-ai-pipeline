@@ -99,6 +99,47 @@ Rules:
 - Do not invent visits that are not in the protocol. The Schedule of Events
   table is the authoritative source — only emit what is listed there.
 
+- WORKED EXAMPLE — study this pattern carefully.
+
+  Suppose the Schedule of Events table in the protocol contains 7 columns:
+
+    | Assessment        | Screening | Day 1 | 24h Call | 48h Call | 72h Call | Day 7 | Day 30 |
+    |-------------------|-----------|-------|----------|----------|----------|-------|--------|
+    | Informed Consent  |    X      |       |          |          |          |       |        |
+    | Adverse Events    |    X      |   X   |    X     |    X     |    X     |   X   |   X    |
+    | Vital Signs       |    X      |   X   |          |          |          |   X   |   X    |
+
+  CORRECT study_events output — exactly 7 entries, one per column header:
+
+    {"oid": "SE_SCREEN",  "name": "Screening",  "category": "scheduled"}
+    {"oid": "SE_D1",      "name": "Day 1",      "category": "scheduled"}
+    {"oid": "SE_CA24H",   "name": "24h Call",   "category": "scheduled"}
+    {"oid": "SE_CA48H",   "name": "48h Call",   "category": "scheduled"}
+    {"oid": "SE_CA72H",   "name": "72h Call",   "category": "scheduled"}
+    {"oid": "SE_D7",      "name": "Day 7",      "category": "scheduled"}
+    {"oid": "SE_D30",     "name": "Day 30",     "category": "scheduled"}
+
+  INCORRECT — the following are failure modes you must AVOID. Each of these
+  is wrong because it collapses two or more separate Schedule columns into
+  a single event entry, making downstream form-to-event mapping impossible:
+
+    WRONG: {"oid": "SE_CALLS", "name": "Phone Calls"}
+      ↑ collapses 3 separate columns (24h, 48h, 72h) into one event.
+
+    WRONG: {"oid": "SE_D2_D7", "name": "Post-treatment Days 2-7"}
+      ↑ uses a date range to merge multiple columns. Date ranges in event
+      names or OIDs are NEVER correct — every column in the Schedule is
+      its own discrete event with its own OID.
+
+    WRONG: {"oid": "SE_FOLLOWUP", "name": "Follow-up Visits"}
+      ↑ merges Day 7 and Day 30 into a single generic "follow-up" event.
+      Even when assessments performed are similar across visits, each
+      visit is still a separate event.
+
+  Apply the same one-event-per-column expansion regardless of how many
+  rows the Schedule has. A 30-column Schedule produces 30 study_events
+  entries, not 5 grouped ones.
+
 - forms: extract ALL CRFs. Use F_ prefix for form_id, bare code for form_oid_short.
   visits_assigned must list EVERY SE_ OID where this form is administered. If
   the Schedule of Events table shows a form checkmarked at multiple visits or
