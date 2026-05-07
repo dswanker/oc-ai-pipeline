@@ -31,6 +31,10 @@ async def create_pending_row(
     name: str = Form(...),
     sponsor_client: str | None = Form(None),
     source_pipeline_item: str | None = Form(None),
+    protocol_number: str | None = Form(None),
+    protocol_pdf_sha256: str | None = Form(None),
+    study_spec_json: UploadFile | None = File(None),
+    edc_build_zip: UploadFile | None = File(None),
 ) -> dict[str, int | str]:
     """
     Create a new corpus board row with the protocol PDF attached.
@@ -40,6 +44,10 @@ async def create_pending_row(
       - name: row title (typically the protocol number, e.g. ABT-CIP-10601)
       - sponsor_client: optional sponsor name to seed the Sponsor/Client column
       - source_pipeline_item: optional oc-ai-pipeline item ID for traceability
+      - protocol_number: optional protocol number (Phase 1.2: accepted, logged, not stored)
+      - protocol_pdf_sha256: optional hex SHA-256 of protocol_pdf (Phase 1.2: accepted, logged, not stored)
+      - study_spec_json: optional pipeline Study Spec JSON file (Phase 1.2: accepted, logged, not stored)
+      - edc_build_zip: optional pipeline EDC Build ZIP file (Phase 1.2: accepted, logged, not stored)
 
     Returns:
       {"item_id": <new_id>, "status": "awaiting_build_completion"}
@@ -58,6 +66,10 @@ async def create_pending_row(
         source_item=source_pipeline_item,
         pdf_bytes=len(pdf_bytes),
         filename=protocol_pdf.filename,
+        protocol_number=protocol_number,
+        protocol_pdf_sha256=protocol_pdf_sha256,
+        study_spec_json_filename=study_spec_json.filename if study_spec_json else None,
+        edc_build_zip_filename=edc_build_zip.filename if edc_build_zip else None,
     )
 
     async with MondayClient() as monday:
