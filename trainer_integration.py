@@ -384,6 +384,11 @@ async def create_pending_row(
     protocol_filename: str,
     sponsor_client: str | None = None,
     source_pipeline_item: str | None = None,
+    sponsor: str | None = None,
+    protocol_number: str | None = None,
+    protocol_pdf_sha256: str | None = None,
+    study_spec_json: bytes | None = None,
+    edc_build_zip: bytes | None = None,
     http_client: "httpx.AsyncClient | None" = None,
 ) -> int | None:
     """
@@ -402,10 +407,27 @@ async def create_pending_row(
         name: Row title (typically the protocol number, e.g. ABT-CIP-10601).
         protocol_filename: Original filename for the PDF (preserved on
             upload so the trainer's parser can dispatch on extension).
-        sponsor_client: Optional sponsor name to seed the Sponsor/Client
-            column on the trainer board.
+        sponsor_client: Deprecated alias for ``sponsor``; kept for backward
+            compatibility. If both are supplied, ``sponsor`` wins.
         source_pipeline_item: Optional oc-ai-pipeline item ID for
             traceability — links the trainer row back to the pipeline run.
+        sponsor: Sponsor name. Used (with ``protocol_number``) by the
+            trainer for (sponsor, protocol_number) dedup, and to seed the
+            Sponsor/Client column on the trainer board. Preferred over
+            ``sponsor_client``.
+        protocol_number: Protocol number. Used (with ``sponsor``) by the
+            trainer for dedup so re-runs of the pipeline against the same
+            protocol don't create duplicate corpus rows.
+        protocol_pdf_sha256: Hex SHA-256 of ``protocol_pdf``. Stored by the
+            trainer for warning-only PDF-drift detection on dedup hits.
+            Not used as a dedup key.
+        study_spec_json: Pipeline-produced Study Spec JSON bytes. When
+            present, the trainer skips its own protocol-analysis step and
+            uses these pipeline outputs as the predicted side.
+        edc_build_zip: Pipeline-produced EDC Build ZIP bytes. When
+            present, the trainer skips its own predicted-build generation
+            and uses this ZIP as the predicted EDC ZIP for accuracy
+            scoring.
         http_client: Injectable for tests. If None, a fresh one is
             created and closed inside this function.
 
@@ -449,9 +471,23 @@ async def create_pending_row(
     files = {
         "protocol_pdf": (protocol_filename, protocol_pdf, "application/pdf"),
     }
+    if study_spec_json:
+        files["study_spec_json"] = (
+            f"{name}_study_spec.json", study_spec_json, "application/json",
+        )
+    if edc_build_zip:
+        files["edc_build_zip"] = (
+            f"{name}_edc_build.zip", edc_build_zip, "application/zip",
+        )
+
     data: dict[str, str] = {"name": name}
-    if sponsor_client:
-        data["sponsor_client"] = sponsor_client
+    effective_sponsor = sponsor or sponsor_client
+    if effective_sponsor:
+        data["sponsor_client"] = effective_sponsor
+    if protocol_number:
+        data["protocol_number"] = protocol_number
+    if protocol_pdf_sha256:
+        data["protocol_pdf_sha256"] = protocol_pdf_sha256
     if source_pipeline_item:
         data["source_pipeline_item"] = str(source_pipeline_item)
 
