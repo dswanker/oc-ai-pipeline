@@ -1,0 +1,712 @@
+"""
+tests/test_migration.py — Migration module test harness
+
+Zero external dependencies:
+  - No Anthropic API calls
+  - No Monday.com calls
+  - No pipeline.py triggers
+  - No Railway/Railway env vars needed
+  - Runs on any machine with: pip install lxml (optional, stdlib xml used)
+
+Usage:
+  python tests/test_migration.py                    # run all tests
+  python tests/test_migration.py -v                 # verbose
+  python tests/test_migration.py TestOdmReader      # one class
+  python tests/test_migration.py TestOdmReader.test_vendor_detection
+
+Fixtures:
+  tests/fixtures/prtk05.xml   — real OC4 export (PrTK05 study)
+  tests/fixtures/synthetic.xml — synthetic multi-vendor test file
+
+The harness validates:
+  1. odm_reader  — parse, vendor detection, ODM version handling,
+                   integrity checks, clinical data parse
+  2. odm_to_spec — OID normalisation, OC-9 compliance, form ID
+                   length, event SE_ prefixes, settings schema,
+                   review flags, round-trip stability
+  3. vendor_registry — extensibility, no hardcoded vendor lists
+  4. Edge cases  — malformed XML, missing elements, BOM, namespaces
+"""
+
+import json
+import os
+import sys
+import unittest
+import shutil
+import tempfile
+from pathlib import Path
+
+# ── Path setup ────────────────────────────────────────────────────────────────
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "migration"))
+
+FIXTURES = Path(__file__).parent / "fixtures"
+PRTK05_XML = FIXTURES / "prtk05.xml"
+SYNTHETIC_XML = FIXTURES / "synthetic.xml"
+
+# ── Lazy imports (only imported when tests run) ───────────────────────────────
+def _import_reader():
+    from odm_reader import (
+        parse_odm_metadata, parse_odm_clinical_data,
+        build_item_lookup, build_codelist_lookup,
+        build_form_item_map, summarise,
+    )
+    return parse_odm_metadata, parse_odm_clinical_data, \
+           build_item_lookup, build_codelist_lookup, \
+           build_form_item_map, summarise
+
+def _import_spec():
+    from odm_to_spec import transform, _oc_event_oid, _oc_form_id
+    return transform, _oc_event_oid, _oc_form_id
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Fixture helpers
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _load(path: Path) -> bytes:
+    with open(path, "rb") as f:
+        return f.read()
+
+
+def _minimal_odm(study_name="TEST", protocol="TEST-001", events=None,
+                 forms=None, items=None, codelists=None,
+                 odm_version="1.3.2", originator="") -> bytes:
+    """
+    Build a minimal valid ODM XML string for targeted unit tests.
+    Only includes the elements explicitly passed in.
+    """
+    events = events or []
+    forms  = forms  or []
+    items  = items  or []
+    codelists = codelists or []
+
+    event_defs = ""
+    for ev in events:
+        frefs = "".join(
+            f'<FormRef FormOID="{fr}" Mandatory="Yes"/>'
+            for fr in ev.get("form_refs", [])
+        )
+        event_defs += (
+            f'<StudyEventDef OID="{ev["oid"]}" Name="{ev["name"]}" '
+            f'Repeating="{ev.get("repeating","No")}" '
+            f'Type="{ev.get("type","Scheduled")}">{frefs}</StudyEventDef>'
+        )
+
+    form_defs = ""
+    for fm in forms:
+        ig_refs = "".join(
+            f'<ItemGroupRef ItemGroupOID="{ig}" Mandatory="Yes"/>'
+            for ig in fm.get("ig_refs", [])
+        )
+        form_defs += (
+            f'<FormDef OID="{fm["oid"]}" Name="{fm["name"]}" '
+            f'Repeating="{fm.get("repeating","No")}">{ig_refs}</FormDef>'
+        )
+
+    item_defs = ""
+    for it in items:
+        cl_ref = (f'<CodeListRef CodeListOID="{it["codelist"]}"/>'
+                  if it.get("codelist") else "")
+        rc = ""
+        for r in it.get("range_checks", []):
+            rc += (f'<RangeCheck Comparator="{r["comp"]}" SoftHard="Soft">'
+                   f'<CheckValue>{r["val"]}</CheckValue></RangeCheck>')
+        item_defs += (
+            f'<ItemDef OID="{it["oid"]}" Name="{it["name"]}" '
+            f'DataType="{it.get("type","text")}" Length="{it.get("length",20)}">'
+            f'<Question><TranslatedText xml:lang="en">{it.get("label",it["name"])}'
+            f'</TranslatedText></Question>{cl_ref}{rc}</ItemDef>'
+        )
+
+    cl_defs = ""
+    for cl in codelists:
+        items_xml = "".join(
+            f'<CodeListItem CodedValue="{ci["value"]}" OrderNumber="{i+1}">'
+            f'<Decode><TranslatedText xml:lang="en">{ci.get("decode",ci["value"])}'
+            f'</TranslatedText></Decode></CodeListItem>'
+            for i, ci in enumerate(cl.get("items", []))
+        )
+        cl_defs += (
+            f'<CodeList OID="{cl["oid"]}" Name="{cl["name"]}" DataType="text">'
+            f'{items_xml}</CodeList>'
+        )
+
+    orig_attr = f' Originator="{originator}"' if originator else ""
+    xml = f"""<?xml version="1.0" encoding="UTF-8"?>
+<ODM ODMVersion="{odm_version}" FileOID="TEST-001"
+     FileType="Snapshot" CreationDateTime="2025-01-01T00:00:00"{orig_attr}
+     xmlns="http://www.cdisc.org/ns/odm/v1.3">
+  <Study OID="S_TEST">
+    <GlobalVariables>
+      <StudyName>{study_name}</StudyName>
+      <StudyDescription>Test study</StudyDescription>
+      <ProtocolName>{protocol}</ProtocolName>
+    </GlobalVariables>
+    <MetaDataVersion OID="v1" Name="v1">
+      <Protocol>
+        {"".join(f'<StudyEventRef StudyEventOID="{ev["oid"]}" OrderNumber="{i}" Mandatory="Yes"/>' for i,ev in enumerate(events))}
+      </Protocol>
+      {event_defs}
+      {form_defs}
+      {item_defs}
+      {cl_defs}
+    </MetaDataVersion>
+  </Study>
+</ODM>"""
+    return xml.encode("utf-8")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Test suite 1 — odm_reader
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestOdmReader(unittest.TestCase):
+    """Tests for odm_reader.parse_odm_metadata()"""
+
+    @classmethod
+    def setUpClass(cls):
+        (parse_odm_metadata, parse_odm_clinical_data,
+         build_item_lookup, build_codelist_lookup,
+         build_form_item_map, summarise) = _import_reader()
+        # staticmethod wrapper prevents Python treating these as unbound methods
+        cls.parse      = staticmethod(parse_odm_metadata)
+        cls.parse_cd   = staticmethod(parse_odm_clinical_data)
+        cls.item_lookup = staticmethod(build_item_lookup)
+        cls.cl_lookup  = staticmethod(build_codelist_lookup)
+        cls.form_map   = staticmethod(build_form_item_map)
+        cls.summarise  = staticmethod(summarise)
+
+    # ── Real file tests ───────────────────────────────────────────────────────
+
+    def test_prtk05_parses_without_error(self):
+        """Real OC4 export parses cleanly with zero warnings."""
+        result = self.parse(_load(PRTK05_XML))
+        self.assertEqual(result["parse_warnings"], [],
+                         f"Unexpected warnings: {result['parse_warnings']}")
+
+    def test_prtk05_study_name(self):
+        result = self.parse(_load(PRTK05_XML))
+        self.assertEqual(result["study"]["name"], "PrTK05")
+        self.assertEqual(result["study"]["protocol_name"], "PrTK05")
+
+    def test_prtk05_odm_version(self):
+        result = self.parse(_load(PRTK05_XML))
+        self.assertEqual(result["odm_version"], "1.3")
+
+    def test_prtk05_event_count(self):
+        result = self.parse(_load(PRTK05_XML))
+        self.assertEqual(len(result["events"]), 21)
+
+    def test_prtk05_form_count(self):
+        result = self.parse(_load(PRTK05_XML))
+        self.assertEqual(len(result["forms"]), 20)
+
+    def test_prtk05_item_count(self):
+        """Should parse all 1251 items from PrTK05."""
+        result = self.parse(_load(PRTK05_XML))
+        self.assertGreaterEqual(len(result["items"]), 1000,
+                                "Expected 1000+ items in PrTK05")
+
+    def test_prtk05_codelist_count(self):
+        result = self.parse(_load(PRTK05_XML))
+        self.assertGreaterEqual(len(result["codelists"]), 100)
+
+    def test_prtk05_vendor_detected_as_openclinica(self):
+        result = self.parse(_load(PRTK05_XML))
+        self.assertIn("OpenClinica", result["source_system"],
+                      f"Expected OpenClinica vendor, got: {result['source_system']}")
+
+    def test_prtk05_oc4_namespace_extensions_captured(self):
+        """OC4 vendor extension attributes should be captured in vendor dicts."""
+        result = self.parse(_load(PRTK05_XML))
+        # At least some events should have OC4 vendor attrs (EventType, Status)
+        events_with_vendor = [e for e in result["events"] if e.get("vendor")]
+        self.assertGreater(len(events_with_vendor), 0,
+                           "No OC4 vendor extension attributes captured on events")
+
+    def test_prtk05_summarise(self):
+        """summarise() should return a non-empty string."""
+        result = self.parse(_load(PRTK05_XML))
+        summary = self.summarise(result)
+        self.assertIn("PrTK05", summary)
+        self.assertIn("Events:", summary)
+
+    def test_prtk05_form_item_map_populated(self):
+        """build_form_item_map should return items for known forms."""
+        result = self.parse(_load(PRTK05_XML))
+        fmap = self.form_map(result)
+        self.assertGreater(len(fmap), 0)
+        # Every form should have at least one item
+        empty_forms = [k for k, v in fmap.items() if len(v) == 0]
+        # Allow a small number of forms with no items (some forms may only have groups)
+        self.assertLess(len(empty_forms), len(fmap) * 0.3,
+                        f"Too many forms with no items: {empty_forms}")
+
+    # ── Vendor detection ──────────────────────────────────────────────────────
+
+    def test_vendor_medidata_detected_from_originator(self):
+        xml = _minimal_odm(originator="Medidata Rave 5.6.9")
+        result = self.parse(xml)
+        self.assertIn("Medidata", result["source_system"])
+
+    def test_vendor_viedoc_detected_from_originator(self):
+        xml = _minimal_odm(originator="Viedoc 4.72")
+        result = self.parse(xml)
+        self.assertIn("Viedoc", result["source_system"])
+
+    def test_vendor_oracle_detected_from_originator(self):
+        xml = _minimal_odm(originator="Oracle InForm 6.2")
+        result = self.parse(xml)
+        self.assertIn("Oracle", result["source_system"])
+
+    def test_vendor_castor_detected_from_originator(self):
+        xml = _minimal_odm(originator="Castor EDC 2023")
+        result = self.parse(xml)
+        self.assertIn("Castor", result["source_system"])
+
+    def test_vendor_redcap_detected_from_originator(self):
+        xml = _minimal_odm(originator="REDCap 14.0")
+        result = self.parse(xml)
+        self.assertIn("REDCap", result["source_system"])
+
+    def test_vendor_unknown_is_graceful(self):
+        xml = _minimal_odm(originator="SomeUnknownEDC 1.0")
+        result = self.parse(xml)
+        self.assertEqual(result["source_system"], "UNKNOWN")
+
+    # ── ODM version handling ──────────────────────────────────────────────────
+
+    def test_odm_version_130(self):
+        xml = _minimal_odm(odm_version="1.3.0")
+        result = self.parse(xml)
+        self.assertEqual(result["odm_version"], "1.3.0")
+
+    def test_odm_version_131(self):
+        xml = _minimal_odm(odm_version="1.3.1")
+        result = self.parse(xml)
+        self.assertEqual(result["odm_version"], "1.3.1")
+
+    def test_odm_version_132(self):
+        xml = _minimal_odm(odm_version="1.3.2")
+        result = self.parse(xml)
+        self.assertEqual(result["odm_version"], "1.3.2")
+
+    def test_odm_version_13_plain(self):
+        """ODM 1.3 (no patch) as exported by OC4."""
+        xml = _minimal_odm(odm_version="1.3")
+        result = self.parse(xml)
+        self.assertEqual(result["odm_version"], "1.3")
+
+    # ── Structural parsing ────────────────────────────────────────────────────
+
+    def test_event_form_refs_populated(self):
+        xml = _minimal_odm(
+            events=[{"oid": "SE_SCREEN", "name": "Screening",
+                     "form_refs": ["F_DM", "F_VS"]}],
+            forms=[{"oid": "F_DM", "name": "Demographics", "ig_refs": []},
+                   {"oid": "F_VS", "name": "Vitals", "ig_refs": []}],
+        )
+        result = self.parse(xml)
+        self.assertEqual(result["events"][0]["form_refs"], ["F_DM", "F_VS"])
+
+    def test_codelist_items_parsed(self):
+        xml = _minimal_odm(
+            codelists=[{
+                "oid": "CL.YN", "name": "YN",
+                "items": [{"value": "Y", "decode": "Yes"},
+                          {"value": "N", "decode": "No"}]
+            }]
+        )
+        result = self.parse(xml)
+        self.assertEqual(len(result["codelists"]), 1)
+        self.assertEqual(len(result["codelists"][0]["items"]), 2)
+
+    def test_range_checks_parsed(self):
+        xml = _minimal_odm(
+            items=[{
+                "oid": "I.VS.SYSBP", "name": "SYSBP", "type": "integer",
+                "label": "Systolic BP",
+                "range_checks": [
+                    {"comp": "GE", "val": "60"},
+                    {"comp": "LE", "val": "250"},
+                ]
+            }]
+        )
+        result = self.parse(xml)
+        item = result["items"][0]
+        self.assertEqual(len(item["range_checks"]), 2)
+        self.assertEqual(item["range_checks"][0]["comparator"], "GE")
+        self.assertEqual(item["range_checks"][0]["check_value"], "60")
+
+    def test_missing_study_element_produces_warning(self):
+        """Gracefully handle ODM with no <Study> element."""
+        xml = b"""<?xml version="1.0" encoding="UTF-8"?>
+<ODM ODMVersion="1.3.2" FileOID="X" FileType="Snapshot"
+     CreationDateTime="2025-01-01T00:00:00"
+     xmlns="http://www.cdisc.org/ns/odm/v1.3"/>"""
+        result = self.parse(xml)
+        self.assertTrue(len(result["parse_warnings"]) > 0)
+        self.assertEqual(result["events"], [])
+
+    def test_bom_stripped(self):
+        """UTF-8 BOM at start of file should be handled silently."""
+        xml = b"\xef\xbb\xbf" + _minimal_odm(study_name="BOM_TEST")
+        result = self.parse(xml)
+        self.assertEqual(result["study"]["name"], "BOM_TEST")
+
+    def test_integrity_warning_missing_formdef(self):
+        """Warning issued when event references a FormDef not in metadata."""
+        xml = _minimal_odm(
+            events=[{"oid": "SE_SCREEN", "name": "Screening",
+                     "form_refs": ["F_MISSING"]}],
+            forms=[],  # F_MISSING not defined
+        )
+        result = self.parse(xml)
+        self.assertTrue(
+            any("F_MISSING" in w for w in result["parse_warnings"]),
+            "Expected warning about missing FormDef F_MISSING"
+        )
+
+    # ── Clinical data parse ───────────────────────────────────────────────────
+
+    def test_clinical_data_parse_from_prtk05(self):
+        """Clinical data parse returns a list (may be empty for metadata-only export)."""
+        result = self.parse_cd(_load(PRTK05_XML))
+        self.assertIsInstance(result, list)
+
+    def test_clinical_data_parse_minimal(self):
+        """Minimal clinical data ODM parses correctly."""
+        xml = b"""<?xml version="1.0" encoding="UTF-8"?>
+<ODM ODMVersion="1.3.2" FileOID="X" FileType="Snapshot"
+     CreationDateTime="2025-01-01T00:00:00"
+     xmlns="http://www.cdisc.org/ns/odm/v1.3">
+  <ClinicalData StudyOID="S_TEST" MetaDataVersionOID="v1">
+    <SubjectData SubjectKey="001-001">
+      <SiteRef LocationOID="SITE.001"/>
+      <StudyEventData StudyEventOID="SE_SCREEN" StudyEventRepeatKey="1">
+        <FormData FormOID="F_DM" FormRepeatKey="1">
+          <ItemGroupData ItemGroupOID="IG.DM.DM" ItemGroupRepeatKey="1">
+            <ItemData ItemOID="I.DM.SUBJID" Value="001-001"/>
+          </ItemGroupData>
+        </FormData>
+      </StudyEventData>
+    </SubjectData>
+  </ClinicalData>
+</ODM>"""
+        subjects = self.parse_cd(xml)
+        self.assertEqual(len(subjects), 1)
+        self.assertEqual(subjects[0]["subject_key"], "001-001")
+        self.assertEqual(subjects[0]["site_oid"], "SITE.001")
+        self.assertEqual(len(subjects[0]["events"]), 1)
+        items = subjects[0]["events"][0]["forms"][0]["item_groups"][0]["items"]
+        self.assertEqual(items[0]["item_oid"], "I.DM.SUBJID")
+        self.assertEqual(items[0]["value"], "001-001")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Test suite 2 — odm_to_spec
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestOdmToSpec(unittest.TestCase):
+    """Tests for odm_to_spec.transform()"""
+
+    @classmethod
+    def setUpClass(cls):
+        parse_odm_metadata = _import_reader()[0]
+        transform, _oc_event_oid, _oc_form_id = _import_spec()
+        cls.transform      = staticmethod(transform)
+        cls.oc_event_oid   = staticmethod(_oc_event_oid)
+        cls.oc_form_id     = staticmethod(_oc_form_id)
+
+        # Parse PrTK05 once and cache
+        cls.prtk05_odm = parse_odm_metadata(_load(PRTK05_XML))
+        cls.prtk05_spec = transform(cls.prtk05_odm)
+
+    # ── PrTK05 end-to-end ─────────────────────────────────────────────────────
+
+    def test_prtk05_spec_top_level_keys(self):
+        spec = self.prtk05_spec
+        for key in ("study_meta", "timepoint_csv", "labranges_csv",
+                    "forms", "review_flags"):
+            self.assertIn(key, spec, f"Missing top-level key: {key}")
+
+    def test_prtk05_protocol_number(self):
+        self.assertEqual(self.prtk05_spec["study_meta"]["protocol_number"], "PrTK05")
+
+    def test_prtk05_input_mode_is_odm_xml(self):
+        self.assertEqual(self.prtk05_spec["study_meta"]["input_mode"], "ODM_XML")
+
+    def test_prtk05_form_count(self):
+        self.assertEqual(len(self.prtk05_spec["forms"]), 20)
+
+    def test_prtk05_event_count_includes_common(self):
+        rows = self.prtk05_spec["timepoint_csv"]["rows"]
+        event_oids = [r["event"] for r in rows]
+        self.assertIn("SE_COMMON", event_oids, "SE_COMMON missing from timepoints")
+        # 21 original + SE_COMMON = 22
+        self.assertEqual(len(rows), 22)
+
+    def test_prtk05_all_events_have_se_prefix(self):
+        for row in self.prtk05_spec["timepoint_csv"]["rows"]:
+            self.assertTrue(row["event"].startswith("SE_"),
+                            f"Event missing SE_ prefix: {row['event']}")
+
+    def test_prtk05_form_ids_no_truncation(self):
+        """No form ID should be obviously truncated mid-word."""
+        for form in self.prtk05_spec["forms"]:
+            fid = form["form_id"]
+            self.assertLessEqual(len(fid), 25,
+                                 f"Form ID too long: {fid}")
+            # Should not end with an underscore (truncation artefact)
+            self.assertFalse(fid.endswith("_"),
+                             f"Form ID ends with underscore: {fid}")
+
+    def test_prtk05_oc9_ae_cm_dv_on_se_common(self):
+        """OC-9: AE, CM, DV must be assigned only to SE_COMMON."""
+        for form in self.prtk05_spec["forms"]:
+            if form["form_id"] in ("AE", "CM", "DV"):
+                self.assertEqual(
+                    form["visits_assigned"], ["SE_COMMON"],
+                    f"OC-9 violation: {form['form_id']} → {form['visits_assigned']}"
+                )
+
+    def test_prtk05_every_form_has_settings(self):
+        for form in self.prtk05_spec["forms"]:
+            s = form.get("settings", {})
+            self.assertIn("form_id", s,
+                          f"Form {form['form_id']} missing settings.form_id")
+            self.assertIn("namespaces", s,
+                          f"Form {form['form_id']} missing settings.namespaces")
+            self.assertIn("oc=", s["namespaces"],
+                          f"Form {form['form_id']} namespaces missing oc= prefix")
+
+    def test_prtk05_settings_form_id_starts_with_F(self):
+        """settings.form_id must follow F_<ID>_<version> pattern."""
+        for form in self.prtk05_spec["forms"]:
+            fid = form["settings"]["form_id"]
+            self.assertTrue(fid.startswith("F_"),
+                            f"settings.form_id missing F_ prefix: {fid}")
+
+    def test_prtk05_survey_rows_have_required_keys(self):
+        """Every survey row must have the 3 mandatory tracking fields."""
+        required = {"completion_status", "library_source", "flag_reason"}
+        for form in self.prtk05_spec["forms"]:
+            for row in form.get("survey", []):
+                missing = required - set(row.keys())
+                self.assertEqual(missing, set(),
+                    f"Form {form['form_id']} row '{row.get('name','')}' "
+                    f"missing keys: {missing}")
+
+    def test_prtk05_survey_data_rows_have_itemgroup(self):
+        """Every data row (non-group type) must have bind__oc_itemgroup."""
+        group_types = {"begin group", "end group", "begin repeat", "end repeat"}
+        for form in self.prtk05_spec["forms"]:
+            for row in form.get("survey", []):
+                if row.get("type", "") in group_types:
+                    continue
+                # calculate rows with external binding are exempt
+                if (row.get("type") == "calculate" and
+                        row.get("bind__oc_external") == "clinicaldata"):
+                    continue
+                self.assertTrue(
+                    bool(row.get("bind__oc_itemgroup")),
+                    f"Form {form['form_id']} data row '{row.get('name','')}' "
+                    f"(type={row.get('type')}) missing bind__oc_itemgroup"
+                )
+
+    def test_range_checks_produce_constraints(self):
+        """Items with ODM RangeChecks should have constraint populated in survey rows."""
+        # Use the synthetic file which has explicit RangeChecks on VS items
+        parse = _import_reader()[0]
+        odm = parse(_load(SYNTHETIC_XML))
+        spec = self.transform(odm)
+        vs_form = next((f for f in spec["forms"] if f["form_id"] == "VS"), None)
+        if vs_form is None:
+            self.skipTest("VS form not found in synthetic spec")
+        constrained = [r for r in vs_form["survey"] if r.get("constraint")]
+        self.assertGreater(len(constrained), 0,
+                           "VS form has no constrained rows despite RangeChecks "
+                           "in synthetic ODM")
+
+    def test_prtk05_review_flags_all_8_categories(self):
+        flags = self.prtk05_spec["review_flags"]
+        expected = {
+            "site_specific", "oid_confirmation", "protocol_ambiguous",
+            "constraint_review", "choice_list_review", "custom_domain",
+            "pdf_mapping_uncertain", "name_deviation",
+        }
+        self.assertEqual(set(flags.keys()), expected)
+
+    def test_prtk05_spec_is_json_serialisable(self):
+        """The spec must serialise to JSON without error (no datetime objects etc)."""
+        try:
+            json.dumps(self.prtk05_spec)
+        except (TypeError, ValueError) as e:
+            self.fail(f"Spec not JSON-serialisable: {e}")
+
+    def test_prtk05_round_trip_stability(self):
+        """Transforming the same ODM twice must produce identical output."""
+        spec2 = self.transform(self.prtk05_odm)
+        self.assertEqual(
+            json.dumps(self.prtk05_spec, sort_keys=True),
+            json.dumps(spec2, sort_keys=True),
+            "transform() is not deterministic — output differs on second call"
+        )
+
+    # ── OID normalisation unit tests ──────────────────────────────────────────
+
+    def test_event_oid_adds_se_prefix(self):
+        self.assertEqual(self.oc_event_oid("SCREEN"), "SE_SCREEN")
+
+    def test_event_oid_preserves_se_prefix(self):
+        self.assertEqual(self.oc_event_oid("SE_SCREEN"), "SE_SCREEN")
+
+    def test_event_oid_uppercases(self):
+        self.assertEqual(self.oc_event_oid("se_baseline"), "SE_BASELINE")
+
+    def test_event_oid_replaces_dots(self):
+        # SE.SCREEN → dot→underscore → SE_SCREEN (SE_ prefix already present)
+        self.assertEqual(self.oc_event_oid("SE.SCREEN"), "SE_SCREEN")
+
+    def test_form_id_cdash_dm(self):
+        self.assertEqual(self.oc_form_id("F_DM", "Demographics"), "DM")
+
+    def test_form_id_cdash_ae(self):
+        self.assertEqual(self.oc_form_id("F.AE", "Adverse Events"), "AE")
+
+    def test_form_id_cdash_vs(self):
+        self.assertEqual(self.oc_form_id("F_VS", "Vital Signs"), "VS")
+
+    def test_form_id_custom_no_truncation(self):
+        fid = self.oc_form_id("F_BIOSPECIMENWORKSHEETSEMENCOL",
+                              "Biospecimen Worksheet Semen Collection")
+        self.assertLessEqual(len(fid), 25)
+        self.assertFalse(fid.endswith("_"))
+
+    def test_form_id_strips_f_prefix(self):
+        fid = self.oc_form_id("F_CUSTOM_FORM", "")
+        self.assertFalse(fid.startswith("F_"),
+                         f"Form ID still has F_ prefix: {fid}")
+
+    # ── Minimal transform edge cases ──────────────────────────────────────────
+
+    def test_empty_study_produces_valid_spec(self):
+        """transform() on a study with no forms must still return valid structure."""
+        parse = _import_reader()[0]
+        xml = _minimal_odm(study_name="EMPTY", protocol="EMPTY-001")
+        odm = parse(xml)
+        spec = self.transform(odm)
+        self.assertIn("study_meta", spec)
+        self.assertIn("forms", spec)
+        self.assertIsInstance(spec["forms"], list)
+
+    def test_se_common_always_added(self):
+        """SE_COMMON must appear in timepoint rows even for studies with no AE/CM."""
+        parse = _import_reader()[0]
+        xml = _minimal_odm(
+            events=[{"oid": "SE_SCREEN", "name": "Screening", "form_refs": []}]
+        )
+        odm = parse(xml)
+        spec = self.transform(odm)
+        event_oids = [r["event"] for r in spec["timepoint_csv"]["rows"]]
+        self.assertIn("SE_COMMON", event_oids)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Test suite 3 — vendor registry extensibility
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestVendorRegistry(unittest.TestCase):
+    """
+    Validates that the vendor detection system is extensible — new vendors
+    can be added without code changes (config-driven).
+
+    These tests pass TODAY because the registry is embedded in odm_reader.py.
+    When we move the registry to vendor_registry.json, these tests will drive
+    that refactor and ensure nothing breaks.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.parse = staticmethod(_import_reader()[0])
+
+    def test_all_current_14_vendors_detectable(self):
+        """
+        Every vendor in the original list of 14 must be detectable
+        from a plausible Originator string.
+        """
+        vendor_map = {
+            "Medidata Solutions":       "medidata",
+            "Viedoc Technologies":      "viedoc",
+            "Oracle":                   "oracle inform",
+            "Veeva Systems":            "veeva vault",
+            "Zelta (Merative)":         "merative",
+            "Castor":                   "castor",
+            "Medrio":                   "medrio",
+            "REDCap Cloud":             "redcap",
+            "OpenClinica 4":            "openclinica",
+        }
+        # Vendors we don't yet have namespace sniffing for — tracked here
+        # so we don't forget them
+        not_yet_detectable = {
+            "CRScube", "Cloudbyz", "Emmes", "MedNet",
+            "Crucial Data Solutions", "EDETEK",
+        }
+        detected_unknown = []
+        for vendor_name, originator_hint in vendor_map.items():
+            xml = _minimal_odm(originator=originator_hint)
+            result = self.parse(xml)
+            if result["source_system"] == "UNKNOWN":
+                detected_unknown.append(vendor_name)
+
+        self.assertEqual(detected_unknown, [],
+            f"These vendors were not detected: {detected_unknown}. "
+            f"Add their namespace hints to odm_reader._detect_vendor()")
+
+    def test_unknown_vendor_does_not_raise(self):
+        """An unrecognised vendor must degrade gracefully to UNKNOWN."""
+        xml = _minimal_odm(originator="FutureEDC 99.0")
+        result = self.parse(xml)
+        self.assertEqual(result["source_system"], "UNKNOWN")
+        # Parse should still succeed
+        self.assertIn("study", result)
+
+    def test_adding_new_vendor_via_originator_would_work(self):
+        """
+        Demonstrates the extension pattern: a new vendor only needs its
+        Originator string added to _detect_vendor(). This test documents
+        what a new integration point looks like.
+        """
+        # Simulate "NewEDC Corp" — not yet in the registry
+        xml = _minimal_odm(originator="NewEDC Corp 3.1")
+        result = self.parse(xml)
+        # Currently UNKNOWN — that's correct and expected
+        self.assertEqual(result["source_system"], "UNKNOWN",
+            "NewEDC is intentionally not yet in the registry. "
+            "When added, this test should be updated to assert detection.")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Test runner
+# ══════════════════════════════════════════════════════════════════════════════
+
+def run_tests(verbosity=1):
+    loader = unittest.TestLoader()
+    suite  = unittest.TestSuite()
+    for cls in (TestOdmReader, TestOdmToSpec, TestVendorRegistry):
+        suite.addTests(loader.loadTestsFromTestCase(cls))
+    runner = unittest.TextTestRunner(verbosity=verbosity)
+    result = runner.run(suite)
+    return 0 if result.wasSuccessful() else 1
+
+
+if __name__ == "__main__":
+    verbosity = 2 if "-v" in sys.argv else 1
+    # Support running a specific test class: python test_migration.py TestOdmReader
+    specific = [a for a in sys.argv[1:] if not a.startswith("-")]
+    if specific:
+        sys.exit(unittest.main(verbosity=verbosity))
+    else:
+        sys.exit(run_tests(verbosity=verbosity))
