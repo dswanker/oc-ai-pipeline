@@ -262,13 +262,28 @@ class IngestWorker:
         await self.monday.set_ingest_status(item_id, "generating_predicted_build")
         logger.info("ingest.generating_predicted_build", **log_ctx)
         predicted_edc_zip: bytes | None = None
-        try:
-            loop = asyncio.get_event_loop()
-            predicted_edc_zip = await loop.run_in_executor(
-                None, lambda: self._generate_predicted_build(analysis_dict, log_ctx)
+        # Phase 1b.D: pipeline-pushed predicted_edc_zip takes precedence over
+        # locally-generated. Legacy _generate_predicted_build kept as fallback
+        # for non-pipeline curation flows.
+        predicted_zip_path = cached.get("predicted_edc_zip")
+        if (predicted_zip_path
+                and predicted_zip_path.exists()
+                and predicted_zip_path.stat().st_size > 0):
+            predicted_edc_zip = predicted_zip_path.read_bytes()
+            logger.info(
+                "ingest.predicted_build_loaded_from_pipeline",
+                path=str(predicted_zip_path),
+                bytes=len(predicted_edc_zip),
+                **log_ctx,
             )
-        except Exception as e:
-            logger.warning("ingest.predicted_build_failed", error=str(e), **log_ctx)
+        else:
+            try:
+                loop = asyncio.get_event_loop()
+                predicted_edc_zip = await loop.run_in_executor(
+                    None, lambda: self._generate_predicted_build(analysis_dict, log_ctx)
+                )
+            except Exception as e:
+                logger.warning("ingest.predicted_build_failed", error=str(e), **log_ctx)
 
         # 9. Status → comparing_builds
         #    Run accuracy scorer and write score + XLSX to monday.
