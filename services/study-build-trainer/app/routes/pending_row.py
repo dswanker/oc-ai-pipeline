@@ -17,11 +17,12 @@ direct human entry on the trainer board itself.
 from __future__ import annotations
 
 import hashlib
+from datetime import datetime, timezone
 
 import structlog
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Response, UploadFile
 
-from core.monday_client import MondayClient
+from core.monday_client import INGEST_STATUS_LABELS, MondayClient
 
 logger = structlog.get_logger(__name__)
 router = APIRouter()
@@ -29,6 +30,7 @@ router = APIRouter()
 
 @router.post("", status_code=201)
 async def create_pending_row(
+    response: Response,
     protocol_pdf: UploadFile = File(...),
     name: str = Form(...),
     sponsor_client: str | None = Form(None),
@@ -59,7 +61,12 @@ async def create_pending_row(
         predicted_edc_zip file column when supplied.
 
     Returns:
-      {"item_id": <new_id>, "status": "awaiting_build_completion"}
+      On create (HTTP 201):
+        {"item_id": <new_id>, "status": "Awaiting Build Completion"}
+
+      On dedup skip (HTTP 200) — when (sponsor_client, protocol_number)
+      matches an existing corpus row:
+        {"action": "skipped", "existing_item_id": <id>, "status": <existing_label>}
     """
     if not name:
         raise HTTPException(400, "name is required")
@@ -101,6 +108,52 @@ async def create_pending_row(
     )
 
     async with MondayClient() as monday:
+        # 0. Dedup: if both sponsor_client and protocol_number were
+        #    supplied, look for an existing corpus row matching the pair.
+        #    On match: read the row, optionally append a PDF-drift
+        #    warning to human_notes, and short-circuit with HTTP 200.
+        if sponsor_client and protocol_number:
+            existing_id = await monday.find_existing_row(
+                sponsor_client, protocol_number,
+            )
+            if existing_id is not None:
+                existing = await monday.get_item(existing_id)
+                pdf_drift = (
+                    existing.protocol_pdf_sha256 is not None
+                    and existing.protocol_pdf_sha256 != computed_sha256
+                )
+                if pdf_drift:
+                    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                    warning = (
+                        f"[PDF DRIFT WARNING {ts}] pipeline re-pushed "
+                        f"protocol with different PDF bytes. "
+                        f"Stored SHA-256: {existing.protocol_pdf_sha256}. "
+                        f"Incoming SHA-256: {computed_sha256}. "
+                        f"The existing row was NOT overwritten — "
+                        f"investigate whether protocol content actually changed."
+                    )
+                    combined = (
+                        f"{existing.human_notes}\n\n{warning}"
+                        if existing.human_notes else warning
+                    )
+                    # TODO: if drift warnings become frequent, consider per-row
+                    # lock or monday compare-and-swap.
+                    await monday.set_long_text(existing_id, "human_notes", combined)
+                logger.info(
+                    "pending_row.skipped",
+                    existing_item_id=existing_id,
+                    sponsor=sponsor_client,
+                    protocol_number=protocol_number,
+                    pdf_drift=pdf_drift,
+                    existing_status=existing.ingest_status,
+                )
+                response.status_code = 200
+                return {
+                    "action": "skipped",
+                    "existing_item_id": existing_id,
+                    "status": existing.ingest_status or "unknown",
+                }
+
         # 1. Create the row in "Awaiting Build Completion" status.
         item_id = await monday.create_row(
             name=name,
@@ -152,5 +205,5 @@ async def create_pending_row(
 
     return {
         "item_id": item_id,
-        "status": "awaiting_build_completion",
+        "status": INGEST_STATUS_LABELS["awaiting_build_completion"],
     }
