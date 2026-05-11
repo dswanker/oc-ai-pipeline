@@ -16,6 +16,8 @@ direct human entry on the trainer board itself.
 """
 from __future__ import annotations
 
+import hashlib
+
 import structlog
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
@@ -44,10 +46,17 @@ async def create_pending_row(
       - name: row title (typically the protocol number, e.g. ABT-CIP-10601)
       - sponsor_client: optional sponsor name to seed the Sponsor/Client column
       - source_pipeline_item: optional oc-ai-pipeline item ID for traceability
-      - protocol_number: optional protocol number (Phase 1.2: accepted, logged, not stored)
-      - protocol_pdf_sha256: optional hex SHA-256 of protocol_pdf (Phase 1.2: accepted, logged, not stored)
-      - study_spec_json: optional pipeline Study Spec JSON file (Phase 1.2: accepted, logged, not stored)
-      - edc_build_zip: optional pipeline EDC Build ZIP file (Phase 1.2: accepted, logged, not stored)
+      - protocol_number: optional protocol number, written to the
+        protocol_number text column when supplied. Combined with
+        sponsor_client it forms the dedup key for /pending-row reruns.
+      - protocol_pdf_sha256: optional hex SHA-256 of protocol_pdf
+        supplied by the caller. The server always computes the canonical
+        SHA-256 from pdf_bytes; if the caller's value differs a warning
+        is logged and the server-computed value is used.
+      - study_spec_json: optional pipeline Study Spec JSON, uploaded to
+        the protocol_analysis_json file column when supplied.
+      - edc_build_zip: optional pipeline EDC Build ZIP, uploaded to the
+        predicted_edc_zip file column when supplied.
 
     Returns:
       {"item_id": <new_id>, "status": "awaiting_build_completion"}
@@ -59,6 +68,25 @@ async def create_pending_row(
     if not pdf_bytes:
         raise HTTPException(400, "protocol_pdf is empty")
 
+    # Server-computed SHA-256 is canonical; warn if caller's value diverges.
+    computed_sha256 = hashlib.sha256(pdf_bytes).hexdigest()
+    if protocol_pdf_sha256 and protocol_pdf_sha256 != computed_sha256:
+        logger.warning(
+            "pending_row.sha256_mismatch",
+            client_sha256=protocol_pdf_sha256,
+            server_sha256=computed_sha256,
+            name=name,
+        )
+
+    # Read optional file bodies up-front so we can size-log them and
+    # reuse the bytes for the monday upload calls below.
+    study_spec_bytes: bytes | None = None
+    if study_spec_json is not None:
+        study_spec_bytes = await study_spec_json.read() or None
+    edc_build_bytes: bytes | None = None
+    if edc_build_zip is not None:
+        edc_build_bytes = await edc_build_zip.read() or None
+
     logger.info(
         "pending_row.received",
         name=name,
@@ -67,9 +95,9 @@ async def create_pending_row(
         pdf_bytes=len(pdf_bytes),
         filename=protocol_pdf.filename,
         protocol_number=protocol_number,
-        protocol_pdf_sha256=protocol_pdf_sha256,
-        study_spec_json_filename=study_spec_json.filename if study_spec_json else None,
-        edc_build_zip_filename=edc_build_zip.filename if edc_build_zip else None,
+        protocol_pdf_sha256=computed_sha256,
+        study_spec_json_bytes=len(study_spec_bytes) if study_spec_bytes else 0,
+        edc_build_zip_bytes=len(edc_build_bytes) if edc_build_bytes else 0,
     )
 
     async with MondayClient() as monday:
@@ -81,7 +109,7 @@ async def create_pending_row(
             ingest_status_key="awaiting_build_completion",
         )
 
-        # 2. Upload the protocol PDF to the row's protocol column.
+        # 2. Upload the protocol PDF to the protocol file column.
         filename = protocol_pdf.filename or f"{name}_protocol.pdf"
         await monday.upload_file_to_column(
             item_id=item_id,
@@ -90,7 +118,37 @@ async def create_pending_row(
             content=pdf_bytes,
         )
 
-    logger.info("pending_row.created", item_id=item_id, name=name)
+        # 3. Write canonical PDF SHA-256 + optional protocol_number text columns.
+        await monday.set_text(item_id, "protocol_pdf_sha256", computed_sha256)
+        if protocol_number:
+            await monday.set_text(item_id, "protocol_number", protocol_number)
+
+        # 4. Upload optional pipeline-side artifacts to their file columns.
+        if study_spec_bytes:
+            await monday.upload_file_to_column(
+                item_id=item_id,
+                col_key="protocol_analysis_json",
+                filename=study_spec_json.filename or f"{name}_study_spec.json",
+                content=study_spec_bytes,
+            )
+        if edc_build_bytes:
+            await monday.upload_file_to_column(
+                item_id=item_id,
+                col_key="predicted_edc_zip",
+                filename=edc_build_zip.filename or f"{name}_edc_build.zip",
+                content=edc_build_bytes,
+            )
+
+    logger.info(
+        "pending_row.created",
+        item_id=item_id,
+        name=name,
+        sponsor=sponsor_client,
+        protocol_number=protocol_number,
+        protocol_pdf_sha256=computed_sha256,
+        study_spec_uploaded=bool(study_spec_bytes),
+        edc_build_uploaded=bool(edc_build_bytes),
+    )
 
     return {
         "item_id": item_id,
