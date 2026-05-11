@@ -44,6 +44,7 @@ sys.path.insert(0, str(ROOT / "migration"))
 FIXTURES = Path(__file__).parent / "fixtures"
 PRTK05_XML = FIXTURES / "prtk05.xml"
 SYNTHETIC_XML = FIXTURES / "synthetic.xml"
+MEDIDATA_RAVE_XML = FIXTURES / "medidata_rave_synthetic.xml"
 
 # ── Lazy imports (only imported when tests run) ───────────────────────────────
 def _import_reader():
@@ -916,13 +917,174 @@ class TestOdmValidator(unittest.TestCase):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# Test suite 5 — Medidata Rave synthetic fixture
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestMedidataRaveFixture(unittest.TestCase):
+    """
+    End-to-end coverage of the Medidata Rave 5.6.9 synthetic fixture
+    (tests/migration/fixtures/medidata_rave_synthetic.xml). Verifies that
+    Rave-specific patterns (mdsol namespace, IsLog log-line forms, vendor
+    extension attrs, RangeChecks, ClinicalData with mdsol:Submission) flow
+    cleanly through validator → reader → transform.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        from odm_validator import validate_odm
+        parse_odm_metadata, parse_odm_clinical_data, *_ = _import_reader()
+        transform, *_ = _import_spec()
+        cls.validate = staticmethod(validate_odm)
+        cls.parse    = staticmethod(parse_odm_metadata)
+        cls.parse_cd = staticmethod(parse_odm_clinical_data)
+        cls.transform = staticmethod(transform)
+        # Cache parse + transform — both are deterministic
+        cls.raw   = _load(MEDIDATA_RAVE_XML)
+        cls.odm   = parse_odm_metadata(cls.raw)
+        cls.spec  = transform(cls.odm)
+
+    # ── Vendor detection ──────────────────────────────────────────────────────
+
+    def test_vendor_detected_as_medidata_rave(self):
+        """Originator='Medidata Rave 5.6.9' must resolve to 'Medidata Rave'."""
+        self.assertEqual(self.odm["source_system"], "Medidata Rave")
+
+    def test_source_system_version_populated(self):
+        """Detector must capture a non-empty version string from root attrs."""
+        self.assertTrue(self.odm["source_system_version"],
+                        "source_system_version is empty — expected a value from "
+                        "ODM root attributes")
+
+    # ── mdsol namespace vendor attr capture ───────────────────────────────────
+
+    def test_mdsol_vendor_attrs_captured_on_events(self):
+        """At least some StudyEventDef elements must carry medidata: vendor attrs."""
+        events_with_vendor = [e for e in self.odm["events"]
+                              if any(k.startswith("medidata:") for k in (e.get("vendor") or {}))]
+        self.assertGreater(len(events_with_vendor), 0,
+                           "No mdsol vendor attrs captured on any StudyEventDef")
+
+    def test_mdsol_vendor_attrs_captured_on_forms(self):
+        """At least some FormDef elements must carry medidata: vendor attrs."""
+        forms_with_vendor = [f for f in self.odm["forms"]
+                             if any(k.startswith("medidata:") for k in (f.get("vendor") or {}))]
+        self.assertGreater(len(forms_with_vendor), 0,
+                           "No mdsol vendor attrs captured on any FormDef")
+
+    def test_mdsol_active_attr_value(self):
+        """SE_SCREEN must carry medidata:Active='Yes' in its vendor dict."""
+        se = next((e for e in self.odm["events"] if e["oid"] == "SE_SCREEN"), None)
+        self.assertIsNotNone(se, "SE_SCREEN missing from parsed events")
+        self.assertEqual(se["vendor"].get("medidata:Active"), "Yes")
+
+    def test_mdsol_islog_on_ae_itemgroup(self):
+        """IG.AE (log-line form) must carry medidata:IsLog='Yes' in its vendor dict."""
+        ig = next((g for g in self.odm["item_groups"] if g["oid"] == "IG.AE"), None)
+        self.assertIsNotNone(ig, "IG.AE missing from parsed item_groups")
+        self.assertEqual(ig["vendor"].get("medidata:IsLog"), "Yes")
+
+    def test_mdsol_islog_on_cm_itemgroup(self):
+        """IG.CM (log-line form) must carry medidata:IsLog='Yes' in its vendor dict."""
+        ig = next((g for g in self.odm["item_groups"] if g["oid"] == "IG.CM"), None)
+        self.assertIsNotNone(ig, "IG.CM missing from parsed item_groups")
+        self.assertEqual(ig["vendor"].get("medidata:IsLog"), "Yes")
+
+    # ── All 3 validation layers pass ──────────────────────────────────────────
+
+    def test_layer_1_passes(self):
+        rep = self.validate(self.raw, source_file=str(MEDIDATA_RAVE_XML))
+        self.assertEqual(rep.layer_results["layer_1"], "PASS")
+
+    def test_layer_2_passes(self):
+        rep = self.validate(self.raw, source_file=str(MEDIDATA_RAVE_XML))
+        self.assertEqual(rep.layer_results["layer_2"], "PASS")
+
+    def test_layer_3_passes(self):
+        rep = self.validate(self.raw, source_file=str(MEDIDATA_RAVE_XML))
+        self.assertEqual(rep.layer_results["layer_3"], "PASS")
+
+    def test_can_proceed(self):
+        rep = self.validate(self.raw)
+        self.assertTrue(rep.can_proceed,
+                        f"Fixture should be migratable: {rep.summary}")
+        self.assertTrue(rep.passed)
+
+    def test_compliance_fields_all_present(self):
+        rep = self.validate(self.raw)
+        for field_name, info in rep.compliance.items():
+            self.assertTrue(info["present"],
+                            f"Compliance field missing: {field_name}")
+            self.assertEqual(info["status"], "PASS",
+                             f"Compliance field not PASS: {field_name}")
+
+    # ── transform() form-ID + OC-9 compliance ─────────────────────────────────
+
+    def test_protocol_number_is_cv3001(self):
+        self.assertEqual(self.spec["study_meta"]["protocol_number"], "CV3001")
+
+    def test_form_ids_match_cdash_set(self):
+        """All 8 CDASH forms must resolve to their canonical short IDs."""
+        expected = {"DM", "IE", "VS", "AE", "CM", "EX", "LB", "DS"}
+        produced = {f["form_id"] for f in self.spec["forms"]}
+        self.assertEqual(produced, expected,
+                         f"Form IDs differ: missing={expected - produced} "
+                         f"extra={produced - expected}")
+
+    def test_oc9_ae_on_se_common_only(self):
+        """OC-9: AE must be assigned only to SE_COMMON."""
+        ae = next((f for f in self.spec["forms"] if f["form_id"] == "AE"), None)
+        self.assertIsNotNone(ae)
+        self.assertEqual(ae["visits_assigned"], ["SE_COMMON"],
+                         f"OC-9 violation: AE visits_assigned={ae['visits_assigned']}")
+
+    def test_oc9_cm_on_se_common_only(self):
+        """OC-9: CM must be assigned only to SE_COMMON."""
+        cm = next((f for f in self.spec["forms"] if f["form_id"] == "CM"), None)
+        self.assertIsNotNone(cm)
+        self.assertEqual(cm["visits_assigned"], ["SE_COMMON"],
+                         f"OC-9 violation: CM visits_assigned={cm['visits_assigned']}")
+
+    # ── AE/CM repeating identification ────────────────────────────────────────
+
+    def test_ae_itemgroup_is_repeating(self):
+        """IG.AE must be parsed as Repeating=True (log-line form pattern)."""
+        ig = next((g for g in self.odm["item_groups"] if g["oid"] == "IG.AE"), None)
+        self.assertIsNotNone(ig)
+        self.assertTrue(ig["repeating"],
+                        "IG.AE Repeating='Yes' was not detected as True")
+
+    def test_cm_itemgroup_is_repeating(self):
+        """IG.CM must be parsed as Repeating=True (log-line form pattern)."""
+        ig = next((g for g in self.odm["item_groups"] if g["oid"] == "IG.CM"), None)
+        self.assertIsNotNone(ig)
+        self.assertTrue(ig["repeating"],
+                        "IG.CM Repeating='Yes' was not detected as True")
+
+    def test_ae_formdef_is_repeating(self):
+        """FormDef F_AE Repeating='Yes' should propagate to forms list."""
+        f = next((x for x in self.odm["forms"] if x["oid"] == "F_AE"), None)
+        self.assertIsNotNone(f)
+        self.assertTrue(f["repeating"])
+
+    # ── ClinicalData parse ────────────────────────────────────────────────────
+
+    def test_clinical_data_two_subjects(self):
+        """ClinicalData section must contain exactly the 2 fabricated subjects."""
+        subjects = self.parse_cd(self.raw)
+        self.assertEqual(len(subjects), 2)
+        keys = {s["subject_key"] for s in subjects}
+        self.assertEqual(keys, {"CV-001-001", "CV-001-002"})
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # Test runner
 # ══════════════════════════════════════════════════════════════════════════════
 
 def run_tests(verbosity=1):
     loader = unittest.TestLoader()
     suite  = unittest.TestSuite()
-    for cls in (TestOdmReader, TestOdmToSpec, TestVendorRegistry, TestOdmValidator):
+    for cls in (TestOdmReader, TestOdmToSpec, TestVendorRegistry,
+                TestOdmValidator, TestMedidataRaveFixture):
         suite.addTests(loader.loadTestsFromTestCase(cls))
     runner = unittest.TextTestRunner(verbosity=verbosity)
     result = runner.run(suite)

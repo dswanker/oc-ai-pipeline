@@ -1,0 +1,595 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Synthetic Medidata Rave 5.6.9 ODM 1.3 export for migration tests.
+  Phase 3 cardiovascular outcomes study (CV3001). Designed to exercise
+  Rave-specific patterns the migration module must handle:
+    * mdsol namespace on root and on most defs (Active, IsLog, OrderNumber, …)
+    * mdsol attributes on StudyEventRef inside Protocol
+    * Scheduled / Common / Unscheduled event types
+    * Log-line forms (AE, CM) with Repeating="Yes" + mdsol:IsLog="Yes"
+    * RangeChecks on numeric VS items
+    * CodeLists with mdsol:IsGlobal
+    * ClinicalData with mdsol:Submission="SpecifiedItemsOnly" and repeats
+  Not a real study. All subject data is fabricated.
+-->
+<ODM ODMVersion="1.3"
+     FileOID="CV3001-2026-05-11T00:00:00"
+     FileType="Snapshot"
+     CreationDateTime="2026-05-11T00:00:00"
+     Originator="Medidata Rave 5.6.9"
+     SourceSystem="Medidata Rave"
+     SourceSystemVersion="5.6.9.55"
+     xmlns="http://www.cdisc.org/ns/odm/v1.3"
+     xmlns:mdsol="http://www.mdsol.com/ns/odm/metadata"
+     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+
+  <Study OID="S_CV3001">
+    <GlobalVariables>
+      <StudyName>CV3001 Phase 3 Cardiovascular Outcomes Study</StudyName>
+      <StudyDescription>A Phase 3 Multicenter Randomized Double-Blind Placebo-Controlled Cardiovascular Outcomes Study of Investigational Compound CVX-101</StudyDescription>
+      <ProtocolName>CV3001</ProtocolName>
+    </GlobalVariables>
+
+    <BasicDefinitions>
+      <MeasurementUnit OID="MU.mmHg" Name="mmHg">
+        <Symbol><TranslatedText xml:lang="en">mmHg</TranslatedText></Symbol>
+      </MeasurementUnit>
+      <MeasurementUnit OID="MU.bpm" Name="bpm">
+        <Symbol><TranslatedText xml:lang="en">bpm</TranslatedText></Symbol>
+      </MeasurementUnit>
+      <MeasurementUnit OID="MU.C" Name="degC">
+        <Symbol><TranslatedText xml:lang="en">°C</TranslatedText></Symbol>
+      </MeasurementUnit>
+      <MeasurementUnit OID="MU.kg" Name="kg">
+        <Symbol><TranslatedText xml:lang="en">kg</TranslatedText></Symbol>
+      </MeasurementUnit>
+      <MeasurementUnit OID="MU.cm" Name="cm">
+        <Symbol><TranslatedText xml:lang="en">cm</TranslatedText></Symbol>
+      </MeasurementUnit>
+    </BasicDefinitions>
+
+    <MetaDataVersion OID="v1.0"
+                     Name="CV3001 v1.0 — IRB-approved 2026-04-15"
+                     mdsol:PrimaryFormOID="F_DM"
+                     mdsol:DefaultMatrixOID="MX_PRIMARY"
+                     mdsol:SignaturePrompt="By signing this form I confirm the data is accurate and complete.">
+
+      <Protocol>
+        <StudyEventRef StudyEventOID="SE_SCREEN" OrderNumber="1" Mandatory="Yes"
+                       mdsol:StudyEventDefType="Scheduled"
+                       mdsol:StudyEventDefRepeating="No"
+                       mdsol:StudyEventDefName="Screening Visit"/>
+        <StudyEventRef StudyEventOID="SE_BASELINE" OrderNumber="2" Mandatory="Yes"
+                       mdsol:StudyEventDefType="Scheduled"
+                       mdsol:StudyEventDefRepeating="No"
+                       mdsol:StudyEventDefName="Baseline / Randomization"/>
+        <StudyEventRef StudyEventOID="SE_COMMON" OrderNumber="3" Mandatory="Yes"
+                       mdsol:StudyEventDefType="Common"
+                       mdsol:StudyEventDefRepeating="Yes"
+                       mdsol:StudyEventDefName="Common Events (AE / CM / DS)"/>
+        <StudyEventRef StudyEventOID="SE_UNSCHED" OrderNumber="4" Mandatory="No"
+                       mdsol:StudyEventDefType="Unscheduled"
+                       mdsol:StudyEventDefRepeating="Yes"
+                       mdsol:StudyEventDefName="Unscheduled Visit"/>
+      </Protocol>
+
+      <!-- ── StudyEventDef ─────────────────────────────────────────────────── -->
+      <StudyEventDef OID="SE_SCREEN" Name="Screening Visit"
+                     Repeating="No" Type="Scheduled"
+                     mdsol:Active="Yes"
+                     mdsol:IsTraversableOpenAfterClose="No">
+        <FormRef FormOID="F_DM" Mandatory="Yes" OrderNumber="1"/>
+        <FormRef FormOID="F_IE" Mandatory="Yes" OrderNumber="2"/>
+        <FormRef FormOID="F_VS" Mandatory="Yes" OrderNumber="3"/>
+        <FormRef FormOID="F_LB" Mandatory="Yes" OrderNumber="4"/>
+      </StudyEventDef>
+      <StudyEventDef OID="SE_BASELINE" Name="Baseline / Randomization"
+                     Repeating="No" Type="Scheduled"
+                     mdsol:Active="Yes"
+                     mdsol:IsTraversableOpenAfterClose="No">
+        <FormRef FormOID="F_VS" Mandatory="Yes" OrderNumber="1"/>
+        <FormRef FormOID="F_EX" Mandatory="Yes" OrderNumber="2"/>
+        <FormRef FormOID="F_LB" Mandatory="Yes" OrderNumber="3"/>
+      </StudyEventDef>
+      <StudyEventDef OID="SE_COMMON" Name="Common Events (AE / CM / DS)"
+                     Repeating="Yes" Type="Common"
+                     mdsol:Active="Yes">
+        <FormRef FormOID="F_AE" Mandatory="No" OrderNumber="1"/>
+        <FormRef FormOID="F_CM" Mandatory="No" OrderNumber="2"/>
+        <FormRef FormOID="F_DS" Mandatory="No" OrderNumber="3"/>
+      </StudyEventDef>
+      <StudyEventDef OID="SE_UNSCHED" Name="Unscheduled Visit"
+                     Repeating="Yes" Type="Unscheduled"
+                     mdsol:Active="Yes">
+        <FormRef FormOID="F_VS" Mandatory="No" OrderNumber="1"/>
+        <FormRef FormOID="F_LB" Mandatory="No" OrderNumber="2"/>
+      </StudyEventDef>
+
+      <!-- ── FormDef ──────────────────────────────────────────────────────── -->
+      <FormDef OID="F_DM" Name="Demographics" Repeating="No"
+               mdsol:Active="Yes" mdsol:OrderNumber="1"
+               mdsol:ConfirmationStyle="None">
+        <ItemGroupRef ItemGroupOID="IG.DM" Mandatory="Yes" OrderNumber="1"/>
+      </FormDef>
+      <FormDef OID="F_IE" Name="Inclusion / Exclusion Criteria" Repeating="No"
+               mdsol:Active="Yes" mdsol:OrderNumber="2">
+        <ItemGroupRef ItemGroupOID="IG.IE" Mandatory="Yes" OrderNumber="1"/>
+      </FormDef>
+      <FormDef OID="F_VS" Name="Vital Signs" Repeating="No"
+               mdsol:Active="Yes" mdsol:OrderNumber="3">
+        <ItemGroupRef ItemGroupOID="IG.VS" Mandatory="Yes" OrderNumber="1"/>
+      </FormDef>
+      <FormDef OID="F_AE" Name="Adverse Events" Repeating="Yes"
+               mdsol:Active="Yes" mdsol:OrderNumber="4">
+        <ItemGroupRef ItemGroupOID="IG.AE" Mandatory="Yes" OrderNumber="1"/>
+      </FormDef>
+      <FormDef OID="F_CM" Name="Concomitant Medications" Repeating="Yes"
+               mdsol:Active="Yes" mdsol:OrderNumber="5">
+        <ItemGroupRef ItemGroupOID="IG.CM" Mandatory="Yes" OrderNumber="1"/>
+      </FormDef>
+      <FormDef OID="F_EX" Name="Study Drug Exposure" Repeating="No"
+               mdsol:Active="Yes" mdsol:OrderNumber="6">
+        <ItemGroupRef ItemGroupOID="IG.EX" Mandatory="Yes" OrderNumber="1"/>
+      </FormDef>
+      <FormDef OID="F_LB" Name="Laboratory Tests" Repeating="No"
+               mdsol:Active="Yes" mdsol:OrderNumber="7">
+        <ItemGroupRef ItemGroupOID="IG.LB" Mandatory="Yes" OrderNumber="1"/>
+      </FormDef>
+      <FormDef OID="F_DS" Name="Disposition" Repeating="No"
+               mdsol:Active="Yes" mdsol:OrderNumber="8">
+        <ItemGroupRef ItemGroupOID="IG.DS" Mandatory="Yes" OrderNumber="1"/>
+      </FormDef>
+
+      <!-- ── ItemGroupDef ─────────────────────────────────────────────────── -->
+      <ItemGroupDef OID="IG.DM" Name="DM" Repeating="No" SASDatasetName="DM"
+                    mdsol:RecordsPerRow="1">
+        <ItemRef ItemOID="I.DM.SUBJID"  OrderNumber="1" Mandatory="Yes"/>
+        <ItemRef ItemOID="I.DM.BIRTHDT" OrderNumber="2" Mandatory="Yes"/>
+        <ItemRef ItemOID="I.DM.SEX"     OrderNumber="3" Mandatory="Yes"/>
+        <ItemRef ItemOID="I.DM.RACE"    OrderNumber="4" Mandatory="Yes"/>
+        <ItemRef ItemOID="I.DM.ETHNIC"  OrderNumber="5" Mandatory="No"/>
+      </ItemGroupDef>
+      <ItemGroupDef OID="IG.IE" Name="IE" Repeating="No" SASDatasetName="IE">
+        <ItemRef ItemOID="I.IE.INC01" OrderNumber="1" Mandatory="Yes"/>
+        <ItemRef ItemOID="I.IE.EXC01" OrderNumber="2" Mandatory="Yes"/>
+      </ItemGroupDef>
+      <ItemGroupDef OID="IG.VS" Name="VS" Repeating="No" SASDatasetName="VS">
+        <ItemRef ItemOID="I.VS.SYSBP"  OrderNumber="1" Mandatory="Yes"/>
+        <ItemRef ItemOID="I.VS.DIABP"  OrderNumber="2" Mandatory="Yes"/>
+        <ItemRef ItemOID="I.VS.PULSE"  OrderNumber="3" Mandatory="Yes"/>
+        <ItemRef ItemOID="I.VS.TEMP"   OrderNumber="4" Mandatory="Yes"/>
+        <ItemRef ItemOID="I.VS.WEIGHT" OrderNumber="5" Mandatory="No"/>
+        <ItemRef ItemOID="I.VS.HEIGHT" OrderNumber="6" Mandatory="No"/>
+      </ItemGroupDef>
+      <ItemGroupDef OID="IG.AE" Name="AE" Repeating="Yes" SASDatasetName="AE"
+                    mdsol:IsLog="Yes"
+                    mdsol:LogDirection="DownwardLogIncrement"
+                    mdsol:RecordsPerRow="1">
+        <ItemRef ItemOID="I.AE.AETERM"  OrderNumber="1" Mandatory="Yes"/>
+        <ItemRef ItemOID="I.AE.AESTDTC" OrderNumber="2" Mandatory="Yes"/>
+        <ItemRef ItemOID="I.AE.AEENDTC" OrderNumber="3" Mandatory="No"/>
+        <ItemRef ItemOID="I.AE.AESEV"   OrderNumber="4" Mandatory="Yes"/>
+        <ItemRef ItemOID="I.AE.AESER"   OrderNumber="5" Mandatory="Yes"/>
+        <ItemRef ItemOID="I.AE.AEOUT"   OrderNumber="6" Mandatory="No"/>
+      </ItemGroupDef>
+      <ItemGroupDef OID="IG.CM" Name="CM" Repeating="Yes" SASDatasetName="CM"
+                    mdsol:IsLog="Yes"
+                    mdsol:LogDirection="DownwardLogIncrement"
+                    mdsol:RecordsPerRow="1">
+        <ItemRef ItemOID="I.CM.CMTRT"   OrderNumber="1" Mandatory="Yes"/>
+        <ItemRef ItemOID="I.CM.CMDOSE"  OrderNumber="2" Mandatory="No"/>
+        <ItemRef ItemOID="I.CM.CMDOSU"  OrderNumber="3" Mandatory="No"/>
+        <ItemRef ItemOID="I.CM.CMSTDTC" OrderNumber="4" Mandatory="Yes"/>
+        <ItemRef ItemOID="I.CM.CMENDTC" OrderNumber="5" Mandatory="No"/>
+        <ItemRef ItemOID="I.CM.CMINDC"  OrderNumber="6" Mandatory="No"/>
+      </ItemGroupDef>
+      <ItemGroupDef OID="IG.EX" Name="EX" Repeating="No" SASDatasetName="EX">
+        <ItemRef ItemOID="I.EX.EXTRT"   OrderNumber="1" Mandatory="Yes"/>
+        <ItemRef ItemOID="I.EX.EXDOSE"  OrderNumber="2" Mandatory="Yes"/>
+        <ItemRef ItemOID="I.EX.EXDOSU"  OrderNumber="3" Mandatory="Yes"/>
+        <ItemRef ItemOID="I.EX.EXSTDTC" OrderNumber="4" Mandatory="Yes"/>
+      </ItemGroupDef>
+      <ItemGroupDef OID="IG.LB" Name="LB" Repeating="Yes" SASDatasetName="LB"
+                    mdsol:IsLog="Yes"
+                    mdsol:RecordsPerRow="1">
+        <ItemRef ItemOID="I.LB.LBTEST"   OrderNumber="1" Mandatory="Yes"/>
+        <ItemRef ItemOID="I.LB.LBORRES"  OrderNumber="2" Mandatory="Yes"/>
+        <ItemRef ItemOID="I.LB.LBORNRLO" OrderNumber="3" Mandatory="No"/>
+        <ItemRef ItemOID="I.LB.LBORNRHI" OrderNumber="4" Mandatory="No"/>
+      </ItemGroupDef>
+      <ItemGroupDef OID="IG.DS" Name="DS" Repeating="No" SASDatasetName="DS">
+        <ItemRef ItemOID="I.DS.DSCAT"  OrderNumber="1" Mandatory="Yes"/>
+        <ItemRef ItemOID="I.DS.DSTERM" OrderNumber="2" Mandatory="Yes"/>
+        <ItemRef ItemOID="I.DS.DSDTC"  OrderNumber="3" Mandatory="Yes"/>
+      </ItemGroupDef>
+
+      <!-- ── ItemDef ──────────────────────────────────────────────────────── -->
+      <!-- DM -->
+      <ItemDef OID="I.DM.SUBJID" Name="SUBJID" DataType="text" Length="20"
+               mdsol:Active="Yes">
+        <Question><TranslatedText xml:lang="en">Subject ID</TranslatedText></Question>
+        <Alias Context="CDASH" Name="SUBJID"/>
+        <Alias Context="SDTM"  Name="USUBJID"/>
+      </ItemDef>
+      <ItemDef OID="I.DM.BIRTHDT" Name="BIRTHDT" DataType="date">
+        <Question><TranslatedText xml:lang="en">Date of Birth</TranslatedText></Question>
+        <Alias Context="CDASH" Name="BRTHDAT"/>
+      </ItemDef>
+      <ItemDef OID="I.DM.SEX" Name="SEX" DataType="text" Length="1">
+        <Question><TranslatedText xml:lang="en">Sex at Birth</TranslatedText></Question>
+        <CodeListRef CodeListOID="CL.SEX"/>
+        <Alias Context="CDASH" Name="SEX"/>
+      </ItemDef>
+      <ItemDef OID="I.DM.RACE" Name="RACE" DataType="text" Length="40">
+        <Question><TranslatedText xml:lang="en">Race</TranslatedText></Question>
+        <CodeListRef CodeListOID="CL.RACE"/>
+        <Alias Context="CDASH" Name="RACE"/>
+      </ItemDef>
+      <ItemDef OID="I.DM.ETHNIC" Name="ETHNIC" DataType="text" Length="40">
+        <Question><TranslatedText xml:lang="en">Ethnicity</TranslatedText></Question>
+        <CodeListRef CodeListOID="CL.ETHNIC"/>
+        <Alias Context="CDASH" Name="ETHNIC"/>
+      </ItemDef>
+
+      <!-- IE -->
+      <ItemDef OID="I.IE.INC01" Name="INC01" DataType="text" Length="1">
+        <Question><TranslatedText xml:lang="en">Inclusion criterion 1: Age 40-80 with confirmed cardiovascular disease — Met?</TranslatedText></Question>
+        <CodeListRef CodeListOID="CL.YN"/>
+        <Alias Context="CDASH" Name="IETESTCD"/>
+      </ItemDef>
+      <ItemDef OID="I.IE.EXC01" Name="EXC01" DataType="text" Length="1">
+        <Question><TranslatedText xml:lang="en">Exclusion criterion 1: NYHA Class IV — Present?</TranslatedText></Question>
+        <CodeListRef CodeListOID="CL.YN"/>
+        <Alias Context="CDASH" Name="IETESTCD"/>
+      </ItemDef>
+
+      <!-- VS — with RangeChecks -->
+      <ItemDef OID="I.VS.SYSBP" Name="SYSBP" DataType="integer" Length="3"
+               mdsol:Active="Yes">
+        <Question><TranslatedText xml:lang="en">Systolic BP (mmHg)</TranslatedText></Question>
+        <MeasurementUnitRef MeasurementUnitOID="MU.mmHg"/>
+        <RangeCheck Comparator="GE" SoftHard="Soft">
+          <CheckValue>60</CheckValue>
+          <ErrorMessage><TranslatedText xml:lang="en">SYSBP below 60 — confirm reading</TranslatedText></ErrorMessage>
+        </RangeCheck>
+        <RangeCheck Comparator="LE" SoftHard="Hard">
+          <CheckValue>250</CheckValue>
+        </RangeCheck>
+        <Alias Context="CDASH" Name="SYSBP"/>
+      </ItemDef>
+      <ItemDef OID="I.VS.DIABP" Name="DIABP" DataType="integer" Length="3">
+        <Question><TranslatedText xml:lang="en">Diastolic BP (mmHg)</TranslatedText></Question>
+        <MeasurementUnitRef MeasurementUnitOID="MU.mmHg"/>
+        <RangeCheck Comparator="GE" SoftHard="Soft">
+          <CheckValue>30</CheckValue>
+        </RangeCheck>
+        <RangeCheck Comparator="LE" SoftHard="Hard">
+          <CheckValue>150</CheckValue>
+        </RangeCheck>
+        <Alias Context="CDASH" Name="DIABP"/>
+      </ItemDef>
+      <ItemDef OID="I.VS.PULSE" Name="PULSE" DataType="integer" Length="3">
+        <Question><TranslatedText xml:lang="en">Pulse rate (bpm)</TranslatedText></Question>
+        <MeasurementUnitRef MeasurementUnitOID="MU.bpm"/>
+        <RangeCheck Comparator="GE" SoftHard="Soft">
+          <CheckValue>30</CheckValue>
+        </RangeCheck>
+        <RangeCheck Comparator="LE" SoftHard="Soft">
+          <CheckValue>220</CheckValue>
+        </RangeCheck>
+        <Alias Context="CDASH" Name="PULSE"/>
+      </ItemDef>
+      <ItemDef OID="I.VS.TEMP" Name="TEMP" DataType="float" Length="4" SignificantDigits="1">
+        <Question><TranslatedText xml:lang="en">Temperature (°C)</TranslatedText></Question>
+        <MeasurementUnitRef MeasurementUnitOID="MU.C"/>
+        <RangeCheck Comparator="GE" SoftHard="Soft">
+          <CheckValue>34.0</CheckValue>
+        </RangeCheck>
+        <RangeCheck Comparator="LE" SoftHard="Soft">
+          <CheckValue>42.0</CheckValue>
+        </RangeCheck>
+        <Alias Context="CDASH" Name="TEMP"/>
+      </ItemDef>
+      <ItemDef OID="I.VS.WEIGHT" Name="WEIGHT" DataType="float" Length="5" SignificantDigits="1">
+        <Question><TranslatedText xml:lang="en">Weight (kg)</TranslatedText></Question>
+        <MeasurementUnitRef MeasurementUnitOID="MU.kg"/>
+        <Alias Context="CDASH" Name="WEIGHT"/>
+      </ItemDef>
+      <ItemDef OID="I.VS.HEIGHT" Name="HEIGHT" DataType="float" Length="4" SignificantDigits="1">
+        <Question><TranslatedText xml:lang="en">Height (cm)</TranslatedText></Question>
+        <MeasurementUnitRef MeasurementUnitOID="MU.cm"/>
+        <Alias Context="CDASH" Name="HEIGHT"/>
+      </ItemDef>
+
+      <!-- AE -->
+      <ItemDef OID="I.AE.AETERM" Name="AETERM" DataType="text" Length="200">
+        <Question><TranslatedText xml:lang="en">Adverse Event term (verbatim)</TranslatedText></Question>
+        <Alias Context="CDASH" Name="AETERM"/>
+      </ItemDef>
+      <ItemDef OID="I.AE.AESTDTC" Name="AESTDTC" DataType="date">
+        <Question><TranslatedText xml:lang="en">AE start date</TranslatedText></Question>
+        <Alias Context="CDASH" Name="AESTDAT"/>
+      </ItemDef>
+      <ItemDef OID="I.AE.AEENDTC" Name="AEENDTC" DataType="date">
+        <Question><TranslatedText xml:lang="en">AE end date</TranslatedText></Question>
+        <Alias Context="CDASH" Name="AEENDAT"/>
+      </ItemDef>
+      <ItemDef OID="I.AE.AESEV" Name="AESEV" DataType="text" Length="10">
+        <Question><TranslatedText xml:lang="en">Severity</TranslatedText></Question>
+        <CodeListRef CodeListOID="CL.AESEV"/>
+        <Alias Context="CDASH" Name="AESEV"/>
+      </ItemDef>
+      <ItemDef OID="I.AE.AESER" Name="AESER" DataType="text" Length="1">
+        <Question><TranslatedText xml:lang="en">Serious?</TranslatedText></Question>
+        <CodeListRef CodeListOID="CL.YN"/>
+        <Alias Context="CDASH" Name="AESER"/>
+      </ItemDef>
+      <ItemDef OID="I.AE.AEOUT" Name="AEOUT" DataType="text" Length="30">
+        <Question><TranslatedText xml:lang="en">Outcome</TranslatedText></Question>
+        <CodeListRef CodeListOID="CL.AEOUT"/>
+        <Alias Context="CDASH" Name="AEOUT"/>
+      </ItemDef>
+
+      <!-- CM -->
+      <ItemDef OID="I.CM.CMTRT" Name="CMTRT" DataType="text" Length="200">
+        <Question><TranslatedText xml:lang="en">Medication name</TranslatedText></Question>
+        <Alias Context="CDASH" Name="CMTRT"/>
+      </ItemDef>
+      <ItemDef OID="I.CM.CMDOSE" Name="CMDOSE" DataType="float" Length="8" SignificantDigits="2">
+        <Question><TranslatedText xml:lang="en">Dose per administration</TranslatedText></Question>
+        <Alias Context="CDASH" Name="CMDOSE"/>
+      </ItemDef>
+      <ItemDef OID="I.CM.CMDOSU" Name="CMDOSU" DataType="text" Length="20">
+        <Question><TranslatedText xml:lang="en">Dose units</TranslatedText></Question>
+        <Alias Context="CDASH" Name="CMDOSU"/>
+      </ItemDef>
+      <ItemDef OID="I.CM.CMSTDTC" Name="CMSTDTC" DataType="date">
+        <Question><TranslatedText xml:lang="en">CM start date</TranslatedText></Question>
+        <Alias Context="CDASH" Name="CMSTDAT"/>
+      </ItemDef>
+      <ItemDef OID="I.CM.CMENDTC" Name="CMENDTC" DataType="date">
+        <Question><TranslatedText xml:lang="en">CM end date</TranslatedText></Question>
+        <Alias Context="CDASH" Name="CMENDAT"/>
+      </ItemDef>
+      <ItemDef OID="I.CM.CMINDC" Name="CMINDC" DataType="text" Length="200">
+        <Question><TranslatedText xml:lang="en">Indication</TranslatedText></Question>
+        <Alias Context="CDASH" Name="CMINDC"/>
+      </ItemDef>
+
+      <!-- EX -->
+      <ItemDef OID="I.EX.EXTRT" Name="EXTRT" DataType="text" Length="40">
+        <Question><TranslatedText xml:lang="en">Study drug</TranslatedText></Question>
+        <Alias Context="CDASH" Name="EXTRT"/>
+      </ItemDef>
+      <ItemDef OID="I.EX.EXDOSE" Name="EXDOSE" DataType="float" Length="8" SignificantDigits="2">
+        <Question><TranslatedText xml:lang="en">Dose</TranslatedText></Question>
+        <Alias Context="CDASH" Name="EXDOSE"/>
+      </ItemDef>
+      <ItemDef OID="I.EX.EXDOSU" Name="EXDOSU" DataType="text" Length="20">
+        <Question><TranslatedText xml:lang="en">Dose units</TranslatedText></Question>
+        <Alias Context="CDASH" Name="EXDOSU"/>
+      </ItemDef>
+      <ItemDef OID="I.EX.EXSTDTC" Name="EXSTDTC" DataType="date">
+        <Question><TranslatedText xml:lang="en">First dose date</TranslatedText></Question>
+        <Alias Context="CDASH" Name="EXSTDAT"/>
+      </ItemDef>
+
+      <!-- LB -->
+      <ItemDef OID="I.LB.LBTEST" Name="LBTEST" DataType="text" Length="40">
+        <Question><TranslatedText xml:lang="en">Lab test name</TranslatedText></Question>
+        <Alias Context="CDASH" Name="LBTEST"/>
+      </ItemDef>
+      <ItemDef OID="I.LB.LBORRES" Name="LBORRES" DataType="text" Length="40">
+        <Question><TranslatedText xml:lang="en">Result (original units)</TranslatedText></Question>
+        <Alias Context="CDASH" Name="LBORRES"/>
+      </ItemDef>
+      <ItemDef OID="I.LB.LBORNRLO" Name="LBORNRLO" DataType="text" Length="40">
+        <Question><TranslatedText xml:lang="en">Reference range — lower</TranslatedText></Question>
+        <Alias Context="CDASH" Name="LBORNRLO"/>
+      </ItemDef>
+      <ItemDef OID="I.LB.LBORNRHI" Name="LBORNRHI" DataType="text" Length="40">
+        <Question><TranslatedText xml:lang="en">Reference range — upper</TranslatedText></Question>
+        <Alias Context="CDASH" Name="LBORNRHI"/>
+      </ItemDef>
+
+      <!-- DS -->
+      <ItemDef OID="I.DS.DSCAT" Name="DSCAT" DataType="text" Length="30">
+        <Question><TranslatedText xml:lang="en">Disposition category</TranslatedText></Question>
+        <CodeListRef CodeListOID="CL.DSCAT"/>
+        <Alias Context="CDASH" Name="DSCAT"/>
+      </ItemDef>
+      <ItemDef OID="I.DS.DSTERM" Name="DSTERM" DataType="text" Length="200">
+        <Question><TranslatedText xml:lang="en">Disposition term (reason for discontinuation, etc.)</TranslatedText></Question>
+        <Alias Context="CDASH" Name="DSTERM"/>
+      </ItemDef>
+      <ItemDef OID="I.DS.DSDTC" Name="DSDTC" DataType="date">
+        <Question><TranslatedText xml:lang="en">Disposition date</TranslatedText></Question>
+        <Alias Context="CDASH" Name="DSDAT"/>
+      </ItemDef>
+
+      <!-- ── CodeList ─────────────────────────────────────────────────────── -->
+      <CodeList OID="CL.YN" Name="Yes/No" DataType="text"
+                mdsol:IsGlobal="Yes">
+        <CodeListItem CodedValue="Y" OrderNumber="1">
+          <Decode><TranslatedText xml:lang="en">Yes</TranslatedText></Decode>
+        </CodeListItem>
+        <CodeListItem CodedValue="N" OrderNumber="2">
+          <Decode><TranslatedText xml:lang="en">No</TranslatedText></Decode>
+        </CodeListItem>
+      </CodeList>
+      <CodeList OID="CL.SEX" Name="Sex" DataType="text"
+                mdsol:IsGlobal="Yes">
+        <CodeListItem CodedValue="M" OrderNumber="1">
+          <Decode><TranslatedText xml:lang="en">Male</TranslatedText></Decode>
+        </CodeListItem>
+        <CodeListItem CodedValue="F" OrderNumber="2">
+          <Decode><TranslatedText xml:lang="en">Female</TranslatedText></Decode>
+        </CodeListItem>
+      </CodeList>
+      <CodeList OID="CL.RACE" Name="Race" DataType="text"
+                mdsol:IsGlobal="Yes">
+        <CodeListItem CodedValue="AIAN" OrderNumber="1">
+          <Decode><TranslatedText xml:lang="en">American Indian or Alaska Native</TranslatedText></Decode>
+        </CodeListItem>
+        <CodeListItem CodedValue="ASIAN" OrderNumber="2">
+          <Decode><TranslatedText xml:lang="en">Asian</TranslatedText></Decode>
+        </CodeListItem>
+        <CodeListItem CodedValue="BAA" OrderNumber="3">
+          <Decode><TranslatedText xml:lang="en">Black or African American</TranslatedText></Decode>
+        </CodeListItem>
+        <CodeListItem CodedValue="NHPI" OrderNumber="4">
+          <Decode><TranslatedText xml:lang="en">Native Hawaiian or Other Pacific Islander</TranslatedText></Decode>
+        </CodeListItem>
+        <CodeListItem CodedValue="WHITE" OrderNumber="5">
+          <Decode><TranslatedText xml:lang="en">White</TranslatedText></Decode>
+        </CodeListItem>
+        <CodeListItem CodedValue="OTHER" OrderNumber="6">
+          <Decode><TranslatedText xml:lang="en">Other</TranslatedText></Decode>
+        </CodeListItem>
+      </CodeList>
+      <CodeList OID="CL.ETHNIC" Name="Ethnicity" DataType="text"
+                mdsol:IsGlobal="Yes">
+        <CodeListItem CodedValue="HISLAT" OrderNumber="1">
+          <Decode><TranslatedText xml:lang="en">Hispanic or Latino</TranslatedText></Decode>
+        </CodeListItem>
+        <CodeListItem CodedValue="NOTHISLAT" OrderNumber="2">
+          <Decode><TranslatedText xml:lang="en">Not Hispanic or Latino</TranslatedText></Decode>
+        </CodeListItem>
+      </CodeList>
+      <CodeList OID="CL.AESEV" Name="AE Severity" DataType="text"
+                mdsol:IsGlobal="No">
+        <CodeListItem CodedValue="MILD" OrderNumber="1">
+          <Decode><TranslatedText xml:lang="en">Mild</TranslatedText></Decode>
+        </CodeListItem>
+        <CodeListItem CodedValue="MODERATE" OrderNumber="2">
+          <Decode><TranslatedText xml:lang="en">Moderate</TranslatedText></Decode>
+        </CodeListItem>
+        <CodeListItem CodedValue="SEVERE" OrderNumber="3">
+          <Decode><TranslatedText xml:lang="en">Severe</TranslatedText></Decode>
+        </CodeListItem>
+      </CodeList>
+      <CodeList OID="CL.AEOUT" Name="AE Outcome" DataType="text"
+                mdsol:IsGlobal="No">
+        <CodeListItem CodedValue="RECOVERED" OrderNumber="1">
+          <Decode><TranslatedText xml:lang="en">Recovered/Resolved</TranslatedText></Decode>
+        </CodeListItem>
+        <CodeListItem CodedValue="RESOLVING" OrderNumber="2">
+          <Decode><TranslatedText xml:lang="en">Recovering/Resolving</TranslatedText></Decode>
+        </CodeListItem>
+        <CodeListItem CodedValue="NOTRECOVERED" OrderNumber="3">
+          <Decode><TranslatedText xml:lang="en">Not Recovered/Not Resolved</TranslatedText></Decode>
+        </CodeListItem>
+        <CodeListItem CodedValue="FATAL" OrderNumber="4">
+          <Decode><TranslatedText xml:lang="en">Fatal</TranslatedText></Decode>
+        </CodeListItem>
+        <CodeListItem CodedValue="UNKNOWN" OrderNumber="5">
+          <Decode><TranslatedText xml:lang="en">Unknown</TranslatedText></Decode>
+        </CodeListItem>
+      </CodeList>
+      <CodeList OID="CL.DSCAT" Name="Disposition Category" DataType="text"
+                mdsol:IsGlobal="No">
+        <CodeListItem CodedValue="COMPLETED" OrderNumber="1">
+          <Decode><TranslatedText xml:lang="en">Study completed</TranslatedText></Decode>
+        </CodeListItem>
+        <CodeListItem CodedValue="DISCONTINUED" OrderNumber="2">
+          <Decode><TranslatedText xml:lang="en">Discontinued — adverse event</TranslatedText></Decode>
+        </CodeListItem>
+        <CodeListItem CodedValue="WITHDRAWAL" OrderNumber="3">
+          <Decode><TranslatedText xml:lang="en">Withdrawal by subject</TranslatedText></Decode>
+        </CodeListItem>
+        <CodeListItem CodedValue="LOST" OrderNumber="4">
+          <Decode><TranslatedText xml:lang="en">Lost to follow-up</TranslatedText></Decode>
+        </CodeListItem>
+      </CodeList>
+
+    </MetaDataVersion>
+  </Study>
+
+  <!-- ── ClinicalData ─────────────────────────────────────────────────────── -->
+  <ClinicalData StudyOID="S_CV3001" MetaDataVersionOID="v1.0">
+    <SubjectData SubjectKey="CV-001-001">
+      <SiteRef LocationOID="SITE.001"/>
+      <StudyEventData StudyEventOID="SE_SCREEN" StudyEventRepeatKey="1">
+        <FormData FormOID="F_DM" FormRepeatKey="1">
+          <ItemGroupData ItemGroupOID="IG.DM" ItemGroupRepeatKey="1"
+                         mdsol:Submission="SpecifiedItemsOnly">
+            <ItemData ItemOID="I.DM.SUBJID"  Value="CV-001-001"/>
+            <ItemData ItemOID="I.DM.BIRTHDT" Value="1962-08-14"/>
+            <ItemData ItemOID="I.DM.SEX"     Value="M"/>
+            <ItemData ItemOID="I.DM.RACE"    Value="WHITE"/>
+            <ItemData ItemOID="I.DM.ETHNIC"  Value="NOTHISLAT"/>
+          </ItemGroupData>
+        </FormData>
+        <FormData FormOID="F_VS" FormRepeatKey="1">
+          <ItemGroupData ItemGroupOID="IG.VS" ItemGroupRepeatKey="1"
+                         mdsol:Submission="SpecifiedItemsOnly">
+            <ItemData ItemOID="I.VS.SYSBP" Value="142"/>
+            <ItemData ItemOID="I.VS.DIABP" Value="91"/>
+            <ItemData ItemOID="I.VS.PULSE" Value="78"/>
+            <ItemData ItemOID="I.VS.TEMP"  Value="36.6"/>
+          </ItemGroupData>
+        </FormData>
+      </StudyEventData>
+      <StudyEventData StudyEventOID="SE_COMMON" StudyEventRepeatKey="1">
+        <FormData FormOID="F_AE" FormRepeatKey="1">
+          <ItemGroupData ItemGroupOID="IG.AE" ItemGroupRepeatKey="1"
+                         mdsol:Submission="SpecifiedItemsOnly">
+            <ItemData ItemOID="I.AE.AETERM"  Value="Headache"/>
+            <ItemData ItemOID="I.AE.AESTDTC" Value="2026-05-02"/>
+            <ItemData ItemOID="I.AE.AEENDTC" Value="2026-05-03"/>
+            <ItemData ItemOID="I.AE.AESEV"   Value="MILD"/>
+            <ItemData ItemOID="I.AE.AESER"   Value="N"/>
+            <ItemData ItemOID="I.AE.AEOUT"   Value="RECOVERED"/>
+          </ItemGroupData>
+          <ItemGroupData ItemGroupOID="IG.AE" ItemGroupRepeatKey="2"
+                         mdsol:Submission="SpecifiedItemsOnly">
+            <ItemData ItemOID="I.AE.AETERM"  Value="Nausea"/>
+            <ItemData ItemOID="I.AE.AESTDTC" Value="2026-05-05"/>
+            <ItemData ItemOID="I.AE.AESEV"   Value="MODERATE"/>
+            <ItemData ItemOID="I.AE.AESER"   Value="N"/>
+            <ItemData ItemOID="I.AE.AEOUT"   Value="RESOLVING"/>
+          </ItemGroupData>
+        </FormData>
+      </StudyEventData>
+    </SubjectData>
+
+    <SubjectData SubjectKey="CV-001-002">
+      <SiteRef LocationOID="SITE.001"/>
+      <StudyEventData StudyEventOID="SE_SCREEN" StudyEventRepeatKey="1">
+        <FormData FormOID="F_DM" FormRepeatKey="1">
+          <ItemGroupData ItemGroupOID="IG.DM" ItemGroupRepeatKey="1"
+                         mdsol:Submission="SpecifiedItemsOnly">
+            <ItemData ItemOID="I.DM.SUBJID"  Value="CV-001-002"/>
+            <ItemData ItemOID="I.DM.BIRTHDT" Value="1955-02-22"/>
+            <ItemData ItemOID="I.DM.SEX"     Value="F"/>
+            <ItemData ItemOID="I.DM.RACE"    Value="BAA"/>
+            <ItemData ItemOID="I.DM.ETHNIC"  Value="NOTHISLAT"/>
+          </ItemGroupData>
+        </FormData>
+      </StudyEventData>
+      <StudyEventData StudyEventOID="SE_COMMON" StudyEventRepeatKey="1">
+        <FormData FormOID="F_AE" FormRepeatKey="1">
+          <ItemGroupData ItemGroupOID="IG.AE" ItemGroupRepeatKey="1"
+                         mdsol:Submission="SpecifiedItemsOnly">
+            <ItemData ItemOID="I.AE.AETERM"  Value="Dizziness"/>
+            <ItemData ItemOID="I.AE.AESTDTC" Value="2026-05-08"/>
+            <ItemData ItemOID="I.AE.AESEV"   Value="MILD"/>
+            <ItemData ItemOID="I.AE.AESER"   Value="N"/>
+            <ItemData ItemOID="I.AE.AEOUT"   Value="RECOVERED"/>
+          </ItemGroupData>
+        </FormData>
+        <FormData FormOID="F_CM" FormRepeatKey="1">
+          <ItemGroupData ItemGroupOID="IG.CM" ItemGroupRepeatKey="1"
+                         mdsol:Submission="SpecifiedItemsOnly">
+            <ItemData ItemOID="I.CM.CMTRT"   Value="Atorvastatin"/>
+            <ItemData ItemOID="I.CM.CMDOSE"  Value="20"/>
+            <ItemData ItemOID="I.CM.CMDOSU"  Value="mg"/>
+            <ItemData ItemOID="I.CM.CMSTDTC" Value="2025-11-01"/>
+            <ItemData ItemOID="I.CM.CMINDC"  Value="Hyperlipidemia"/>
+          </ItemGroupData>
+        </FormData>
+      </StudyEventData>
+    </SubjectData>
+  </ClinicalData>
+
+</ODM>
