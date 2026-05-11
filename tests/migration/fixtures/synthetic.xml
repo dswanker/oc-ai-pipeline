@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ODM ODMVersion="1.3.2" FileOID="SYNTHETIC-001" FileType="Snapshot"
+     CreationDateTime="2025-01-01T00:00:00" Originator="Medidata Rave 5.6.9"
+     xmlns="http://www.cdisc.org/ns/odm/v1.3">
+  <Study OID="S_SYNTHETIC">
+    <GlobalVariables>
+      <StudyName>Synthetic Test Study</StudyName>
+      <StudyDescription>Synthetic ODM for migration testing</StudyDescription>
+      <ProtocolName>SYNTHETIC-001</ProtocolName>
+    </GlobalVariables>
+    <MetaDataVersion OID="v1" Name="v1">
+      <Protocol>
+        <StudyEventRef StudyEventOID="SE_SCREEN" OrderNumber="1" Mandatory="Yes"/>
+      </Protocol>
+      <StudyEventDef OID="SE_SCREEN" Name="Screening" Repeating="No" Type="Scheduled">
+        <FormRef FormOID="F_VS" Mandatory="Yes"/>
+      </StudyEventDef>
+      <FormDef OID="F_VS" Name="Vital Signs" Repeating="No">
+        <ItemGroupRef ItemGroupOID="IG_VS" Mandatory="Yes"/>
+      </FormDef>
+      <ItemGroupDef OID="IG_VS" Name="VS" Repeating="No">
+        <ItemRef ItemOID="I_SYSBP" Mandatory="Yes" OrderNumber="1"/>
+        <ItemRef ItemOID="I_DIABP" Mandatory="Yes" OrderNumber="2"/>
+        <ItemRef ItemOID="I_PULSE" Mandatory="Yes" OrderNumber="3"/>
+      </ItemGroupDef>
+      <ItemDef OID="I_SYSBP" Name="SYSBP" DataType="integer" Length="3">
+        <Question><TranslatedText xml:lang="en">Systolic BP (mmHg)</TranslatedText></Question>
+        <RangeCheck Comparator="GE" SoftHard="Soft"><CheckValue>60</CheckValue></RangeCheck>
+        <RangeCheck Comparator="LE" SoftHard="Soft"><CheckValue>250</CheckValue></RangeCheck>
+        <Alias Context="CDASH" Name="SYSBP"/>
+      </ItemDef>
+      <ItemDef OID="I_DIABP" Name="DIABP" DataType="integer" Length="3">
+        <Question><TranslatedText xml:lang="en">Diastolic BP (mmHg)</TranslatedText></Question>
+        <RangeCheck Comparator="GE" SoftHard="Soft"><CheckValue>30</CheckValue></RangeCheck>
+        <RangeCheck Comparator="LE" SoftHard="Soft"><CheckValue>150</CheckValue></RangeCheck>
+        <Alias Context="CDASH" Name="DIABP"/>
+      </ItemDef>
+      <ItemDef OID="I_PULSE" Name="PULSE" DataType="integer" Length="3">
+        <Question><TranslatedText xml:lang="en">Pulse rate (bpm)</TranslatedText></Question>
+        <RangeCheck Comparator="GE" SoftHard="Soft"><CheckValue>30</CheckValue></RangeCheck>
+        <RangeCheck Comparator="LE" SoftHard="Soft"><CheckValue>200</CheckValue></RangeCheck>
+        <Alias Context="CDASH" Name="PULSE"/>
+      </ItemDef>
+    </MetaDataVersion>
+  </Study>
+</ODM>
