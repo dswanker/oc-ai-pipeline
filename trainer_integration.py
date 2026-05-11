@@ -36,6 +36,7 @@ Failure mode (graceful):
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 from typing import Any, TYPE_CHECKING
@@ -441,6 +442,13 @@ async def create_pending_row(
     if not name:
         print("[trainer] create_pending_row: empty name — skipping", flush=True)
         return None
+
+    # Phase 1b.E: compute canonical PDF SHA-256 when caller didn't supply one.
+    if not protocol_pdf_sha256:
+        protocol_pdf_sha256 = hashlib.sha256(protocol_pdf).hexdigest()
+        print(f"[trainer] create_pending_row: computed protocol_pdf_sha256 "
+              f"from {len(protocol_pdf)} pdf bytes",
+              flush=True)
 
     url = f"{_trainer_url()}/pending-row"
 

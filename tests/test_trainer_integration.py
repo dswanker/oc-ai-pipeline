@@ -10,6 +10,8 @@ Covers:
     failures, malformed responses. All exercised via stubbed httpx.
   * run_protocol_analysis_quick — happy path and failure paths via
     stubbed call_claude/extract_json.
+  * create_pending_row — SHA-256 compute-if-missing logic, caller-supplied
+    preservation, empty-pdf short-circuit. Via stubbed httpx.
   * _normalize_sponsor — covers the equality-check edge cases.
 """
 from __future__ import annotations
@@ -27,6 +29,7 @@ if str(_REPO_ROOT) not in sys.path:
 from trainer_integration import (
     _normalize_sponsor,
     _trainer_url,
+    create_pending_row,
     format_examples_block,
     retrieve_examples,
     run_protocol_analysis_quick,
@@ -67,8 +70,8 @@ class _StubHttpClient:
     def queue(self, response: _StubResponse) -> None:
         self.queued_responses.append(response)
 
-    async def post(self, url: str, *, json: dict | None = None, **kw):
-        self.posts.append({"url": url, "json": json})
+    async def post(self, url: str, *, json: dict | None = None, files=None, data=None, **kw):
+        self.posts.append({"url": url, "json": json, "files": files, "data": data})
         if self.raise_on_next is not None:
             err, self.raise_on_next = self.raise_on_next, None
             raise err
@@ -488,6 +491,71 @@ def test_quick_analysis_returns_empty_when_extract_returns_non_dict() -> None:
         extract_json_fn=fake_extract,
     ))
     assert out == {}
+
+
+# ─── create_pending_row ──────────────────────────────────────────────────
+
+
+def test_create_pending_row_computes_sha256_when_missing() -> None:
+    """Caller omits protocol_pdf_sha256 → function computes from pdf bytes."""
+    import hashlib
+    pdf = b"%PDF-1.4 fake content for sha test\n"
+    expected_sha = hashlib.sha256(pdf).hexdigest()
+
+    stub = _StubHttpClient()
+    stub.queue(_StubResponse(
+        status_code=201,
+        json_body={"item_id": 12345, "status": "Awaiting Build Completion"},
+    ))
+
+    result = asyncio.run(create_pending_row(
+        pdf,
+        name="TEST-PROTOCOL",
+        protocol_filename="test.pdf",
+        http_client=stub,
+    ))
+
+    assert result == 12345
+    assert len(stub.posts) == 1
+    posted = stub.posts[0]
+    assert posted["data"]["protocol_pdf_sha256"] == expected_sha
+
+
+def test_create_pending_row_preserves_caller_supplied_sha256() -> None:
+    """Caller supplies protocol_pdf_sha256 → function passes it through verbatim."""
+    pdf = b"%PDF-1.4 fake content\n"
+    caller_value = "CALLER-SUPPLIED-deadbeef"
+
+    stub = _StubHttpClient()
+    stub.queue(_StubResponse(
+        status_code=201,
+        json_body={"item_id": 99999, "status": "Awaiting Build Completion"},
+    ))
+
+    result = asyncio.run(create_pending_row(
+        pdf,
+        name="TEST-PROTOCOL",
+        protocol_filename="test.pdf",
+        protocol_pdf_sha256=caller_value,
+        http_client=stub,
+    ))
+
+    assert result == 99999
+    posted = stub.posts[0]
+    assert posted["data"]["protocol_pdf_sha256"] == caller_value
+
+
+def test_create_pending_row_empty_pdf_returns_none() -> None:
+    """Empty protocol_pdf short-circuits to None — no HTTP call made."""
+    stub = _StubHttpClient()
+    result = asyncio.run(create_pending_row(
+        b"",
+        name="TEST-PROTOCOL",
+        protocol_filename="test.pdf",
+        http_client=stub,
+    ))
+    assert result is None
+    assert len(stub.posts) == 0
 
 
 # ─── Script runner ──────────────────────────────────────────────────────
