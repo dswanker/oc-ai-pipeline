@@ -38,6 +38,7 @@ from monday_client import (get_item, download_file, upload_file, set_status,
                             append_log, set_text, download_column_file,
                             list_column_filenames, COL)
 from claude_client  import call_claude, extract_json
+from migration_pipeline import run_migration as run_edc_migration
 from trainer_integration import (
     run_protocol_analysis_quick,
     retrieve_examples,
@@ -1103,17 +1104,20 @@ async def run_pipeline(item_id):
          edited_build_zip,
          edited_dvs_xlsx,
          edited_quote_xlsx,
-         edited_soe_csv) = await asyncio.gather(
+         edited_soe_csv,
+         source_edc_export_bytes) = await asyncio.gather(
             download_column_file(item_id, COL["edited_spec_input"]),
             download_column_file(item_id, COL["build_input"]),
             download_column_file(item_id, COL["dvs_input"]),
             download_column_file(item_id, COL["quote_input"]),
             download_column_file(item_id, COL["soe_input"]),
+            download_column_file(item_id, COL["source_edc_export"]),
         )
 
         print(f"Human inputs — spec:{edited_spec_xlsx is not None} "
               f"build:{edited_build_zip is not None} dvs:{edited_dvs_xlsx is not None} "
-              f"quote:{edited_quote_xlsx is not None} soe:{edited_soe_csv is not None}",
+              f"quote:{edited_quote_xlsx is not None} soe:{edited_soe_csv is not None} "
+              f"edc_export:{source_edc_export_bytes is not None}",
               flush=True)
 
         # ── Path D: Edited Quote XLSX → regenerate Quote PDFs ─────────────────
@@ -1291,6 +1295,33 @@ async def run_pipeline(item_id):
                         pass
             if struct_json is None:
                 await append_log(item_id, "Could not extract JSON from edited XLSX — running fresh analysis.")
+
+        # ── Path M: Source EDC Export (migration) ─────────────────────────────
+        # Customer uploaded an ODM XML (optionally inside a ZIP) to the
+        # Source EDC Export column. Run it through validate → parse →
+        # transform to produce struct_json, replacing the EDC_STRUCTURE_PROMPT
+        # branch below (which is gated by `struct_json is None`).
+        # Migration also uploads the Study Spec JSON to COL["spec_json"]
+        # itself, so no spec_json_upload_task wiring is needed here.
+        if struct_json is None and source_edc_export_bytes:
+            await append_log(item_id, "Source EDC Export detected — running migration path.")
+            print("Path M: running EDC migration from Source EDC Export...", flush=True)
+            await set_status(item_id, COL["pipeline_status"], STATUS["analysis_running"])
+            mig_result = await run_edc_migration(item_id, raw_bytes=source_edc_export_bytes)
+            if mig_result["status"] != "ok":
+                msg = f"Migration {mig_result['status']}: {mig_result['summary']}"
+                print(f"Path M FAIL: {msg}", flush=True)
+                await append_log(item_id, msg)
+                await set_status(item_id, COL["pipeline_status"], STATUS["failed"])
+                return
+            # On success, fetch the freshly-uploaded Study Spec JSON so
+            # downstream stages see the same in-memory struct.
+            spec_bytes = await download_column_file(item_id, COL["spec_json"])
+            struct_json = json.loads(spec_bytes.decode("utf-8"))
+            struct_json = _enforce_common_visit(struct_json)
+            print(f"Path M: struct_json loaded — "
+                  f"{len(struct_json.get('forms', []))} forms, "
+                  f"source={mig_result.get('source_system')}", flush=True)
 
         # ── Read AI Instructions from edited XLSX (if present) ──────────────
         ai_instructions_block = ""

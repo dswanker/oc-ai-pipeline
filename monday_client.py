@@ -45,6 +45,9 @@ COL = {
     "build_preview":     "file_mm2x1ey6",
     # Trainer (per-row toggle)
     "send_to_trainer":   "boolean_mm2vy4dv",
+    # EDC migration input (created by scripts/create_migration_columns.py)
+    "source_edc_export": "file_mm386dte",   # file: ODM XML or ZIP containing ODM XML
+    "source_edc_system": "dropdown_mm382w7d",  # dropdown: vendor (auto-detected, overridable)
 }
 
 def get_token():
