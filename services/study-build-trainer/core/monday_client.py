@@ -89,6 +89,7 @@ COL: dict[str, str] = {
     "final_xls_forms":         "file_mm2yv234",   # Final XLSForm ZIP (actual build)
     "protocol":                "file_mm2tjj47",
     "protocol_analysis_json":  "file_mm2tc0md",
+    "predicted_edc_zip":       "file_mm35j5ce",   # Pipeline-pushed EDC build ZIP (predicted side)
     "ctgov_protocol_pdf":      "file_mm2tw9nr",   # unused (CT.gov deferred)
     # Status columns
     "trigger":                 "color_mm2tw612",
@@ -104,6 +105,8 @@ COL: dict[str, str] = {
     "indexed_pair_hash":       "text_mm2tn36k",
     "source_pipeline_item":    "text_mm2typsx",
     "sponsor_client":          "text_mm2tw420",
+    "protocol_number":         "text_mm35s55p",   # Pipeline-pushed protocol number (dedup key with sponsor_client)
+    "protocol_pdf_sha256":     "text_mm35j8r5",   # Pipeline-pushed PDF SHA-256 (drift detection on dedup hits)
     # Date columns
     "index_date":              "date_mm2tn53m",
     "accuracy_score":          "numeric_mm2y10gd",
@@ -173,6 +176,8 @@ class CorpusItem:
     sponsor_client: str | None = None
     human_notes: str | None = None
     source_pipeline_item: str | None = None
+    protocol_number: str | None = None
+    protocol_pdf_sha256: str | None = None
 
     # Pre-computed fields (populated by the trainer or pipeline)
     fingerprint: str | None = None
@@ -336,9 +341,10 @@ class MondayClient:
         files_by_column: dict[str, list[dict[str, str]]] = {}
         for col_key in (
             "form_design",
-            "final_xls_forms",           # NEW — Final XLSForm ZIP
+            "final_xls_forms",
             "protocol",
             "protocol_analysis_json",
+            "predicted_edc_zip",
             "ctgov_protocol_pdf",
         ):
             v = col_values.get(COL[col_key])
@@ -379,6 +385,8 @@ class MondayClient:
             sponsor_client=_text("sponsor_client"),
             human_notes=_text("human_notes"),
             source_pipeline_item=_text("source_pipeline_item"),
+            protocol_number=_text("protocol_number"),
+            protocol_pdf_sha256=_text("protocol_pdf_sha256"),
             fingerprint=_text("fingerprint"),
             indexed_pair_hash=_text("indexed_pair_hash"),
             files_by_column=files_by_column,
@@ -509,6 +517,7 @@ class MondayClient:
             "final_xls_forms",
             "protocol",
             "protocol_analysis_json",
+            "predicted_edc_zip",
         ),
     ) -> dict[str, Path]:
         """Download all files for a pair into the corpus cache.
@@ -636,6 +645,57 @@ class MondayClient:
             item_id=new_id, name=name, sponsor=sponsor_client,
         )
         return new_id
+
+    # ── Dedup query (used by /pending-row) ───────────────────────
+
+    async def find_existing_row(
+        self,
+        sponsor_client: str,
+        protocol_number: str,
+    ) -> int | None:
+        """Find a corpus row by (sponsor_client, protocol_number) AND-match.
+
+        Used by /pending-row dedup: when the pipeline pushes a protocol
+        already in the corpus, the caller skips create and (optionally)
+        warns on PDF SHA drift. Returns the item_id of the first match,
+        or None if no row matches both column values. Empty inputs
+        return None.
+        """
+        if not sponsor_client or not protocol_number:
+            return None
+
+        query = """
+        query($b:ID!, $cols:[ItemsPageByColumnValuesQuery!]!) {
+          items_page_by_column_values(board_id:$b, columns:$cols) {
+            items { id name }
+          }
+        }
+        """
+        variables = {
+            "b": str(self.board_id),
+            "cols": [
+                {"column_id": COL["sponsor_client"],
+                 "column_values": [sponsor_client]},
+                {"column_id": COL["protocol_number"],
+                 "column_values": [protocol_number]},
+            ],
+        }
+        data = await self._gql(query, variables)
+        page = data.get("items_page_by_column_values") or {}
+        items = page.get("items") or []
+        if not items:
+            logger.info(
+                "monday.find_existing_row.no_match",
+                sponsor=sponsor_client, protocol_number=protocol_number,
+            )
+            return None
+        item_id = int(items[0]["id"])
+        logger.info(
+            "monday.find_existing_row.matched",
+            sponsor=sponsor_client, protocol_number=protocol_number,
+            item_id=item_id, match_count=len(items),
+        )
+        return item_id
 
 
 # Re-export convenient bits
