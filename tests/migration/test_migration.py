@@ -689,13 +689,240 @@ class TestVendorRegistry(unittest.TestCase):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# Test suite 4 — odm_validator
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestOdmValidator(unittest.TestCase):
+    """Tests for odm_validator.validate_odm() and format_report()"""
+
+    @classmethod
+    def setUpClass(cls):
+        from odm_validator import validate_odm, validate_odm_file, format_report
+        cls.validate      = staticmethod(validate_odm)
+        cls.validate_file = staticmethod(validate_odm_file)
+        cls.format        = staticmethod(format_report)
+
+    # ── Real file ─────────────────────────────────────────────────────────────
+
+    def test_prtk05_passes_all_layers(self):
+        """Real OC4 export should pass all 3 validation layers."""
+        report = self.validate(_load(PRTK05_XML), source_file="prtk05.xml")
+        self.assertTrue(report.passed,
+                        f"PrTK05 validation failed: {report.summary}")
+        self.assertTrue(report.can_proceed)
+        self.assertEqual(report.layer_results["layer_1"], "PASS")
+        self.assertEqual(report.layer_results["layer_2"], "PASS")
+        self.assertEqual(report.layer_results["layer_3"], "PASS")
+
+    def test_prtk05_compliance_fields_all_present(self):
+        """All 6 CFR Part 11 / ICH compliance fields must be present."""
+        report = self.validate(_load(PRTK05_XML))
+        for field_name, info in report.compliance.items():
+            self.assertTrue(info["present"],
+                            f"Compliance field missing: {field_name}")
+            self.assertEqual(info["status"], "PASS",
+                             f"Compliance field not PASS: {field_name}")
+
+    def test_prtk05_stats_correct(self):
+        """Stats should match known PrTK05 counts."""
+        report = self.validate(_load(PRTK05_XML))
+        self.assertEqual(report.stats["events"], 21)
+        self.assertEqual(report.stats["forms"],  20)
+        self.assertGreaterEqual(report.stats["items"], 1000)
+
+    def test_prtk05_odm_version_captured(self):
+        report = self.validate(_load(PRTK05_XML))
+        self.assertEqual(report.odm_version, "1.3")
+
+    def test_prtk05_no_checks_failed(self):
+        report = self.validate(_load(PRTK05_XML))
+        failures = [c for c in report.checks if c.status == "FAIL"]
+        self.assertEqual(failures, [],
+                         f"Unexpected failures: {[c.name for c in failures]}")
+
+    def test_synthetic_passes_all_layers(self):
+        """Synthetic ODM with Medidata vendor extensions should also pass."""
+        report = self.validate(_load(SYNTHETIC_XML), source_file="synthetic.xml")
+        self.assertTrue(report.passed)
+        self.assertTrue(report.can_proceed)
+
+    # ── Layer 1: well-formedness ──────────────────────────────────────────────
+
+    def test_malformed_xml_fails_layer1(self):
+        """Broken XML must fail layer 1 and set can_proceed=False."""
+        bad_xml = b"<?xml version='1.0'?><ODM><unclosed>"
+        report = self.validate(bad_xml)
+        self.assertFalse(report.passed)
+        self.assertFalse(report.can_proceed)
+        self.assertEqual(report.layer_results["layer_1"], "FAIL")
+        self.assertEqual(report.layer_results["layer_2"], "SKIP")
+
+    def test_bom_handled_in_layer1(self):
+        """UTF-8 BOM should not cause layer 1 failure."""
+        xml = b"\xef\xbb\xbf" + _minimal_odm(study_name="BOM_TEST")
+        report = self.validate(xml)
+        self.assertEqual(report.layer_results["layer_1"], "PASS")
+
+    def test_empty_bytes_fails_gracefully(self):
+        """Empty input must not crash — should fail layer 1."""
+        report = self.validate(b"")
+        self.assertFalse(report.can_proceed)
+
+    # ── Layer 2: structural conformance ──────────────────────────────────────
+
+    def test_missing_odm_version_warns(self):
+        """Missing ODMVersion should produce a WARN not a FAIL."""
+        xml = _minimal_odm(odm_version="1.3.2").replace(
+            b'ODMVersion="1.3.2"', b''
+        )
+        report = self.validate(xml)
+        self.assertTrue(report.can_proceed,
+                        "Missing ODMVersion should warn, not block migration")
+        odm_ver_check = next(
+            (c for c in report.checks if c.name == "ODM version"), None
+        )
+        self.assertIsNotNone(odm_ver_check)
+        self.assertEqual(odm_ver_check.status, "WARN")
+
+    def test_unknown_odm_version_warns_not_fails(self):
+        """A non-standard ODM version string should warn, not fail."""
+        xml = _minimal_odm(odm_version="1.4.0-vendor")
+        report = self.validate(xml)
+        self.assertTrue(report.can_proceed)
+        odm_ver_check = next(
+            (c for c in report.checks if c.name == "ODM version"), None
+        )
+        self.assertEqual(odm_ver_check.status, "WARN")
+
+    def test_non_odm_root_element_fails(self):
+        """A non-ODM root element should fail layer 2."""
+        xml = b"""<?xml version="1.0"?>
+<ClinicalStudy xmlns="http://example.com">
+  <Study/>
+</ClinicalStudy>"""
+        report = self.validate(xml)
+        root_check = next(
+            (c for c in report.checks if c.name == "Root element"), None
+        )
+        self.assertIsNotNone(root_check)
+        self.assertEqual(root_check.status, "FAIL")
+
+    def test_missing_study_element_fails_layer2(self):
+        """No <Study> element must fail layer 2."""
+        xml = b"""<?xml version="1.0" encoding="UTF-8"?>
+<ODM ODMVersion="1.3.2" FileOID="X" FileType="Snapshot"
+     CreationDateTime="2025-01-01T00:00:00"
+     xmlns="http://www.cdisc.org/ns/odm/v1.3"/>"""
+        report = self.validate(xml)
+        study_check = next(
+            (c for c in report.checks if c.name == "Study element"), None
+        )
+        self.assertIsNotNone(study_check)
+        self.assertEqual(study_check.status, "FAIL")
+
+    def test_valid_file_types_pass(self):
+        """Both Snapshot and Transactional FileTypes should pass."""
+        for ft in ("Snapshot", "Transactional"):
+            xml = _minimal_odm().replace(b'FileType="Snapshot"',
+                                         f'FileType="{ft}"'.encode())
+            report = self.validate(xml)
+            ft_check = next(
+                (c for c in report.checks if c.name == "FileType"), None
+            )
+            self.assertEqual(ft_check.status, "PASS",
+                             f"FileType='{ft}' should pass")
+
+    # ── Layer 3: OID integrity ────────────────────────────────────────────────
+
+    def test_dangling_form_ref_warns(self):
+        """A FormRef pointing to a non-existent FormDef should produce WARN."""
+        xml = _minimal_odm(
+            events=[{"oid": "SE_SCREEN", "name": "Screening",
+                     "form_refs": ["F_GHOST"]}],
+            forms=[],  # F_GHOST not defined
+        )
+        report = self.validate(xml)
+        form_ref_check = next(
+            (c for c in report.checks
+             if "StudyEventDef" in c.name and "FormDef" in c.name), None
+        )
+        self.assertIsNotNone(form_ref_check)
+        self.assertEqual(form_ref_check.status, "WARN")
+        self.assertIn("F_GHOST", form_ref_check.detail)
+
+    def test_clean_oid_refs_all_pass(self):
+        """A well-formed minimal ODM should pass all layer 3 checks."""
+        xml = _minimal_odm(
+            events=[{"oid": "SE_SCREEN", "name": "Screening",
+                     "form_refs": ["F_DM"]}],
+            forms=[{"oid": "F_DM", "name": "Demographics", "ig_refs": []}],
+        )
+        report = self.validate(xml)
+        layer3_checks = [c for c in report.checks if c.layer == 3]
+        failures = [c for c in layer3_checks if c.status == "FAIL"]
+        self.assertEqual(failures, [],
+                         f"Layer 3 should not fail on clean ODM: {failures}")
+
+    # ── Report formatting ─────────────────────────────────────────────────────
+
+    def test_format_report_contains_summary(self):
+        """format_report() must include the summary line."""
+        report = self.validate(_load(PRTK05_XML))
+        text = self.format(report)
+        self.assertIn("PASS", text)
+        self.assertIn("ODM Validation Report", text)
+        self.assertIn("PrTK05", text)
+
+    def test_format_report_verbose_shows_passes(self):
+        """Verbose mode must show PASS results."""
+        report = self.validate(_load(PRTK05_XML))
+        text = self.format(report, verbose=True)
+        self.assertIn("[PASS]", text)
+
+    def test_format_report_default_hides_passes(self):
+        """Default (non-verbose) mode must not show individual PASS lines."""
+        report = self.validate(_load(PRTK05_XML))
+        text = self.format(report, verbose=False)
+        # Should say all passed, not list individual checks
+        self.assertIn("All checks passed", text)
+        self.assertNotIn("[PASS]", text)
+
+    def test_validate_odm_file_convenience(self):
+        """validate_odm_file() path wrapper should work identically."""
+        report = self.validate_file(str(PRTK05_XML))
+        self.assertTrue(report.passed)
+        self.assertEqual(report.source_file, str(PRTK05_XML))
+
+    # ── can_proceed logic ─────────────────────────────────────────────────────
+
+    def test_can_proceed_true_on_warnings_only(self):
+        """Warnings alone must not block migration (can_proceed=True)."""
+        # ODM without ODMVersion will warn but not fail
+        xml = _minimal_odm(odm_version="1.3.2").replace(
+            b'ODMVersion="1.3.2"', b''
+        )
+        report = self.validate(xml)
+        warnings = [c for c in report.checks if c.status == "WARN"]
+        failures = [c for c in report.checks if c.status == "FAIL"]
+        if warnings and not failures:
+            self.assertTrue(report.can_proceed,
+                            "Warnings-only report should still allow migration")
+
+    def test_can_proceed_false_on_failure(self):
+        """Any FAIL check must set can_proceed=False."""
+        bad_xml = b"not xml at all <<<"
+        report = self.validate(bad_xml)
+        self.assertFalse(report.can_proceed)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # Test runner
 # ══════════════════════════════════════════════════════════════════════════════
 
 def run_tests(verbosity=1):
     loader = unittest.TestLoader()
     suite  = unittest.TestSuite()
-    for cls in (TestOdmReader, TestOdmToSpec, TestVendorRegistry):
+    for cls in (TestOdmReader, TestOdmToSpec, TestVendorRegistry, TestOdmValidator):
         suite.addTests(loader.loadTestsFromTestCase(cls))
     runner = unittest.TextTestRunner(verbosity=verbosity)
     result = runner.run(suite)
