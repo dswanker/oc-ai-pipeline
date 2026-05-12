@@ -7,6 +7,9 @@ python-dotenv==1.0.0
 openpyxl==3.1.5
 reportlab==4.4.10
 pyxform>=2.1.0
+# Word-doc protocol fallback (.docx text extraction when LibreOffice
+# isn't available in the container). See _extract_docx_as_text in pipeline.py.
+python-docx>=1.1.0
 
 # --- Build Preview dependencies ---
 # playwright version must match the Chromium revision in the

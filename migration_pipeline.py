@@ -59,7 +59,6 @@ from monday_client import (
     get_item,
     list_column_filenames,
     make_mutation,
-    set_link,
     upload_file,
     _check_monday_response,
 )
@@ -369,21 +368,8 @@ async def run_migration(
                f"{len(odm_study.get('items', []))} items)")
     await append_log(item_id, f"Migration OK: {summary}")
 
-    # ── Mapping review UI deep-link ──────────────────────────────────────
-    # Populate COL["mapping_review_url"] with a URL that opens the mapping
-    # review UI for this row. Gated on MAPPING_UI_URL — when unset (local
-    # dev, mapping-ui not yet deployed), the column write is skipped
-    # silently. Best-effort; failure does not block migration return.
-    mapping_ui_base = _os.environ.get("MAPPING_UI_URL", "").strip().rstrip("/")
-    if mapping_ui_base:
-        review_url = f"{mapping_ui_base}/?item={item_id}&board={BOARD_ID}"
-        try:
-            await set_link(item_id, COL["mapping_review_url"], review_url,
-                           text="Open Mapping Review")
-            await append_log(item_id, f"Mapping review URL written: {review_url}")
-        except Exception as _link_exc:  # noqa: BLE001
-            print(f"[MIGRATION] mapping_review_url write failed (non-fatal): "
-                  f"{_link_exc}", flush=True)
+    # Mapping review URL is written by pipeline.py after struct_json is
+    # confirmed — fires for both Path B and Path M.
 
     # ── Trainer: create pending corpus row on Path-M completion ──────────
     # Mirrors pipeline.py's Path-B block (best-effort, never blocks).

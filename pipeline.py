@@ -35,8 +35,8 @@ from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
 
 from monday_client import (get_item, download_file, upload_file, set_status,
-                            append_log, set_text, download_column_file,
-                            list_column_filenames, COL)
+                            append_log, set_text, set_link, download_column_file,
+                            list_column_filenames, COL, BOARD_ID)
 from claude_client  import call_claude, extract_json
 from migration_pipeline import run_migration as run_edc_migration
 from trainer_integration import (
@@ -1628,6 +1628,25 @@ async def run_pipeline(item_id):
                 except Exception as _trainer_exc:  # noqa: BLE001
                     print(f"[trainer] create_pending_row failed: {_trainer_exc} "
                           f"— continuing without trainer row", flush=True)
+
+        # ── Mapping review UI deep-link ─────────────────────────────────────
+        # Populate COL["mapping_review_url"] once we have a Study Spec JSON,
+        # regardless of which path produced it (Path B protocol-PDF or Path M
+        # migration). Gated on MAPPING_UI_URL env — when unset (local dev,
+        # mapping-ui not yet deployed) the column write is skipped silently.
+        # Best-effort; failure does not block the chains.
+        if struct_json:
+            mapping_ui_base = os.environ.get("MAPPING_UI_URL", "").strip().rstrip("/")
+            if mapping_ui_base:
+                review_url = f"{mapping_ui_base}/?item={item_id}&board={BOARD_ID}"
+                try:
+                    await set_link(item_id, COL["mapping_review_url"], review_url,
+                                   text="Open Mapping Review")
+                    await append_log(item_id,
+                        f"Mapping review URL written: {review_url}")
+                except Exception as _link_exc:  # noqa: BLE001
+                    print(f"mapping_review_url write failed (non-fatal): "
+                          f"{_link_exc}", flush=True)
 
         # ── Launch parallel chains if struct_json is available ────────────────
         if struct_json and needs_analysis:
