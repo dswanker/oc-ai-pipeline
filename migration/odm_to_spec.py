@@ -581,15 +581,6 @@ def transform(odm_study: dict) -> dict:
                     "library_source": "CDASH_DEFAULT", "flag_reason": "",
                 },
                 {
-                    "type": "end group", "name": "",
-                    "bind__oc_itemgroup": repeat_group_code,
-                    "label": "", "appearance": "", "required": "", "constraint": "",
-                    "constraint_message": "", "relevant": "", "calculation": "",
-                    "readonly": "", "hint": "", "bind__oc_briefdescription": "",
-                    "bind__oc_description": "", "completion_status": "COMPLETE",
-                    "library_source": "CDASH_DEFAULT", "flag_reason": "",
-                },
-                {
                     "type": "end repeat", "name": "",
                     "bind__oc_itemgroup": repeat_group_code,
                     "label": "", "appearance": "", "required": "", "constraint": "",
