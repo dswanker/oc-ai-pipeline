@@ -44,6 +44,7 @@ from trainer_integration import (
     retrieve_examples,
     create_pending_row,
     format_examples_block,
+    trainer_enabled,
 )
 from prompts        import (
     EDC_STRUCTURE_PROMPT, PRICING_SUMMARY_PROMPT,
@@ -1088,16 +1089,16 @@ async def run_pipeline(item_id):
         except Exception:
             oc_production = False
 
-        # Per-row toggle: only call the trainer when this checkbox is checked.
-        # Default (unchecked / missing column) → skip the trainer entirely.
-        send_to_trainer_val = cols.get(COL["send_to_trainer"], {}).get("value")
-        try:
-            parsed = json.loads(send_to_trainer_val or "{}")
-            send_to_trainer = bool(parsed.get("checked", False)) if isinstance(parsed, dict) else bool(parsed)
-        except Exception:
-            send_to_trainer = False
+        # Trainer integration is gated on TRAINER_URL being set in env
+        # (see trainer_integration.trainer_enabled). No per-row Monday
+        # checkbox — successful pipeline runs always feed the trainer
+        # when the service is wired up; dedup on the trainer side
+        # prevents duplicate corpus rows.
+        trainer_on = trainer_enabled()
 
-        print(f"Create OC Study: {create_study} | Subdomain: {oc_subdomain} | Production: {oc_production} | Send to Trainer: {send_to_trainer}", flush=True)
+        print(f"Create OC Study: {create_study} | Subdomain: {oc_subdomain} | "
+              f"Production: {oc_production} | Trainer enabled: {trainer_on}",
+              flush=True)
 
         # ── 1. Check for human-uploaded inputs (parallel downloads) ──────────
         (edited_spec_xlsx,
@@ -1319,7 +1320,6 @@ async def run_pipeline(item_id):
                 item_id,
                 raw_bytes=source_edc_export_bytes,
                 protocol_bytes=_proto_for_migration,
-                send_to_trainer=send_to_trainer,
             )
             if mig_result["status"] != "ok":
                 msg = f"Migration {mig_result['status']}: {mig_result['summary']}"
@@ -1452,11 +1452,12 @@ async def run_pipeline(item_id):
                     "(fallback for any forms not found in the Priority 1 source)."
                 )
             # ─── Trainer retrieval: fetch similar past pairs as few-shot examples ──
-            # Gated by the per-row "Send to Trainer" checkbox on the AI Testing
-            # Estimations board. Default unchecked → skip entirely. Checked →
-            # run the existing best-effort retrieval.
-            if not send_to_trainer:
-                print("Step 0: Trainer retrieval — SKIPPED (Send to Trainer checkbox is unchecked)",
+            # Gated on TRAINER_URL presence (trainer_enabled). When the trainer
+            # is wired up, retrieval runs on every pipeline pass; otherwise it
+            # is silently skipped (no noisy "not reachable" warnings on local
+            # dev runs without a trainer).
+            if not trainer_on:
+                print("Step 0: Trainer retrieval — SKIPPED (TRAINER_URL not set)",
                       flush=True)
             else:
                 try:
@@ -1546,11 +1547,13 @@ async def run_pipeline(item_id):
             )
 
             # ── Trainer: create pending row on trainer board ────────────────
-            # Gated by the per-row "Send to Trainer" checkbox. Best-effort —
-            # any failure is logged but does not block the pipeline. The
-            # trainer row sits in "Awaiting Build Completion" status until
-            # a human uploads the final form definitions.
-            if send_to_trainer and protocol_pdf:
+            # Fires unconditionally on every successful pipeline run when the
+            # trainer is wired up (TRAINER_URL set). Best-effort — any failure
+            # is logged but does not block the pipeline. The corpus dedup
+            # logic in /pending-row prevents duplicates. The new row sits in
+            # "Awaiting Build Completion" status until a human uploads the
+            # final form definitions.
+            if trainer_on and protocol_pdf:
                 try:
                     sponsor_hint = (struct_json.get("study_meta", {})
                                     .get("sponsor")

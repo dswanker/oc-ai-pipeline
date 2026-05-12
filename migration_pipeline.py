@@ -74,7 +74,7 @@ if _MIG_DIR not in sys.path:
 from odm_validator import validate_odm, format_report
 from odm_reader import parse_odm_metadata
 from odm_to_spec import transform, transform_with_ai
-from trainer_integration import create_pending_row
+from trainer_integration import create_pending_row, trainer_enabled
 
 
 # ── ZIP unwrap ────────────────────────────────────────────────────────────────
@@ -213,7 +213,6 @@ async def run_migration(
     protocol_bytes: bytes | None = None,
     claude_client: Any = None,
     ai_assist: bool = False,
-    send_to_trainer: bool = False,
 ) -> dict:
     """
     Run the EDC migration path for a single AI Hub row.
@@ -239,10 +238,14 @@ async def run_migration(
     ai_assist      : legacy toggle for AI-assist without a protocol PDF.
                      Protocol-driven enrichment auto-engages whenever
                      protocol_bytes are present and is preferred.
-    send_to_trainer: when True, after a successful migration the trainer
-                     corpus board receives a "Pending PS Review" row with
-                     the source ODM XML attached. Mirrors the Path-B
-                     trainer-pending-row creation in pipeline.py.
+
+    Trainer corpus
+    --------------
+    After a successful migration this function creates a "Pending PS
+    Review" row on the trainer corpus board with the source ODM XML
+    attached. Gated only on ``trainer_enabled()`` (TRAINER_URL set in
+    env) — no per-row Monday toggle. Dedup on the trainer side prevents
+    duplicates.
 
     Returns
     -------
@@ -366,11 +369,11 @@ async def run_migration(
 
     # ── Trainer: create pending corpus row on Path-M completion ──────────
     # Mirrors pipeline.py's Path-B block (best-effort, never blocks).
-    # Path M's dedup key on the trainer side is (source_system,
-    # protocol_number) — fall back to the ODM study OID when the export
-    # carries no protocol_name (per project decision, study_oid is the
-    # most reliable fallback).
-    if send_to_trainer:
+    # Fires unconditionally on every successful migration when the
+    # trainer is wired up (TRAINER_URL set). Path M's dedup key on the
+    # trainer side is (source_system, dedup_key) where dedup_key is the
+    # ODM protocol_number when present, otherwise the ODM study_oid.
+    if trainer_enabled():
         try:
             sm = spec_json.get("study_meta", {}) or {}
             protocol_num = (sm.get("protocol_number")

@@ -57,6 +57,19 @@ def _trainer_url() -> str:
     return os.environ.get("TRAINER_URL", "http://localhost:8001").strip().rstrip("/")
 
 
+def trainer_enabled() -> bool:
+    """
+    True when TRAINER_URL is set in the environment.
+
+    Pipeline gates (retrieval + corpus row creation, both Path B and
+    Path M) should check this rather than a per-row Monday toggle so a
+    successful pipeline run on Railway always feeds the trainer, while
+    local-dev runs without TRAINER_URL stay quiet (no "trainer not
+    reachable" warnings on every run).
+    """
+    return bool(os.environ.get("TRAINER_URL", "").strip())
+
+
 # Timeouts. Tuned for "must not delay the pipeline if the trainer is sad".
 # The retrieve call should normally take 100-300 ms; we give it 10s before
 # we give up and proceed without examples.
@@ -599,5 +612,6 @@ __all__ = [
     "retrieve_examples",
     "format_examples_block",
     "create_pending_row",
+    "trainer_enabled",
     "QUICK_ANALYSIS_PROMPT",
 ]

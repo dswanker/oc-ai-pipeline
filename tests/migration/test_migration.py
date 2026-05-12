@@ -1832,14 +1832,16 @@ class TestMigrationEnrichmentDispatch(unittest.TestCase):
 
 class TestMigrationTrainerWiring(unittest.TestCase):
     """
-    run_migration must call create_pending_row() exactly when
-    send_to_trainer=True, passing Path-M-flavoured kwargs (source_system,
-    path="migration", ingest_status_key="pending_ps_review", odm_xml, etc.)
-    and must skip the trainer call entirely when the toggle is off.
+    run_migration must call create_pending_row() exactly when the trainer
+    is wired up (TRAINER_URL set in env), passing Path-M-flavoured kwargs
+    (source_system, path="migration", ingest_status_key="pending_ps_review",
+    odm_xml, etc.). It must skip the trainer call entirely when
+    TRAINER_URL is unset (local-dev quiet mode).
     """
 
-    def _run(self, *, send_to_trainer: bool):
+    def _run(self, *, trainer_url: str | None):
         import asyncio
+        import os
         from unittest.mock import patch, AsyncMock, MagicMock
         import migration_pipeline as mp
 
@@ -1860,7 +1862,10 @@ class TestMigrationTrainerWiring(unittest.TestCase):
         det_mock = MagicMock(return_value=fake_spec)
         trainer_mock = AsyncMock(return_value=42)
 
-        with patch.object(mp, "download_column_file", new=AsyncMock(return_value=b"")), \
+        env_patch = {"TRAINER_URL": trainer_url} if trainer_url is not None \
+            else {"TRAINER_URL": ""}
+        with patch.dict(os.environ, env_patch, clear=False), \
+             patch.object(mp, "download_column_file", new=AsyncMock(return_value=b"")), \
              patch.object(mp, "list_column_filenames", new=AsyncMock(return_value=["src.xml"])), \
              patch.object(mp, "upload_file",           new=AsyncMock(return_value=None)), \
              patch.object(mp, "append_log",            new=AsyncMock(return_value=None)), \
@@ -1872,17 +1877,16 @@ class TestMigrationTrainerWiring(unittest.TestCase):
                 item_id="1",
                 raw_bytes=raw_bytes,
                 protocol_bytes=None,
-                send_to_trainer=send_to_trainer,
             ))
         return result, trainer_mock
 
-    def test_send_to_trainer_true_invokes_create_pending_row(self):
-        result, trainer_mock = self._run(send_to_trainer=True)
+    def test_trainer_url_set_invokes_create_pending_row(self):
+        result, trainer_mock = self._run(trainer_url="http://trainer:8001")
         self.assertEqual(result["status"], "ok",
                          f"Expected ok, got {result['status']}: {result['summary']}")
         self.assertEqual(trainer_mock.call_count, 1,
                          "create_pending_row must be called exactly once when "
-                         "send_to_trainer=True")
+                         "TRAINER_URL is set")
         kwargs = trainer_mock.call_args.kwargs
         # Path-M flavour: source_system, path, status, odm_xml present.
         self.assertEqual(kwargs.get("source_system"), "UNKNOWN")
@@ -1896,13 +1900,13 @@ class TestMigrationTrainerWiring(unittest.TestCase):
         # here protocol_number IS present so it should win.
         self.assertEqual(kwargs.get("protocol_number"), "ENRICH-001")
 
-    def test_send_to_trainer_false_skips_create_pending_row(self):
-        result, trainer_mock = self._run(send_to_trainer=False)
+    def test_trainer_url_unset_skips_create_pending_row(self):
+        result, trainer_mock = self._run(trainer_url="")
         self.assertEqual(result["status"], "ok",
                          f"Expected ok, got {result['status']}: {result['summary']}")
         self.assertEqual(trainer_mock.call_count, 0,
                          "create_pending_row must NOT be called when "
-                         "send_to_trainer=False")
+                         "TRAINER_URL is unset")
 
 
 class TestAiAssistPromptHierarchy(unittest.TestCase):
