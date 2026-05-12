@@ -2,7 +2,7 @@
 export function LoadScreen({ error }) {
   return (
     <div className="load-screen">
-      <div className="logo" style={{ width: 48, height: 48, fontSize: 16 }}>OC</div>
+      <img className="logo" style={{ width: 48, height: 48, fontSize: 16 }} src="/oc-swoosh.svg" alt="OpenClinica" />
       {error ? (
         <>
           <div className="load-err">⚠ {error}</div>

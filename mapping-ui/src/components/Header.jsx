@@ -16,7 +16,7 @@ export default function Header({ spec, dirty, saving, isDemo, onSave }) {
   return (
     <header className="header">
       <div className="header-left">
-        <div className="logo">OC</div>
+        <img className="logo" src="/oc-swoosh.svg" alt="OpenClinica" />
         <div>
           <div className="header-title">
             EDC Mapping Review
