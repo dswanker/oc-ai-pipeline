@@ -209,7 +209,9 @@ async def download_column_file(item_id, col_id):
           id
           ... on FileValue {
             files {
-              asset_id
+              ... on FileAssetValue {
+                asset_id
+              }
             }
           }
         }
@@ -235,7 +237,7 @@ async def download_column_file(item_id, col_id):
             return None
 
         # Fetch the asset URL
-        asset_q = "query($ids:[ID!]){assets(ids:$ids){id public_url}}"
+        asset_q = "query($ids:[ID!]!){assets(ids:$ids){id public_url}}"
         async with httpx.AsyncClient(timeout=30) as c:
             ar = await c.post(MONDAY_API_URL, headers=get_headers(),
                               json={"query": asset_q,
@@ -263,8 +265,10 @@ async def list_column_filenames(item_id, col_id):
           id
           ... on FileValue {
             files {
-              asset_id
-              name
+              ... on FileAssetValue {
+                asset_id
+                name
+              }
             }
           }
         }
@@ -293,7 +297,7 @@ async def list_column_filenames(item_id, col_id):
             elif f.get("asset_id"):
                 missing_name_ids.append(f["asset_id"])
         if missing_name_ids:
-            asset_q = "query($ids:[ID!]){assets(ids:$ids){id name}}"
+            asset_q = "query($ids:[ID!]!){assets(ids:$ids){id name}}"
             async with httpx.AsyncClient(timeout=30) as c:
                 ar = await c.post(MONDAY_API_URL, headers=get_headers(),
                                   json={"query": asset_q,
