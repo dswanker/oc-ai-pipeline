@@ -651,37 +651,59 @@ def _form_category(form_id: str, cdash_domain: str | None) -> str:
 # ── AI-assisted transform ─────────────────────────────────────────────────────
 
 AI_ASSIST_PROMPT = """\
-You are helping to migrate a clinical study from a source EDC system into
-OpenClinica 4. You have been given a partially-built OC4 Study Spec JSON
-that was deterministically generated from an ODM XML export.
+You are migrating a clinical study from a source EDC into OpenClinica 4.
+You have:
+  1. A partially-built OC4 Study Spec JSON, deterministically generated from
+     the source ODM XML export. This is your STRUCTURAL baseline.
+  2. (Optionally) the study Protocol PDF attached as a document part. Use it
+     ONLY as a source of clinical context that the ODM does not carry.
 
-Your task is to IMPROVE this Study Spec JSON by:
+INPUT HIERARCHY (highest priority first — never invert this order):
+  1. OC Standards OC-1 through OC-9 — always applied, never overridden.
+  2. CDASH conventions — form IDs, field names, domain codes.
+  3. OC4 naming conventions — SE_ prefix on events, F_<FORM>_N for form_id
+     in settings, IG_ / short-code item groups.
+  4. Customer library files (if referenced by the row).
+  5. ODM XML from the source EDC — exact, authoritative structure:
+     events, forms, items, codelists, visit assignments.
+  6. Protocol PDF — clinical intent, rationale, eligibility, indication,
+     sponsor, arms, study-specific constraints not captured in ODM.
+  7. You (the model) interpret everything above. You do not invent structure.
 
-1. FILLING GAPS in study_meta: infer study_phase, indication, therapeutic_area,
-   type, sponsor where possible from the study name/description/form content.
-
-2. COMPLETING VISIT ASSIGNMENTS: review each form's visits_assigned list.
-   Ensure AE/CM/DV/AESAE are only on SE_COMMON (OC-9). Flag any form whose
-   visit list seems incomplete.
-
-3. ADDING CROSS-FORM DEPENDENCIES: For each form, identify fields that should
-   pull values from other forms (SUBJID from DM, ICFDAT from ICF, etc.) and
-   populate the cross_form_dependencies list with full XPath expressions.
-
-4. IMPROVING CONSTRAINTS AND RELEVANCE: For date fields, add `. <= today()`
-   constraints. For paired start/end dates, add end >= start constraint.
-   For Yes/No gates, add relevant expressions on child fields.
-
-5. FLAGGING ITEMS THAT NEED HUMAN REVIEW: Set completion_status to "FLAGGED"
-   and populate flag_reason for any field whose mapping is uncertain.
+HARD RULES:
+  a) USE the ODM structure as AUTHORITATIVE for events, forms, items,
+     codelists and visit assignments. Do NOT reinvent these from the protocol.
+  b) ENRICH with protocol-derived context where the ODM is silent: indication,
+     phase, therapeutic_area, sponsor, arms, eligibility, and clinical
+     constraints/validations that the ODM RangeChecks did not capture.
+  c) NEVER override OC-1 through OC-9 compliance — these standards win over
+     anything the protocol or ODM might suggest.
+  d) NEVER change CDASH form IDs that already match (DM, VS, AE, CM, LB, EX,
+     MH, IE, DS, PE, EG, ICF, EN, DV, PC, etc.).
+  e) NEVER alter visits_assigned that already comply with OC-9 (AE / CM / DV /
+     AESAE pinned to SE_COMMON; all other forms keep their ODM-derived list).
+  f) FILL study_meta gaps from the protocol PDF where available:
+     protocol_number, indication, therapeutic_area, study_phase, sponsor,
+     arms (names, descriptions, planned_enrollment), study_title.
+     Do NOT overwrite a study_meta field that is already populated and
+     plausible.
+  g) ADD meaningful `constraint`, `constraint_message`, and `relevant`
+     expressions on survey rows where the protocol specifies eligibility
+     thresholds or data-validation rules that the ODM did not encode.
+     Preserve any constraints already present.
+  h) Cross-form dependencies (SUBJID from DM, ICFDAT from ICF, etc.) may be
+     added to each form's `cross_form_dependencies` list as full XPath
+     expressions.
+  i) Flag rows whose mapping you genuinely cannot resolve: set
+     `completion_status` to "FLAGGED" and populate `flag_reason`.
 
 OUTPUT FORMAT:
-- Return ONLY the improved Study Spec JSON object.
-- Do not change the structure — only improve/fill existing fields.
-- Preserve all fields already populated. Only add/change where empty or wrong.
-- No markdown, no explanation, no preamble. Just the JSON.
+  - Return ONLY the improved Study Spec JSON object.
+  - Preserve the existing structure exactly. Only fill empty fields or
+    sharpen plainly-wrong ones.
+  - No markdown, no explanation, no preamble — just the JSON.
 
-STUDY SPEC JSON TO IMPROVE:
+STUDY SPEC JSON TO IMPROVE (ODM-derived baseline):
 {spec_json}
 
 SOURCE ODM SUMMARY:
@@ -689,43 +711,63 @@ SOURCE ODM SUMMARY:
 """
 
 
-def transform_with_ai(odm_study: dict, claude_client: Any) -> dict:
+_DOCX_TEXT_MARKER = b"%%DOCX_TEXT%%"
+
+
+async def transform_with_ai(
+    odm_study: dict,
+    claude_client: Any,
+    protocol_bytes: bytes | None = None,
+) -> dict:
     """
-    AI-assisted transform. Runs deterministic transform first, then
-    calls Claude to fill gaps, improve constraints, and add cross-form deps.
+    AI-assisted transform. Runs the deterministic `transform` first to obtain
+    a baseline Study Spec, then calls Claude with that JSON plus (optionally)
+    the protocol PDF to enrich study_meta, constraints, and cross-form deps.
 
     Args:
-        odm_study:    OdmStudy dict from odm_reader.parse_odm_metadata()
-        claude_client: object with call_claude(prompt, extra_parts=[]) method
-                       (same interface as claude_client.py in your repo)
+        odm_study:      OdmStudy dict from odm_reader.parse_odm_metadata().
+        claude_client:  module or object with an async
+                        `call_claude(prompt, pdf_bytes=None, extra_text=None)`
+                        callable (matches the project's claude_client module).
+        protocol_bytes: optional bytes for the protocol PDF. If they start
+                        with the b"%%DOCX_TEXT%%" sentinel produced by
+                        pipeline.py for Word-doc fallbacks, the inner text is
+                        passed as extra_text instead of as a PDF document.
 
     Returns:
-        Improved Study Spec JSON dict
+        Improved Study Spec JSON dict. On any AI failure, falls back to the
+        deterministic baseline (callers always receive a valid spec).
     """
     from odm_reader import summarise
 
-    # Step 1: deterministic baseline
     spec = transform(odm_study)
 
-    # Step 2: build prompt
     spec_json_str = json.dumps(spec, indent=2, default=str)
     odm_summary   = summarise(odm_study)
-
     prompt = AI_ASSIST_PROMPT.format(
         spec_json=spec_json_str,
         odm_summary=odm_summary,
     )
 
-    # Step 3: call Claude
+    pdf_arg: bytes | None = None
+    extra_text_arg: str | None = None
+    if protocol_bytes:
+        if protocol_bytes.startswith(_DOCX_TEXT_MARKER):
+            extra_text_arg = protocol_bytes[len(_DOCX_TEXT_MARKER):].decode(
+                "utf-8", errors="replace"
+            )
+        else:
+            pdf_arg = protocol_bytes
+
     try:
-        response_text = claude_client.call_claude(prompt)
-        # Strip markdown fences if present
+        response_text = await claude_client.call_claude(
+            prompt, pdf_bytes=pdf_arg, extra_text=extra_text_arg,
+        )
         cleaned = response_text.strip()
         if cleaned.startswith("```"):
             cleaned = re.sub(r"^```[a-z]*\n?", "", cleaned)
             cleaned = re.sub(r"\n?```$", "", cleaned.rstrip())
-        improved_spec = json.loads(cleaned)
-        return improved_spec
+        return json.loads(cleaned)
     except Exception as e:
         print(f"[odm_to_spec] AI-assist failed ({e}) — returning deterministic spec.", flush=True)
         return spec
@@ -758,12 +800,10 @@ if __name__ == "__main__":
 
     if use_ai:
         # Requires ANTHROPIC_API_KEY in environment and claude_client.py on path
+        import asyncio
         sys.path.insert(0, ".")
-        from claude_client import call_claude
-        class _CC:
-            def call_claude(self, prompt, extra_parts=None):
-                return call_claude(prompt, extra_parts or [])
-        spec = transform_with_ai(odm_study, _CC())
+        import claude_client
+        spec = asyncio.run(transform_with_ai(odm_study, claude_client))
     else:
         spec = transform(odm_study)
 

@@ -209,6 +209,7 @@ async def run_migration(
     item_id,
     *,
     raw_bytes: bytes | None = None,
+    protocol_bytes: bytes | None = None,
     claude_client: Any = None,
     ai_assist: bool = False,
 ) -> dict:
@@ -217,14 +218,25 @@ async def run_migration(
 
     Parameters
     ----------
-    item_id     : monday.com item id (int or str).
-    raw_bytes   : optional pre-downloaded Source EDC Export bytes. When
-                  provided, skips the Monday download step. Callers that
-                  already fetch the bytes (e.g. pipeline.py's parallel
-                  input gather) should pass them in.
-    claude_client : optional claude client; required if ai_assist=True.
-    ai_assist   : when True, calls odm_to_spec.transform_with_ai to fill
-                  gaps that pure deterministic mapping can't resolve.
+    item_id        : monday.com item id (int or str).
+    raw_bytes      : optional pre-downloaded Source EDC Export bytes. When
+                     provided, skips the Monday download step. Callers that
+                     already fetch the bytes (e.g. pipeline.py's parallel
+                     input gather) should pass them in.
+    protocol_bytes : optional pre-downloaded protocol PDF bytes. When present
+                     (or when COL["protocol_pdf"] yields a file), Path M runs
+                     in "ODM+Protocol enrichment mode (AI-assisted)" — the
+                     deterministic ODM transform is enriched by Claude with
+                     protocol-derived study_meta, eligibility constraints,
+                     and clinical context. When absent, Path M runs in
+                     "ODM-only mode" (pure deterministic transform).
+    claude_client  : optional claude client (module or object with an async
+                     call_claude(prompt, pdf_bytes=None, extra_text=None)
+                     callable). Defaults to the project's claude_client
+                     module when enrichment mode is selected.
+    ai_assist      : legacy toggle for AI-assist without a protocol PDF.
+                     Protocol-driven enrichment auto-engages whenever
+                     protocol_bytes are present and is preferred.
 
     Returns
     -------
@@ -308,11 +320,29 @@ async def run_migration(
         await append_log(item_id, f"Migration warning: dropdown auto-populate failed: {e}")
 
     # 6. Transform → Study Spec JSON
-    if ai_assist:
+    # If the caller did not pre-fetch the protocol PDF, try Monday now —
+    # this lets run_migration be used standalone (e.g. from the CLI) and
+    # still pick up enrichment context when a protocol is attached.
+    if protocol_bytes is None:
+        try:
+            protocol_bytes = await download_column_file(item_id, COL["protocol_pdf"])
+        except Exception as e:
+            print(f"[MIGRATION] protocol PDF fetch failed (non-fatal): {e}", flush=True)
+            protocol_bytes = None
+
+    use_enrichment = bool(protocol_bytes) or ai_assist
+    if use_enrichment:
+        mode_label = ("ODM+Protocol enrichment mode (AI-assisted)"
+                      if protocol_bytes else "ODM-only AI-assist mode")
+        print(f"[MIGRATION] Path M: {mode_label}", flush=True)
         if claude_client is None:
-            raise ValueError("ai_assist=True requires a claude_client")
-        spec_json = transform_with_ai(odm_study, claude_client)
+            import claude_client as _cc_mod  # default to the project module
+            claude_client = _cc_mod
+        spec_json = await transform_with_ai(
+            odm_study, claude_client, protocol_bytes=protocol_bytes,
+        )
     else:
+        print(f"[MIGRATION] Path M: ODM-only mode", flush=True)
         spec_json = transform(odm_study)
 
     # 7. Upload Study Spec JSON to the row

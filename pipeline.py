@@ -1304,10 +1304,22 @@ async def run_pipeline(item_id):
         # Migration also uploads the Study Spec JSON to COL["spec_json"]
         # itself, so no spec_json_upload_task wiring is needed here.
         if struct_json is None and source_edc_export_bytes:
-            await append_log(item_id, "Source EDC Export detected — running migration path.")
-            print("Path M: running EDC migration from Source EDC Export...", flush=True)
+            # protocol_pdf may be a real PDF, the b"%%DOCX_TEXT%%"-marked
+            # text fallback from Word docs, or b""/None. run_migration
+            # accepts all three: it routes truthy bytes into enrichment
+            # mode and unwraps the DOCX_TEXT marker internally.
+            _proto_for_migration = protocol_pdf if protocol_pdf else None
+            _enrichment = bool(_proto_for_migration)
+            _mode = ("ODM+Protocol enrichment mode (AI-assisted)"
+                     if _enrichment else "ODM-only mode")
+            await append_log(item_id, f"Source EDC Export detected — running migration path ({_mode}).")
+            print(f"Path M: running EDC migration from Source EDC Export — {_mode}", flush=True)
             await set_status(item_id, COL["pipeline_status"], STATUS["analysis_running"])
-            mig_result = await run_edc_migration(item_id, raw_bytes=source_edc_export_bytes)
+            mig_result = await run_edc_migration(
+                item_id,
+                raw_bytes=source_edc_export_bytes,
+                protocol_bytes=_proto_for_migration,
+            )
             if mig_result["status"] != "ok":
                 msg = f"Migration {mig_result['status']}: {mig_result['summary']}"
                 print(f"Path M FAIL: {msg}", flush=True)

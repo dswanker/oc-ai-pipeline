@@ -37,7 +37,10 @@ import tempfile
 from pathlib import Path
 
 # ── Path setup ────────────────────────────────────────────────────────────────
-ROOT = Path(__file__).resolve().parent.parent
+# This file lives at tests/migration/test_migration.py — the project root is
+# three levels up. Insert root (for migration_pipeline, monday_client, etc.)
+# and root/migration (for odm_reader, odm_to_spec, odm_validator).
+ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "migration"))
 
@@ -1743,6 +1746,105 @@ class TestZeltaFixture(unittest.TestCase):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# ODM + Protocol enrichment-mode dispatch
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestMigrationEnrichmentDispatch(unittest.TestCase):
+    """
+    Verify run_migration() routes correctly between the deterministic
+    ODM-only transform and the AI-assisted ODM+Protocol enrichment.
+
+    These are pure dispatch tests — they mock all Monday I/O and both
+    transform paths so they don't depend on Anthropic, lxml, or the
+    network. They only assert which transform was invoked.
+    """
+
+    def _run(self, protocol_bytes):
+        import asyncio
+        from unittest.mock import patch, AsyncMock, MagicMock
+        import migration_pipeline as mp
+
+        # Tiny but well-formed ODM the validator can accept and parse.
+        raw_bytes = _minimal_odm(
+            study_name="ENRICH_TEST", protocol="ENRICH-001",
+            events=[{"oid": "SE_BL", "name": "Baseline", "form_refs": ["F_DM"]}],
+            forms =[{"oid": "F_DM",  "name": "DM",       "ig_refs":   ["IG_DM"]}],
+        )
+
+        fake_spec = {
+            "study_meta": {"protocol_number": "ENRICH-001"},
+            "forms": [],
+            "timepoint_csv":  {"filename": "x.csv", "rows": []},
+            "labranges_csv":  {"filename": "y.csv", "columns": [], "rows": []},
+            "review_flags":   {},
+        }
+
+        det_mock = MagicMock(return_value=fake_spec)
+        ai_mock  = AsyncMock(return_value=fake_spec)
+        # A mock claude_client so run_migration doesn't reach for the real
+        # `claude_client` module (which would pull in the anthropic SDK).
+        fake_cc = MagicMock()
+        fake_cc.call_claude = AsyncMock(return_value="{}")
+
+        with patch.object(mp, "download_column_file", new=AsyncMock(return_value=b"")), \
+             patch.object(mp, "list_column_filenames", new=AsyncMock(return_value=["src.xml"])), \
+             patch.object(mp, "upload_file",           new=AsyncMock(return_value=None)), \
+             patch.object(mp, "append_log",            new=AsyncMock(return_value=None)), \
+             patch.object(mp, "_set_dropdown_value",   new=AsyncMock(return_value=None)), \
+             patch.object(mp, "_read_dropdown_value",  new=AsyncMock(return_value=[])), \
+             patch.object(mp, "transform",          new=det_mock), \
+             patch.object(mp, "transform_with_ai",  new=ai_mock):
+            result = asyncio.run(mp.run_migration(
+                item_id="1",
+                raw_bytes=raw_bytes,
+                protocol_bytes=protocol_bytes,
+                claude_client=fake_cc,
+            ))
+        return result, det_mock, ai_mock
+
+    def test_odm_only_mode_calls_transform(self):
+        """No protocol_bytes → deterministic transform() is used."""
+        result, det, ai = self._run(protocol_bytes=None)
+        self.assertEqual(result["status"], "ok",
+                         f"Expected ok, got {result['status']}: {result['summary']}")
+        self.assertEqual(det.call_count, 1,
+                         "transform() should have been called exactly once")
+        self.assertEqual(ai.call_count, 0,
+                         "transform_with_ai() must NOT be called in ODM-only mode")
+
+    def test_enrichment_mode_calls_transform_with_ai(self):
+        """protocol_bytes present → transform_with_ai() is used, gets the PDF."""
+        pdf_bytes = b"%PDF-1.4 fake-protocol-content"
+        result, det, ai = self._run(protocol_bytes=pdf_bytes)
+        self.assertEqual(result["status"], "ok",
+                         f"Expected ok, got {result['status']}: {result['summary']}")
+        self.assertEqual(ai.call_count, 1,
+                         "transform_with_ai() should have been called exactly once")
+        self.assertEqual(det.call_count, 0,
+                         "Deterministic transform() must NOT be called when "
+                         "enrichment mode is active (transform_with_ai owns the "
+                         "baseline call internally)")
+        # The PDF bytes must reach transform_with_ai as the protocol context.
+        kwargs = ai.call_args.kwargs
+        self.assertEqual(kwargs.get("protocol_bytes"), pdf_bytes,
+                         "protocol_bytes must be forwarded to transform_with_ai")
+
+
+class TestAiAssistPromptHierarchy(unittest.TestCase):
+    """The AI_ASSIST_PROMPT must encode the input hierarchy and hard rules."""
+
+    def test_ai_assist_prompt_contains_hierarchy_instructions(self):
+        from odm_to_spec import AI_ASSIST_PROMPT
+        text = AI_ASSIST_PROMPT.lower()
+        for phrase in ("oc-9", "cdash", "authoritative", "never override"):
+            self.assertIn(
+                phrase, text,
+                f"AI_ASSIST_PROMPT missing required phrase: {phrase!r}. "
+                f"The hierarchy + hard-rule block was not detected."
+            )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # Test runner
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -1753,7 +1855,9 @@ def run_tests(verbosity=1):
                 TestOdmValidator, TestMedidataRaveFixture,
                 TestVeevaFixture, TestViedocFixture, TestImednetFixture,
                 TestOracleInFormFixture, TestRedcapFixture,
-                TestCastorFixture, TestZeltaFixture):
+                TestCastorFixture, TestZeltaFixture,
+                TestMigrationEnrichmentDispatch,
+                TestAiAssistPromptHierarchy):
         suite.addTests(loader.loadTestsFromTestCase(cls))
     runner = unittest.TextTestRunner(verbosity=verbosity)
     result = runner.run(suite)
