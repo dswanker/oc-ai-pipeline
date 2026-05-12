@@ -7,7 +7,7 @@ BOARD_ID = "18409146946"
 
 COL = {
     # Input files (from monday.com)
-    "protocol_pdf":      "files9__1",
+    "protocol":          "files9__1",   # Protocol document — PDF, Word, or Google Doc link
     "crf_library":       "fileb5c8dt0c",  # Customer Specific CRF Standards
     "oc_standard":       "file_mm2mafjc",  # Customer OC4 XLSForm Standard(s)
     # Human-in-the-loop input columns

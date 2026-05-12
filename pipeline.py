@@ -342,6 +342,30 @@ def _extract_docx_as_text(file_bytes: bytes) -> str:
         return ''
 
 
+def _google_doc_export_url(link: str) -> str:
+    """
+    Convert a Google Docs / Drive share link into a PDF-export URL.
+
+    Handles the three common share-link shapes:
+      - https://docs.google.com/document/d/<ID>/edit?usp=sharing
+      - https://docs.google.com/document/d/<ID>/view
+      - https://drive.google.com/file/d/<ID>/view?usp=sharing
+
+    Returns the public ``?export=pdf`` URL when the document ID can be
+    extracted; otherwise returns "" so callers can skip cleanly. Only
+    works for documents whose share setting is "Anyone with the link"
+    — protected docs will 401/403 and the caller treats that as empty.
+    """
+    import re as _re
+    m = _re.search(r"/d/([A-Za-z0-9_-]{20,})", link or "")
+    if not m:
+        return ""
+    doc_id = m.group(1)
+    if "drive.google.com" in link:
+        return f"https://drive.google.com/uc?export=download&id={doc_id}"
+    return f"https://docs.google.com/document/d/{doc_id}/export?format=pdf"
+
+
 def _detect_oc_standard_type(file_bytes):
     """
     Detect whether the file in the oc_standard column is an ODM XML or a
@@ -1037,8 +1061,6 @@ async def run_pipeline(item_id):
         item         = await get_item(item_id)
         cols         = {c["id"]: c for c in item["column_values"]}
         protocol_num = cols.get(COL["protocol_number"], {}).get("text", "STUDY")
-        crf_url      = cols.get(COL["crf_library"],     {}).get("text")
-        oc_std_url   = cols.get(COL["oc_standard"],     {}).get("text")
         oc_subdomain = cols.get(COL["oc_subdomain"],    {}).get("text", "").strip()
 
         # Fetch library filenames for both columns so we can inject them into
@@ -1148,68 +1170,98 @@ async def run_pipeline(item_id):
             return
 
         # ── Download inputs in parallel ───────────────────────────────────────
-        # Skip protocol PDF download if Path A active (edited spec provided)
-        from monday_client import get_asset_url
-
-        async def _get_protocol_pdf():
+        async def _get_protocol_doc():
             """
-            Download the protocol document and return it as PDF bytes.
-            Supports: .pdf (direct), .docx / .doc (converted via LibreOffice),
-            Google Docs export URLs (public/shared docs only).
+            Download the protocol document from the protocol column ONLY.
+
+            Reads exclusively from COL["protocol"] (no whole-item asset scan).
+            Supports:
+              - PDF: returned as-is.
+              - Word (.docx / .doc): converted to PDF via LibreOffice when
+                possible; otherwise extracted as text and returned with the
+                ``%%DOCX_TEXT%%`` marker so callers can pass it as
+                ``extra_text`` instead of ``pdf_bytes``.
+              - Google Doc / Drive link (URL in the column rather than an
+                uploaded file): exported as PDF.
+
+            Returns bytes on success, or None when the column is empty / the
+            content can't be resolved. Callers must tolerate None.
             """
             if edited_spec_xlsx:
-                return b""  # Skip — we already have struct via edited XLSX
-            assets = await get_asset_url(item_id)
-            if not assets:
-                return b""
+                return None  # Skip — Path A already gives us struct via XLSX
 
-            # Priority: PDF > DOCX > DOC
-            pdf_asset  = next((a for a in assets
-                               if (a.get("name") or "").lower().endswith(".pdf")), None)
-            docx_asset = next((a for a in assets
-                               if (a.get("name") or "").lower().endswith((".docx", ".doc"))),
-                              None)
+            col_entry = cols.get(COL["protocol"], {})
+            raw_value = col_entry.get("value")
 
-            # ── PDF path ──────────────────────────────────────────────────
-            if pdf_asset:
-                url = pdf_asset.get("public_url") or pdf_asset.get("url")
-                if url:
-                    pdf = await download_file(url)
-                    if pdf:
-                        return pdf
+            # 1. Uploaded-file case (asset on the column).
+            if raw_value:
+                try:
+                    parsed = json.loads(raw_value)
+                except (ValueError, TypeError):
+                    parsed = {}
+                files = parsed.get("files") if isinstance(parsed, dict) else None
+                if files:
+                    body = await download_column_file(item_id, COL["protocol"])
+                    if not body:
+                        return None
+                    fname = (files[-1].get("name") or "").lower()
 
-            # ── Word document path ────────────────────────────────────────
-            if docx_asset:
-                fname = docx_asset.get("name", "protocol.docx")
-                url   = docx_asset.get("public_url") or docx_asset.get("url")
-                if url:
-                    print(f"Downloading Word doc: {fname}", flush=True)
-                    docx_bytes = await download_file(url)
-                    if docx_bytes:
-                        # Try LibreOffice conversion first
+                    # PDF magic or .pdf extension → pass through.
+                    if body.startswith(b"%PDF-") or fname.endswith(".pdf"):
+                        return body
+
+                    # ZIP magic (.docx/.xlsx OOXML) or .docx/.doc extension
+                    # → try LibreOffice, fall back to extracted text.
+                    if body.startswith(b"PK\x03\x04") or \
+                       fname.endswith((".docx", ".doc")):
+                        print(f"Converting Word doc: {fname or '<unnamed>'}",
+                              flush=True)
                         pdf = await asyncio.get_event_loop().run_in_executor(
-                            None, lambda: _convert_to_pdf(docx_bytes, fname))
+                            None,
+                            lambda: _convert_to_pdf(body, fname or "protocol.docx"),
+                        )
                         if pdf:
                             return pdf
-                        # Fallback: extract text and return as UTF-8 encoded
-                        # fake-PDF (pipeline will detect and pass as extra_text)
                         text = await asyncio.get_event_loop().run_in_executor(
-                            None, lambda: _extract_docx_as_text(docx_bytes))
+                            None, lambda: _extract_docx_as_text(body),
+                        )
                         if text:
-                            # Return text bytes tagged so pipeline knows it's text
                             return b"%%DOCX_TEXT%%" + text.encode("utf-8")
-            return b""
+                        return None
 
-        protocol_pdf, crf_pdf, oc_zip = await asyncio.gather(
-            _get_protocol_pdf(),
-            download_file(crf_url)    if crf_url    else _noop_bytes(),
-            download_file(oc_std_url) if oc_std_url else _noop_bytes(),
+                    # Anything else (no recognisable header) — accept the
+                    # bytes verbatim and let Claude decide.
+                    return body
+
+            # 2. Link case — Monday file columns can also carry a URL
+            # (e.g. Google Doc / Drive share link). Detect a docs/drive URL
+            # in the column's `.text` and fetch the PDF export.
+            link_text = (col_entry.get("text") or "").strip()
+            if link_text and ("docs.google.com" in link_text or
+                              "drive.google.com" in link_text):
+                export_url = _google_doc_export_url(link_text)
+                if export_url:
+                    print(f"Exporting Google Doc as PDF: {link_text[:80]}",
+                          flush=True)
+                    return await download_file(export_url) or None
+
+            return None
+
+        # Use download_column_file for CRF / OC standard so we go through the
+        # asset → public_url (S3) path that doesn't need session auth. The
+        # previous code used the column's `.text` URL which is a Monday
+        # `protected_static/...` link that returns HTTP 406 to bearer-token
+        # requests, silently dropping the customer's library inputs.
+        protocol_bytes, crf_pdf, oc_zip = await asyncio.gather(
+            _get_protocol_doc(),
+            download_column_file(item_id, COL["crf_library"]),
+            download_column_file(item_id, COL["oc_standard"]),
         )
         _proto_desc = (
-            f"{len(protocol_pdf):,} bytes PDF" if protocol_pdf and
-            not protocol_pdf.startswith(b"%%DOCX_TEXT%%")
-            else f"{len(protocol_pdf) - 14:,} chars text (Word doc)"
-            if protocol_pdf else "0 bytes"
+            f"{len(protocol_bytes):,} bytes PDF" if protocol_bytes and
+            not protocol_bytes.startswith(b"%%DOCX_TEXT%%")
+            else f"{len(protocol_bytes) - 14:,} chars text (Word doc)"
+            if protocol_bytes else "0 bytes"
         )
         print(f"Protocol: {_proto_desc} | "
               f"CRF: {len(crf_pdf) if crf_pdf else 0} | "
@@ -1305,11 +1357,11 @@ async def run_pipeline(item_id):
         # Migration also uploads the Study Spec JSON to COL["spec_json"]
         # itself, so no spec_json_upload_task wiring is needed here.
         if struct_json is None and source_edc_export_bytes:
-            # protocol_pdf may be a real PDF, the b"%%DOCX_TEXT%%"-marked
+            # protocol_bytes may be a real PDF, the b"%%DOCX_TEXT%%"-marked
             # text fallback from Word docs, or b""/None. run_migration
             # accepts all three: it routes truthy bytes into enrichment
             # mode and unwraps the DOCX_TEXT marker internally.
-            _proto_for_migration = protocol_pdf if protocol_pdf else None
+            _proto_for_migration = protocol_bytes if protocol_bytes else None
             _enrichment = bool(_proto_for_migration)
             _mode = ("ODM+Protocol enrichment mode (AI-assisted)"
                      if _enrichment else "ODM-only mode")
@@ -1462,7 +1514,7 @@ async def run_pipeline(item_id):
             else:
                 try:
                     print("Step 0: Trainer retrieval — quick protocol analysis...", flush=True)
-                    quick_analysis = await run_protocol_analysis_quick(protocol_pdf or b"")
+                    quick_analysis = await run_protocol_analysis_quick(protocol_bytes or b"")
                     if quick_analysis:
                         print(f"Step 0: Trainer retrieval — fetching examples (k={TRAINER_K})...",
                               flush=True)
@@ -1487,15 +1539,15 @@ async def run_pipeline(item_id):
             print("Step 1: Claude extracting Study Spec JSON...", flush=True)
             # Handle DOCX-as-text fallback: protocol arrived as text, not PDF
             _docx_text_marker = b"%%DOCX_TEXT%%"
-            if protocol_pdf and protocol_pdf.startswith(_docx_text_marker):
-                docx_text = protocol_pdf[len(_docx_text_marker):].decode("utf-8",
-                                                                          errors="replace")
+            if protocol_bytes and protocol_bytes.startswith(_docx_text_marker):
+                docx_text = protocol_bytes[len(_docx_text_marker):].decode("utf-8",
+                                                                            errors="replace")
                 print(f"Protocol is Word text ({len(docx_text):,} chars) — "
                       f"passing as extra_text", flush=True)
                 _pdf_arg   = None
                 _text_args = [docx_text] + (extra_parts or [])
             else:
-                _pdf_arg   = protocol_pdf or None
+                _pdf_arg   = protocol_bytes or None
                 _text_args = extra_parts or []
 
             struct_text = await call_claude(
@@ -1553,7 +1605,7 @@ async def run_pipeline(item_id):
             # logic in /pending-row prevents duplicates. The new row sits in
             # "Awaiting Build Completion" status until a human uploads the
             # final form definitions.
-            if trainer_on and protocol_pdf:
+            if trainer_on and protocol_bytes:
                 try:
                     sponsor_hint = (struct_json.get("study_meta", {})
                                     .get("sponsor")
@@ -1562,7 +1614,7 @@ async def run_pipeline(item_id):
                     print(f"[trainer] creating pending row: name={protocol_num!r} "
                           f"sponsor={sponsor_hint!r}", flush=True)
                     new_trainer_item_id = await create_pending_row(
-                        protocol_pdf,
+                        protocol_bytes,
                         name=protocol_num,
                         protocol_filename=f"{protocol_num}.pdf",
                         sponsor_client=sponsor_hint,

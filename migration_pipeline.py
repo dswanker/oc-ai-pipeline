@@ -224,8 +224,8 @@ async def run_migration(
                      provided, skips the Monday download step. Callers that
                      already fetch the bytes (e.g. pipeline.py's parallel
                      input gather) should pass them in.
-    protocol_bytes : optional pre-downloaded protocol PDF bytes. When present
-                     (or when COL["protocol_pdf"] yields a file), Path M runs
+    protocol_bytes : optional pre-downloaded protocol document bytes. When
+                     present (or when COL["protocol"] yields a file), Path M runs
                      in "ODM+Protocol enrichment mode (AI-assisted)" — the
                      deterministic ODM transform is enriched by Claude with
                      protocol-derived study_meta, eligibility constraints,
@@ -329,14 +329,15 @@ async def run_migration(
         await append_log(item_id, f"Migration warning: dropdown auto-populate failed: {e}")
 
     # 6. Transform → Study Spec JSON
-    # If the caller did not pre-fetch the protocol PDF, try Monday now —
+    # If the caller did not pre-fetch the protocol document, try Monday now —
     # this lets run_migration be used standalone (e.g. from the CLI) and
     # still pick up enrichment context when a protocol is attached.
     if protocol_bytes is None:
         try:
-            protocol_bytes = await download_column_file(item_id, COL["protocol_pdf"])
+            protocol_bytes = await download_column_file(item_id, COL["protocol"])
         except Exception as e:
-            print(f"[MIGRATION] protocol PDF fetch failed (non-fatal): {e}", flush=True)
+            print(f"[MIGRATION] protocol document fetch failed (non-fatal): {e}",
+                  flush=True)
             protocol_bytes = None
 
     use_enrichment = bool(protocol_bytes) or ai_assist
