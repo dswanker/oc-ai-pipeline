@@ -45,6 +45,9 @@ FIXTURES = Path(__file__).parent / "fixtures"
 PRTK05_XML = FIXTURES / "prtk05.xml"
 SYNTHETIC_XML = FIXTURES / "synthetic.xml"
 MEDIDATA_RAVE_XML = FIXTURES / "medidata_rave_synthetic.xml"
+VEEVA_XML = FIXTURES / "veeva_synthetic.xml"
+VIEDOC_XML = FIXTURES / "viedoc_synthetic.xml"
+IMEDNET_XML = FIXTURES / "imednet_synthetic.xml"
 
 # ── Lazy imports (only imported when tests run) ───────────────────────────────
 def _import_reader():
@@ -1077,6 +1080,298 @@ class TestMedidataRaveFixture(unittest.TestCase):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# Test suite 6 — Veeva Vault CDMS synthetic fixture
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestVeevaFixture(unittest.TestCase):
+    """
+    End-to-end coverage of the Veeva Vault CDMS synthetic fixture
+    (tests/migration/fixtures/veeva_synthetic.xml). Phase 2 oncology study
+    with three 21-day treatment cycles, RECIST tumour assessments, and
+    minimal v: namespace vendor extensions (reflecting Veeva's clean
+    ODM 1.3.2 export style).
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        from odm_validator import validate_odm
+        parse_odm_metadata, *_ = _import_reader()
+        transform, *_ = _import_spec()
+        cls.validate = staticmethod(validate_odm)
+        cls.parse    = staticmethod(parse_odm_metadata)
+        cls.transform = staticmethod(transform)
+        cls.raw  = _load(VEEVA_XML)
+        cls.odm  = parse_odm_metadata(cls.raw)
+        cls.spec = transform(cls.odm)
+
+    def test_vendor_detected_as_veeva_vault_cdms(self):
+        """Originator='Veeva Vault CDMS 24.2' must resolve to 'Veeva Vault CDMS'."""
+        self.assertEqual(self.odm["source_system"], "Veeva Vault CDMS")
+
+    def test_layer_1_passes(self):
+        rep = self.validate(self.raw)
+        self.assertEqual(rep.layer_results["layer_1"], "PASS")
+
+    def test_layer_2_passes(self):
+        rep = self.validate(self.raw)
+        self.assertEqual(rep.layer_results["layer_2"], "PASS")
+
+    def test_layer_3_passes(self):
+        rep = self.validate(self.raw)
+        self.assertEqual(rep.layer_results["layer_3"], "PASS")
+
+    def test_can_proceed(self):
+        rep = self.validate(self.raw)
+        self.assertTrue(rep.can_proceed, f"Fixture must be migratable: {rep.summary}")
+        self.assertTrue(rep.passed)
+
+    def test_protocol_number_is_onc2024(self):
+        self.assertEqual(self.spec["study_meta"]["protocol_number"], "ONC2024")
+
+    def test_oc9_ae_on_se_common_only(self):
+        ae = next((f for f in self.spec["forms"] if f["form_id"] == "AE"), None)
+        self.assertIsNotNone(ae, "AE form missing from spec")
+        self.assertEqual(ae["visits_assigned"], ["SE_COMMON"],
+                         f"OC-9 violation: AE visits_assigned={ae['visits_assigned']}")
+
+    def test_oc9_cm_on_se_common_only(self):
+        cm = next((f for f in self.spec["forms"] if f["form_id"] == "CM"), None)
+        self.assertIsNotNone(cm, "CM form missing from spec")
+        self.assertEqual(cm["visits_assigned"], ["SE_COMMON"],
+                         f"OC-9 violation: CM visits_assigned={cm['visits_assigned']}")
+
+    def test_tu_form_present_in_spec(self):
+        """Oncology-specific TU (Tumour Assessment) form must appear in the spec."""
+        form_ids = {f["form_id"] for f in self.spec["forms"]}
+        self.assertIn("TU", form_ids,
+                      f"TU form missing from spec. Forms: {sorted(form_ids)}")
+
+    def test_three_cycle_events_detected(self):
+        """SE_CYCLE1, SE_CYCLE2, SE_CYCLE3 must all be parsed from the protocol."""
+        event_oids = {e["oid"] for e in self.odm["events"]}
+        for cycle in ("SE_CYCLE1", "SE_CYCLE2", "SE_CYCLE3"):
+            self.assertIn(cycle, event_oids,
+                          f"Treatment cycle event {cycle} missing — found: {sorted(event_oids)}")
+
+    def test_cycle_events_are_repeating(self):
+        """All three cycle events must be Repeating='Yes'."""
+        ev_by_oid = {e["oid"]: e for e in self.odm["events"]}
+        for cycle in ("SE_CYCLE1", "SE_CYCLE2", "SE_CYCLE3"):
+            self.assertTrue(ev_by_oid[cycle]["repeating"],
+                            f"{cycle} should be Repeating='Yes'")
+
+    def test_recist_codelist_present(self):
+        """CL.RECIST CodeList must include CR, PR, SD, PD response categories."""
+        recist = next((c for c in self.odm["codelists"] if c["oid"] == "CL.RECIST"), None)
+        self.assertIsNotNone(recist, "CL.RECIST CodeList missing")
+        codes = {ci["coded_value"] for ci in recist["items"]}
+        for required in ("CR", "PR", "SD", "PD"):
+            self.assertIn(required, codes,
+                          f"RECIST response category {required} missing — found: {sorted(codes)}")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Test suite 7 — Viedoc synthetic fixture
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestViedocFixture(unittest.TestCase):
+    """
+    End-to-end coverage of the Viedoc 4.72 synthetic fixture
+    (tests/migration/fixtures/viedoc_synthetic.xml). Phase 2 CNS / MDD
+    study with MADRS-10 and HAM-D-7 rating scales (17 integer items
+    constrained to 0-6), administered at SCREEN / WEEK2 / WEEK4 / WEEK8 /
+    WEEK12 (latter four repeating). Exercises viedoc: namespace attr
+    capture on FormDef.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        from odm_validator import validate_odm
+        parse_odm_metadata, *_ = _import_reader()
+        transform, *_ = _import_spec()
+        cls.validate = staticmethod(validate_odm)
+        cls.parse    = staticmethod(parse_odm_metadata)
+        cls.transform = staticmethod(transform)
+        cls.raw  = _load(VIEDOC_XML)
+        cls.odm  = parse_odm_metadata(cls.raw)
+        cls.spec = transform(cls.odm)
+
+    def test_vendor_detected_as_viedoc(self):
+        """Originator='Viedoc 4.72' must resolve to 'Viedoc'."""
+        self.assertEqual(self.odm["source_system"], "Viedoc")
+
+    def test_viedoc_namespace_attrs_captured_on_forms(self):
+        """At least some FormDef elements must carry viedoc: vendor attrs."""
+        forms_with_viedoc = [f for f in self.odm["forms"]
+                             if any(k.startswith("viedoc:") for k in (f.get("vendor") or {}))]
+        self.assertGreater(len(forms_with_viedoc), 0,
+                           "No viedoc: vendor attrs captured on any FormDef")
+
+    def test_viedoc_layout_attr_value(self):
+        """F_DM must carry viedoc:Layout='OneColumn' in its vendor dict."""
+        dm = next((f for f in self.odm["forms"] if f["oid"] == "F_DM"), None)
+        self.assertIsNotNone(dm, "F_DM missing from parsed forms")
+        self.assertEqual(dm["vendor"].get("viedoc:Layout"), "OneColumn")
+
+    def test_layer_1_passes(self):
+        rep = self.validate(self.raw)
+        self.assertEqual(rep.layer_results["layer_1"], "PASS")
+
+    def test_layer_2_passes(self):
+        rep = self.validate(self.raw)
+        self.assertEqual(rep.layer_results["layer_2"], "PASS")
+
+    def test_layer_3_passes(self):
+        rep = self.validate(self.raw)
+        self.assertEqual(rep.layer_results["layer_3"], "PASS")
+
+    def test_can_proceed(self):
+        rep = self.validate(self.raw)
+        self.assertTrue(rep.can_proceed, f"Fixture must be migratable: {rep.summary}")
+        self.assertTrue(rep.passed)
+
+    def test_protocol_number_is_cns2024(self):
+        self.assertEqual(self.spec["study_meta"]["protocol_number"], "CNS2024")
+
+    def test_oc9_ae_on_se_common_only(self):
+        ae = next((f for f in self.spec["forms"] if f["form_id"] == "AE"), None)
+        self.assertIsNotNone(ae)
+        self.assertEqual(ae["visits_assigned"], ["SE_COMMON"],
+                         f"OC-9 violation: AE visits_assigned={ae['visits_assigned']}")
+
+    def test_oc9_cm_on_se_common_only(self):
+        cm = next((f for f in self.spec["forms"] if f["form_id"] == "CM"), None)
+        self.assertIsNotNone(cm)
+        self.assertEqual(cm["visits_assigned"], ["SE_COMMON"],
+                         f"OC-9 violation: CM visits_assigned={cm['visits_assigned']}")
+
+    def test_qs_form_present_with_constrained_items(self):
+        """QS form must be present and have constrained survey rows from RangeChecks."""
+        qs = next((f for f in self.spec["forms"] if f["form_id"] == "QS"), None)
+        self.assertIsNotNone(qs, f"QS form missing. Forms: "
+                                 f"{sorted(f['form_id'] for f in self.spec['forms'])}")
+        constrained = [r for r in qs["survey"] if r.get("constraint")]
+        self.assertGreaterEqual(len(constrained), 10,
+                                f"QS form should have ≥10 constrained items "
+                                f"(MADRS-10 + HAM-D-7), found {len(constrained)}")
+
+    def test_repeating_week_visits_detected(self):
+        """SE_WEEK2/4/8/12 must all be parsed as Repeating='Yes'."""
+        ev_by_oid = {e["oid"]: e for e in self.odm["events"]}
+        for week in ("SE_WEEK2", "SE_WEEK4", "SE_WEEK8", "SE_WEEK12"):
+            self.assertIn(week, ev_by_oid,
+                          f"{week} missing from parsed events")
+            self.assertTrue(ev_by_oid[week]["repeating"],
+                            f"{week} should be Repeating='Yes'")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Test suite 8 — iMedNet synthetic fixture
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestImednetFixture(unittest.TestCase):
+    """
+    End-to-end coverage of the iMedNet EDC 6.0 synthetic fixture
+    (tests/migration/fixtures/imednet_synthetic.xml). Phase 3 type-2
+    diabetes study with quarterly HbA1c monitoring across six scheduled
+    visits. iMedNet exports clean ODM 1.3.2 with no widely-known
+    namespace, so vendor detection here is Originator-string based.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        from odm_validator import validate_odm
+        parse_odm_metadata, *_ = _import_reader()
+        transform, *_ = _import_spec()
+        cls.validate = staticmethod(validate_odm)
+        cls.parse    = staticmethod(parse_odm_metadata)
+        cls.transform = staticmethod(transform)
+        cls.raw  = _load(IMEDNET_XML)
+        cls.odm  = parse_odm_metadata(cls.raw)
+        cls.spec = transform(cls.odm)
+
+    def test_vendor_detected_from_originator(self):
+        """Originator='iMedNet EDC 6.0' must resolve to 'iMedNet' via Originator detection."""
+        self.assertEqual(self.odm["source_system"], "iMedNet")
+
+    def test_layer_1_passes(self):
+        rep = self.validate(self.raw)
+        self.assertEqual(rep.layer_results["layer_1"], "PASS")
+
+    def test_layer_2_passes(self):
+        rep = self.validate(self.raw)
+        self.assertEqual(rep.layer_results["layer_2"], "PASS")
+
+    def test_layer_3_passes(self):
+        rep = self.validate(self.raw)
+        self.assertEqual(rep.layer_results["layer_3"], "PASS")
+
+    def test_can_proceed(self):
+        rep = self.validate(self.raw)
+        self.assertTrue(rep.can_proceed, f"Fixture must be migratable: {rep.summary}")
+        self.assertTrue(rep.passed)
+
+    def test_protocol_number_is_dm3001(self):
+        self.assertEqual(self.spec["study_meta"]["protocol_number"], "DM3001")
+
+    def test_oc9_ae_on_se_common_only(self):
+        ae = next((f for f in self.spec["forms"] if f["form_id"] == "AE"), None)
+        self.assertIsNotNone(ae)
+        self.assertEqual(ae["visits_assigned"], ["SE_COMMON"],
+                         f"OC-9 violation: AE visits_assigned={ae['visits_assigned']}")
+
+    def test_oc9_cm_on_se_common_only(self):
+        cm = next((f for f in self.spec["forms"] if f["form_id"] == "CM"), None)
+        self.assertIsNotNone(cm)
+        self.assertEqual(cm["visits_assigned"], ["SE_COMMON"],
+                         f"OC-9 violation: CM visits_assigned={cm['visits_assigned']}")
+
+    def test_hba1c_form_present_with_constrained_item(self):
+        """HBA1C form must be in spec and have at least one constrained survey row
+        (the HbA1c result item, constrained to 3.0-20.0%)."""
+        hba1c = next((f for f in self.spec["forms"] if f["form_id"] == "HBA1C"), None)
+        self.assertIsNotNone(hba1c, f"HBA1C form missing. Forms: "
+                                    f"{sorted(f['form_id'] for f in self.spec['forms'])}")
+        constrained = [r for r in hba1c["survey"] if r.get("constraint")]
+        self.assertGreaterEqual(len(constrained), 1,
+                                f"HBA1C form should have ≥1 constrained item, found {len(constrained)}")
+        # The constraint should reflect the 3.0 - 20.0 range from the fixture
+        constraint_text = " ".join(r.get("constraint", "") for r in constrained)
+        self.assertIn("3.0", constraint_text,
+                      f"HbA1c lower bound 3.0 missing from constraint: {constraint_text}")
+        self.assertIn("20.0", constraint_text,
+                      f"HbA1c upper bound 20.0 missing from constraint: {constraint_text}")
+
+    def test_scheduled_visits_correct(self):
+        """All six scheduled visits (SCREEN, WEEK4, WEEK12, WEEK24, WEEK52, EOT)
+        must be parsed from the protocol."""
+        expected = {"SE_SCREEN", "SE_WEEK4", "SE_WEEK12", "SE_WEEK24",
+                    "SE_WEEK52", "SE_EOT"}
+        event_oids = {e["oid"] for e in self.odm["events"]}
+        missing = expected - event_oids
+        self.assertEqual(missing, set(),
+                         f"Scheduled visits missing from parsed events: {sorted(missing)}")
+
+    def test_insulin_type_codelist_present(self):
+        """CL.INSULIN CodeList must include the standard insulin categories."""
+        cl = next((c for c in self.odm["codelists"] if c["oid"] == "CL.INSULIN"), None)
+        self.assertIsNotNone(cl, "CL.INSULIN CodeList missing")
+        codes = {ci["coded_value"] for ci in cl["items"]}
+        for required in ("RAPID", "SHORT", "LONG"):
+            self.assertIn(required, codes,
+                          f"Insulin type {required} missing — found: {sorted(codes)}")
+
+    def test_injection_site_codelist_present(self):
+        """CL.INJSITE CodeList must include the standard injection sites."""
+        cl = next((c for c in self.odm["codelists"] if c["oid"] == "CL.INJSITE"), None)
+        self.assertIsNotNone(cl, "CL.INJSITE CodeList missing")
+        codes = {ci["coded_value"] for ci in cl["items"]}
+        for required in ("ABDOMEN", "THIGH", "UPPARM"):
+            self.assertIn(required, codes,
+                          f"Injection site {required} missing — found: {sorted(codes)}")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # Test runner
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -1084,7 +1379,8 @@ def run_tests(verbosity=1):
     loader = unittest.TestLoader()
     suite  = unittest.TestSuite()
     for cls in (TestOdmReader, TestOdmToSpec, TestVendorRegistry,
-                TestOdmValidator, TestMedidataRaveFixture):
+                TestOdmValidator, TestMedidataRaveFixture,
+                TestVeevaFixture, TestViedocFixture, TestImednetFixture):
         suite.addTests(loader.loadTestsFromTestCase(cls))
     runner = unittest.TextTestRunner(verbosity=verbosity)
     result = runner.run(suite)

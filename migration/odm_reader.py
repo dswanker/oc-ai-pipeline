@@ -178,6 +178,8 @@ def _detect_vendor(root: ET.Element, raw_xml: bytes) -> tuple[str, str]:
         return "Medrio", attrs.get("SourceSystemVersion", "")
     if "veeva" in originator or "vault" in originator:
         return "Veeva Vault CDMS", attrs.get("SourceSystemVersion", "")
+    if "imednet" in originator:
+        return "iMedNet", attrs.get("SourceSystemVersion", "")
 
     # Fallback: sniff namespaces in raw XML
     raw_head = raw_xml[:2000].decode("utf-8", errors="ignore").lower()

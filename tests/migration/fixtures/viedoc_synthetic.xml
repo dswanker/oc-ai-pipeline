@@ -1,0 +1,397 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Synthetic Viedoc 4.72 ODM 1.3.2 export for migration tests.
+  Phase 2 CNS depression study (CNS2024) — randomized, double-blind,
+  placebo-controlled, 12-week treatment with MADRS / HAM-D scale
+  assessments at WEEK2 / WEEK4 / WEEK8 / WEEK12 (all repeating, since
+  visits may be re-administered within a tolerance window).
+
+  Viedoc exports standard ODM 1.3.2 with viedoc: namespace extensions
+  on FormDef and MetaDataVersion for display settings. This fixture
+  reflects that pattern.
+
+  Not a real study. All MADRS/HAM-D scores are fabricated.
+-->
+<ODM ODMVersion="1.3.2"
+     FileOID="CNS2024-2026-05-11T00:00:00"
+     FileType="Snapshot"
+     CreationDateTime="2026-05-11T00:00:00"
+     Originator="Viedoc 4.72"
+     SourceSystem="Viedoc Clinic"
+     SourceSystemVersion="4.72.1"
+     xmlns="http://www.cdisc.org/ns/odm/v1.3"
+     xmlns:viedoc="http://www.viedoc.net/ns/odm"
+     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+
+  <Study OID="S_CNS2024">
+    <GlobalVariables>
+      <StudyName>CNS2024 Phase 2 Major Depressive Disorder Study</StudyName>
+      <StudyDescription>A Phase 2 Randomized Double-Blind Placebo-Controlled 12-Week Study of Investigational Compound CNX-19 in Adults with Moderate to Severe Major Depressive Disorder</StudyDescription>
+      <ProtocolName>CNS2024</ProtocolName>
+    </GlobalVariables>
+
+    <BasicDefinitions>
+      <MeasurementUnit OID="MU.mmHg" Name="mmHg">
+        <Symbol><TranslatedText xml:lang="en">mmHg</TranslatedText></Symbol>
+      </MeasurementUnit>
+      <MeasurementUnit OID="MU.bpm" Name="bpm">
+        <Symbol><TranslatedText xml:lang="en">bpm</TranslatedText></Symbol>
+      </MeasurementUnit>
+    </BasicDefinitions>
+
+    <MetaDataVersion OID="v1.0"
+                     Name="CNS2024 v1.0 — IRB-approved 2026-02-15"
+                     viedoc:StudyPhase="2"
+                     viedoc:Locale="en-US">
+
+      <Protocol>
+        <StudyEventRef StudyEventOID="SE_SCREEN" OrderNumber="1" Mandatory="Yes"/>
+        <StudyEventRef StudyEventOID="SE_WEEK2"  OrderNumber="2" Mandatory="Yes"/>
+        <StudyEventRef StudyEventOID="SE_WEEK4"  OrderNumber="3" Mandatory="Yes"/>
+        <StudyEventRef StudyEventOID="SE_WEEK8"  OrderNumber="4" Mandatory="Yes"/>
+        <StudyEventRef StudyEventOID="SE_WEEK12" OrderNumber="5" Mandatory="Yes"/>
+        <StudyEventRef StudyEventOID="SE_COMMON" OrderNumber="6" Mandatory="Yes"/>
+      </Protocol>
+
+      <!-- ── StudyEventDef ─────────────────────────────────────────────────── -->
+      <StudyEventDef OID="SE_SCREEN" Name="Screening Visit"
+                     Repeating="No" Type="Scheduled">
+        <FormRef FormOID="F_DM" Mandatory="Yes" OrderNumber="1"/>
+        <FormRef FormOID="F_IE" Mandatory="Yes" OrderNumber="2"/>
+        <FormRef FormOID="F_MH" Mandatory="Yes" OrderNumber="3"/>
+        <FormRef FormOID="F_VS" Mandatory="Yes" OrderNumber="4"/>
+        <FormRef FormOID="F_QS" Mandatory="Yes" OrderNumber="5"/>
+      </StudyEventDef>
+      <StudyEventDef OID="SE_WEEK2" Name="Week 2 Visit"
+                     Repeating="Yes" Type="Scheduled">
+        <FormRef FormOID="F_VS" Mandatory="Yes" OrderNumber="1"/>
+        <FormRef FormOID="F_QS" Mandatory="Yes" OrderNumber="2"/>
+      </StudyEventDef>
+      <StudyEventDef OID="SE_WEEK4" Name="Week 4 Visit"
+                     Repeating="Yes" Type="Scheduled">
+        <FormRef FormOID="F_VS" Mandatory="Yes" OrderNumber="1"/>
+        <FormRef FormOID="F_QS" Mandatory="Yes" OrderNumber="2"/>
+      </StudyEventDef>
+      <StudyEventDef OID="SE_WEEK8" Name="Week 8 Visit"
+                     Repeating="Yes" Type="Scheduled">
+        <FormRef FormOID="F_VS" Mandatory="Yes" OrderNumber="1"/>
+        <FormRef FormOID="F_QS" Mandatory="Yes" OrderNumber="2"/>
+      </StudyEventDef>
+      <StudyEventDef OID="SE_WEEK12" Name="Week 12 Visit (End of Treatment)"
+                     Repeating="Yes" Type="Scheduled">
+        <FormRef FormOID="F_VS" Mandatory="Yes" OrderNumber="1"/>
+        <FormRef FormOID="F_QS" Mandatory="Yes" OrderNumber="2"/>
+      </StudyEventDef>
+      <StudyEventDef OID="SE_COMMON" Name="Common Events (AE / CM)"
+                     Repeating="Yes" Type="Common">
+        <FormRef FormOID="F_AE" Mandatory="No" OrderNumber="1"/>
+        <FormRef FormOID="F_CM" Mandatory="No" OrderNumber="2"/>
+      </StudyEventDef>
+
+      <!-- ── FormDef ──────────────────────────────────────────────────────── -->
+      <FormDef OID="F_DM" Name="Demographics" Repeating="No"
+               viedoc:OrderNumber="1" viedoc:Layout="OneColumn">
+        <ItemGroupRef ItemGroupOID="IG.DM" Mandatory="Yes" OrderNumber="1"/>
+      </FormDef>
+      <FormDef OID="F_IE" Name="Inclusion / Exclusion Criteria" Repeating="No"
+               viedoc:OrderNumber="2" viedoc:Layout="OneColumn">
+        <ItemGroupRef ItemGroupOID="IG.IE" Mandatory="Yes" OrderNumber="1"/>
+      </FormDef>
+      <FormDef OID="F_MH" Name="Medical History" Repeating="Yes"
+               viedoc:OrderNumber="3" viedoc:Layout="LogRow">
+        <ItemGroupRef ItemGroupOID="IG.MH" Mandatory="Yes" OrderNumber="1"/>
+      </FormDef>
+      <FormDef OID="F_VS" Name="Vital Signs" Repeating="No"
+               viedoc:OrderNumber="4" viedoc:Layout="TwoColumn">
+        <ItemGroupRef ItemGroupOID="IG.VS" Mandatory="Yes" OrderNumber="1"/>
+      </FormDef>
+      <FormDef OID="F_AE" Name="Adverse Events" Repeating="Yes"
+               viedoc:OrderNumber="5" viedoc:Layout="LogRow">
+        <ItemGroupRef ItemGroupOID="IG.AE" Mandatory="Yes" OrderNumber="1"/>
+      </FormDef>
+      <FormDef OID="F_CM" Name="Concomitant Medications" Repeating="Yes"
+               viedoc:OrderNumber="6" viedoc:Layout="LogRow">
+        <ItemGroupRef ItemGroupOID="IG.CM" Mandatory="Yes" OrderNumber="1"/>
+      </FormDef>
+      <FormDef OID="F_QS" Name="Depression Scales (MADRS / HAM-D)" Repeating="No"
+               viedoc:OrderNumber="7" viedoc:Layout="OneColumn">
+        <ItemGroupRef ItemGroupOID="IG.QS_MADRS" Mandatory="Yes" OrderNumber="1"/>
+        <ItemGroupRef ItemGroupOID="IG.QS_HAMD"  Mandatory="Yes" OrderNumber="2"/>
+      </FormDef>
+
+      <!-- ── ItemGroupDef ─────────────────────────────────────────────────── -->
+      <ItemGroupDef OID="IG.DM" Name="DM" Repeating="No" SASDatasetName="DM">
+        <ItemRef ItemOID="I.DM.SUBJID"  OrderNumber="1" Mandatory="Yes"/>
+        <ItemRef ItemOID="I.DM.BIRTHDT" OrderNumber="2" Mandatory="Yes"/>
+        <ItemRef ItemOID="I.DM.SEX"     OrderNumber="3" Mandatory="Yes"/>
+        <ItemRef ItemOID="I.DM.RACE"    OrderNumber="4" Mandatory="Yes"/>
+      </ItemGroupDef>
+      <ItemGroupDef OID="IG.IE" Name="IE" Repeating="No" SASDatasetName="IE">
+        <ItemRef ItemOID="I.IE.INC01" OrderNumber="1" Mandatory="Yes"/>
+        <ItemRef ItemOID="I.IE.EXC01" OrderNumber="2" Mandatory="Yes"/>
+      </ItemGroupDef>
+      <ItemGroupDef OID="IG.MH" Name="MH" Repeating="Yes" SASDatasetName="MH">
+        <ItemRef ItemOID="I.MH.MHTERM"  OrderNumber="1" Mandatory="Yes"/>
+        <ItemRef ItemOID="I.MH.MHSTDTC" OrderNumber="2" Mandatory="Yes"/>
+        <ItemRef ItemOID="I.MH.MHONGO"  OrderNumber="3" Mandatory="Yes"/>
+      </ItemGroupDef>
+      <ItemGroupDef OID="IG.VS" Name="VS" Repeating="No" SASDatasetName="VS">
+        <ItemRef ItemOID="I.VS.SYSBP" OrderNumber="1" Mandatory="Yes"/>
+        <ItemRef ItemOID="I.VS.DIABP" OrderNumber="2" Mandatory="Yes"/>
+        <ItemRef ItemOID="I.VS.PULSE" OrderNumber="3" Mandatory="Yes"/>
+      </ItemGroupDef>
+      <ItemGroupDef OID="IG.AE" Name="AE" Repeating="Yes" SASDatasetName="AE">
+        <ItemRef ItemOID="I.AE.AETERM"  OrderNumber="1" Mandatory="Yes"/>
+        <ItemRef ItemOID="I.AE.AESTDTC" OrderNumber="2" Mandatory="Yes"/>
+        <ItemRef ItemOID="I.AE.AESEV"   OrderNumber="3" Mandatory="Yes"/>
+        <ItemRef ItemOID="I.AE.AESER"   OrderNumber="4" Mandatory="Yes"/>
+      </ItemGroupDef>
+      <ItemGroupDef OID="IG.CM" Name="CM" Repeating="Yes" SASDatasetName="CM">
+        <ItemRef ItemOID="I.CM.CMTRT"   OrderNumber="1" Mandatory="Yes"/>
+        <ItemRef ItemOID="I.CM.CMSTDTC" OrderNumber="2" Mandatory="Yes"/>
+        <ItemRef ItemOID="I.CM.CMINDC"  OrderNumber="3" Mandatory="No"/>
+      </ItemGroupDef>
+      <ItemGroupDef OID="IG.QS_MADRS" Name="MADRS" Repeating="No" SASDatasetName="QS">
+        <ItemRef ItemOID="I.QS.MADRS1"  OrderNumber="1"  Mandatory="Yes"/>
+        <ItemRef ItemOID="I.QS.MADRS2"  OrderNumber="2"  Mandatory="Yes"/>
+        <ItemRef ItemOID="I.QS.MADRS3"  OrderNumber="3"  Mandatory="Yes"/>
+        <ItemRef ItemOID="I.QS.MADRS4"  OrderNumber="4"  Mandatory="Yes"/>
+        <ItemRef ItemOID="I.QS.MADRS5"  OrderNumber="5"  Mandatory="Yes"/>
+        <ItemRef ItemOID="I.QS.MADRS6"  OrderNumber="6"  Mandatory="Yes"/>
+        <ItemRef ItemOID="I.QS.MADRS7"  OrderNumber="7"  Mandatory="Yes"/>
+        <ItemRef ItemOID="I.QS.MADRS8"  OrderNumber="8"  Mandatory="Yes"/>
+        <ItemRef ItemOID="I.QS.MADRS9"  OrderNumber="9"  Mandatory="Yes"/>
+        <ItemRef ItemOID="I.QS.MADRS10" OrderNumber="10" Mandatory="Yes"/>
+      </ItemGroupDef>
+      <ItemGroupDef OID="IG.QS_HAMD" Name="HAMD" Repeating="No" SASDatasetName="QS">
+        <ItemRef ItemOID="I.QS.HAMD1" OrderNumber="1" Mandatory="Yes"/>
+        <ItemRef ItemOID="I.QS.HAMD2" OrderNumber="2" Mandatory="Yes"/>
+        <ItemRef ItemOID="I.QS.HAMD3" OrderNumber="3" Mandatory="Yes"/>
+        <ItemRef ItemOID="I.QS.HAMD4" OrderNumber="4" Mandatory="Yes"/>
+        <ItemRef ItemOID="I.QS.HAMD5" OrderNumber="5" Mandatory="Yes"/>
+        <ItemRef ItemOID="I.QS.HAMD6" OrderNumber="6" Mandatory="Yes"/>
+        <ItemRef ItemOID="I.QS.HAMD7" OrderNumber="7" Mandatory="Yes"/>
+      </ItemGroupDef>
+
+      <!-- ── ItemDef ──────────────────────────────────────────────────────── -->
+      <!-- DM -->
+      <ItemDef OID="I.DM.SUBJID" Name="SUBJID" DataType="text" Length="20">
+        <Question><TranslatedText xml:lang="en">Subject ID</TranslatedText></Question>
+        <Alias Context="CDASH" Name="SUBJID"/>
+      </ItemDef>
+      <ItemDef OID="I.DM.BIRTHDT" Name="BIRTHDT" DataType="date">
+        <Question><TranslatedText xml:lang="en">Date of Birth</TranslatedText></Question>
+        <Alias Context="CDASH" Name="BRTHDAT"/>
+      </ItemDef>
+      <ItemDef OID="I.DM.SEX" Name="SEX" DataType="text" Length="1">
+        <Question><TranslatedText xml:lang="en">Sex at Birth</TranslatedText></Question>
+        <CodeListRef CodeListOID="CL.SEX"/>
+        <Alias Context="CDASH" Name="SEX"/>
+      </ItemDef>
+      <ItemDef OID="I.DM.RACE" Name="RACE" DataType="text" Length="40">
+        <Question><TranslatedText xml:lang="en">Race</TranslatedText></Question>
+        <Alias Context="CDASH" Name="RACE"/>
+      </ItemDef>
+
+      <!-- IE -->
+      <ItemDef OID="I.IE.INC01" Name="INC01" DataType="text" Length="1">
+        <Question><TranslatedText xml:lang="en">Inclusion 1: MADRS total score ≥ 26 at screening — Met?</TranslatedText></Question>
+        <CodeListRef CodeListOID="CL.YN"/>
+        <Alias Context="CDASH" Name="IETESTCD"/>
+      </ItemDef>
+      <ItemDef OID="I.IE.EXC01" Name="EXC01" DataType="text" Length="1">
+        <Question><TranslatedText xml:lang="en">Exclusion 1: Current psychotic features — Present?</TranslatedText></Question>
+        <CodeListRef CodeListOID="CL.YN"/>
+        <Alias Context="CDASH" Name="IETESTCD"/>
+      </ItemDef>
+
+      <!-- MH -->
+      <ItemDef OID="I.MH.MHTERM" Name="MHTERM" DataType="text" Length="200">
+        <Question><TranslatedText xml:lang="en">Medical history term</TranslatedText></Question>
+        <Alias Context="CDASH" Name="MHTERM"/>
+      </ItemDef>
+      <ItemDef OID="I.MH.MHSTDTC" Name="MHSTDTC" DataType="date">
+        <Question><TranslatedText xml:lang="en">Onset date</TranslatedText></Question>
+        <Alias Context="CDASH" Name="MHSTDAT"/>
+      </ItemDef>
+      <ItemDef OID="I.MH.MHONGO" Name="MHONGO" DataType="text" Length="1">
+        <Question><TranslatedText xml:lang="en">Ongoing?</TranslatedText></Question>
+        <CodeListRef CodeListOID="CL.YN"/>
+        <Alias Context="CDASH" Name="MHONGO"/>
+      </ItemDef>
+
+      <!-- VS -->
+      <ItemDef OID="I.VS.SYSBP" Name="SYSBP" DataType="integer" Length="3">
+        <Question><TranslatedText xml:lang="en">Systolic BP (mmHg)</TranslatedText></Question>
+        <MeasurementUnitRef MeasurementUnitOID="MU.mmHg"/>
+        <RangeCheck Comparator="GE" SoftHard="Soft"><CheckValue>60</CheckValue></RangeCheck>
+        <RangeCheck Comparator="LE" SoftHard="Hard"><CheckValue>250</CheckValue></RangeCheck>
+        <Alias Context="CDASH" Name="SYSBP"/>
+      </ItemDef>
+      <ItemDef OID="I.VS.DIABP" Name="DIABP" DataType="integer" Length="3">
+        <Question><TranslatedText xml:lang="en">Diastolic BP (mmHg)</TranslatedText></Question>
+        <MeasurementUnitRef MeasurementUnitOID="MU.mmHg"/>
+        <Alias Context="CDASH" Name="DIABP"/>
+      </ItemDef>
+      <ItemDef OID="I.VS.PULSE" Name="PULSE" DataType="integer" Length="3">
+        <Question><TranslatedText xml:lang="en">Pulse rate (bpm)</TranslatedText></Question>
+        <MeasurementUnitRef MeasurementUnitOID="MU.bpm"/>
+        <Alias Context="CDASH" Name="PULSE"/>
+      </ItemDef>
+
+      <!-- AE -->
+      <ItemDef OID="I.AE.AETERM" Name="AETERM" DataType="text" Length="200">
+        <Question><TranslatedText xml:lang="en">Adverse Event term (verbatim)</TranslatedText></Question>
+        <Alias Context="CDASH" Name="AETERM"/>
+      </ItemDef>
+      <ItemDef OID="I.AE.AESTDTC" Name="AESTDTC" DataType="date">
+        <Question><TranslatedText xml:lang="en">AE start date</TranslatedText></Question>
+        <Alias Context="CDASH" Name="AESTDAT"/>
+      </ItemDef>
+      <ItemDef OID="I.AE.AESEV" Name="AESEV" DataType="text" Length="10">
+        <Question><TranslatedText xml:lang="en">Severity</TranslatedText></Question>
+        <CodeListRef CodeListOID="CL.AESEV"/>
+        <Alias Context="CDASH" Name="AESEV"/>
+      </ItemDef>
+      <ItemDef OID="I.AE.AESER" Name="AESER" DataType="text" Length="1">
+        <Question><TranslatedText xml:lang="en">Serious?</TranslatedText></Question>
+        <CodeListRef CodeListOID="CL.YN"/>
+        <Alias Context="CDASH" Name="AESER"/>
+      </ItemDef>
+
+      <!-- CM -->
+      <ItemDef OID="I.CM.CMTRT" Name="CMTRT" DataType="text" Length="200">
+        <Question><TranslatedText xml:lang="en">Medication name</TranslatedText></Question>
+        <Alias Context="CDASH" Name="CMTRT"/>
+      </ItemDef>
+      <ItemDef OID="I.CM.CMSTDTC" Name="CMSTDTC" DataType="date">
+        <Question><TranslatedText xml:lang="en">CM start date</TranslatedText></Question>
+        <Alias Context="CDASH" Name="CMSTDAT"/>
+      </ItemDef>
+      <ItemDef OID="I.CM.CMINDC" Name="CMINDC" DataType="text" Length="200">
+        <Question><TranslatedText xml:lang="en">Indication</TranslatedText></Question>
+        <Alias Context="CDASH" Name="CMINDC"/>
+      </ItemDef>
+
+      <!-- QS: MADRS items (10 items, each 0-6 scale) -->
+      <ItemDef OID="I.QS.MADRS1" Name="MADRS1" DataType="integer" Length="1">
+        <Question><TranslatedText xml:lang="en">MADRS-1: Apparent sadness (0-6)</TranslatedText></Question>
+        <RangeCheck Comparator="GE" SoftHard="Hard"><CheckValue>0</CheckValue></RangeCheck>
+        <RangeCheck Comparator="LE" SoftHard="Hard"><CheckValue>6</CheckValue></RangeCheck>
+        <Alias Context="CDASH" Name="QSORRES"/>
+      </ItemDef>
+      <ItemDef OID="I.QS.MADRS2" Name="MADRS2" DataType="integer" Length="1">
+        <Question><TranslatedText xml:lang="en">MADRS-2: Reported sadness (0-6)</TranslatedText></Question>
+        <RangeCheck Comparator="GE" SoftHard="Hard"><CheckValue>0</CheckValue></RangeCheck>
+        <RangeCheck Comparator="LE" SoftHard="Hard"><CheckValue>6</CheckValue></RangeCheck>
+      </ItemDef>
+      <ItemDef OID="I.QS.MADRS3" Name="MADRS3" DataType="integer" Length="1">
+        <Question><TranslatedText xml:lang="en">MADRS-3: Inner tension (0-6)</TranslatedText></Question>
+        <RangeCheck Comparator="GE" SoftHard="Hard"><CheckValue>0</CheckValue></RangeCheck>
+        <RangeCheck Comparator="LE" SoftHard="Hard"><CheckValue>6</CheckValue></RangeCheck>
+      </ItemDef>
+      <ItemDef OID="I.QS.MADRS4" Name="MADRS4" DataType="integer" Length="1">
+        <Question><TranslatedText xml:lang="en">MADRS-4: Reduced sleep (0-6)</TranslatedText></Question>
+        <RangeCheck Comparator="GE" SoftHard="Hard"><CheckValue>0</CheckValue></RangeCheck>
+        <RangeCheck Comparator="LE" SoftHard="Hard"><CheckValue>6</CheckValue></RangeCheck>
+      </ItemDef>
+      <ItemDef OID="I.QS.MADRS5" Name="MADRS5" DataType="integer" Length="1">
+        <Question><TranslatedText xml:lang="en">MADRS-5: Reduced appetite (0-6)</TranslatedText></Question>
+        <RangeCheck Comparator="GE" SoftHard="Hard"><CheckValue>0</CheckValue></RangeCheck>
+        <RangeCheck Comparator="LE" SoftHard="Hard"><CheckValue>6</CheckValue></RangeCheck>
+      </ItemDef>
+      <ItemDef OID="I.QS.MADRS6" Name="MADRS6" DataType="integer" Length="1">
+        <Question><TranslatedText xml:lang="en">MADRS-6: Concentration difficulties (0-6)</TranslatedText></Question>
+        <RangeCheck Comparator="GE" SoftHard="Hard"><CheckValue>0</CheckValue></RangeCheck>
+        <RangeCheck Comparator="LE" SoftHard="Hard"><CheckValue>6</CheckValue></RangeCheck>
+      </ItemDef>
+      <ItemDef OID="I.QS.MADRS7" Name="MADRS7" DataType="integer" Length="1">
+        <Question><TranslatedText xml:lang="en">MADRS-7: Lassitude (0-6)</TranslatedText></Question>
+        <RangeCheck Comparator="GE" SoftHard="Hard"><CheckValue>0</CheckValue></RangeCheck>
+        <RangeCheck Comparator="LE" SoftHard="Hard"><CheckValue>6</CheckValue></RangeCheck>
+      </ItemDef>
+      <ItemDef OID="I.QS.MADRS8" Name="MADRS8" DataType="integer" Length="1">
+        <Question><TranslatedText xml:lang="en">MADRS-8: Inability to feel (0-6)</TranslatedText></Question>
+        <RangeCheck Comparator="GE" SoftHard="Hard"><CheckValue>0</CheckValue></RangeCheck>
+        <RangeCheck Comparator="LE" SoftHard="Hard"><CheckValue>6</CheckValue></RangeCheck>
+      </ItemDef>
+      <ItemDef OID="I.QS.MADRS9" Name="MADRS9" DataType="integer" Length="1">
+        <Question><TranslatedText xml:lang="en">MADRS-9: Pessimistic thoughts (0-6)</TranslatedText></Question>
+        <RangeCheck Comparator="GE" SoftHard="Hard"><CheckValue>0</CheckValue></RangeCheck>
+        <RangeCheck Comparator="LE" SoftHard="Hard"><CheckValue>6</CheckValue></RangeCheck>
+      </ItemDef>
+      <ItemDef OID="I.QS.MADRS10" Name="MADRS10" DataType="integer" Length="1">
+        <Question><TranslatedText xml:lang="en">MADRS-10: Suicidal thoughts (0-6)</TranslatedText></Question>
+        <RangeCheck Comparator="GE" SoftHard="Hard"><CheckValue>0</CheckValue></RangeCheck>
+        <RangeCheck Comparator="LE" SoftHard="Hard"><CheckValue>6</CheckValue></RangeCheck>
+      </ItemDef>
+
+      <!-- QS: HAM-D items (7 items, scales mostly 0-4 but normalised here 0-6 for fixture simplicity) -->
+      <ItemDef OID="I.QS.HAMD1" Name="HAMD1" DataType="integer" Length="1">
+        <Question><TranslatedText xml:lang="en">HAM-D-1: Depressed mood (0-6)</TranslatedText></Question>
+        <RangeCheck Comparator="GE" SoftHard="Hard"><CheckValue>0</CheckValue></RangeCheck>
+        <RangeCheck Comparator="LE" SoftHard="Hard"><CheckValue>6</CheckValue></RangeCheck>
+      </ItemDef>
+      <ItemDef OID="I.QS.HAMD2" Name="HAMD2" DataType="integer" Length="1">
+        <Question><TranslatedText xml:lang="en">HAM-D-2: Feelings of guilt (0-6)</TranslatedText></Question>
+        <RangeCheck Comparator="GE" SoftHard="Hard"><CheckValue>0</CheckValue></RangeCheck>
+        <RangeCheck Comparator="LE" SoftHard="Hard"><CheckValue>6</CheckValue></RangeCheck>
+      </ItemDef>
+      <ItemDef OID="I.QS.HAMD3" Name="HAMD3" DataType="integer" Length="1">
+        <Question><TranslatedText xml:lang="en">HAM-D-3: Suicide (0-6)</TranslatedText></Question>
+        <RangeCheck Comparator="GE" SoftHard="Hard"><CheckValue>0</CheckValue></RangeCheck>
+        <RangeCheck Comparator="LE" SoftHard="Hard"><CheckValue>6</CheckValue></RangeCheck>
+      </ItemDef>
+      <ItemDef OID="I.QS.HAMD4" Name="HAMD4" DataType="integer" Length="1">
+        <Question><TranslatedText xml:lang="en">HAM-D-4: Insomnia (early) (0-6)</TranslatedText></Question>
+        <RangeCheck Comparator="GE" SoftHard="Hard"><CheckValue>0</CheckValue></RangeCheck>
+        <RangeCheck Comparator="LE" SoftHard="Hard"><CheckValue>6</CheckValue></RangeCheck>
+      </ItemDef>
+      <ItemDef OID="I.QS.HAMD5" Name="HAMD5" DataType="integer" Length="1">
+        <Question><TranslatedText xml:lang="en">HAM-D-5: Insomnia (middle) (0-6)</TranslatedText></Question>
+        <RangeCheck Comparator="GE" SoftHard="Hard"><CheckValue>0</CheckValue></RangeCheck>
+        <RangeCheck Comparator="LE" SoftHard="Hard"><CheckValue>6</CheckValue></RangeCheck>
+      </ItemDef>
+      <ItemDef OID="I.QS.HAMD6" Name="HAMD6" DataType="integer" Length="1">
+        <Question><TranslatedText xml:lang="en">HAM-D-6: Insomnia (late) (0-6)</TranslatedText></Question>
+        <RangeCheck Comparator="GE" SoftHard="Hard"><CheckValue>0</CheckValue></RangeCheck>
+        <RangeCheck Comparator="LE" SoftHard="Hard"><CheckValue>6</CheckValue></RangeCheck>
+      </ItemDef>
+      <ItemDef OID="I.QS.HAMD7" Name="HAMD7" DataType="integer" Length="1">
+        <Question><TranslatedText xml:lang="en">HAM-D-7: Work and activities (0-6)</TranslatedText></Question>
+        <RangeCheck Comparator="GE" SoftHard="Hard"><CheckValue>0</CheckValue></RangeCheck>
+        <RangeCheck Comparator="LE" SoftHard="Hard"><CheckValue>6</CheckValue></RangeCheck>
+      </ItemDef>
+
+      <!-- ── CodeList ─────────────────────────────────────────────────────── -->
+      <CodeList OID="CL.YN" Name="Yes/No" DataType="text">
+        <CodeListItem CodedValue="Y" OrderNumber="1">
+          <Decode><TranslatedText xml:lang="en">Yes</TranslatedText></Decode>
+        </CodeListItem>
+        <CodeListItem CodedValue="N" OrderNumber="2">
+          <Decode><TranslatedText xml:lang="en">No</TranslatedText></Decode>
+        </CodeListItem>
+      </CodeList>
+      <CodeList OID="CL.SEX" Name="Sex" DataType="text">
+        <CodeListItem CodedValue="M" OrderNumber="1">
+          <Decode><TranslatedText xml:lang="en">Male</TranslatedText></Decode>
+        </CodeListItem>
+        <CodeListItem CodedValue="F" OrderNumber="2">
+          <Decode><TranslatedText xml:lang="en">Female</TranslatedText></Decode>
+        </CodeListItem>
+      </CodeList>
+      <CodeList OID="CL.AESEV" Name="AE Severity" DataType="text">
+        <CodeListItem CodedValue="MILD" OrderNumber="1">
+          <Decode><TranslatedText xml:lang="en">Mild</TranslatedText></Decode>
+        </CodeListItem>
+        <CodeListItem CodedValue="MODERATE" OrderNumber="2">
+          <Decode><TranslatedText xml:lang="en">Moderate</TranslatedText></Decode>
+        </CodeListItem>
+        <CodeListItem CodedValue="SEVERE" OrderNumber="3">
+          <Decode><TranslatedText xml:lang="en">Severe</TranslatedText></Decode>
+        </CodeListItem>
+      </CodeList>
+
+    </MetaDataVersion>
+  </Study>
+</ODM>
