@@ -27,3 +27,6 @@ test_outputs/
 *[ ]copy/
 test_output/
 SESSION_NOTES_*.md
+
+# Claude Code per-user state (local permissions, lock files)
+.claude/
