@@ -48,6 +48,10 @@ MEDIDATA_RAVE_XML = FIXTURES / "medidata_rave_synthetic.xml"
 VEEVA_XML = FIXTURES / "veeva_synthetic.xml"
 VIEDOC_XML = FIXTURES / "viedoc_synthetic.xml"
 IMEDNET_XML = FIXTURES / "imednet_synthetic.xml"
+ORACLE_INFORM_XML = FIXTURES / "oracle_inform_synthetic.xml"
+REDCAP_XML = FIXTURES / "redcap_synthetic.xml"
+CASTOR_XML = FIXTURES / "castor_synthetic.xml"
+ZELTA_XML = FIXTURES / "zelta_synthetic.xml"
 
 # ── Lazy imports (only imported when tests run) ───────────────────────────────
 def _import_reader():
@@ -1372,6 +1376,373 @@ class TestImednetFixture(unittest.TestCase):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# Test suite 9 — Oracle InForm synthetic fixture
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestOracleInFormFixture(unittest.TestCase):
+    """
+    End-to-end coverage of the Oracle InForm 6.3 synthetic fixture
+    (tests/migration/fixtures/oracle_inform_synthetic.xml). Phase 2 RA
+    study capturing InForm's distinctive patterns: pf: namespace
+    (Phase Forward), pf:DBUID / pf:GUID on every ItemDef, and the
+    hierarchical dot-notation OID convention frm<F>.sct<S>.itm<I>.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        import re as _re
+        from odm_validator import validate_odm
+        parse_odm_metadata, *_ = _import_reader()
+        transform, *_ = _import_spec()
+        cls.validate = staticmethod(validate_odm)
+        cls.parse    = staticmethod(parse_odm_metadata)
+        cls.transform = staticmethod(transform)
+        cls.raw  = _load(ORACLE_INFORM_XML)
+        cls.odm  = parse_odm_metadata(cls.raw)
+        cls.spec = transform(cls.odm)
+        cls.HIER_RE = _re.compile(r"^frm[A-Za-z0-9]+\.sct[A-Za-z0-9]+\.itm[A-Za-z0-9]+$")
+
+    def test_vendor_detected_as_oracle_inform(self):
+        """Originator='Oracle InForm 6.3' must resolve to 'Oracle InForm'."""
+        self.assertEqual(self.odm["source_system"], "Oracle InForm")
+
+    def test_pf_vendor_attrs_captured_on_items(self):
+        """At least some ItemDef elements must carry pf: DBUID/GUID vendor attrs."""
+        items_with_pf = [it for it in self.odm["items"]
+                         if any("DBUID" in k or "GUID" in k
+                                for k in (it.get("vendor") or {}))]
+        self.assertGreater(len(items_with_pf), 0,
+                           "No pf: DBUID/GUID vendor attrs captured on any ItemDef")
+        # All 25 items in this fixture carry both attrs — assert strongly
+        self.assertEqual(len(items_with_pf), len(self.odm["items"]),
+                         "Expected pf: attrs on every item, found "
+                         f"{len(items_with_pf)} / {len(self.odm['items'])}")
+
+    def test_pf_dbuid_value_on_specific_item(self):
+        """frmDM.sctDM.itmSUBJID must carry the exact DBUID value from the fixture."""
+        it = next((x for x in self.odm["items"]
+                   if x["oid"] == "frmDM.sctDM.itmSUBJID"), None)
+        self.assertIsNotNone(it, "frmDM.sctDM.itmSUBJID missing from parsed items")
+        vendor = it.get("vendor") or {}
+        # The vendor key prefix depends on VENDOR_NS resolution — match on suffix
+        dbuid_keys = [k for k in vendor if k.endswith(":DBUID")]
+        self.assertGreater(len(dbuid_keys), 0, "No DBUID attr captured on SUBJID item")
+        self.assertEqual(vendor[dbuid_keys[0]], "IT-100001-DBUID")
+
+    def test_layer_1_passes(self):
+        rep = self.validate(self.raw)
+        self.assertEqual(rep.layer_results["layer_1"], "PASS")
+
+    def test_layer_2_passes(self):
+        rep = self.validate(self.raw)
+        self.assertEqual(rep.layer_results["layer_2"], "PASS")
+
+    def test_layer_3_passes(self):
+        rep = self.validate(self.raw)
+        self.assertEqual(rep.layer_results["layer_3"], "PASS")
+
+    def test_can_proceed(self):
+        rep = self.validate(self.raw)
+        self.assertTrue(rep.can_proceed, f"Fixture must be migratable: {rep.summary}")
+
+    def test_protocol_number_is_ra2024(self):
+        self.assertEqual(self.spec["study_meta"]["protocol_number"], "RA2024")
+
+    def test_oc9_ae_on_se_common_only(self):
+        ae = next((f for f in self.spec["forms"] if f["form_id"] == "AE"), None)
+        self.assertIsNotNone(ae)
+        self.assertEqual(ae["visits_assigned"], ["SE_COMMON"],
+                         f"OC-9 violation: AE visits_assigned={ae['visits_assigned']}")
+
+    def test_oc9_cm_on_se_common_only(self):
+        cm = next((f for f in self.spec["forms"] if f["form_id"] == "CM"), None)
+        self.assertIsNotNone(cm)
+        self.assertEqual(cm["visits_assigned"], ["SE_COMMON"],
+                         f"OC-9 violation: CM visits_assigned={cm['visits_assigned']}")
+
+    def test_hierarchical_oid_pattern_preserved_on_items(self):
+        """Every ItemDef OID must follow the InForm frm<F>.sct<S>.itm<I> pattern."""
+        non_matching = [it["oid"] for it in self.odm["items"]
+                        if not self.HIER_RE.match(it["oid"])]
+        self.assertEqual(non_matching, [],
+                         f"Items not matching hierarchical OID pattern: {non_matching}")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Test suite 10 — REDCap Cloud synthetic fixture
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestRedcapFixture(unittest.TestCase):
+    """
+    End-to-end coverage of the REDCap Cloud 14.0.0 synthetic fixture
+    (tests/migration/fixtures/redcap_synthetic.xml). Phase 1 first-in-
+    human vaccine study with a multi-arm Protocol (ARM1 active vs ARM2
+    placebo). REDCap exports characteristically omit Originator and
+    populate SourceSystem instead — vendor detection here falls through
+    to the namespace-sniff fallback against xmlns:redcap.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        from odm_validator import validate_odm
+        parse_odm_metadata, *_ = _import_reader()
+        transform, *_ = _import_spec()
+        cls.validate = staticmethod(validate_odm)
+        cls.parse    = staticmethod(parse_odm_metadata)
+        cls.transform = staticmethod(transform)
+        cls.raw  = _load(REDCAP_XML)
+        cls.odm  = parse_odm_metadata(cls.raw)
+        cls.spec = transform(cls.odm)
+
+    def test_vendor_detected_as_redcap(self):
+        """No Originator on root — detection must fall through to the
+        xmlns:redcap namespace sniff and return 'REDCap'."""
+        self.assertEqual(self.odm["source_system"], "REDCap")
+
+    def test_redcap_namespace_attrs_captured_on_items(self):
+        """At least some ItemDef elements must carry redcap: vendor attrs."""
+        items_with_redcap = [it for it in self.odm["items"]
+                             if any(k.startswith("redcap:")
+                                    for k in (it.get("vendor") or {}))]
+        self.assertGreater(len(items_with_redcap), 0,
+                           "No redcap: vendor attrs captured on any ItemDef")
+
+    def test_redcap_variable_attr_value(self):
+        """I.DM.SUBJID must carry redcap:Variable='subjid' in its vendor dict."""
+        it = next((x for x in self.odm["items"] if x["oid"] == "I.DM.SUBJID"), None)
+        self.assertIsNotNone(it, "I.DM.SUBJID missing from parsed items")
+        self.assertEqual(it["vendor"].get("redcap:Variable"), "subjid")
+
+    def test_odm_version_is_131(self):
+        """REDCap historically targets ODM 1.3.1 — verify that's what we parse."""
+        self.assertEqual(self.odm["odm_version"], "1.3.1")
+
+    def test_layer_1_passes(self):
+        rep = self.validate(self.raw)
+        self.assertEqual(rep.layer_results["layer_1"], "PASS")
+
+    def test_layer_2_passes(self):
+        rep = self.validate(self.raw)
+        self.assertEqual(rep.layer_results["layer_2"], "PASS")
+
+    def test_layer_3_passes(self):
+        rep = self.validate(self.raw)
+        self.assertEqual(rep.layer_results["layer_3"], "PASS")
+
+    def test_can_proceed(self):
+        rep = self.validate(self.raw)
+        self.assertTrue(rep.can_proceed, f"Fixture must be migratable: {rep.summary}")
+
+    def test_protocol_number_is_vax1001(self):
+        self.assertEqual(self.spec["study_meta"]["protocol_number"], "VAX1001")
+
+    def test_oc9_ae_on_se_common_only(self):
+        ae = next((f for f in self.spec["forms"] if f["form_id"] == "AE"), None)
+        self.assertIsNotNone(ae)
+        self.assertEqual(ae["visits_assigned"], ["SE_COMMON"],
+                         f"OC-9 violation: AE visits_assigned={ae['visits_assigned']}")
+
+    def test_oc9_cm_on_se_common_only(self):
+        cm = next((f for f in self.spec["forms"] if f["form_id"] == "CM"), None)
+        self.assertIsNotNone(cm)
+        self.assertEqual(cm["visits_assigned"], ["SE_COMMON"],
+                         f"OC-9 violation: CM visits_assigned={cm['visits_assigned']}")
+
+    def test_multi_arm_structure_detected(self):
+        """Protocol must expose two Arms — ARM1 active vaccine + ARM2 placebo."""
+        arms = self.odm["protocol"]["arms"]
+        self.assertEqual(len(arms), 2,
+                         f"Expected 2 arms, found {len(arms)}: {arms}")
+        arm_oids = {a["oid"] for a in arms}
+        self.assertEqual(arm_oids, {"ARM1", "ARM2"},
+                         f"Arm OIDs do not match: {arm_oids}")
+        # And verify the names so we know the placebo arm is distinguishable
+        arm_by_oid = {a["oid"]: a["name"] for a in arms}
+        self.assertIn("Vaccine", arm_by_oid["ARM1"])
+        self.assertIn("Placebo", arm_by_oid["ARM2"])
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Test suite 11 — Castor EDC synthetic fixture
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestCastorFixture(unittest.TestCase):
+    """
+    End-to-end coverage of the Castor EDC 2024.1 synthetic fixture
+    (tests/migration/fixtures/castor_synthetic.xml). Phase 2 atopic
+    dermatitis study. Exercises Castor's distinctive patterns: UUID-
+    style FormDef OIDs, castor: namespace per-item attrs, omitted
+    BasicDefinitions (units in question text), and an EASI dermatology
+    score with four body-region items constrained to 0-6.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        import re as _re
+        from odm_validator import validate_odm
+        parse_odm_metadata, *_ = _import_reader()
+        transform, *_ = _import_spec()
+        cls.validate = staticmethod(validate_odm)
+        cls.parse    = staticmethod(parse_odm_metadata)
+        cls.transform = staticmethod(transform)
+        cls.raw  = _load(CASTOR_XML)
+        cls.odm  = parse_odm_metadata(cls.raw)
+        cls.spec = transform(cls.odm)
+        cls.UUID_FORM_RE = _re.compile(
+            r"^F_[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-"
+        )
+
+    def test_vendor_detected_as_castor_edc(self):
+        """Originator='Castor EDC 2024.1' must resolve to 'Castor EDC'."""
+        self.assertEqual(self.odm["source_system"], "Castor EDC")
+
+    def test_castor_namespace_attrs_captured_on_items(self):
+        """All ItemDef elements in this fixture must carry castor: vendor attrs."""
+        items_with_castor = [it for it in self.odm["items"]
+                             if any(k.startswith("castor:")
+                                    for k in (it.get("vendor") or {}))]
+        self.assertGreater(len(items_with_castor), 0,
+                           "No castor: vendor attrs captured on any ItemDef")
+        self.assertEqual(len(items_with_castor), len(self.odm["items"]),
+                         "Expected castor: attrs on every item, found "
+                         f"{len(items_with_castor)} / {len(self.odm['items'])}")
+
+    def test_uuid_style_form_oids_preserved(self):
+        """Most FormDef OIDs follow Castor's F_<UUID-prefix>-<TYPE> pattern."""
+        uuid_forms = [f["oid"] for f in self.odm["forms"]
+                      if self.UUID_FORM_RE.match(f["oid"])]
+        self.assertGreaterEqual(len(uuid_forms), 5,
+                                f"Too few UUID-style form OIDs: {uuid_forms}")
+
+    def test_layer_1_passes(self):
+        rep = self.validate(self.raw)
+        self.assertEqual(rep.layer_results["layer_1"], "PASS")
+
+    def test_layer_2_passes(self):
+        rep = self.validate(self.raw)
+        self.assertEqual(rep.layer_results["layer_2"], "PASS")
+
+    def test_layer_3_passes(self):
+        rep = self.validate(self.raw)
+        self.assertEqual(rep.layer_results["layer_3"], "PASS")
+
+    def test_can_proceed(self):
+        rep = self.validate(self.raw)
+        self.assertTrue(rep.can_proceed, f"Fixture must be migratable: {rep.summary}")
+
+    def test_protocol_number_is_derm2024(self):
+        self.assertEqual(self.spec["study_meta"]["protocol_number"], "DERM2024")
+
+    def test_oc9_ae_on_se_common_only(self):
+        ae = next((f for f in self.spec["forms"] if f["form_id"] == "AE"), None)
+        self.assertIsNotNone(ae)
+        self.assertEqual(ae["visits_assigned"], ["SE_COMMON"],
+                         f"OC-9 violation: AE visits_assigned={ae['visits_assigned']}")
+
+    def test_oc9_cm_on_se_common_only(self):
+        cm = next((f for f in self.spec["forms"] if f["form_id"] == "CM"), None)
+        self.assertIsNotNone(cm)
+        self.assertEqual(cm["visits_assigned"], ["SE_COMMON"],
+                         f"OC-9 violation: CM visits_assigned={cm['visits_assigned']}")
+
+    def test_easi_form_present_with_constrained_items(self):
+        """EASI form must be in spec with 4 body-region items each constrained 0-6."""
+        easi = next((f for f in self.spec["forms"] if f["form_id"] == "EASI"), None)
+        self.assertIsNotNone(easi, f"EASI form missing. Forms: "
+                                   f"{sorted(f['form_id'] for f in self.spec['forms'])}")
+        constrained = [r for r in easi["survey"] if r.get("constraint")]
+        self.assertEqual(len(constrained), 4,
+                         f"EASI form expected 4 constrained body-region items, "
+                         f"found {len(constrained)}")
+        # Each row should have a 0-6 bound
+        for r in constrained:
+            self.assertIn("0", r["constraint"],
+                          f"EASI row {r.get('name')} missing 0 bound: {r['constraint']}")
+            self.assertIn("6", r["constraint"],
+                          f"EASI row {r.get('name')} missing 6 bound: {r['constraint']}")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Test suite 12 — Zelta (Merative) synthetic fixture
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestZeltaFixture(unittest.TestCase):
+    """
+    End-to-end coverage of the Zelta (Merative) 2024.1 synthetic fixture
+    (tests/migration/fixtures/zelta_synthetic.xml). Phase 3 asthma study
+    with three repeating 4-week treatment cycles and a respiratory-
+    specific SP (spirometry) form. Zelta has no widely-known public
+    namespace; vendor detection here is Originator-string based only.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        from odm_validator import validate_odm
+        parse_odm_metadata, *_ = _import_reader()
+        transform, *_ = _import_spec()
+        cls.validate = staticmethod(validate_odm)
+        cls.parse    = staticmethod(parse_odm_metadata)
+        cls.transform = staticmethod(transform)
+        cls.raw  = _load(ZELTA_XML)
+        cls.odm  = parse_odm_metadata(cls.raw)
+        cls.spec = transform(cls.odm)
+
+    def test_vendor_detected_via_originator(self):
+        """Originator='Zelta 2024.1' must resolve to 'Zelta (Merative)'."""
+        self.assertEqual(self.odm["source_system"], "Zelta (Merative)")
+
+    def test_layer_1_passes(self):
+        rep = self.validate(self.raw)
+        self.assertEqual(rep.layer_results["layer_1"], "PASS")
+
+    def test_layer_2_passes(self):
+        rep = self.validate(self.raw)
+        self.assertEqual(rep.layer_results["layer_2"], "PASS")
+
+    def test_layer_3_passes(self):
+        rep = self.validate(self.raw)
+        self.assertEqual(rep.layer_results["layer_3"], "PASS")
+
+    def test_can_proceed(self):
+        rep = self.validate(self.raw)
+        self.assertTrue(rep.can_proceed, f"Fixture must be migratable: {rep.summary}")
+
+    def test_protocol_number_is_resp3001(self):
+        self.assertEqual(self.spec["study_meta"]["protocol_number"], "RESP3001")
+
+    def test_oc9_ae_on_se_common_only(self):
+        ae = next((f for f in self.spec["forms"] if f["form_id"] == "AE"), None)
+        self.assertIsNotNone(ae)
+        self.assertEqual(ae["visits_assigned"], ["SE_COMMON"],
+                         f"OC-9 violation: AE visits_assigned={ae['visits_assigned']}")
+
+    def test_oc9_cm_on_se_common_only(self):
+        cm = next((f for f in self.spec["forms"] if f["form_id"] == "CM"), None)
+        self.assertIsNotNone(cm)
+        self.assertEqual(cm["visits_assigned"], ["SE_COMMON"],
+                         f"OC-9 violation: CM visits_assigned={cm['visits_assigned']}")
+
+    def test_sp_form_present_with_constrained_items(self):
+        """SP (spirometry) form must be in spec with FEV1 + FVC constrained items."""
+        sp = next((f for f in self.spec["forms"] if f["form_id"] == "SP"), None)
+        self.assertIsNotNone(sp, f"SP form missing. Forms: "
+                                 f"{sorted(f['form_id'] for f in self.spec['forms'])}")
+        constrained = [r for r in sp["survey"] if r.get("constraint")]
+        self.assertGreaterEqual(len(constrained), 2,
+                                f"SP form expected ≥2 constrained items "
+                                f"(FEV1 + FVC), found {len(constrained)}")
+
+    def test_cycle_events_present_and_repeating(self):
+        """SE_CYCLE1/2/3 must all be parsed and marked Repeating='Yes'."""
+        ev_by_oid = {e["oid"]: e for e in self.odm["events"]}
+        for cycle in ("SE_CYCLE1", "SE_CYCLE2", "SE_CYCLE3"):
+            self.assertIn(cycle, ev_by_oid,
+                          f"{cycle} missing from parsed events")
+            self.assertTrue(ev_by_oid[cycle]["repeating"],
+                            f"{cycle} should be Repeating='Yes'")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # Test runner
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -1380,7 +1751,9 @@ def run_tests(verbosity=1):
     suite  = unittest.TestSuite()
     for cls in (TestOdmReader, TestOdmToSpec, TestVendorRegistry,
                 TestOdmValidator, TestMedidataRaveFixture,
-                TestVeevaFixture, TestViedocFixture, TestImednetFixture):
+                TestVeevaFixture, TestViedocFixture, TestImednetFixture,
+                TestOracleInFormFixture, TestRedcapFixture,
+                TestCastorFixture, TestZeltaFixture):
         suite.addTests(loader.loadTestsFromTestCase(cls))
     runner = unittest.TextTestRunner(verbosity=verbosity)
     result = runner.run(suite)

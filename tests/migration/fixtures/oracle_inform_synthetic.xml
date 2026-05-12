@@ -1,0 +1,374 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Synthetic Oracle InForm 6.3 ODM 1.3.2 export for migration tests.
+  Phase 2 rheumatoid arthritis study (RA2024). Captures InForm's
+  distinctive patterns:
+    - pf: namespace (Phase Forward / Oracle InForm Adapter)
+    - pf:MappingVersion, pf:HierarchicalOIDs, pf:InFormAdapterVersion
+      on the ODM root
+    - pf:DBUID and pf:GUID attributes on MeasurementUnit and ItemDef
+    - pf:InFormItemRef sibling elements inside ItemGroupDef for InForm
+      item ordering (alongside standard ItemRef so parsers see both)
+    - Hierarchical dot-notation OIDs on ItemDef elements:
+      frm<FORM>.sct<SECTION>.itm<ITEM>
+    - FormDef OIDs keep the F_ prefix so CDASH form-id resolution
+      and OC-9 enforcement work cleanly downstream
+
+  Not a real study. All fabricated.
+-->
+<ODM ODMVersion="1.3.2"
+     FileOID="RA2024-2026-05-11T00:00:00"
+     FileType="Snapshot"
+     CreationDateTime="2026-05-11T00:00:00"
+     Originator="Oracle InForm 6.3"
+     SourceSystem="Oracle InForm"
+     SourceSystemVersion="6.3.0"
+     xmlns="http://www.cdisc.org/ns/odm/v1.3"
+     xmlns:pf="http://www.phaseforward.com/InFormAdapter/ODM/Extensions/2.0"
+     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+     pf:MappingVersion="V2"
+     pf:HierarchicalOIDs="Yes"
+     pf:InFormAdapterVersion="6.3.0">
+
+  <Study OID="S_RA2024">
+    <GlobalVariables>
+      <StudyName>RA2024 Phase 2 Rheumatoid Arthritis Study</StudyName>
+      <StudyDescription>A Phase 2 Randomized Double-Blind Active-Comparator 24-Week Study of Investigational Compound RAX-9 in Adults with Moderate to Severe Rheumatoid Arthritis Inadequately Responsive to Methotrexate</StudyDescription>
+      <ProtocolName>RA2024</ProtocolName>
+    </GlobalVariables>
+
+    <BasicDefinitions>
+      <MeasurementUnit OID="MU.mmHg" Name="mmHg"
+                       pf:DBUID="MU-7F1A22C0-DBUID"
+                       pf:GUID="6e91c5d0-1a4e-11ef-9b1e-mu-mmhg">
+        <Symbol><TranslatedText xml:lang="en">mmHg</TranslatedText></Symbol>
+      </MeasurementUnit>
+      <MeasurementUnit OID="MU.mgL" Name="mgL"
+                       pf:DBUID="MU-7F1A22C1-DBUID"
+                       pf:GUID="6e91c5d1-1a4e-11ef-9b1e-mu-mgl">
+        <Symbol><TranslatedText xml:lang="en">mg/L</TranslatedText></Symbol>
+      </MeasurementUnit>
+      <MeasurementUnit OID="MU.mg" Name="mg"
+                       pf:DBUID="MU-7F1A22C2-DBUID"
+                       pf:GUID="6e91c5d2-1a4e-11ef-9b1e-mu-mg">
+        <Symbol><TranslatedText xml:lang="en">mg</TranslatedText></Symbol>
+      </MeasurementUnit>
+    </BasicDefinitions>
+
+    <MetaDataVersion OID="v1.0"
+                     Name="RA2024 v1.0 — IRB-approved 2026-03-22">
+
+      <Protocol>
+        <StudyEventRef StudyEventOID="SE_SCREEN"  OrderNumber="1" Mandatory="Yes"/>
+        <StudyEventRef StudyEventOID="SE_BASE"    OrderNumber="2" Mandatory="Yes"/>
+        <StudyEventRef StudyEventOID="SE_WEEK12"  OrderNumber="3" Mandatory="Yes"/>
+        <StudyEventRef StudyEventOID="SE_WEEK24"  OrderNumber="4" Mandatory="Yes"/>
+        <StudyEventRef StudyEventOID="SE_EOT"     OrderNumber="5" Mandatory="Yes"/>
+        <StudyEventRef StudyEventOID="SE_COMMON"  OrderNumber="6" Mandatory="Yes"/>
+      </Protocol>
+
+      <!-- ── StudyEventDef ─────────────────────────────────────────────────── -->
+      <StudyEventDef OID="SE_SCREEN" Name="Screening" Repeating="No" Type="Scheduled">
+        <FormRef FormOID="F_DM" Mandatory="Yes" OrderNumber="1"/>
+        <FormRef FormOID="F_IE" Mandatory="Yes" OrderNumber="2"/>
+        <FormRef FormOID="F_VS" Mandatory="Yes" OrderNumber="3"/>
+        <FormRef FormOID="F_LB" Mandatory="Yes" OrderNumber="4"/>
+      </StudyEventDef>
+      <StudyEventDef OID="SE_BASE" Name="Baseline / Randomization" Repeating="No" Type="Scheduled">
+        <FormRef FormOID="F_VS" Mandatory="Yes" OrderNumber="1"/>
+        <FormRef FormOID="F_EX" Mandatory="Yes" OrderNumber="2"/>
+      </StudyEventDef>
+      <StudyEventDef OID="SE_WEEK12" Name="Week 12 Visit" Repeating="No" Type="Scheduled">
+        <FormRef FormOID="F_VS" Mandatory="Yes" OrderNumber="1"/>
+        <FormRef FormOID="F_LB" Mandatory="Yes" OrderNumber="2"/>
+        <FormRef FormOID="F_EX" Mandatory="Yes" OrderNumber="3"/>
+      </StudyEventDef>
+      <StudyEventDef OID="SE_WEEK24" Name="Week 24 Visit" Repeating="No" Type="Scheduled">
+        <FormRef FormOID="F_VS" Mandatory="Yes" OrderNumber="1"/>
+        <FormRef FormOID="F_LB" Mandatory="Yes" OrderNumber="2"/>
+        <FormRef FormOID="F_EX" Mandatory="Yes" OrderNumber="3"/>
+      </StudyEventDef>
+      <StudyEventDef OID="SE_EOT" Name="End of Treatment" Repeating="No" Type="Scheduled">
+        <FormRef FormOID="F_VS" Mandatory="Yes" OrderNumber="1"/>
+        <FormRef FormOID="F_LB" Mandatory="Yes" OrderNumber="2"/>
+        <FormRef FormOID="F_DS" Mandatory="Yes" OrderNumber="3"/>
+      </StudyEventDef>
+      <StudyEventDef OID="SE_COMMON" Name="Common Events (AE / CM)"
+                     Repeating="Yes" Type="Common">
+        <FormRef FormOID="F_AE" Mandatory="No" OrderNumber="1"/>
+        <FormRef FormOID="F_CM" Mandatory="No" OrderNumber="2"/>
+      </StudyEventDef>
+
+      <!-- ── FormDef ──────────────────────────────────────────────────────── -->
+      <FormDef OID="F_DM" Name="Demographics" Repeating="No">
+        <ItemGroupRef ItemGroupOID="sctDM" Mandatory="Yes" OrderNumber="1"/>
+      </FormDef>
+      <FormDef OID="F_IE" Name="Inclusion / Exclusion Criteria" Repeating="No">
+        <ItemGroupRef ItemGroupOID="sctIE" Mandatory="Yes" OrderNumber="1"/>
+      </FormDef>
+      <FormDef OID="F_VS" Name="Vital Signs" Repeating="No">
+        <ItemGroupRef ItemGroupOID="sctVS" Mandatory="Yes" OrderNumber="1"/>
+      </FormDef>
+      <FormDef OID="F_AE" Name="Adverse Events" Repeating="Yes">
+        <ItemGroupRef ItemGroupOID="sctAE" Mandatory="Yes" OrderNumber="1"/>
+      </FormDef>
+      <FormDef OID="F_CM" Name="Concomitant Medications" Repeating="Yes">
+        <ItemGroupRef ItemGroupOID="sctCM" Mandatory="Yes" OrderNumber="1"/>
+      </FormDef>
+      <FormDef OID="F_LB" Name="Laboratory Tests" Repeating="Yes">
+        <ItemGroupRef ItemGroupOID="sctLB" Mandatory="Yes" OrderNumber="1"/>
+      </FormDef>
+      <FormDef OID="F_EX" Name="Study Drug Exposure" Repeating="No">
+        <ItemGroupRef ItemGroupOID="sctEX" Mandatory="Yes" OrderNumber="1"/>
+      </FormDef>
+      <FormDef OID="F_DS" Name="Disposition" Repeating="No">
+        <ItemGroupRef ItemGroupOID="sctDS" Mandatory="Yes" OrderNumber="1"/>
+      </FormDef>
+
+      <!-- ── ItemGroupDef — InForm pattern with ItemRef + pf:InFormItemRef ───-->
+      <ItemGroupDef OID="sctDM" Name="DM Section" Repeating="No" SASDatasetName="DM">
+        <ItemRef ItemOID="frmDM.sctDM.itmSUBJID"  OrderNumber="1" Mandatory="Yes"/>
+        <ItemRef ItemOID="frmDM.sctDM.itmBIRTHDT" OrderNumber="2" Mandatory="Yes"/>
+        <ItemRef ItemOID="frmDM.sctDM.itmSEX"     OrderNumber="3" Mandatory="Yes"/>
+        <ItemRef ItemOID="frmDM.sctDM.itmRACE"    OrderNumber="4" Mandatory="Yes"/>
+        <pf:InFormItemRef ItemOID="frmDM.sctDM.itmSUBJID"  pf:Position="1"/>
+        <pf:InFormItemRef ItemOID="frmDM.sctDM.itmBIRTHDT" pf:Position="2"/>
+        <pf:InFormItemRef ItemOID="frmDM.sctDM.itmSEX"     pf:Position="3"/>
+        <pf:InFormItemRef ItemOID="frmDM.sctDM.itmRACE"    pf:Position="4"/>
+      </ItemGroupDef>
+      <ItemGroupDef OID="sctIE" Name="IE Section" Repeating="No" SASDatasetName="IE">
+        <ItemRef ItemOID="frmIE.sctIE.itmINC01" OrderNumber="1" Mandatory="Yes"/>
+        <ItemRef ItemOID="frmIE.sctIE.itmEXC01" OrderNumber="2" Mandatory="Yes"/>
+        <pf:InFormItemRef ItemOID="frmIE.sctIE.itmINC01" pf:Position="1"/>
+        <pf:InFormItemRef ItemOID="frmIE.sctIE.itmEXC01" pf:Position="2"/>
+      </ItemGroupDef>
+      <ItemGroupDef OID="sctVS" Name="VS Section" Repeating="No" SASDatasetName="VS">
+        <ItemRef ItemOID="frmVS.sctVS.itmSYSBP" OrderNumber="1" Mandatory="Yes"/>
+        <ItemRef ItemOID="frmVS.sctVS.itmDIABP" OrderNumber="2" Mandatory="Yes"/>
+        <ItemRef ItemOID="frmVS.sctVS.itmPULSE" OrderNumber="3" Mandatory="Yes"/>
+        <pf:InFormItemRef ItemOID="frmVS.sctVS.itmSYSBP" pf:Position="1"/>
+        <pf:InFormItemRef ItemOID="frmVS.sctVS.itmDIABP" pf:Position="2"/>
+        <pf:InFormItemRef ItemOID="frmVS.sctVS.itmPULSE" pf:Position="3"/>
+      </ItemGroupDef>
+      <ItemGroupDef OID="sctAE" Name="AE Section" Repeating="Yes" SASDatasetName="AE">
+        <ItemRef ItemOID="frmAE.sctAE.itmAETERM"  OrderNumber="1" Mandatory="Yes"/>
+        <ItemRef ItemOID="frmAE.sctAE.itmAESTDTC" OrderNumber="2" Mandatory="Yes"/>
+        <ItemRef ItemOID="frmAE.sctAE.itmAESEV"   OrderNumber="3" Mandatory="Yes"/>
+        <ItemRef ItemOID="frmAE.sctAE.itmAESER"   OrderNumber="4" Mandatory="Yes"/>
+        <pf:InFormItemRef ItemOID="frmAE.sctAE.itmAETERM"  pf:Position="1"/>
+        <pf:InFormItemRef ItemOID="frmAE.sctAE.itmAESTDTC" pf:Position="2"/>
+        <pf:InFormItemRef ItemOID="frmAE.sctAE.itmAESEV"   pf:Position="3"/>
+        <pf:InFormItemRef ItemOID="frmAE.sctAE.itmAESER"   pf:Position="4"/>
+      </ItemGroupDef>
+      <ItemGroupDef OID="sctCM" Name="CM Section" Repeating="Yes" SASDatasetName="CM">
+        <ItemRef ItemOID="frmCM.sctCM.itmCMTRT"   OrderNumber="1" Mandatory="Yes"/>
+        <ItemRef ItemOID="frmCM.sctCM.itmCMSTDTC" OrderNumber="2" Mandatory="Yes"/>
+        <ItemRef ItemOID="frmCM.sctCM.itmCMINDC"  OrderNumber="3" Mandatory="No"/>
+        <pf:InFormItemRef ItemOID="frmCM.sctCM.itmCMTRT"   pf:Position="1"/>
+        <pf:InFormItemRef ItemOID="frmCM.sctCM.itmCMSTDTC" pf:Position="2"/>
+        <pf:InFormItemRef ItemOID="frmCM.sctCM.itmCMINDC"  pf:Position="3"/>
+      </ItemGroupDef>
+      <ItemGroupDef OID="sctLB" Name="LB Section" Repeating="Yes" SASDatasetName="LB">
+        <ItemRef ItemOID="frmLB.sctLB.itmLBTEST"  OrderNumber="1" Mandatory="Yes"/>
+        <ItemRef ItemOID="frmLB.sctLB.itmLBORRES" OrderNumber="2" Mandatory="Yes"/>
+        <ItemRef ItemOID="frmLB.sctLB.itmCRP"     OrderNumber="3" Mandatory="No"/>
+        <pf:InFormItemRef ItemOID="frmLB.sctLB.itmLBTEST"  pf:Position="1"/>
+        <pf:InFormItemRef ItemOID="frmLB.sctLB.itmLBORRES" pf:Position="2"/>
+        <pf:InFormItemRef ItemOID="frmLB.sctLB.itmCRP"     pf:Position="3"/>
+      </ItemGroupDef>
+      <ItemGroupDef OID="sctEX" Name="EX Section" Repeating="No" SASDatasetName="EX">
+        <ItemRef ItemOID="frmEX.sctEX.itmEXTRT"   OrderNumber="1" Mandatory="Yes"/>
+        <ItemRef ItemOID="frmEX.sctEX.itmEXDOSE"  OrderNumber="2" Mandatory="Yes"/>
+        <ItemRef ItemOID="frmEX.sctEX.itmEXSTDTC" OrderNumber="3" Mandatory="Yes"/>
+        <pf:InFormItemRef ItemOID="frmEX.sctEX.itmEXTRT"   pf:Position="1"/>
+        <pf:InFormItemRef ItemOID="frmEX.sctEX.itmEXDOSE"  pf:Position="2"/>
+        <pf:InFormItemRef ItemOID="frmEX.sctEX.itmEXSTDTC" pf:Position="3"/>
+      </ItemGroupDef>
+      <ItemGroupDef OID="sctDS" Name="DS Section" Repeating="No" SASDatasetName="DS">
+        <ItemRef ItemOID="frmDS.sctDS.itmDSCAT"  OrderNumber="1" Mandatory="Yes"/>
+        <ItemRef ItemOID="frmDS.sctDS.itmDSTERM" OrderNumber="2" Mandatory="Yes"/>
+        <ItemRef ItemOID="frmDS.sctDS.itmDSDTC"  OrderNumber="3" Mandatory="Yes"/>
+        <pf:InFormItemRef ItemOID="frmDS.sctDS.itmDSCAT"  pf:Position="1"/>
+        <pf:InFormItemRef ItemOID="frmDS.sctDS.itmDSTERM" pf:Position="2"/>
+        <pf:InFormItemRef ItemOID="frmDS.sctDS.itmDSDTC"  pf:Position="3"/>
+      </ItemGroupDef>
+
+      <!-- ── ItemDef — full hierarchical OIDs with pf:DBUID + pf:GUID ────────-->
+      <ItemDef OID="frmDM.sctDM.itmSUBJID" Name="SUBJID" DataType="text" Length="20"
+               pf:DBUID="IT-100001-DBUID" pf:GUID="b0a1c0e0-1a4e-11ef-9b1e-it-subjid">
+        <Question><TranslatedText xml:lang="en">Subject ID</TranslatedText></Question>
+        <Alias Context="CDASH" Name="SUBJID"/>
+      </ItemDef>
+      <ItemDef OID="frmDM.sctDM.itmBIRTHDT" Name="BIRTHDT" DataType="date"
+               pf:DBUID="IT-100002-DBUID" pf:GUID="b0a1c0e1-1a4e-11ef-9b1e-it-birth">
+        <Question><TranslatedText xml:lang="en">Date of Birth</TranslatedText></Question>
+        <Alias Context="CDASH" Name="BRTHDAT"/>
+      </ItemDef>
+      <ItemDef OID="frmDM.sctDM.itmSEX" Name="SEX" DataType="text" Length="1"
+               pf:DBUID="IT-100003-DBUID" pf:GUID="b0a1c0e2-1a4e-11ef-9b1e-it-sex">
+        <Question><TranslatedText xml:lang="en">Sex at Birth</TranslatedText></Question>
+        <CodeListRef CodeListOID="CL.SEX"/>
+        <Alias Context="CDASH" Name="SEX"/>
+      </ItemDef>
+      <ItemDef OID="frmDM.sctDM.itmRACE" Name="RACE" DataType="text" Length="40"
+               pf:DBUID="IT-100004-DBUID" pf:GUID="b0a1c0e3-1a4e-11ef-9b1e-it-race">
+        <Question><TranslatedText xml:lang="en">Race</TranslatedText></Question>
+        <Alias Context="CDASH" Name="RACE"/>
+      </ItemDef>
+
+      <ItemDef OID="frmIE.sctIE.itmINC01" Name="INC01" DataType="text" Length="1"
+               pf:DBUID="IT-100101-DBUID" pf:GUID="b0a1c1e1-1a4e-11ef-9b1e-it-inc01">
+        <Question><TranslatedText xml:lang="en">Inclusion 1: Adult with RA per ACR/EULAR 2010 criteria — Met?</TranslatedText></Question>
+        <CodeListRef CodeListOID="CL.YN"/>
+        <Alias Context="CDASH" Name="IETESTCD"/>
+      </ItemDef>
+      <ItemDef OID="frmIE.sctIE.itmEXC01" Name="EXC01" DataType="text" Length="1"
+               pf:DBUID="IT-100102-DBUID" pf:GUID="b0a1c1e2-1a4e-11ef-9b1e-it-exc01">
+        <Question><TranslatedText xml:lang="en">Exclusion 1: Active infection requiring systemic therapy — Present?</TranslatedText></Question>
+        <CodeListRef CodeListOID="CL.YN"/>
+        <Alias Context="CDASH" Name="IETESTCD"/>
+      </ItemDef>
+
+      <ItemDef OID="frmVS.sctVS.itmSYSBP" Name="SYSBP" DataType="integer" Length="3"
+               pf:DBUID="IT-100201-DBUID" pf:GUID="b0a1c2e1-1a4e-11ef-9b1e-it-sysbp">
+        <Question><TranslatedText xml:lang="en">Systolic BP (mmHg)</TranslatedText></Question>
+        <MeasurementUnitRef MeasurementUnitOID="MU.mmHg"/>
+        <RangeCheck Comparator="GE" SoftHard="Soft"><CheckValue>60</CheckValue></RangeCheck>
+        <RangeCheck Comparator="LE" SoftHard="Hard"><CheckValue>250</CheckValue></RangeCheck>
+        <Alias Context="CDASH" Name="SYSBP"/>
+      </ItemDef>
+      <ItemDef OID="frmVS.sctVS.itmDIABP" Name="DIABP" DataType="integer" Length="3"
+               pf:DBUID="IT-100202-DBUID" pf:GUID="b0a1c2e2-1a4e-11ef-9b1e-it-diabp">
+        <Question><TranslatedText xml:lang="en">Diastolic BP (mmHg)</TranslatedText></Question>
+        <MeasurementUnitRef MeasurementUnitOID="MU.mmHg"/>
+        <Alias Context="CDASH" Name="DIABP"/>
+      </ItemDef>
+      <ItemDef OID="frmVS.sctVS.itmPULSE" Name="PULSE" DataType="integer" Length="3"
+               pf:DBUID="IT-100203-DBUID" pf:GUID="b0a1c2e3-1a4e-11ef-9b1e-it-pulse">
+        <Question><TranslatedText xml:lang="en">Pulse rate (bpm)</TranslatedText></Question>
+        <Alias Context="CDASH" Name="PULSE"/>
+      </ItemDef>
+
+      <ItemDef OID="frmAE.sctAE.itmAETERM" Name="AETERM" DataType="text" Length="200"
+               pf:DBUID="IT-100301-DBUID" pf:GUID="b0a1c3e1-1a4e-11ef-9b1e-it-aeterm">
+        <Question><TranslatedText xml:lang="en">Adverse Event term (verbatim)</TranslatedText></Question>
+        <Alias Context="CDASH" Name="AETERM"/>
+      </ItemDef>
+      <ItemDef OID="frmAE.sctAE.itmAESTDTC" Name="AESTDTC" DataType="date"
+               pf:DBUID="IT-100302-DBUID" pf:GUID="b0a1c3e2-1a4e-11ef-9b1e-it-aestdtc">
+        <Question><TranslatedText xml:lang="en">AE start date</TranslatedText></Question>
+        <Alias Context="CDASH" Name="AESTDAT"/>
+      </ItemDef>
+      <ItemDef OID="frmAE.sctAE.itmAESEV" Name="AESEV" DataType="text" Length="10"
+               pf:DBUID="IT-100303-DBUID" pf:GUID="b0a1c3e3-1a4e-11ef-9b1e-it-aesev">
+        <Question><TranslatedText xml:lang="en">Severity</TranslatedText></Question>
+        <CodeListRef CodeListOID="CL.AESEV"/>
+        <Alias Context="CDASH" Name="AESEV"/>
+      </ItemDef>
+      <ItemDef OID="frmAE.sctAE.itmAESER" Name="AESER" DataType="text" Length="1"
+               pf:DBUID="IT-100304-DBUID" pf:GUID="b0a1c3e4-1a4e-11ef-9b1e-it-aeser">
+        <Question><TranslatedText xml:lang="en">Serious?</TranslatedText></Question>
+        <CodeListRef CodeListOID="CL.YN"/>
+        <Alias Context="CDASH" Name="AESER"/>
+      </ItemDef>
+
+      <ItemDef OID="frmCM.sctCM.itmCMTRT" Name="CMTRT" DataType="text" Length="200"
+               pf:DBUID="IT-100401-DBUID" pf:GUID="b0a1c4e1-1a4e-11ef-9b1e-it-cmtrt">
+        <Question><TranslatedText xml:lang="en">Medication name</TranslatedText></Question>
+        <Alias Context="CDASH" Name="CMTRT"/>
+      </ItemDef>
+      <ItemDef OID="frmCM.sctCM.itmCMSTDTC" Name="CMSTDTC" DataType="date"
+               pf:DBUID="IT-100402-DBUID" pf:GUID="b0a1c4e2-1a4e-11ef-9b1e-it-cmstdtc">
+        <Question><TranslatedText xml:lang="en">CM start date</TranslatedText></Question>
+        <Alias Context="CDASH" Name="CMSTDAT"/>
+      </ItemDef>
+      <ItemDef OID="frmCM.sctCM.itmCMINDC" Name="CMINDC" DataType="text" Length="200"
+               pf:DBUID="IT-100403-DBUID" pf:GUID="b0a1c4e3-1a4e-11ef-9b1e-it-cmindc">
+        <Question><TranslatedText xml:lang="en">Indication</TranslatedText></Question>
+        <Alias Context="CDASH" Name="CMINDC"/>
+      </ItemDef>
+
+      <ItemDef OID="frmLB.sctLB.itmLBTEST" Name="LBTEST" DataType="text" Length="40"
+               pf:DBUID="IT-100501-DBUID" pf:GUID="b0a1c5e1-1a4e-11ef-9b1e-it-lbtest">
+        <Question><TranslatedText xml:lang="en">Lab test name</TranslatedText></Question>
+        <Alias Context="CDASH" Name="LBTEST"/>
+      </ItemDef>
+      <ItemDef OID="frmLB.sctLB.itmLBORRES" Name="LBORRES" DataType="text" Length="40"
+               pf:DBUID="IT-100502-DBUID" pf:GUID="b0a1c5e2-1a4e-11ef-9b1e-it-lborres">
+        <Question><TranslatedText xml:lang="en">Result</TranslatedText></Question>
+        <Alias Context="CDASH" Name="LBORRES"/>
+      </ItemDef>
+      <ItemDef OID="frmLB.sctLB.itmCRP" Name="CRP" DataType="float" Length="6" SignificantDigits="2"
+               pf:DBUID="IT-100503-DBUID" pf:GUID="b0a1c5e3-1a4e-11ef-9b1e-it-crp">
+        <Question><TranslatedText xml:lang="en">C-reactive protein (mg/L)</TranslatedText></Question>
+        <MeasurementUnitRef MeasurementUnitOID="MU.mgL"/>
+        <RangeCheck Comparator="GE" SoftHard="Soft"><CheckValue>0.0</CheckValue></RangeCheck>
+        <RangeCheck Comparator="LE" SoftHard="Soft"><CheckValue>500.0</CheckValue></RangeCheck>
+        <Alias Context="CDASH" Name="LBORRES"/>
+      </ItemDef>
+
+      <ItemDef OID="frmEX.sctEX.itmEXTRT" Name="EXTRT" DataType="text" Length="40"
+               pf:DBUID="IT-100601-DBUID" pf:GUID="b0a1c6e1-1a4e-11ef-9b1e-it-extrt">
+        <Question><TranslatedText xml:lang="en">Study drug</TranslatedText></Question>
+        <Alias Context="CDASH" Name="EXTRT"/>
+      </ItemDef>
+      <ItemDef OID="frmEX.sctEX.itmEXDOSE" Name="EXDOSE" DataType="float" Length="8" SignificantDigits="2"
+               pf:DBUID="IT-100602-DBUID" pf:GUID="b0a1c6e2-1a4e-11ef-9b1e-it-exdose">
+        <Question><TranslatedText xml:lang="en">Dose (mg)</TranslatedText></Question>
+        <MeasurementUnitRef MeasurementUnitOID="MU.mg"/>
+        <Alias Context="CDASH" Name="EXDOSE"/>
+      </ItemDef>
+      <ItemDef OID="frmEX.sctEX.itmEXSTDTC" Name="EXSTDTC" DataType="date"
+               pf:DBUID="IT-100603-DBUID" pf:GUID="b0a1c6e3-1a4e-11ef-9b1e-it-exstdtc">
+        <Question><TranslatedText xml:lang="en">Dose date</TranslatedText></Question>
+        <Alias Context="CDASH" Name="EXSTDAT"/>
+      </ItemDef>
+
+      <ItemDef OID="frmDS.sctDS.itmDSCAT" Name="DSCAT" DataType="text" Length="30"
+               pf:DBUID="IT-100701-DBUID" pf:GUID="b0a1c7e1-1a4e-11ef-9b1e-it-dscat">
+        <Question><TranslatedText xml:lang="en">Disposition category</TranslatedText></Question>
+        <Alias Context="CDASH" Name="DSCAT"/>
+      </ItemDef>
+      <ItemDef OID="frmDS.sctDS.itmDSTERM" Name="DSTERM" DataType="text" Length="200"
+               pf:DBUID="IT-100702-DBUID" pf:GUID="b0a1c7e2-1a4e-11ef-9b1e-it-dsterm">
+        <Question><TranslatedText xml:lang="en">Disposition term</TranslatedText></Question>
+        <Alias Context="CDASH" Name="DSTERM"/>
+      </ItemDef>
+      <ItemDef OID="frmDS.sctDS.itmDSDTC" Name="DSDTC" DataType="date"
+               pf:DBUID="IT-100703-DBUID" pf:GUID="b0a1c7e3-1a4e-11ef-9b1e-it-dsdtc">
+        <Question><TranslatedText xml:lang="en">Disposition date</TranslatedText></Question>
+        <Alias Context="CDASH" Name="DSDAT"/>
+      </ItemDef>
+
+      <!-- ── CodeList ─────────────────────────────────────────────────────── -->
+      <CodeList OID="CL.YN" Name="Yes/No" DataType="text">
+        <CodeListItem CodedValue="Y" OrderNumber="1">
+          <Decode><TranslatedText xml:lang="en">Yes</TranslatedText></Decode>
+        </CodeListItem>
+        <CodeListItem CodedValue="N" OrderNumber="2">
+          <Decode><TranslatedText xml:lang="en">No</TranslatedText></Decode>
+        </CodeListItem>
+      </CodeList>
+      <CodeList OID="CL.SEX" Name="Sex" DataType="text">
+        <CodeListItem CodedValue="M" OrderNumber="1">
+          <Decode><TranslatedText xml:lang="en">Male</TranslatedText></Decode>
+        </CodeListItem>
+        <CodeListItem CodedValue="F" OrderNumber="2">
+          <Decode><TranslatedText xml:lang="en">Female</TranslatedText></Decode>
+        </CodeListItem>
+      </CodeList>
+      <CodeList OID="CL.AESEV" Name="AE Severity" DataType="text">
+        <CodeListItem CodedValue="MILD" OrderNumber="1">
+          <Decode><TranslatedText xml:lang="en">Mild</TranslatedText></Decode>
+        </CodeListItem>
+        <CodeListItem CodedValue="MODERATE" OrderNumber="2">
+          <Decode><TranslatedText xml:lang="en">Moderate</TranslatedText></Decode>
+        </CodeListItem>
+        <CodeListItem CodedValue="SEVERE" OrderNumber="3">
+          <Decode><TranslatedText xml:lang="en">Severe</TranslatedText></Decode>
+        </CodeListItem>
+      </CodeList>
+
+    </MetaDataVersion>
+  </Study>
+</ODM>

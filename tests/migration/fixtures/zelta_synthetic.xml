@@ -1,0 +1,354 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Synthetic Zelta 2024.1 (Merative) ODM 1.3.2 export for migration tests.
+  Phase 3 moderate-to-severe asthma study (RESP3001) with three 4-week
+  treatment cycles and spirometry assessments at each timepoint.
+
+  Zelta exports clean ODM with no widely-known vendor namespace, so
+  vendor detection here is Originator-string based only. The fixture
+  reflects Zelta's support for repeating event groups (the three CYCLE
+  events are all Repeating="Yes") and includes a respiratory-specific
+  SP (spirometry) form with FEV1 / FVC items, both with RangeChecks.
+
+  Not a real study. All fabricated.
+-->
+<ODM ODMVersion="1.3.2"
+     FileOID="RESP3001-2026-05-11T00:00:00"
+     FileType="Snapshot"
+     CreationDateTime="2026-05-11T00:00:00"
+     Originator="Zelta 2024.1"
+     SourceSystem="Zelta (Merative)"
+     SourceSystemVersion="2024.1.7"
+     xmlns="http://www.cdisc.org/ns/odm/v1.3"
+     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+
+  <Study OID="S_RESP3001">
+    <GlobalVariables>
+      <StudyName>RESP3001 Phase 3 Moderate-to-Severe Asthma Study</StudyName>
+      <StudyDescription>A Phase 3 Randomized Double-Blind Active-Comparator 12-Week Study (three 4-week treatment cycles) of Investigational Compound RSP-44 versus Standard of Care in Adults with Moderate-to-Severe Asthma Inadequately Controlled on Medium-Dose ICS/LABA</StudyDescription>
+      <ProtocolName>RESP3001</ProtocolName>
+    </GlobalVariables>
+
+    <BasicDefinitions>
+      <MeasurementUnit OID="MU.mmHg" Name="mmHg">
+        <Symbol><TranslatedText xml:lang="en">mmHg</TranslatedText></Symbol>
+      </MeasurementUnit>
+      <MeasurementUnit OID="MU.L" Name="L">
+        <Symbol><TranslatedText xml:lang="en">L</TranslatedText></Symbol>
+      </MeasurementUnit>
+      <MeasurementUnit OID="MU.pct" Name="pct">
+        <Symbol><TranslatedText xml:lang="en">%</TranslatedText></Symbol>
+      </MeasurementUnit>
+    </BasicDefinitions>
+
+    <MetaDataVersion OID="v1.0"
+                     Name="RESP3001 v1.0 — IRB-approved 2026-01-25">
+
+      <Protocol>
+        <StudyEventRef StudyEventOID="SE_SCREEN"  OrderNumber="1" Mandatory="Yes"/>
+        <StudyEventRef StudyEventOID="SE_CYCLE1"  OrderNumber="2" Mandatory="Yes"/>
+        <StudyEventRef StudyEventOID="SE_CYCLE2"  OrderNumber="3" Mandatory="Yes"/>
+        <StudyEventRef StudyEventOID="SE_CYCLE3"  OrderNumber="4" Mandatory="Yes"/>
+        <StudyEventRef StudyEventOID="SE_EOT"     OrderNumber="5" Mandatory="Yes"/>
+        <StudyEventRef StudyEventOID="SE_COMMON"  OrderNumber="6" Mandatory="Yes"/>
+      </Protocol>
+
+      <!-- ── StudyEventDef ─────────────────────────────────────────────────── -->
+      <StudyEventDef OID="SE_SCREEN" Name="Screening" Repeating="No" Type="Scheduled">
+        <FormRef FormOID="F_DM" Mandatory="Yes" OrderNumber="1"/>
+        <FormRef FormOID="F_IE" Mandatory="Yes" OrderNumber="2"/>
+        <FormRef FormOID="F_VS" Mandatory="Yes" OrderNumber="3"/>
+        <FormRef FormOID="F_LB" Mandatory="Yes" OrderNumber="4"/>
+        <FormRef FormOID="F_SP" Mandatory="Yes" OrderNumber="5"/>
+      </StudyEventDef>
+      <StudyEventDef OID="SE_CYCLE1" Name="Cycle 1 (4-week treatment)"
+                     Repeating="Yes" Type="Scheduled">
+        <FormRef FormOID="F_VS" Mandatory="Yes" OrderNumber="1"/>
+        <FormRef FormOID="F_LB" Mandatory="Yes" OrderNumber="2"/>
+        <FormRef FormOID="F_EX" Mandatory="Yes" OrderNumber="3"/>
+        <FormRef FormOID="F_SP" Mandatory="Yes" OrderNumber="4"/>
+      </StudyEventDef>
+      <StudyEventDef OID="SE_CYCLE2" Name="Cycle 2 (4-week treatment)"
+                     Repeating="Yes" Type="Scheduled">
+        <FormRef FormOID="F_VS" Mandatory="Yes" OrderNumber="1"/>
+        <FormRef FormOID="F_LB" Mandatory="Yes" OrderNumber="2"/>
+        <FormRef FormOID="F_EX" Mandatory="Yes" OrderNumber="3"/>
+        <FormRef FormOID="F_SP" Mandatory="Yes" OrderNumber="4"/>
+      </StudyEventDef>
+      <StudyEventDef OID="SE_CYCLE3" Name="Cycle 3 (4-week treatment)"
+                     Repeating="Yes" Type="Scheduled">
+        <FormRef FormOID="F_VS" Mandatory="Yes" OrderNumber="1"/>
+        <FormRef FormOID="F_LB" Mandatory="Yes" OrderNumber="2"/>
+        <FormRef FormOID="F_EX" Mandatory="Yes" OrderNumber="3"/>
+        <FormRef FormOID="F_SP" Mandatory="Yes" OrderNumber="4"/>
+      </StudyEventDef>
+      <StudyEventDef OID="SE_EOT" Name="End of Treatment" Repeating="No" Type="Scheduled">
+        <FormRef FormOID="F_VS" Mandatory="Yes" OrderNumber="1"/>
+        <FormRef FormOID="F_LB" Mandatory="Yes" OrderNumber="2"/>
+        <FormRef FormOID="F_SP" Mandatory="Yes" OrderNumber="3"/>
+        <FormRef FormOID="F_DS" Mandatory="Yes" OrderNumber="4"/>
+      </StudyEventDef>
+      <StudyEventDef OID="SE_COMMON" Name="Common Events (AE / CM)"
+                     Repeating="Yes" Type="Common">
+        <FormRef FormOID="F_AE" Mandatory="No" OrderNumber="1"/>
+        <FormRef FormOID="F_CM" Mandatory="No" OrderNumber="2"/>
+      </StudyEventDef>
+
+      <!-- ── FormDef ──────────────────────────────────────────────────────── -->
+      <FormDef OID="F_DM" Name="Demographics" Repeating="No">
+        <ItemGroupRef ItemGroupOID="IG.DM" Mandatory="Yes" OrderNumber="1"/>
+      </FormDef>
+      <FormDef OID="F_IE" Name="Inclusion / Exclusion Criteria" Repeating="No">
+        <ItemGroupRef ItemGroupOID="IG.IE" Mandatory="Yes" OrderNumber="1"/>
+      </FormDef>
+      <FormDef OID="F_VS" Name="Vital Signs" Repeating="No">
+        <ItemGroupRef ItemGroupOID="IG.VS" Mandatory="Yes" OrderNumber="1"/>
+      </FormDef>
+      <FormDef OID="F_AE" Name="Adverse Events" Repeating="Yes">
+        <ItemGroupRef ItemGroupOID="IG.AE" Mandatory="Yes" OrderNumber="1"/>
+      </FormDef>
+      <FormDef OID="F_CM" Name="Concomitant Medications" Repeating="Yes">
+        <ItemGroupRef ItemGroupOID="IG.CM" Mandatory="Yes" OrderNumber="1"/>
+      </FormDef>
+      <FormDef OID="F_LB" Name="Laboratory Tests" Repeating="Yes">
+        <ItemGroupRef ItemGroupOID="IG.LB" Mandatory="Yes" OrderNumber="1"/>
+      </FormDef>
+      <FormDef OID="F_EX" Name="Study Drug Exposure" Repeating="No">
+        <ItemGroupRef ItemGroupOID="IG.EX" Mandatory="Yes" OrderNumber="1"/>
+      </FormDef>
+      <FormDef OID="F_DS" Name="Disposition" Repeating="No">
+        <ItemGroupRef ItemGroupOID="IG.DS" Mandatory="Yes" OrderNumber="1"/>
+      </FormDef>
+      <FormDef OID="F_SP" Name="Spirometry" Repeating="No">
+        <ItemGroupRef ItemGroupOID="IG.SP" Mandatory="Yes" OrderNumber="1"/>
+      </FormDef>
+
+      <!-- ── ItemGroupDef ─────────────────────────────────────────────────── -->
+      <ItemGroupDef OID="IG.DM" Name="DM" Repeating="No" SASDatasetName="DM">
+        <ItemRef ItemOID="I.DM.SUBJID"  OrderNumber="1" Mandatory="Yes"/>
+        <ItemRef ItemOID="I.DM.BIRTHDT" OrderNumber="2" Mandatory="Yes"/>
+        <ItemRef ItemOID="I.DM.SEX"     OrderNumber="3" Mandatory="Yes"/>
+      </ItemGroupDef>
+      <ItemGroupDef OID="IG.IE" Name="IE" Repeating="No" SASDatasetName="IE">
+        <ItemRef ItemOID="I.IE.INC01" OrderNumber="1" Mandatory="Yes"/>
+        <ItemRef ItemOID="I.IE.EXC01" OrderNumber="2" Mandatory="Yes"/>
+      </ItemGroupDef>
+      <ItemGroupDef OID="IG.VS" Name="VS" Repeating="No" SASDatasetName="VS">
+        <ItemRef ItemOID="I.VS.SYSBP" OrderNumber="1" Mandatory="Yes"/>
+        <ItemRef ItemOID="I.VS.DIABP" OrderNumber="2" Mandatory="Yes"/>
+        <ItemRef ItemOID="I.VS.PULSE" OrderNumber="3" Mandatory="Yes"/>
+      </ItemGroupDef>
+      <ItemGroupDef OID="IG.AE" Name="AE" Repeating="Yes" SASDatasetName="AE">
+        <ItemRef ItemOID="I.AE.AETERM"  OrderNumber="1" Mandatory="Yes"/>
+        <ItemRef ItemOID="I.AE.AESTDTC" OrderNumber="2" Mandatory="Yes"/>
+        <ItemRef ItemOID="I.AE.AESEV"   OrderNumber="3" Mandatory="Yes"/>
+        <ItemRef ItemOID="I.AE.AESER"   OrderNumber="4" Mandatory="Yes"/>
+      </ItemGroupDef>
+      <ItemGroupDef OID="IG.CM" Name="CM" Repeating="Yes" SASDatasetName="CM">
+        <ItemRef ItemOID="I.CM.CMTRT"   OrderNumber="1" Mandatory="Yes"/>
+        <ItemRef ItemOID="I.CM.CMSTDTC" OrderNumber="2" Mandatory="Yes"/>
+        <ItemRef ItemOID="I.CM.CMINDC"  OrderNumber="3" Mandatory="No"/>
+      </ItemGroupDef>
+      <ItemGroupDef OID="IG.LB" Name="LB" Repeating="Yes" SASDatasetName="LB">
+        <ItemRef ItemOID="I.LB.LBTEST"  OrderNumber="1" Mandatory="Yes"/>
+        <ItemRef ItemOID="I.LB.LBORRES" OrderNumber="2" Mandatory="Yes"/>
+      </ItemGroupDef>
+      <ItemGroupDef OID="IG.EX" Name="EX" Repeating="No" SASDatasetName="EX">
+        <ItemRef ItemOID="I.EX.EXTRT"   OrderNumber="1" Mandatory="Yes"/>
+        <ItemRef ItemOID="I.EX.EXDOSE"  OrderNumber="2" Mandatory="Yes"/>
+        <ItemRef ItemOID="I.EX.EXSTDTC" OrderNumber="3" Mandatory="Yes"/>
+      </ItemGroupDef>
+      <ItemGroupDef OID="IG.DS" Name="DS" Repeating="No" SASDatasetName="DS">
+        <ItemRef ItemOID="I.DS.DSCAT"  OrderNumber="1" Mandatory="Yes"/>
+        <ItemRef ItemOID="I.DS.DSTERM" OrderNumber="2" Mandatory="Yes"/>
+        <ItemRef ItemOID="I.DS.DSDTC"  OrderNumber="3" Mandatory="Yes"/>
+      </ItemGroupDef>
+      <ItemGroupDef OID="IG.SP" Name="SP" Repeating="No" SASDatasetName="SP">
+        <ItemRef ItemOID="I.SP.FEV1"     OrderNumber="1" Mandatory="Yes"/>
+        <ItemRef ItemOID="I.SP.FVC"      OrderNumber="2" Mandatory="Yes"/>
+        <ItemRef ItemOID="I.SP.FEV1FVC"  OrderNumber="3" Mandatory="No"/>
+        <ItemRef ItemOID="I.SP.SPDTC"    OrderNumber="4" Mandatory="Yes"/>
+      </ItemGroupDef>
+
+      <!-- ── ItemDef ──────────────────────────────────────────────────────── -->
+      <ItemDef OID="I.DM.SUBJID" Name="SUBJID" DataType="text" Length="20">
+        <Question><TranslatedText xml:lang="en">Subject ID</TranslatedText></Question>
+        <Alias Context="CDASH" Name="SUBJID"/>
+      </ItemDef>
+      <ItemDef OID="I.DM.BIRTHDT" Name="BIRTHDT" DataType="date">
+        <Question><TranslatedText xml:lang="en">Date of Birth</TranslatedText></Question>
+        <Alias Context="CDASH" Name="BRTHDAT"/>
+      </ItemDef>
+      <ItemDef OID="I.DM.SEX" Name="SEX" DataType="text" Length="1">
+        <Question><TranslatedText xml:lang="en">Sex at Birth</TranslatedText></Question>
+        <CodeListRef CodeListOID="CL.SEX"/>
+        <Alias Context="CDASH" Name="SEX"/>
+      </ItemDef>
+
+      <ItemDef OID="I.IE.INC01" Name="INC01" DataType="text" Length="1">
+        <Question><TranslatedText xml:lang="en">Inclusion 1: Adult with diagnosis of moderate-to-severe asthma per GINA — Met?</TranslatedText></Question>
+        <CodeListRef CodeListOID="CL.YN"/>
+        <Alias Context="CDASH" Name="IETESTCD"/>
+      </ItemDef>
+      <ItemDef OID="I.IE.EXC01" Name="EXC01" DataType="text" Length="1">
+        <Question><TranslatedText xml:lang="en">Exclusion 1: Smoking history ≥ 10 pack-years — Present?</TranslatedText></Question>
+        <CodeListRef CodeListOID="CL.YN"/>
+        <Alias Context="CDASH" Name="IETESTCD"/>
+      </ItemDef>
+
+      <ItemDef OID="I.VS.SYSBP" Name="SYSBP" DataType="integer" Length="3">
+        <Question><TranslatedText xml:lang="en">Systolic BP (mmHg)</TranslatedText></Question>
+        <MeasurementUnitRef MeasurementUnitOID="MU.mmHg"/>
+        <RangeCheck Comparator="GE" SoftHard="Soft"><CheckValue>60</CheckValue></RangeCheck>
+        <RangeCheck Comparator="LE" SoftHard="Hard"><CheckValue>250</CheckValue></RangeCheck>
+        <Alias Context="CDASH" Name="SYSBP"/>
+      </ItemDef>
+      <ItemDef OID="I.VS.DIABP" Name="DIABP" DataType="integer" Length="3">
+        <Question><TranslatedText xml:lang="en">Diastolic BP (mmHg)</TranslatedText></Question>
+        <MeasurementUnitRef MeasurementUnitOID="MU.mmHg"/>
+        <Alias Context="CDASH" Name="DIABP"/>
+      </ItemDef>
+      <ItemDef OID="I.VS.PULSE" Name="PULSE" DataType="integer" Length="3">
+        <Question><TranslatedText xml:lang="en">Pulse rate (bpm)</TranslatedText></Question>
+        <Alias Context="CDASH" Name="PULSE"/>
+      </ItemDef>
+
+      <ItemDef OID="I.AE.AETERM" Name="AETERM" DataType="text" Length="200">
+        <Question><TranslatedText xml:lang="en">Adverse Event term (verbatim)</TranslatedText></Question>
+        <Alias Context="CDASH" Name="AETERM"/>
+      </ItemDef>
+      <ItemDef OID="I.AE.AESTDTC" Name="AESTDTC" DataType="date">
+        <Question><TranslatedText xml:lang="en">AE start date</TranslatedText></Question>
+        <Alias Context="CDASH" Name="AESTDAT"/>
+      </ItemDef>
+      <ItemDef OID="I.AE.AESEV" Name="AESEV" DataType="text" Length="10">
+        <Question><TranslatedText xml:lang="en">Severity</TranslatedText></Question>
+        <CodeListRef CodeListOID="CL.AESEV"/>
+        <Alias Context="CDASH" Name="AESEV"/>
+      </ItemDef>
+      <ItemDef OID="I.AE.AESER" Name="AESER" DataType="text" Length="1">
+        <Question><TranslatedText xml:lang="en">Serious?</TranslatedText></Question>
+        <CodeListRef CodeListOID="CL.YN"/>
+        <Alias Context="CDASH" Name="AESER"/>
+      </ItemDef>
+
+      <ItemDef OID="I.CM.CMTRT" Name="CMTRT" DataType="text" Length="200">
+        <Question><TranslatedText xml:lang="en">Medication name</TranslatedText></Question>
+        <Alias Context="CDASH" Name="CMTRT"/>
+      </ItemDef>
+      <ItemDef OID="I.CM.CMSTDTC" Name="CMSTDTC" DataType="date">
+        <Question><TranslatedText xml:lang="en">CM start date</TranslatedText></Question>
+        <Alias Context="CDASH" Name="CMSTDAT"/>
+      </ItemDef>
+      <ItemDef OID="I.CM.CMINDC" Name="CMINDC" DataType="text" Length="200">
+        <Question><TranslatedText xml:lang="en">Indication</TranslatedText></Question>
+        <Alias Context="CDASH" Name="CMINDC"/>
+      </ItemDef>
+
+      <ItemDef OID="I.LB.LBTEST" Name="LBTEST" DataType="text" Length="40">
+        <Question><TranslatedText xml:lang="en">Lab test name</TranslatedText></Question>
+        <Alias Context="CDASH" Name="LBTEST"/>
+      </ItemDef>
+      <ItemDef OID="I.LB.LBORRES" Name="LBORRES" DataType="text" Length="40">
+        <Question><TranslatedText xml:lang="en">Result</TranslatedText></Question>
+        <Alias Context="CDASH" Name="LBORRES"/>
+      </ItemDef>
+
+      <ItemDef OID="I.EX.EXTRT" Name="EXTRT" DataType="text" Length="40">
+        <Question><TranslatedText xml:lang="en">Study drug</TranslatedText></Question>
+        <Alias Context="CDASH" Name="EXTRT"/>
+      </ItemDef>
+      <ItemDef OID="I.EX.EXDOSE" Name="EXDOSE" DataType="float" Length="8" SignificantDigits="2">
+        <Question><TranslatedText xml:lang="en">Dose</TranslatedText></Question>
+        <Alias Context="CDASH" Name="EXDOSE"/>
+      </ItemDef>
+      <ItemDef OID="I.EX.EXSTDTC" Name="EXSTDTC" DataType="date">
+        <Question><TranslatedText xml:lang="en">Dose date</TranslatedText></Question>
+        <Alias Context="CDASH" Name="EXSTDAT"/>
+      </ItemDef>
+
+      <ItemDef OID="I.DS.DSCAT" Name="DSCAT" DataType="text" Length="30">
+        <Question><TranslatedText xml:lang="en">Disposition category</TranslatedText></Question>
+        <Alias Context="CDASH" Name="DSCAT"/>
+      </ItemDef>
+      <ItemDef OID="I.DS.DSTERM" Name="DSTERM" DataType="text" Length="200">
+        <Question><TranslatedText xml:lang="en">Disposition term</TranslatedText></Question>
+        <Alias Context="CDASH" Name="DSTERM"/>
+      </ItemDef>
+      <ItemDef OID="I.DS.DSDTC" Name="DSDTC" DataType="date">
+        <Question><TranslatedText xml:lang="en">Disposition date</TranslatedText></Question>
+        <Alias Context="CDASH" Name="DSDAT"/>
+      </ItemDef>
+
+      <!-- Spirometry — FEV1 (L), FVC (L) with Hard RangeChecks; ratio + date -->
+      <ItemDef OID="I.SP.FEV1" Name="FEV1" DataType="float" Length="4" SignificantDigits="2">
+        <Question><TranslatedText xml:lang="en">FEV1 — Forced Expiratory Volume in 1 second (L)</TranslatedText></Question>
+        <MeasurementUnitRef MeasurementUnitOID="MU.L"/>
+        <RangeCheck Comparator="GE" SoftHard="Hard">
+          <CheckValue>0.30</CheckValue>
+          <ErrorMessage><TranslatedText xml:lang="en">FEV1 below 0.30 L is implausible — confirm spirometer calibration</TranslatedText></ErrorMessage>
+        </RangeCheck>
+        <RangeCheck Comparator="LE" SoftHard="Hard">
+          <CheckValue>8.00</CheckValue>
+        </RangeCheck>
+        <Alias Context="CDASH" Name="RSORRES"/>
+      </ItemDef>
+      <ItemDef OID="I.SP.FVC" Name="FVC" DataType="float" Length="4" SignificantDigits="2">
+        <Question><TranslatedText xml:lang="en">FVC — Forced Vital Capacity (L)</TranslatedText></Question>
+        <MeasurementUnitRef MeasurementUnitOID="MU.L"/>
+        <RangeCheck Comparator="GE" SoftHard="Hard">
+          <CheckValue>0.50</CheckValue>
+        </RangeCheck>
+        <RangeCheck Comparator="LE" SoftHard="Hard">
+          <CheckValue>8.00</CheckValue>
+        </RangeCheck>
+        <Alias Context="CDASH" Name="RSORRES"/>
+      </ItemDef>
+      <ItemDef OID="I.SP.FEV1FVC" Name="FEV1FVC" DataType="float" Length="4" SignificantDigits="2">
+        <Question><TranslatedText xml:lang="en">FEV1 / FVC ratio (%)</TranslatedText></Question>
+        <MeasurementUnitRef MeasurementUnitOID="MU.pct"/>
+        <RangeCheck Comparator="GE" SoftHard="Soft">
+          <CheckValue>20.0</CheckValue>
+        </RangeCheck>
+        <RangeCheck Comparator="LE" SoftHard="Soft">
+          <CheckValue>100.0</CheckValue>
+        </RangeCheck>
+        <Alias Context="CDASH" Name="RSORRES"/>
+      </ItemDef>
+      <ItemDef OID="I.SP.SPDTC" Name="SPDTC" DataType="date">
+        <Question><TranslatedText xml:lang="en">Spirometry assessment date</TranslatedText></Question>
+        <Alias Context="CDASH" Name="RSDAT"/>
+      </ItemDef>
+
+      <!-- ── CodeList ─────────────────────────────────────────────────────── -->
+      <CodeList OID="CL.YN" Name="Yes/No" DataType="text">
+        <CodeListItem CodedValue="Y" OrderNumber="1">
+          <Decode><TranslatedText xml:lang="en">Yes</TranslatedText></Decode>
+        </CodeListItem>
+        <CodeListItem CodedValue="N" OrderNumber="2">
+          <Decode><TranslatedText xml:lang="en">No</TranslatedText></Decode>
+        </CodeListItem>
+      </CodeList>
+      <CodeList OID="CL.SEX" Name="Sex" DataType="text">
+        <CodeListItem CodedValue="M" OrderNumber="1">
+          <Decode><TranslatedText xml:lang="en">Male</TranslatedText></Decode>
+        </CodeListItem>
+        <CodeListItem CodedValue="F" OrderNumber="2">
+          <Decode><TranslatedText xml:lang="en">Female</TranslatedText></Decode>
+        </CodeListItem>
+      </CodeList>
+      <CodeList OID="CL.AESEV" Name="AE Severity" DataType="text">
+        <CodeListItem CodedValue="MILD" OrderNumber="1">
+          <Decode><TranslatedText xml:lang="en">Mild</TranslatedText></Decode>
+        </CodeListItem>
+        <CodeListItem CodedValue="MODERATE" OrderNumber="2">
+          <Decode><TranslatedText xml:lang="en">Moderate</TranslatedText></Decode>
+        </CodeListItem>
+        <CodeListItem CodedValue="SEVERE" OrderNumber="3">
+          <Decode><TranslatedText xml:lang="en">Severe</TranslatedText></Decode>
+        </CodeListItem>
+      </CodeList>
+
+    </MetaDataVersion>
+  </Study>
+</ODM>

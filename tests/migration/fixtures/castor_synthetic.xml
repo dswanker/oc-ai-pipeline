@@ -1,0 +1,330 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Synthetic Castor EDC 2024.1 ODM 1.3.2 export for migration tests.
+  Phase 2 dermatology study (DERM2024) — moderate-to-severe atopic
+  dermatitis, EASI score as primary efficacy endpoint.
+
+  Captures Castor's distinctive patterns:
+    - UUID-style OIDs on every FormDef (e.g. F_15E88A04-9CB8-4B30-9A3C-DM),
+      reflecting Castor's database-key-as-OID style
+    - castor: namespace attributes on every ItemDef
+    - Bare CDASH codes ("DM", "AE", "VS"...) used as FormDef Name attribute
+      values — this is how Castor identifies forms internally and is what
+      drives downstream CDASH form-id resolution in this fixture
+    - No BasicDefinitions / MeasurementUnit elements (Castor exports
+      omit them — units live in the question text instead)
+    - No grid fields (Castor limitation — handled here naturally by
+      using flat ItemRef lists)
+
+  Not a real study. All fabricated.
+-->
+<ODM ODMVersion="1.3.2"
+     FileOID="DERM2024-2026-05-11T00:00:00"
+     FileType="Snapshot"
+     CreationDateTime="2026-05-11T00:00:00"
+     Originator="Castor EDC 2024.1"
+     SourceSystem="Castor EDC"
+     SourceSystemVersion="2024.1.3"
+     xmlns="http://www.cdisc.org/ns/odm/v1.3"
+     xmlns:castor="http://www.castoredc.com/ns/odm"
+     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+
+  <Study OID="S_DERM2024">
+    <GlobalVariables>
+      <StudyName>DERM2024 Phase 2 Atopic Dermatitis Study</StudyName>
+      <StudyDescription>A Phase 2 Randomized Double-Blind Vehicle-Controlled 16-Week Study of Topical Compound DRX-3 in Adults with Moderate-to-Severe Atopic Dermatitis</StudyDescription>
+      <ProtocolName>DERM2024</ProtocolName>
+    </GlobalVariables>
+
+    <MetaDataVersion OID="v1.0"
+                     Name="DERM2024 v1.0 — IRB-approved 2026-02-10"
+                     castor:StudyUUID="2C8E1F40-AB12-4D71-8F5E-derm2024">
+
+      <Protocol>
+        <StudyEventRef StudyEventOID="SE_SCREEN"  OrderNumber="1" Mandatory="Yes"/>
+        <StudyEventRef StudyEventOID="SE_BASE"    OrderNumber="2" Mandatory="Yes"/>
+        <StudyEventRef StudyEventOID="SE_WEEK4"   OrderNumber="3" Mandatory="Yes"/>
+        <StudyEventRef StudyEventOID="SE_WEEK8"   OrderNumber="4" Mandatory="Yes"/>
+        <StudyEventRef StudyEventOID="SE_WEEK16"  OrderNumber="5" Mandatory="Yes"/>
+        <StudyEventRef StudyEventOID="SE_COMMON"  OrderNumber="6" Mandatory="Yes"/>
+      </Protocol>
+
+      <!-- ── StudyEventDef ─────────────────────────────────────────────────── -->
+      <StudyEventDef OID="SE_SCREEN" Name="Screening" Repeating="No" Type="Scheduled">
+        <FormRef FormOID="F_15E88A04-9CB8-4B30-9A3C-DM"   Mandatory="Yes" OrderNumber="1"/>
+        <FormRef FormOID="F_15E88A05-9CB8-4B30-9A3C-IE"   Mandatory="Yes" OrderNumber="2"/>
+        <FormRef FormOID="F_15E88A06-9CB8-4B30-9A3C-VS"   Mandatory="Yes" OrderNumber="3"/>
+        <FormRef FormOID="F_15E88A07-9CB8-4B30-9A3C-LB"   Mandatory="Yes" OrderNumber="4"/>
+        <FormRef FormOID="F_EASI"                          Mandatory="Yes" OrderNumber="5"/>
+      </StudyEventDef>
+      <StudyEventDef OID="SE_BASE" Name="Baseline / Randomization" Repeating="No" Type="Scheduled">
+        <FormRef FormOID="F_15E88A06-9CB8-4B30-9A3C-VS" Mandatory="Yes" OrderNumber="1"/>
+        <FormRef FormOID="F_EASI"                       Mandatory="Yes" OrderNumber="2"/>
+      </StudyEventDef>
+      <StudyEventDef OID="SE_WEEK4" Name="Week 4" Repeating="No" Type="Scheduled">
+        <FormRef FormOID="F_15E88A06-9CB8-4B30-9A3C-VS" Mandatory="Yes" OrderNumber="1"/>
+        <FormRef FormOID="F_EASI"                       Mandatory="Yes" OrderNumber="2"/>
+      </StudyEventDef>
+      <StudyEventDef OID="SE_WEEK8" Name="Week 8" Repeating="No" Type="Scheduled">
+        <FormRef FormOID="F_15E88A06-9CB8-4B30-9A3C-VS" Mandatory="Yes" OrderNumber="1"/>
+        <FormRef FormOID="F_15E88A07-9CB8-4B30-9A3C-LB" Mandatory="Yes" OrderNumber="2"/>
+        <FormRef FormOID="F_EASI"                       Mandatory="Yes" OrderNumber="3"/>
+      </StudyEventDef>
+      <StudyEventDef OID="SE_WEEK16" Name="Week 16 (End of Treatment)" Repeating="No" Type="Scheduled">
+        <FormRef FormOID="F_15E88A06-9CB8-4B30-9A3C-VS" Mandatory="Yes" OrderNumber="1"/>
+        <FormRef FormOID="F_15E88A07-9CB8-4B30-9A3C-LB" Mandatory="Yes" OrderNumber="2"/>
+        <FormRef FormOID="F_EASI"                       Mandatory="Yes" OrderNumber="3"/>
+        <FormRef FormOID="F_15E88A08-9CB8-4B30-9A3C-DS" Mandatory="Yes" OrderNumber="4"/>
+      </StudyEventDef>
+      <StudyEventDef OID="SE_COMMON" Name="Common Events (AE / CM)"
+                     Repeating="Yes" Type="Common">
+        <FormRef FormOID="F_15E88A09-9CB8-4B30-9A3C-AE" Mandatory="No" OrderNumber="1"/>
+        <FormRef FormOID="F_15E88A0A-9CB8-4B30-9A3C-CM" Mandatory="No" OrderNumber="2"/>
+      </StudyEventDef>
+
+      <!-- ── FormDef — UUID-style OIDs, bare CDASH codes as Name ─────────────-->
+      <FormDef OID="F_15E88A04-9CB8-4B30-9A3C-DM" Name="DM" Repeating="No">
+        <ItemGroupRef ItemGroupOID="IG.DM" Mandatory="Yes" OrderNumber="1"/>
+      </FormDef>
+      <FormDef OID="F_15E88A05-9CB8-4B30-9A3C-IE" Name="IE" Repeating="No">
+        <ItemGroupRef ItemGroupOID="IG.IE" Mandatory="Yes" OrderNumber="1"/>
+      </FormDef>
+      <FormDef OID="F_15E88A06-9CB8-4B30-9A3C-VS" Name="VS" Repeating="No">
+        <ItemGroupRef ItemGroupOID="IG.VS" Mandatory="Yes" OrderNumber="1"/>
+      </FormDef>
+      <FormDef OID="F_15E88A09-9CB8-4B30-9A3C-AE" Name="AE" Repeating="Yes">
+        <ItemGroupRef ItemGroupOID="IG.AE" Mandatory="Yes" OrderNumber="1"/>
+      </FormDef>
+      <FormDef OID="F_15E88A0A-9CB8-4B30-9A3C-CM" Name="CM" Repeating="Yes">
+        <ItemGroupRef ItemGroupOID="IG.CM" Mandatory="Yes" OrderNumber="1"/>
+      </FormDef>
+      <FormDef OID="F_15E88A07-9CB8-4B30-9A3C-LB" Name="LB" Repeating="Yes">
+        <ItemGroupRef ItemGroupOID="IG.LB" Mandatory="Yes" OrderNumber="1"/>
+      </FormDef>
+      <FormDef OID="F_15E88A08-9CB8-4B30-9A3C-DS" Name="DS" Repeating="No">
+        <ItemGroupRef ItemGroupOID="IG.DS" Mandatory="Yes" OrderNumber="1"/>
+      </FormDef>
+      <FormDef OID="F_EASI" Name="EASI" Repeating="No">
+        <ItemGroupRef ItemGroupOID="IG.EASI" Mandatory="Yes" OrderNumber="1"/>
+      </FormDef>
+
+      <!-- ── ItemGroupDef ─────────────────────────────────────────────────── -->
+      <ItemGroupDef OID="IG.DM" Name="DM" Repeating="No" SASDatasetName="DM">
+        <ItemRef ItemOID="I.DM.SUBJID"  OrderNumber="1" Mandatory="Yes"/>
+        <ItemRef ItemOID="I.DM.BIRTHDT" OrderNumber="2" Mandatory="Yes"/>
+        <ItemRef ItemOID="I.DM.SEX"     OrderNumber="3" Mandatory="Yes"/>
+      </ItemGroupDef>
+      <ItemGroupDef OID="IG.IE" Name="IE" Repeating="No" SASDatasetName="IE">
+        <ItemRef ItemOID="I.IE.INC01" OrderNumber="1" Mandatory="Yes"/>
+        <ItemRef ItemOID="I.IE.EXC01" OrderNumber="2" Mandatory="Yes"/>
+      </ItemGroupDef>
+      <ItemGroupDef OID="IG.VS" Name="VS" Repeating="No" SASDatasetName="VS">
+        <ItemRef ItemOID="I.VS.SYSBP" OrderNumber="1" Mandatory="Yes"/>
+        <ItemRef ItemOID="I.VS.DIABP" OrderNumber="2" Mandatory="Yes"/>
+        <ItemRef ItemOID="I.VS.PULSE" OrderNumber="3" Mandatory="Yes"/>
+      </ItemGroupDef>
+      <ItemGroupDef OID="IG.AE" Name="AE" Repeating="Yes" SASDatasetName="AE">
+        <ItemRef ItemOID="I.AE.AETERM"  OrderNumber="1" Mandatory="Yes"/>
+        <ItemRef ItemOID="I.AE.AESTDTC" OrderNumber="2" Mandatory="Yes"/>
+        <ItemRef ItemOID="I.AE.AESEV"   OrderNumber="3" Mandatory="Yes"/>
+        <ItemRef ItemOID="I.AE.AESER"   OrderNumber="4" Mandatory="Yes"/>
+      </ItemGroupDef>
+      <ItemGroupDef OID="IG.CM" Name="CM" Repeating="Yes" SASDatasetName="CM">
+        <ItemRef ItemOID="I.CM.CMTRT"   OrderNumber="1" Mandatory="Yes"/>
+        <ItemRef ItemOID="I.CM.CMSTDTC" OrderNumber="2" Mandatory="Yes"/>
+        <ItemRef ItemOID="I.CM.CMINDC"  OrderNumber="3" Mandatory="No"/>
+      </ItemGroupDef>
+      <ItemGroupDef OID="IG.LB" Name="LB" Repeating="Yes" SASDatasetName="LB">
+        <ItemRef ItemOID="I.LB.LBTEST"  OrderNumber="1" Mandatory="Yes"/>
+        <ItemRef ItemOID="I.LB.LBORRES" OrderNumber="2" Mandatory="Yes"/>
+      </ItemGroupDef>
+      <ItemGroupDef OID="IG.DS" Name="DS" Repeating="No" SASDatasetName="DS">
+        <ItemRef ItemOID="I.DS.DSCAT"  OrderNumber="1" Mandatory="Yes"/>
+        <ItemRef ItemOID="I.DS.DSTERM" OrderNumber="2" Mandatory="Yes"/>
+        <ItemRef ItemOID="I.DS.DSDTC"  OrderNumber="3" Mandatory="Yes"/>
+      </ItemGroupDef>
+      <ItemGroupDef OID="IG.EASI" Name="EASI" Repeating="No" SASDatasetName="EASI">
+        <ItemRef ItemOID="I.EASI.HEAD"   OrderNumber="1" Mandatory="Yes"/>
+        <ItemRef ItemOID="I.EASI.TRUNK"  OrderNumber="2" Mandatory="Yes"/>
+        <ItemRef ItemOID="I.EASI.UPLIMB" OrderNumber="3" Mandatory="Yes"/>
+        <ItemRef ItemOID="I.EASI.LOLIMB" OrderNumber="4" Mandatory="Yes"/>
+      </ItemGroupDef>
+
+      <!-- ── ItemDef — castor: namespace attrs on every item ────────────────-->
+      <ItemDef OID="I.DM.SUBJID" Name="SUBJID" DataType="text" Length="20"
+               castor:FieldUUID="6E91C5D0-AB12-4D71-8F5E-it-subjid"
+               castor:FieldOrder="1">
+        <Question><TranslatedText xml:lang="en">Subject ID</TranslatedText></Question>
+        <Alias Context="CDASH" Name="SUBJID"/>
+      </ItemDef>
+      <ItemDef OID="I.DM.BIRTHDT" Name="BIRTHDT" DataType="date"
+               castor:FieldUUID="6E91C5D1-AB12-4D71-8F5E-it-birth"
+               castor:FieldOrder="2">
+        <Question><TranslatedText xml:lang="en">Date of Birth</TranslatedText></Question>
+        <Alias Context="CDASH" Name="BRTHDAT"/>
+      </ItemDef>
+      <ItemDef OID="I.DM.SEX" Name="SEX" DataType="text" Length="1"
+               castor:FieldUUID="6E91C5D2-AB12-4D71-8F5E-it-sex"
+               castor:FieldOrder="3">
+        <Question><TranslatedText xml:lang="en">Sex at Birth</TranslatedText></Question>
+        <CodeListRef CodeListOID="CL.SEX"/>
+        <Alias Context="CDASH" Name="SEX"/>
+      </ItemDef>
+
+      <ItemDef OID="I.IE.INC01" Name="INC01" DataType="text" Length="1"
+               castor:FieldUUID="6E91C601-AB12-4D71-8F5E-it-inc01">
+        <Question><TranslatedText xml:lang="en">Inclusion 1: Moderate-to-severe AD per IGA ≥ 3 — Met?</TranslatedText></Question>
+        <CodeListRef CodeListOID="CL.YN"/>
+        <Alias Context="CDASH" Name="IETESTCD"/>
+      </ItemDef>
+      <ItemDef OID="I.IE.EXC01" Name="EXC01" DataType="text" Length="1"
+               castor:FieldUUID="6E91C602-AB12-4D71-8F5E-it-exc01">
+        <Question><TranslatedText xml:lang="en">Exclusion 1: Active skin infection at study site — Present?</TranslatedText></Question>
+        <CodeListRef CodeListOID="CL.YN"/>
+        <Alias Context="CDASH" Name="IETESTCD"/>
+      </ItemDef>
+
+      <!-- VS — Castor pattern: units in question text, no MeasurementUnitRef -->
+      <ItemDef OID="I.VS.SYSBP" Name="SYSBP" DataType="integer" Length="3"
+               castor:FieldUUID="6E91C701-AB12-4D71-8F5E-it-sysbp">
+        <Question><TranslatedText xml:lang="en">Systolic BP [mmHg]</TranslatedText></Question>
+        <RangeCheck Comparator="GE" SoftHard="Soft"><CheckValue>60</CheckValue></RangeCheck>
+        <RangeCheck Comparator="LE" SoftHard="Hard"><CheckValue>250</CheckValue></RangeCheck>
+        <Alias Context="CDASH" Name="SYSBP"/>
+      </ItemDef>
+      <ItemDef OID="I.VS.DIABP" Name="DIABP" DataType="integer" Length="3"
+               castor:FieldUUID="6E91C702-AB12-4D71-8F5E-it-diabp">
+        <Question><TranslatedText xml:lang="en">Diastolic BP [mmHg]</TranslatedText></Question>
+        <Alias Context="CDASH" Name="DIABP"/>
+      </ItemDef>
+      <ItemDef OID="I.VS.PULSE" Name="PULSE" DataType="integer" Length="3"
+               castor:FieldUUID="6E91C703-AB12-4D71-8F5E-it-pulse">
+        <Question><TranslatedText xml:lang="en">Pulse rate [bpm]</TranslatedText></Question>
+        <Alias Context="CDASH" Name="PULSE"/>
+      </ItemDef>
+
+      <ItemDef OID="I.AE.AETERM" Name="AETERM" DataType="text" Length="200"
+               castor:FieldUUID="6E91C801-AB12-4D71-8F5E-it-aeterm">
+        <Question><TranslatedText xml:lang="en">Adverse Event term (verbatim)</TranslatedText></Question>
+        <Alias Context="CDASH" Name="AETERM"/>
+      </ItemDef>
+      <ItemDef OID="I.AE.AESTDTC" Name="AESTDTC" DataType="date"
+               castor:FieldUUID="6E91C802-AB12-4D71-8F5E-it-aestdtc">
+        <Question><TranslatedText xml:lang="en">AE start date</TranslatedText></Question>
+        <Alias Context="CDASH" Name="AESTDAT"/>
+      </ItemDef>
+      <ItemDef OID="I.AE.AESEV" Name="AESEV" DataType="text" Length="10"
+               castor:FieldUUID="6E91C803-AB12-4D71-8F5E-it-aesev">
+        <Question><TranslatedText xml:lang="en">Severity</TranslatedText></Question>
+        <CodeListRef CodeListOID="CL.AESEV"/>
+        <Alias Context="CDASH" Name="AESEV"/>
+      </ItemDef>
+      <ItemDef OID="I.AE.AESER" Name="AESER" DataType="text" Length="1"
+               castor:FieldUUID="6E91C804-AB12-4D71-8F5E-it-aeser">
+        <Question><TranslatedText xml:lang="en">Serious?</TranslatedText></Question>
+        <CodeListRef CodeListOID="CL.YN"/>
+        <Alias Context="CDASH" Name="AESER"/>
+      </ItemDef>
+
+      <ItemDef OID="I.CM.CMTRT" Name="CMTRT" DataType="text" Length="200"
+               castor:FieldUUID="6E91C901-AB12-4D71-8F5E-it-cmtrt">
+        <Question><TranslatedText xml:lang="en">Medication name</TranslatedText></Question>
+        <Alias Context="CDASH" Name="CMTRT"/>
+      </ItemDef>
+      <ItemDef OID="I.CM.CMSTDTC" Name="CMSTDTC" DataType="date"
+               castor:FieldUUID="6E91C902-AB12-4D71-8F5E-it-cmstdtc">
+        <Question><TranslatedText xml:lang="en">CM start date</TranslatedText></Question>
+        <Alias Context="CDASH" Name="CMSTDAT"/>
+      </ItemDef>
+      <ItemDef OID="I.CM.CMINDC" Name="CMINDC" DataType="text" Length="200"
+               castor:FieldUUID="6E91C903-AB12-4D71-8F5E-it-cmindc">
+        <Question><TranslatedText xml:lang="en">Indication</TranslatedText></Question>
+        <Alias Context="CDASH" Name="CMINDC"/>
+      </ItemDef>
+
+      <ItemDef OID="I.LB.LBTEST" Name="LBTEST" DataType="text" Length="40"
+               castor:FieldUUID="6E91CA01-AB12-4D71-8F5E-it-lbtest">
+        <Question><TranslatedText xml:lang="en">Lab test name</TranslatedText></Question>
+        <Alias Context="CDASH" Name="LBTEST"/>
+      </ItemDef>
+      <ItemDef OID="I.LB.LBORRES" Name="LBORRES" DataType="text" Length="40"
+               castor:FieldUUID="6E91CA02-AB12-4D71-8F5E-it-lborres">
+        <Question><TranslatedText xml:lang="en">Result</TranslatedText></Question>
+        <Alias Context="CDASH" Name="LBORRES"/>
+      </ItemDef>
+
+      <ItemDef OID="I.DS.DSCAT" Name="DSCAT" DataType="text" Length="30"
+               castor:FieldUUID="6E91CB01-AB12-4D71-8F5E-it-dscat">
+        <Question><TranslatedText xml:lang="en">Disposition category</TranslatedText></Question>
+        <Alias Context="CDASH" Name="DSCAT"/>
+      </ItemDef>
+      <ItemDef OID="I.DS.DSTERM" Name="DSTERM" DataType="text" Length="200"
+               castor:FieldUUID="6E91CB02-AB12-4D71-8F5E-it-dsterm">
+        <Question><TranslatedText xml:lang="en">Disposition term</TranslatedText></Question>
+        <Alias Context="CDASH" Name="DSTERM"/>
+      </ItemDef>
+      <ItemDef OID="I.DS.DSDTC" Name="DSDTC" DataType="date"
+               castor:FieldUUID="6E91CB03-AB12-4D71-8F5E-it-dsdtc">
+        <Question><TranslatedText xml:lang="en">Disposition date</TranslatedText></Question>
+        <Alias Context="CDASH" Name="DSDAT"/>
+      </ItemDef>
+
+      <!-- EASI — 4 body region area scores, each 0-6 with Hard RangeCheck -->
+      <ItemDef OID="I.EASI.HEAD" Name="EASIHEAD" DataType="integer" Length="1"
+               castor:FieldUUID="6E91CC01-AB12-4D71-8F5E-it-easi-head">
+        <Question><TranslatedText xml:lang="en">EASI — Head/Neck area (0-6)</TranslatedText></Question>
+        <RangeCheck Comparator="GE" SoftHard="Hard"><CheckValue>0</CheckValue></RangeCheck>
+        <RangeCheck Comparator="LE" SoftHard="Hard"><CheckValue>6</CheckValue></RangeCheck>
+        <Alias Context="CDASH" Name="QSORRES"/>
+      </ItemDef>
+      <ItemDef OID="I.EASI.TRUNK" Name="EASITRUNK" DataType="integer" Length="1"
+               castor:FieldUUID="6E91CC02-AB12-4D71-8F5E-it-easi-trunk">
+        <Question><TranslatedText xml:lang="en">EASI — Trunk area (0-6)</TranslatedText></Question>
+        <RangeCheck Comparator="GE" SoftHard="Hard"><CheckValue>0</CheckValue></RangeCheck>
+        <RangeCheck Comparator="LE" SoftHard="Hard"><CheckValue>6</CheckValue></RangeCheck>
+      </ItemDef>
+      <ItemDef OID="I.EASI.UPLIMB" Name="EASIUPLIMB" DataType="integer" Length="1"
+               castor:FieldUUID="6E91CC03-AB12-4D71-8F5E-it-easi-uplimb">
+        <Question><TranslatedText xml:lang="en">EASI — Upper Limbs area (0-6)</TranslatedText></Question>
+        <RangeCheck Comparator="GE" SoftHard="Hard"><CheckValue>0</CheckValue></RangeCheck>
+        <RangeCheck Comparator="LE" SoftHard="Hard"><CheckValue>6</CheckValue></RangeCheck>
+      </ItemDef>
+      <ItemDef OID="I.EASI.LOLIMB" Name="EASILOLIMB" DataType="integer" Length="1"
+               castor:FieldUUID="6E91CC04-AB12-4D71-8F5E-it-easi-lolimb">
+        <Question><TranslatedText xml:lang="en">EASI — Lower Limbs area (0-6)</TranslatedText></Question>
+        <RangeCheck Comparator="GE" SoftHard="Hard"><CheckValue>0</CheckValue></RangeCheck>
+        <RangeCheck Comparator="LE" SoftHard="Hard"><CheckValue>6</CheckValue></RangeCheck>
+      </ItemDef>
+
+      <!-- ── CodeList ─────────────────────────────────────────────────────── -->
+      <CodeList OID="CL.YN" Name="Yes/No" DataType="text">
+        <CodeListItem CodedValue="Y" OrderNumber="1">
+          <Decode><TranslatedText xml:lang="en">Yes</TranslatedText></Decode>
+        </CodeListItem>
+        <CodeListItem CodedValue="N" OrderNumber="2">
+          <Decode><TranslatedText xml:lang="en">No</TranslatedText></Decode>
+        </CodeListItem>
+      </CodeList>
+      <CodeList OID="CL.SEX" Name="Sex" DataType="text">
+        <CodeListItem CodedValue="M" OrderNumber="1">
+          <Decode><TranslatedText xml:lang="en">Male</TranslatedText></Decode>
+        </CodeListItem>
+        <CodeListItem CodedValue="F" OrderNumber="2">
+          <Decode><TranslatedText xml:lang="en">Female</TranslatedText></Decode>
+        </CodeListItem>
+      </CodeList>
+      <CodeList OID="CL.AESEV" Name="AE Severity" DataType="text">
+        <CodeListItem CodedValue="MILD" OrderNumber="1">
+          <Decode><TranslatedText xml:lang="en">Mild</TranslatedText></Decode>
+        </CodeListItem>
+        <CodeListItem CodedValue="MODERATE" OrderNumber="2">
+          <Decode><TranslatedText xml:lang="en">Moderate</TranslatedText></Decode>
+        </CodeListItem>
+        <CodeListItem CodedValue="SEVERE" OrderNumber="3">
+          <Decode><TranslatedText xml:lang="en">Severe</TranslatedText></Decode>
+        </CodeListItem>
+      </CodeList>
+
+    </MetaDataVersion>
+  </Study>
+</ODM>
