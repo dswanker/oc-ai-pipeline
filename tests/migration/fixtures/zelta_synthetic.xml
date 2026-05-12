@@ -351,4 +351,90 @@
 
     </MetaDataVersion>
   </Study>
+
+  <!-- ── ClinicalData ─────────────────────────────────────────────────────── -->
+  <ClinicalData StudyOID="S_RESP3001" MetaDataVersionOID="v1.0">
+    <SubjectData SubjectKey="RESP-001-001">
+      <SiteRef LocationOID="SITE.001"/>
+      <StudyEventData StudyEventOID="SE_SCREEN" StudyEventRepeatKey="1">
+        <FormData FormOID="F_DM" FormRepeatKey="1">
+          <ItemGroupData ItemGroupOID="IG.DM" ItemGroupRepeatKey="1">
+            <ItemData ItemOID="I.DM.SUBJID"  Value="RESP-001-001"/>
+            <ItemData ItemOID="I.DM.BIRTHDT" Value="1981-10-25"/>
+            <ItemData ItemOID="I.DM.SEX"     Value="F"/>
+          </ItemGroupData>
+        </FormData>
+        <FormData FormOID="F_SP" FormRepeatKey="1">
+          <ItemGroupData ItemGroupOID="IG.SP" ItemGroupRepeatKey="1">
+            <ItemData ItemOID="I.SP.FEV1"    Value="1.85"/>
+            <ItemData ItemOID="I.SP.FVC"     Value="3.20"/>
+            <ItemData ItemOID="I.SP.FEV1FVC" Value="57.8"/>
+            <ItemData ItemOID="I.SP.SPDTC"   Value="2026-02-20"/>
+          </ItemGroupData>
+        </FormData>
+      </StudyEventData>
+      <StudyEventData StudyEventOID="SE_CYCLE1" StudyEventRepeatKey="1">
+        <FormData FormOID="F_SP" FormRepeatKey="1">
+          <ItemGroupData ItemGroupOID="IG.SP" ItemGroupRepeatKey="1">
+            <ItemData ItemOID="I.SP.FEV1"    Value="2.05"/>
+            <ItemData ItemOID="I.SP.FVC"     Value="3.30"/>
+            <ItemData ItemOID="I.SP.FEV1FVC" Value="62.1"/>
+            <ItemData ItemOID="I.SP.SPDTC"   Value="2026-03-20"/>
+          </ItemGroupData>
+        </FormData>
+      </StudyEventData>
+      <StudyEventData StudyEventOID="SE_CYCLE2" StudyEventRepeatKey="1">
+        <FormData FormOID="F_SP" FormRepeatKey="1">
+          <ItemGroupData ItemGroupOID="IG.SP" ItemGroupRepeatKey="1">
+            <ItemData ItemOID="I.SP.FEV1"    Value="2.18"/>
+            <ItemData ItemOID="I.SP.FVC"     Value="3.35"/>
+            <ItemData ItemOID="I.SP.FEV1FVC" Value="65.1"/>
+            <ItemData ItemOID="I.SP.SPDTC"   Value="2026-04-18"/>
+          </ItemGroupData>
+        </FormData>
+      </StudyEventData>
+      <StudyEventData StudyEventOID="SE_CYCLE3" StudyEventRepeatKey="1">
+        <FormData FormOID="F_SP" FormRepeatKey="1">
+          <ItemGroupData ItemGroupOID="IG.SP" ItemGroupRepeatKey="1">
+            <ItemData ItemOID="I.SP.FEV1"    Value="2.34"/>
+            <ItemData ItemOID="I.SP.FVC"     Value="3.42"/>
+            <ItemData ItemOID="I.SP.FEV1FVC" Value="68.4"/>
+            <ItemData ItemOID="I.SP.SPDTC"   Value="2026-05-16"/>
+          </ItemGroupData>
+        </FormData>
+      </StudyEventData>
+    </SubjectData>
+
+    <SubjectData SubjectKey="RESP-001-002">
+      <SiteRef LocationOID="SITE.002"/>
+      <StudyEventData StudyEventOID="SE_SCREEN" StudyEventRepeatKey="1">
+        <FormData FormOID="F_DM" FormRepeatKey="1">
+          <ItemGroupData ItemGroupOID="IG.DM" ItemGroupRepeatKey="1">
+            <ItemData ItemOID="I.DM.SUBJID"  Value="RESP-001-002"/>
+            <ItemData ItemOID="I.DM.BIRTHDT" Value="1974-05-09"/>
+            <ItemData ItemOID="I.DM.SEX"     Value="M"/>
+          </ItemGroupData>
+        </FormData>
+        <FormData FormOID="F_SP" FormRepeatKey="1">
+          <ItemGroupData ItemGroupOID="IG.SP" ItemGroupRepeatKey="1">
+            <ItemData ItemOID="I.SP.FEV1"    Value="2.42"/>
+            <ItemData ItemOID="I.SP.FVC"     Value="4.10"/>
+            <ItemData ItemOID="I.SP.FEV1FVC" Value="59.0"/>
+            <ItemData ItemOID="I.SP.SPDTC"   Value="2026-02-22"/>
+          </ItemGroupData>
+        </FormData>
+      </StudyEventData>
+      <StudyEventData StudyEventOID="SE_CYCLE1" StudyEventRepeatKey="1">
+        <FormData FormOID="F_SP" FormRepeatKey="1">
+          <ItemGroupData ItemGroupOID="IG.SP" ItemGroupRepeatKey="1">
+            <ItemData ItemOID="I.SP.FEV1"    Value="2.55"/>
+            <ItemData ItemOID="I.SP.FVC"     Value="4.18"/>
+            <ItemData ItemOID="I.SP.FEV1FVC" Value="61.0"/>
+            <ItemData ItemOID="I.SP.SPDTC"   Value="2026-03-22"/>
+          </ItemGroupData>
+        </FormData>
+      </StudyEventData>
+    </SubjectData>
+  </ClinicalData>
+
 </ODM>

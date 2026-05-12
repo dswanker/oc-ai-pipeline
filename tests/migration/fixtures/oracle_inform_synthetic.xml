@@ -371,4 +371,85 @@
 
     </MetaDataVersion>
   </Study>
+
+  <!-- ── ClinicalData — InForm uses pf:InFormItemSetOID on every ItemGroupData -->
+  <ClinicalData StudyOID="S_RA2024" MetaDataVersionOID="v1.0">
+    <SubjectData SubjectKey="RA-001-001">
+      <SiteRef LocationOID="SITE.001"/>
+      <StudyEventData StudyEventOID="SE_SCREEN" StudyEventRepeatKey="1">
+        <FormData FormOID="F_DM" FormRepeatKey="1">
+          <ItemGroupData ItemGroupOID="sctDM" ItemGroupRepeatKey="1"
+                         pf:InFormItemSetOID="igs-DM-RA-001-001">
+            <ItemData ItemOID="frmDM.sctDM.itmSUBJID"  Value="RA-001-001"/>
+            <ItemData ItemOID="frmDM.sctDM.itmBIRTHDT" Value="1960-06-21"/>
+            <ItemData ItemOID="frmDM.sctDM.itmSEX"     Value="F"/>
+            <ItemData ItemOID="frmDM.sctDM.itmRACE"    Value="White"/>
+          </ItemGroupData>
+        </FormData>
+        <FormData FormOID="F_VS" FormRepeatKey="1">
+          <ItemGroupData ItemGroupOID="sctVS" ItemGroupRepeatKey="1"
+                         pf:InFormItemSetOID="igs-VS-RA-001-001-S">
+            <ItemData ItemOID="frmVS.sctVS.itmSYSBP" Value="138"/>
+            <ItemData ItemOID="frmVS.sctVS.itmDIABP" Value="86"/>
+            <ItemData ItemOID="frmVS.sctVS.itmPULSE" Value="74"/>
+          </ItemGroupData>
+        </FormData>
+      </StudyEventData>
+      <StudyEventData StudyEventOID="SE_BASE" StudyEventRepeatKey="1">
+        <FormData FormOID="F_EX" FormRepeatKey="1">
+          <ItemGroupData ItemGroupOID="sctEX" ItemGroupRepeatKey="1"
+                         pf:InFormItemSetOID="igs-EX-RA-001-001-B">
+            <ItemData ItemOID="frmEX.sctEX.itmEXTRT"   Value="RAX-9"/>
+            <ItemData ItemOID="frmEX.sctEX.itmEXDOSE"  Value="200"/>
+            <ItemData ItemOID="frmEX.sctEX.itmEXSTDTC" Value="2026-03-30"/>
+          </ItemGroupData>
+        </FormData>
+      </StudyEventData>
+      <StudyEventData StudyEventOID="SE_COMMON" StudyEventRepeatKey="1">
+        <FormData FormOID="F_AE" FormRepeatKey="1">
+          <ItemGroupData ItemGroupOID="sctAE" ItemGroupRepeatKey="1"
+                         pf:InFormItemSetOID="igs-AE-RA-001-001-1">
+            <ItemData ItemOID="frmAE.sctAE.itmAETERM"  Value="Upper respiratory infection"/>
+            <ItemData ItemOID="frmAE.sctAE.itmAESTDTC" Value="2026-04-18"/>
+            <ItemData ItemOID="frmAE.sctAE.itmAESEV"   Value="MILD"/>
+            <ItemData ItemOID="frmAE.sctAE.itmAESER"   Value="N"/>
+          </ItemGroupData>
+        </FormData>
+      </StudyEventData>
+    </SubjectData>
+
+    <SubjectData SubjectKey="RA-001-002">
+      <SiteRef LocationOID="SITE.002"/>
+      <StudyEventData StudyEventOID="SE_SCREEN" StudyEventRepeatKey="1">
+        <FormData FormOID="F_DM" FormRepeatKey="1">
+          <ItemGroupData ItemGroupOID="sctDM" ItemGroupRepeatKey="1"
+                         pf:InFormItemSetOID="igs-DM-RA-001-002">
+            <ItemData ItemOID="frmDM.sctDM.itmSUBJID"  Value="RA-001-002"/>
+            <ItemData ItemOID="frmDM.sctDM.itmBIRTHDT" Value="1972-01-08"/>
+            <ItemData ItemOID="frmDM.sctDM.itmSEX"     Value="F"/>
+            <ItemData ItemOID="frmDM.sctDM.itmRACE"    Value="Asian"/>
+          </ItemGroupData>
+        </FormData>
+        <FormData FormOID="F_LB" FormRepeatKey="1">
+          <ItemGroupData ItemGroupOID="sctLB" ItemGroupRepeatKey="1"
+                         pf:InFormItemSetOID="igs-LB-RA-001-002-S-CRP">
+            <ItemData ItemOID="frmLB.sctLB.itmLBTEST"  Value="C-reactive protein"/>
+            <ItemData ItemOID="frmLB.sctLB.itmLBORRES" Value="18.4"/>
+            <ItemData ItemOID="frmLB.sctLB.itmCRP"     Value="18.4"/>
+          </ItemGroupData>
+        </FormData>
+      </StudyEventData>
+      <StudyEventData StudyEventOID="SE_BASE" StudyEventRepeatKey="1">
+        <FormData FormOID="F_EX" FormRepeatKey="1">
+          <ItemGroupData ItemGroupOID="sctEX" ItemGroupRepeatKey="1"
+                         pf:InFormItemSetOID="igs-EX-RA-001-002-B">
+            <ItemData ItemOID="frmEX.sctEX.itmEXTRT"   Value="Methotrexate (active comparator)"/>
+            <ItemData ItemOID="frmEX.sctEX.itmEXDOSE"  Value="15"/>
+            <ItemData ItemOID="frmEX.sctEX.itmEXSTDTC" Value="2026-04-02"/>
+          </ItemGroupData>
+        </FormData>
+      </StudyEventData>
+    </SubjectData>
+  </ClinicalData>
+
 </ODM>

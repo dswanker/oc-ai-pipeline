@@ -404,4 +404,77 @@
 
     </MetaDataVersion>
   </Study>
+
+  <!-- ── ClinicalData ─────────────────────────────────────────────────────── -->
+  <ClinicalData StudyOID="S_DM3001" MetaDataVersionOID="v1.0">
+    <SubjectData SubjectKey="DM-001-001">
+      <SiteRef LocationOID="SITE.001"/>
+      <StudyEventData StudyEventOID="SE_SCREEN" StudyEventRepeatKey="1">
+        <FormData FormOID="F_DM" FormRepeatKey="1">
+          <ItemGroupData ItemGroupOID="IG.DM" ItemGroupRepeatKey="1">
+            <ItemData ItemOID="I.DM.SUBJID"  Value="DM-001-001"/>
+            <ItemData ItemOID="I.DM.BIRTHDT" Value="1968-09-04"/>
+            <ItemData ItemOID="I.DM.SEX"     Value="M"/>
+            <ItemData ItemOID="I.DM.DMTYPE"  Value="T2DM ≥ 5 years"/>
+          </ItemGroupData>
+        </FormData>
+        <FormData FormOID="F_HBA1C" FormRepeatKey="1">
+          <ItemGroupData ItemGroupOID="IG.HBA1C" ItemGroupRepeatKey="1">
+            <ItemData ItemOID="I.HBA1C.HBA1CRES" Value="8.4"/>
+            <ItemData ItemOID="I.HBA1C.HBA1CDTC" Value="2026-02-12"/>
+            <ItemData ItemOID="I.HBA1C.FASTING"  Value="Y"/>
+          </ItemGroupData>
+        </FormData>
+      </StudyEventData>
+      <StudyEventData StudyEventOID="SE_WEEK12" StudyEventRepeatKey="1">
+        <FormData FormOID="F_HBA1C" FormRepeatKey="1">
+          <ItemGroupData ItemGroupOID="IG.HBA1C" ItemGroupRepeatKey="1">
+            <ItemData ItemOID="I.HBA1C.HBA1CRES" Value="7.5"/>
+            <ItemData ItemOID="I.HBA1C.HBA1CDTC" Value="2026-05-04"/>
+            <ItemData ItemOID="I.HBA1C.FASTING"  Value="Y"/>
+          </ItemGroupData>
+        </FormData>
+      </StudyEventData>
+      <StudyEventData StudyEventOID="SE_WEEK24" StudyEventRepeatKey="1">
+        <FormData FormOID="F_HBA1C" FormRepeatKey="1">
+          <ItemGroupData ItemGroupOID="IG.HBA1C" ItemGroupRepeatKey="1">
+            <ItemData ItemOID="I.HBA1C.HBA1CRES" Value="6.9"/>
+            <ItemData ItemOID="I.HBA1C.HBA1CDTC" Value="2026-07-28"/>
+            <ItemData ItemOID="I.HBA1C.FASTING"  Value="Y"/>
+          </ItemGroupData>
+        </FormData>
+      </StudyEventData>
+    </SubjectData>
+
+    <SubjectData SubjectKey="DM-001-002">
+      <SiteRef LocationOID="SITE.001"/>
+      <StudyEventData StudyEventOID="SE_SCREEN" StudyEventRepeatKey="1">
+        <FormData FormOID="F_DM" FormRepeatKey="1">
+          <ItemGroupData ItemGroupOID="IG.DM" ItemGroupRepeatKey="1">
+            <ItemData ItemOID="I.DM.SUBJID"  Value="DM-001-002"/>
+            <ItemData ItemOID="I.DM.BIRTHDT" Value="1972-12-18"/>
+            <ItemData ItemOID="I.DM.SEX"     Value="F"/>
+            <ItemData ItemOID="I.DM.DMTYPE"  Value="T2DM ≥ 10 years"/>
+          </ItemGroupData>
+        </FormData>
+        <FormData FormOID="F_HBA1C" FormRepeatKey="1">
+          <ItemGroupData ItemGroupOID="IG.HBA1C" ItemGroupRepeatKey="1">
+            <ItemData ItemOID="I.HBA1C.HBA1CRES" Value="9.2"/>
+            <ItemData ItemOID="I.HBA1C.HBA1CDTC" Value="2026-02-15"/>
+            <ItemData ItemOID="I.HBA1C.FASTING"  Value="Y"/>
+          </ItemGroupData>
+        </FormData>
+      </StudyEventData>
+      <StudyEventData StudyEventOID="SE_WEEK12" StudyEventRepeatKey="1">
+        <FormData FormOID="F_HBA1C" FormRepeatKey="1">
+          <ItemGroupData ItemGroupOID="IG.HBA1C" ItemGroupRepeatKey="1">
+            <ItemData ItemOID="I.HBA1C.HBA1CRES" Value="8.8"/>
+            <ItemData ItemOID="I.HBA1C.HBA1CDTC" Value="2026-05-08"/>
+            <ItemData ItemOID="I.HBA1C.FASTING"  Value="N"/>
+          </ItemGroupData>
+        </FormData>
+      </StudyEventData>
+    </SubjectData>
+  </ClinicalData>
+
 </ODM>

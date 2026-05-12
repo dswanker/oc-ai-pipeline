@@ -375,4 +375,81 @@
 
     </MetaDataVersion>
   </Study>
+
+  <!-- ── ClinicalData ─────────────────────────────────────────────────────── -->
+  <ClinicalData StudyOID="S_VAX1001" MetaDataVersionOID="v1.0">
+    <SubjectData SubjectKey="VAX-001-001">
+      <SiteRef LocationOID="SITE.001"/>
+      <StudyEventData StudyEventOID="SE_SCREEN" StudyEventRepeatKey="1">
+        <FormData FormOID="F_DM" FormRepeatKey="1">
+          <ItemGroupData ItemGroupOID="IG.DM" ItemGroupRepeatKey="1">
+            <ItemData ItemOID="I.DM.SUBJID"  Value="VAX-001-001"/>
+            <ItemData ItemOID="I.DM.BIRTHDT" Value="1993-04-18"/>
+            <ItemData ItemOID="I.DM.SEX"     Value="M"/>
+            <ItemData ItemOID="I.DM.ARMCD"   Value="ARM1"/>
+          </ItemGroupData>
+        </FormData>
+      </StudyEventData>
+      <StudyEventData StudyEventOID="SE_DOSING" StudyEventRepeatKey="1">
+        <FormData FormOID="F_VS" FormRepeatKey="1">
+          <ItemGroupData ItemGroupOID="IG.VS" ItemGroupRepeatKey="1">
+            <ItemData ItemOID="I.VS.SYSBP" Value="118"/>
+            <ItemData ItemOID="I.VS.DIABP" Value="76"/>
+            <ItemData ItemOID="I.VS.PULSE" Value="68"/>
+            <ItemData ItemOID="I.VS.TEMP"  Value="36.7"/>
+          </ItemGroupData>
+        </FormData>
+        <FormData FormOID="F_EX" FormRepeatKey="1">
+          <ItemGroupData ItemGroupOID="IG.EX" ItemGroupRepeatKey="1">
+            <ItemData ItemOID="I.EX.EXTRT"   Value="CVX-001 (active vaccine)"/>
+            <ItemData ItemOID="I.EX.EXDOSE"  Value="50.00"/>
+            <ItemData ItemOID="I.EX.EXSTDTC" Value="2026-03-10"/>
+          </ItemGroupData>
+        </FormData>
+      </StudyEventData>
+      <StudyEventData StudyEventOID="SE_COMMON" StudyEventRepeatKey="1">
+        <FormData FormOID="F_AE" FormRepeatKey="1">
+          <ItemGroupData ItemGroupOID="IG.AE" ItemGroupRepeatKey="1">
+            <ItemData ItemOID="I.AE.AETERM"  Value="Injection-site soreness"/>
+            <ItemData ItemOID="I.AE.AESTDTC" Value="2026-03-10"/>
+            <ItemData ItemOID="I.AE.AESEV"   Value="MILD"/>
+            <ItemData ItemOID="I.AE.AESER"   Value="N"/>
+            <ItemData ItemOID="I.AE.AEREL"   Value="PROBABLE"/>
+          </ItemGroupData>
+        </FormData>
+      </StudyEventData>
+    </SubjectData>
+
+    <SubjectData SubjectKey="VAX-001-002">
+      <SiteRef LocationOID="SITE.001"/>
+      <StudyEventData StudyEventOID="SE_SCREEN" StudyEventRepeatKey="1">
+        <FormData FormOID="F_DM" FormRepeatKey="1">
+          <ItemGroupData ItemGroupOID="IG.DM" ItemGroupRepeatKey="1">
+            <ItemData ItemOID="I.DM.SUBJID"  Value="VAX-001-002"/>
+            <ItemData ItemOID="I.DM.BIRTHDT" Value="1989-11-02"/>
+            <ItemData ItemOID="I.DM.SEX"     Value="F"/>
+            <ItemData ItemOID="I.DM.ARMCD"   Value="ARM2"/>
+          </ItemGroupData>
+        </FormData>
+      </StudyEventData>
+      <StudyEventData StudyEventOID="SE_DOSING" StudyEventRepeatKey="1">
+        <FormData FormOID="F_VS" FormRepeatKey="1">
+          <ItemGroupData ItemGroupOID="IG.VS" ItemGroupRepeatKey="1">
+            <ItemData ItemOID="I.VS.SYSBP" Value="112"/>
+            <ItemData ItemOID="I.VS.DIABP" Value="72"/>
+            <ItemData ItemOID="I.VS.PULSE" Value="74"/>
+            <ItemData ItemOID="I.VS.TEMP"  Value="36.5"/>
+          </ItemGroupData>
+        </FormData>
+        <FormData FormOID="F_EX" FormRepeatKey="1">
+          <ItemGroupData ItemGroupOID="IG.EX" ItemGroupRepeatKey="1">
+            <ItemData ItemOID="I.EX.EXTRT"   Value="Placebo (saline)"/>
+            <ItemData ItemOID="I.EX.EXDOSE"  Value="0.00"/>
+            <ItemData ItemOID="I.EX.EXSTDTC" Value="2026-03-11"/>
+          </ItemGroupData>
+        </FormData>
+      </StudyEventData>
+    </SubjectData>
+  </ClinicalData>
+
 </ODM>
