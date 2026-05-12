@@ -37,6 +37,7 @@ OC4 OID conventions applied (matching EDC_STRUCTURE_PROMPT rules)
 
 import re
 import json
+from pathlib import Path
 from typing import Any
 
 from odm_reader import (
@@ -46,6 +47,49 @@ from odm_reader import (
     odm_datatype_to_xlsform,
     DATATYPE_MAP,
 )
+
+# ── Vendor convention loader ──────────────────────────────────────────────────
+
+# Maps the source_system string emitted by odm_reader._detect_vendor to a
+# convention filename under migration/vendor_conventions/. Extending the
+# system to a new vendor is a one-line entry here plus a new .md file.
+VENDOR_CONVENTION_FILES: dict[str, str] = {
+    "Medidata Rave":     "medidata_rave.md",
+    "Oracle InForm":     "oracle_inform.md",
+    "REDCap":            "redcap.md",
+    "Castor EDC":        "castor.md",
+    "Viedoc":            "viedoc.md",
+    "Veeva Vault CDMS":  "veeva.md",
+    "Zelta (Merative)":  "zelta.md",
+    "iMedNet":           "imednet.md",
+    "Medrio":            "medrio.md",
+    # OC4-emitted ODM is handled by the generic rules.
+    "OpenClinica":       "generic_odm.md",
+    "OpenClinica 4":     "generic_odm.md",
+}
+
+_CONVENTIONS_DIR = Path(__file__).resolve().parent / "vendor_conventions"
+
+
+def load_vendor_conventions(source_system: str) -> str:
+    """
+    Return the markdown content of the convention file matching
+    `source_system`, falling back to generic_odm.md when unknown, and to
+    an empty string when even the fallback file is missing.
+
+    The text is consumed verbatim by the AI enrichment prompt — keep
+    convention files concise and well-structured.
+    """
+    filename = VENDOR_CONVENTION_FILES.get(source_system or "", "generic_odm.md")
+    candidates = [_CONVENTIONS_DIR / filename, _CONVENTIONS_DIR / "generic_odm.md"]
+    for path in candidates:
+        try:
+            return path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            continue
+        except OSError:
+            continue
+    return ""
 
 # ── CDASH domain detection ────────────────────────────────────────────────────
 
@@ -687,6 +731,13 @@ INPUT HIERARCHY (highest priority first — never invert this order):
      sponsor, arms, study-specific constraints not captured in ODM.
   7. You (the model) interpret everything above. You do not invent structure.
 
+VENDOR-SPECIFIC CONVENTIONS FOR <<SOURCE_SYSTEM>>:
+<<VENDOR_CONVENTIONS>>
+
+Apply the conventions above when transforming this export. They take
+precedence over generic ODM handling but remain subordinate to OC
+Standards OC-1 through OC-9 (which always win).
+
 HARD RULES:
   a) USE the ODM structure as AUTHORITATIVE for events, forms, items,
      codelists and visit assignments. Do NOT reinvent these from the protocol.
@@ -736,11 +787,34 @@ OUTPUT FORMAT:
   - No markdown, no explanation, no preamble — just the JSON.
 
 STUDY SPEC JSON TO IMPROVE (ODM-derived baseline):
-{spec_json}
+<<SPEC_JSON>>
 
 SOURCE ODM SUMMARY:
-{odm_summary}
+<<ODM_SUMMARY>>
 """
+
+
+def _render_ai_assist_prompt(
+    *,
+    spec_json: str,
+    odm_summary: str,
+    source_system: str,
+    vendor_conventions: str,
+) -> str:
+    """
+    Brace-safe placeholder substitution for AI_ASSIST_PROMPT.
+
+    The prompt body contains literal JSON braces (e.g. the example
+    cross_form_dependencies object), so str.format() is unsafe. Substitute
+    `<<NAME>>` placeholders verbatim instead.
+    """
+    return (
+        AI_ASSIST_PROMPT
+        .replace("<<SOURCE_SYSTEM>>", source_system or "UNKNOWN")
+        .replace("<<VENDOR_CONVENTIONS>>", vendor_conventions or "")
+        .replace("<<SPEC_JSON>>", spec_json)
+        .replace("<<ODM_SUMMARY>>", odm_summary)
+    )
 
 
 _DOCX_TEXT_MARKER = b"%%DOCX_TEXT%%"
@@ -750,6 +824,7 @@ async def transform_with_ai(
     odm_study: dict,
     claude_client: Any,
     protocol_bytes: bytes | None = None,
+    source_system: str | None = None,
 ) -> dict:
     """
     AI-assisted transform. Runs the deterministic `transform` first to obtain
@@ -765,6 +840,9 @@ async def transform_with_ai(
                         with the b"%%DOCX_TEXT%%" sentinel produced by
                         pipeline.py for Word-doc fallbacks, the inner text is
                         passed as extra_text instead of as a PDF document.
+        source_system:  vendor label (e.g. "Medidata Rave") used to load
+                        the matching `vendor_conventions/*.md` file into the
+                        prompt. Defaults to `odm_study["source_system"]`.
 
     Returns:
         Improved Study Spec JSON dict. On any AI failure, falls back to the
@@ -774,11 +852,17 @@ async def transform_with_ai(
 
     spec = transform(odm_study)
 
+    if source_system is None:
+        source_system = odm_study.get("source_system", "") or ""
+
     spec_json_str = json.dumps(spec, indent=2, default=str)
     odm_summary   = summarise(odm_study)
-    prompt = AI_ASSIST_PROMPT.format(
+    vendor_conv   = load_vendor_conventions(source_system)
+    prompt = _render_ai_assist_prompt(
         spec_json=spec_json_str,
         odm_summary=odm_summary,
+        source_system=source_system,
+        vendor_conventions=vendor_conv,
     )
 
     pdf_arg: bytes | None = None

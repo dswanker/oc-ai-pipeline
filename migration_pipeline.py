@@ -340,6 +340,7 @@ async def run_migration(
             claude_client = _cc_mod
         spec_json = await transform_with_ai(
             odm_study, claude_client, protocol_bytes=protocol_bytes,
+            source_system=source_system,
         )
     else:
         print(f"[MIGRATION] Path M: ODM-only mode", flush=True)

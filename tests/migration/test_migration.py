@@ -1844,6 +1844,133 @@ class TestAiAssistPromptHierarchy(unittest.TestCase):
             )
 
 
+class TestVendorConventions(unittest.TestCase):
+    """The vendor_conventions/ folder + loader + AI-prompt wiring."""
+
+    REQUIRED_SECTIONS = (
+        "## Overview",
+        "## Detection",
+        "## Namespace",
+        "## ODM Structural Patterns",
+        "## OID Conventions",
+        "## Form Structure Quirks",
+        "## Event/Visit Mapping",
+        "## Codelist Handling",
+        "## Clinical Data Patterns",
+        "## Known Export Limitations",
+        "## OC4 Transform Rules",
+        "## Compliance Notes",
+    )
+
+    @classmethod
+    def setUpClass(cls):
+        from odm_to_spec import (
+            VENDOR_CONVENTION_FILES,
+            load_vendor_conventions,
+            _CONVENTIONS_DIR,
+        )
+        cls.MAP   = VENDOR_CONVENTION_FILES
+        cls.load  = staticmethod(load_vendor_conventions)
+        cls.DIR   = _CONVENTIONS_DIR
+
+    def test_load_vendor_conventions_medidata(self):
+        """Medidata convention loads and carries the headline rules."""
+        text = self.load("Medidata Rave")
+        self.assertTrue(text, "Medidata convention file returned empty content")
+        for phrase in ("mdsol", "IsLog", "OC-8"):
+            self.assertIn(
+                phrase, text,
+                f"medidata_rave.md missing expected phrase {phrase!r}"
+            )
+
+    def test_load_vendor_conventions_unknown_falls_back_to_generic(self):
+        """An unrecognised source_system loads generic_odm.md."""
+        text = self.load("UnknownEDC 1.0")
+        self.assertTrue(text, "generic_odm.md fallback returned empty content")
+        self.assertIn("Generic ODM", text,
+                      "Fallback did not return generic_odm.md content")
+
+    def test_load_vendor_conventions_empty_string_on_missing_file(self):
+        """If both the matched file AND the generic fallback are missing,
+        the loader degrades gracefully to an empty string."""
+        from odm_to_spec import _CONVENTIONS_DIR
+        with tempfile.TemporaryDirectory() as tmp:
+            # Point the loader at an empty directory by patching the module
+            # attribute for the duration of the test.
+            import odm_to_spec as mod
+            original = mod._CONVENTIONS_DIR
+            try:
+                mod._CONVENTIONS_DIR = Path(tmp)
+                text = mod.load_vendor_conventions("Medidata Rave")
+                self.assertEqual(text, "",
+                    "Loader should return '' when no convention file is found")
+            finally:
+                mod._CONVENTIONS_DIR = original
+
+    def test_all_convention_files_exist(self):
+        """Every VENDOR_CONVENTION_FILES entry points at a real file."""
+        for vendor, filename in self.MAP.items():
+            path = self.DIR / filename
+            self.assertTrue(
+                path.is_file(),
+                f"Convention file for {vendor!r} not found: {path}"
+            )
+
+    def test_all_convention_files_have_required_sections(self):
+        """Every convention file follows the 12-section standard structure."""
+        for filename in sorted(set(self.MAP.values())):
+            path = self.DIR / filename
+            text = path.read_text(encoding="utf-8")
+            for heading in self.REQUIRED_SECTIONS:
+                self.assertIn(
+                    heading, text,
+                    f"{filename} missing required heading {heading!r}"
+                )
+
+    def test_ai_assist_prompt_includes_conventions(self):
+        """transform_with_ai must embed the vendor conventions in the prompt
+        it passes to claude_client.call_claude."""
+        import asyncio
+        import odm_to_spec as mod
+
+        captured: dict = {}
+
+        class _FakeClient:
+            async def call_claude(self, prompt, pdf_bytes=None, extra_text=None):
+                captured["prompt"] = prompt
+                # Return a JSON-serialised minimal spec so transform_with_ai
+                # parses it successfully.
+                return json.dumps({"forms": []})
+
+        # Build a minimal OdmStudy dict (no real ODM parse needed — transform()
+        # only reads keys the module already tolerates as missing).
+        odm_study = {
+            "source_system":         "Medidata Rave",
+            "source_system_version": "5.6",
+            "study":                 {"oid": "S1", "name": "T", "protocol_name": "P"},
+            "protocol":              {"arms": []},
+            "events":                [],
+            "forms":                 [],
+            "items":                 [],
+            "item_groups":           [],
+            "codelists":             [],
+            "parse_warnings":        [],
+        }
+
+        asyncio.run(mod.transform_with_ai(
+            odm_study, _FakeClient(),
+            protocol_bytes=None,
+            source_system="Medidata Rave",
+        ))
+
+        prompt = captured.get("prompt", "")
+        self.assertIn("VENDOR-SPECIFIC CONVENTIONS FOR Medidata Rave", prompt,
+                      "Prompt missing the vendor-conventions header")
+        self.assertIn("mdsol", prompt,
+                      "Prompt does not appear to include the Medidata "
+                      "convention body (no 'mdsol' substring found)")
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Test runner
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1857,7 +1984,8 @@ def run_tests(verbosity=1):
                 TestOracleInFormFixture, TestRedcapFixture,
                 TestCastorFixture, TestZeltaFixture,
                 TestMigrationEnrichmentDispatch,
-                TestAiAssistPromptHierarchy):
+                TestAiAssistPromptHierarchy,
+                TestVendorConventions):
         suite.addTests(loader.loadTestsFromTestCase(cls))
     runner = unittest.TextTestRunner(verbosity=verbosity)
     result = runner.run(suite)
