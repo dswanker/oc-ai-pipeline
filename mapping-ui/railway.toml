@@ -1,0 +1,9 @@
+# railway.toml for mapping-ui service
+[build]
+builder = "nixpacks"
+buildCommand = "npm install && npm run build"
+
+[deploy]
+startCommand = "npx serve -s build -l $PORT"
+healthcheckPath = "/"
+restartPolicyType = "on_failure"

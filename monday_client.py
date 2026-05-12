@@ -43,6 +43,8 @@ COL = {
     "output_requested":  "dropdown_mm2nc7d4",
     # Build Preview file column (created by scripts/create_build_preview_column.py)
     "build_preview":     "file_mm2x1ey6",
+    # Mapping review UI deep-link (populated after successful migration)
+    "mapping_review_url": "link_mm397x44",
     # EDC migration input (created by scripts/create_migration_columns.py)
     "source_edc_export": "file_mm386dte",   # file: ODM XML or ZIP containing ODM XML
     "source_edc_system": "dropdown_mm382w7d",  # dropdown: vendor (auto-detected, overridable)
@@ -193,6 +195,23 @@ async def set_text(item_id, col_id, text_value):
                              "c": col_id, "v": v}})
     print(f"SET_TEXT {col_id}: {r.status_code}", flush=True)
     _check_monday_response(r, f"SET_TEXT({col_id})")
+
+
+async def set_link(item_id, col_id, url, text=None):
+    """Set a link column value on a monday.com item.
+
+    Monday link columns expect {"url": "...", "text": "..."}. When `text`
+    is omitted the URL is shown as its own label.
+    """
+    q = make_mutation()
+    v = json.dumps({"url": url, "text": text or url})
+    async with httpx.AsyncClient(timeout=30) as c:
+        r = await c.post(MONDAY_API_URL, headers=get_headers(),
+                         json={"query": q, "variables": {
+                             "i": item_id, "b": BOARD_ID,
+                             "c": col_id, "v": v}})
+    print(f"SET_LINK {col_id}: {r.status_code}", flush=True)
+    _check_monday_response(r, f"SET_LINK({col_id})")
 
 
 async def download_column_file(item_id, col_id):
