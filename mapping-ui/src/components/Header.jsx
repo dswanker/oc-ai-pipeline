@@ -19,7 +19,7 @@ export default function Header({ spec, dirty, saving, isDemo, onSave }) {
         <img className="logo" src="/oc-swoosh.svg" alt="OpenClinica" />
         <div>
           <div className="header-title">
-            EDC Mapping Review
+            Syndeo
             {isDemo && <span className="demo-badge" style={{ marginLeft: 8 }}>DEMO</span>}
           </div>
           <div className="header-sub">

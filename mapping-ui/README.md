@@ -1,4 +1,4 @@
-# OC EDC Mapping Review UI
+# Syndeo by OpenClinica
 
 React web application for reviewing and editing EDC migration field mappings before triggering the OC4 build.
 
