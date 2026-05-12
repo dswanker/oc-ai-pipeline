@@ -709,8 +709,23 @@ HARD RULES:
      thresholds or data-validation rules that the ODM did not encode.
      Preserve any constraints already present.
   h) Cross-form dependencies (SUBJID from DM, ICFDAT from ICF, etc.) may be
-     added to each form's `cross_form_dependencies` list as full XPath
-     expressions.
+     added to each form's `cross_form_dependencies` list. Every entry MUST
+     be a JSON object (dict) with exactly these four keys:
+         {
+           "source_form":      "<FORM_ID of the form the value comes from>",
+           "source_field":     "<bare field name on the source form>",
+           "target_field":     "<bare field name on THIS form>",
+           "xpath_expression": "<full XPath, e.g. instance('clinicaldata')/ODM/ClinicalData/SubjectData/StudyEventData[@StudyEventOID='SE_SCREEN']/FormData[@FormOID='F_DM_1']/ItemGroupData/ItemData[@ItemOID='SUBJID']/@Value>"
+         }
+     NEVER emit a plain string, a bare XPath, or a partial object.
+     Example of a correct entry on the AE form:
+         {
+           "source_form":      "DM",
+           "source_field":     "SUBJID",
+           "target_field":     "SUBJID",
+           "xpath_expression": "instance('clinicaldata')/ODM/ClinicalData/SubjectData/@SubjectKey"
+         }
+     If you cannot fully populate all four keys, omit the entry entirely.
   i) Flag rows whose mapping you genuinely cannot resolve: set
      `completion_status` to "FLAGGED" and populate `flag_reason`.
 
@@ -784,10 +799,39 @@ async def transform_with_ai(
         if cleaned.startswith("```"):
             cleaned = re.sub(r"^```[a-z]*\n?", "", cleaned)
             cleaned = re.sub(r"\n?```$", "", cleaned.rstrip())
-        return json.loads(cleaned)
+        enriched = json.loads(cleaned)
+        _sanitise_cross_form_dependencies(enriched)
+        return enriched
     except Exception as e:
         print(f"[odm_to_spec] AI-assist failed ({e}) — returning deterministic spec.", flush=True)
         return spec
+
+
+def _sanitise_cross_form_dependencies(spec: dict) -> None:
+    """
+    Drop any non-dict entries from each form's `cross_form_dependencies`.
+
+    Claude occasionally emits a bare XPath string instead of the required
+    {source_form, source_field, target_field, xpath_expression} object.
+    Downstream code (e.g. dep_utils.extract_declared_dependencies) calls
+    `dep.get(...)` and crashes with AttributeError on those strings.
+    Filter them out in-place and log the count.
+    """
+    for form in spec.get("forms", []) or []:
+        deps = form.get("cross_form_dependencies")
+        if not isinstance(deps, list):
+            continue
+        kept = [d for d in deps if isinstance(d, dict)]
+        dropped = len(deps) - len(kept)
+        if dropped:
+            print(
+                f"[odm_to_spec] dropped {dropped} non-dict "
+                f"cross_form_dependencies entr"
+                f"{'y' if dropped == 1 else 'ies'} on form "
+                f"{form.get('form_id', '?')}",
+                flush=True,
+            )
+            form["cross_form_dependencies"] = kept
 
 
 # ── CLI entrypoint ────────────────────────────────────────────────────────────
