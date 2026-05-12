@@ -153,13 +153,43 @@ async def set_status(item_id, col_id, label_text):
     _check_monday_response(r, f"SET_STATUS({col_id}={label_text})")
 
 async def append_log(item_id, message):
+    """Append a timestamped line to the AI Run Log column.
+
+    Reads the existing long-text value first and prepends the new entry on
+    top so the column accumulates a full per-run history instead of
+    overwriting on every call. Failures are logged to stdout — never
+    raised — because callers include every error handler in the pipeline.
+    """
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    val = json.dumps({"text": f"[{ts}] {message}"})
+    new_line = f"[{ts}] {message}"
+
+    # Read existing column value so we can append rather than overwrite.
+    existing = ""
+    read_q = """
+    query($i:[ID!], $c:[String!]) {
+      items(ids:$i) { column_values(ids:$c) { text } }
+    }
+    """
+    try:
+        async with httpx.AsyncClient(timeout=15) as c:
+            rr = await c.post(MONDAY_API_URL, headers=get_headers(),
+                              json={"query": read_q,
+                                    "variables": {"i": [item_id],
+                                                  "c": [COL["ai_run_log"]]}})
+        existing = (((rr.json().get("data") or {}).get("items") or [{}])[0]
+                    .get("column_values") or [{}])[0].get("text") or ""
+    except Exception as exc:  # noqa: BLE001
+        # If the read fails, write the new line on its own rather than
+        # losing the message entirely.
+        print(f"APPEND_LOG read failed (continuing with new-line only): "
+              f"{type(exc).__name__}: {exc}", flush=True)
+
+    combined = f"{new_line}\n{existing}" if existing else new_line
+    val = json.dumps({"text": combined})
     variables = {"i": item_id, "b": BOARD_ID, "c": COL["ai_run_log"], "v": val}
     async with httpx.AsyncClient(timeout=30) as c:
-        r = await c.post(MONDAY_API_URL, headers=get_headers(), json={"query": make_mutation(), "variables": variables})
-    # append_log is called from every error handler — don't raise here, just
-    # print. Raising would mask the original error we're trying to log.
+        r = await c.post(MONDAY_API_URL, headers=get_headers(),
+                         json={"query": make_mutation(), "variables": variables})
     if r.status_code != 200:
         print(f"APPEND_LOG failed — HTTP {r.status_code}: {r.text[:200]}", flush=True)
 
