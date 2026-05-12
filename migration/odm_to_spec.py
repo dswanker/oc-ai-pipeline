@@ -523,12 +523,32 @@ def transform(odm_study: dict) -> dict:
                 "completion_status": "COMPLETE", "library_source": "CDASH_DEFAULT", "flag_reason": "",
             })
 
+            # Track field names within this group so multiple items sharing a
+            # CDASH alias (e.g. IE inclusion/exclusion criteria both aliased to
+            # IETESTCD) don't collide — pyxform requires unique names within
+            # the nearest parent.
+            seen_names_in_group: set[str] = set()
+
             for item in ig_items_ordered:
                 row = _build_survey_row(item, form_id, group_code, codelist_lookup)
                 # Apply mandatory from ItemRef
                 for ir in ig["item_refs"]:
                     if ir["oid"] == item["oid"] and ir["mandatory"]:
                         row["required"] = "yes"
+
+                if row["name"] in seen_names_in_group:
+                    odm_name = re.sub(r"[^A-Za-z0-9]", "_",
+                                      item.get("name", "")).upper().strip("_")
+                    candidate = (f"{row['name']}_{odm_name}"
+                                 if odm_name and odm_name != row["name"] else row["name"])
+                    if candidate in seen_names_in_group or candidate == row["name"]:
+                        n = 2
+                        while f"{row['name']}_{n}" in seen_names_in_group:
+                            n += 1
+                        candidate = f"{row['name']}_{n}"
+                    row["name"] = candidate
+
+                seen_names_in_group.add(row["name"])
                 survey_rows.append(row)
 
             # end group
@@ -544,9 +564,15 @@ def transform(odm_study: dict) -> dict:
         # Repeating forms — add the OC8 repeating structure at the end
         if is_repeating:
             repeat_group_code = cdash_domain or form_id
+            # The inner item group above already uses `form_id` as its name when
+            # the ODM ItemGroup name matches the form (e.g. AE → IG.AE/"AE").
+            # Naming the repeat wrapper `form_id` too produces a duplicate-name
+            # collision at the form-root scope, which pyxform rejects. Suffix
+            # the repeat so it's unique among its siblings.
+            repeat_name = f"{form_id}_LOG"
             survey_rows.extend([
                 {
-                    "type": "begin repeat", "name": form_id,
+                    "type": "begin repeat", "name": repeat_name,
                     "bind__oc_itemgroup": repeat_group_code,
                     "label": "", "appearance": "", "required": "", "constraint": "",
                     "constraint_message": "", "relevant": "", "calculation": "",
