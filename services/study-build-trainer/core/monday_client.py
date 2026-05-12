@@ -111,6 +111,17 @@ COL: dict[str, str] = {
     "index_date":              "date_mm2tn53m",
     "accuracy_score":          "numeric_mm2y10gd",
     "accuracy_report":         "file_mm2yq3cp",
+    # Path-M (migration) columns — added by
+    # scripts/create_corpus_migration_columns.py.
+    "source_system":           "text_mm392fb2",   # Vendor label (e.g. "Medidata Rave")
+    "path":                    "color_mm39ea6a",  # Protocol (Path B) | Migration (Path M)
+    "source_odm_xml":          "file_mm394z0b",   # Source EDC ODM XML (Path M)
+}
+
+# Path status labels (Path B vs Path M).
+PATH_LABELS: dict[str, str] = {
+    "protocol":   "Protocol (Path B)",
+    "migration":  "Migration (Path M)",
 }
 
 # Trigger labels. Keys are stable internal names; values are the label
@@ -137,6 +148,8 @@ INGEST_STATUS_LABELS: dict[str, str] = {
     # ── New processing states ──
     "generating_predicted_build": "Generating Predicted Build",
     "comparing_builds":           "Comparing Builds",
+    # ── Path-M (migration) states ──
+    "pending_ps_review":         "Pending PS Review",
     # ── Terminal states ──
     "indexed":                   "Indexed",
     "failed":                    "Failed",
@@ -178,6 +191,10 @@ class CorpusItem:
     source_pipeline_item: str | None = None
     protocol_number: str | None = None
     protocol_pdf_sha256: str | None = None
+
+    # Path-M (migration) fields
+    source_system: str | None = None      # vendor label, e.g. "Medidata Rave"
+    path: str | None = None               # "Protocol (Path B)" | "Migration (Path M)"
 
     # Pre-computed fields (populated by the trainer or pipeline)
     fingerprint: str | None = None
@@ -346,6 +363,7 @@ class MondayClient:
             "protocol_analysis_json",
             "predicted_edc_zip",
             "ctgov_protocol_pdf",
+            "source_odm_xml",
         ):
             v = col_values.get(COL[col_key])
             if not v:
@@ -387,6 +405,8 @@ class MondayClient:
             source_pipeline_item=_text("source_pipeline_item"),
             protocol_number=_text("protocol_number"),
             protocol_pdf_sha256=_text("protocol_pdf_sha256"),
+            source_system=_text("source_system"),
+            path=_label("path"),
             fingerprint=_text("fingerprint"),
             indexed_pair_hash=_text("indexed_pair_hash"),
             files_by_column=files_by_column,
@@ -613,8 +633,17 @@ class MondayClient:
         sponsor_client: str | None = None,
         source_pipeline_item: str | None = None,
         ingest_status_key: str = "awaiting_build_completion",
+        source_system: str | None = None,
+        path_key: str | None = None,
     ) -> int:
-        """Create a new corpus board row. Returns the new item_id."""
+        """Create a new corpus board row. Returns the new item_id.
+
+        Path-M kwargs:
+            source_system: vendor label (e.g. "Medidata Rave"). Written to
+                the Source System text column when supplied.
+            path_key: one of PATH_LABELS keys ("protocol" | "migration").
+                Sets the Path status column. Omit on Path B legacy callers.
+        """
         column_values: dict[str, Any] = {}
         if sponsor_client:
             column_values[COL["sponsor_client"]] = sponsor_client
@@ -628,6 +657,14 @@ class MondayClient:
             column_values[COL["ingest_status"]] = {
                 "label": INGEST_STATUS_LABELS[ingest_status_key]
             }
+        if source_system:
+            column_values[COL["source_system"]] = source_system
+        if path_key:
+            if path_key not in PATH_LABELS:
+                raise ValueError(
+                    f"Unknown path {path_key!r}. Allowed: {sorted(PATH_LABELS)}"
+                )
+            column_values[COL["path"]] = {"label": PATH_LABELS[path_key]}
 
         mutation = """
         mutation($b:ID!, $n:String!, $cv:JSON!) {
@@ -697,6 +734,59 @@ class MondayClient:
         )
         return item_id
 
+    async def find_existing_row_migration(
+        self,
+        source_system: str,
+        dedup_key: str,
+    ) -> int | None:
+        """Find a Path-M corpus row by (source_system, dedup_key) AND-match.
+
+        Path B keys on (sponsor_client, protocol_number). Path M doesn't
+        have a sponsor at create time — the migration pipeline only knows
+        the source EDC vendor and either the ODM-derived protocol number
+        (when present) or the ODM study OID (always present) as the
+        fallback. ``dedup_key`` is whichever of those the caller has —
+        stored on the existing row as ``protocol_number``.
+
+        Returns the item_id of the first match, or None if no row matches
+        both column values. Empty inputs return None.
+        """
+        if not source_system or not dedup_key:
+            return None
+
+        query = """
+        query($b:ID!, $cols:[ItemsPageByColumnValuesQuery!]!) {
+          items_page_by_column_values(board_id:$b, columns:$cols) {
+            items { id name }
+          }
+        }
+        """
+        variables = {
+            "b": str(self.board_id),
+            "cols": [
+                {"column_id": COL["source_system"],
+                 "column_values": [source_system]},
+                {"column_id": COL["protocol_number"],
+                 "column_values": [dedup_key]},
+            ],
+        }
+        data = await self._gql(query, variables)
+        page = data.get("items_page_by_column_values") or {}
+        items = page.get("items") or []
+        if not items:
+            logger.info(
+                "monday.find_existing_row_migration.no_match",
+                source_system=source_system, dedup_key=dedup_key,
+            )
+            return None
+        item_id = int(items[0]["id"])
+        logger.info(
+            "monday.find_existing_row_migration.matched",
+            source_system=source_system, dedup_key=dedup_key,
+            item_id=item_id, match_count=len(items),
+        )
+        return item_id
+
 
 # Re-export convenient bits
 __all__ = [
@@ -706,5 +796,6 @@ __all__ = [
     "INGEST_STATUS_LABELS",
     "TRIGGER_LABELS",
     "DECISION_LABELS",
+    "PATH_LABELS",
     "CORPUS_BOARD_ID",
 ]

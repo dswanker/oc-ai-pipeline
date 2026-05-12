@@ -1830,6 +1830,81 @@ class TestMigrationEnrichmentDispatch(unittest.TestCase):
                          "protocol_bytes must be forwarded to transform_with_ai")
 
 
+class TestMigrationTrainerWiring(unittest.TestCase):
+    """
+    run_migration must call create_pending_row() exactly when
+    send_to_trainer=True, passing Path-M-flavoured kwargs (source_system,
+    path="migration", ingest_status_key="pending_ps_review", odm_xml, etc.)
+    and must skip the trainer call entirely when the toggle is off.
+    """
+
+    def _run(self, *, send_to_trainer: bool):
+        import asyncio
+        from unittest.mock import patch, AsyncMock, MagicMock
+        import migration_pipeline as mp
+
+        raw_bytes = _minimal_odm(
+            study_name="ENRICH_TEST", protocol="ENRICH-001",
+            events=[{"oid": "SE_BL", "name": "Baseline", "form_refs": ["F_DM"]}],
+            forms =[{"oid": "F_DM",  "name": "DM",       "ig_refs":   ["IG_DM"]}],
+        )
+
+        fake_spec = {
+            "study_meta": {"protocol_number": "ENRICH-001",
+                           "study_id": "STUDY-OID-42"},
+            "forms": [],
+            "timepoint_csv":  {"filename": "x.csv", "rows": []},
+            "labranges_csv":  {"filename": "y.csv", "columns": [], "rows": []},
+            "review_flags":   {},
+        }
+        det_mock = MagicMock(return_value=fake_spec)
+        trainer_mock = AsyncMock(return_value=42)
+
+        with patch.object(mp, "download_column_file", new=AsyncMock(return_value=b"")), \
+             patch.object(mp, "list_column_filenames", new=AsyncMock(return_value=["src.xml"])), \
+             patch.object(mp, "upload_file",           new=AsyncMock(return_value=None)), \
+             patch.object(mp, "append_log",            new=AsyncMock(return_value=None)), \
+             patch.object(mp, "_set_dropdown_value",   new=AsyncMock(return_value=None)), \
+             patch.object(mp, "_read_dropdown_value",  new=AsyncMock(return_value=[])), \
+             patch.object(mp, "transform",             new=det_mock), \
+             patch.object(mp, "create_pending_row",    new=trainer_mock):
+            result = asyncio.run(mp.run_migration(
+                item_id="1",
+                raw_bytes=raw_bytes,
+                protocol_bytes=None,
+                send_to_trainer=send_to_trainer,
+            ))
+        return result, trainer_mock
+
+    def test_send_to_trainer_true_invokes_create_pending_row(self):
+        result, trainer_mock = self._run(send_to_trainer=True)
+        self.assertEqual(result["status"], "ok",
+                         f"Expected ok, got {result['status']}: {result['summary']}")
+        self.assertEqual(trainer_mock.call_count, 1,
+                         "create_pending_row must be called exactly once when "
+                         "send_to_trainer=True")
+        kwargs = trainer_mock.call_args.kwargs
+        # Path-M flavour: source_system, path, status, odm_xml present.
+        self.assertEqual(kwargs.get("source_system"), "UNKNOWN")
+        self.assertEqual(kwargs.get("path"), "migration")
+        self.assertEqual(kwargs.get("ingest_status_key"), "pending_ps_review")
+        self.assertIn(b"<ODM", kwargs.get("odm_xml") or b"",
+                      "odm_xml must carry the source ODM bytes")
+        self.assertTrue(kwargs.get("protocol_pdf") in (None, b""),
+                        "No protocol_pdf was provided — Path M should pass None/empty")
+        # Dedup key falls back to study_id when protocol_number is absent;
+        # here protocol_number IS present so it should win.
+        self.assertEqual(kwargs.get("protocol_number"), "ENRICH-001")
+
+    def test_send_to_trainer_false_skips_create_pending_row(self):
+        result, trainer_mock = self._run(send_to_trainer=False)
+        self.assertEqual(result["status"], "ok",
+                         f"Expected ok, got {result['status']}: {result['summary']}")
+        self.assertEqual(trainer_mock.call_count, 0,
+                         "create_pending_row must NOT be called when "
+                         "send_to_trainer=False")
+
+
 class TestAiAssistPromptHierarchy(unittest.TestCase):
     """The AI_ASSIST_PROMPT must encode the input hierarchy and hard rules."""
 
@@ -1984,6 +2059,7 @@ def run_tests(verbosity=1):
                 TestOracleInFormFixture, TestRedcapFixture,
                 TestCastorFixture, TestZeltaFixture,
                 TestMigrationEnrichmentDispatch,
+                TestMigrationTrainerWiring,
                 TestAiAssistPromptHierarchy,
                 TestVendorConventions):
         suite.addTests(loader.loadTestsFromTestCase(cls))

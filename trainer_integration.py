@@ -379,10 +379,10 @@ _PENDING_ROW_TIMEOUT_S = 30.0
 
 
 async def create_pending_row(
-    protocol_pdf: bytes,
+    protocol_pdf: bytes | None = None,
     *,
     name: str,
-    protocol_filename: str,
+    protocol_filename: str = "",
     sponsor_client: str | None = None,
     source_pipeline_item: str | None = None,
     sponsor: str | None = None,
@@ -390,38 +390,53 @@ async def create_pending_row(
     protocol_pdf_sha256: str | None = None,
     study_spec_json: bytes | None = None,
     edc_build_zip: bytes | None = None,
+    # Path-M (migration) kwargs
+    odm_xml: bytes | None = None,
+    odm_xml_filename: str = "",
+    source_system: str | None = None,
+    path: str | None = None,
+    ingest_status_key: str | None = None,
     http_client: "httpx.AsyncClient | None" = None,
 ) -> int | None:
     """
     Create a pending row on the trainer's monday corpus board.
 
-    Sends the protocol PDF + metadata to the trainer's POST /pending-row
-    endpoint. The trainer creates a row in "Awaiting Build Completion"
-    status, attaches the protocol, and returns the new monday item_id.
+    Supports both ingest paths:
+
+      * **Path B (protocol PDF)** — pass ``protocol_pdf`` + ``protocol_filename``
+        (and typically ``sponsor`` + ``protocol_number`` for dedup). Status
+        defaults to "Awaiting Build Completion".
+
+      * **Path M (migration ODM XML)** — pass ``odm_xml`` + ``odm_xml_filename``
+        + ``source_system`` + ``path="migration"``. Caller typically also
+        passes ``ingest_status_key="pending_ps_review"`` and ``protocol_number``
+        (either the ODM-derived protocol number or the study OID as fallback)
+        for dedup against ``(source_system, protocol_number)``.
 
     A human will later visit that row, upload the final form definitions
     (ODM XML or XLSForm zip), and flip the trigger to ingest the pair
     into the corpus.
 
     Args:
-        protocol_pdf: Raw PDF bytes.
+        protocol_pdf: Raw PDF bytes. Required on Path B; omit/None on Path M.
         name: Row title (typically the protocol number, e.g. ABT-CIP-10601).
-        protocol_filename: Original filename for the PDF (preserved on
-            upload so the trainer's parser can dispatch on extension).
+        protocol_filename: Original filename for the PDF. Ignored when
+            ``protocol_pdf`` is empty.
         sponsor_client: Deprecated alias for ``sponsor``; kept for backward
             compatibility. If both are supplied, ``sponsor`` wins.
         source_pipeline_item: Optional oc-ai-pipeline item ID for
             traceability — links the trainer row back to the pipeline run.
         sponsor: Sponsor name. Used (with ``protocol_number``) by the
-            trainer for (sponsor, protocol_number) dedup, and to seed the
-            Sponsor/Client column on the trainer board. Preferred over
-            ``sponsor_client``.
-        protocol_number: Protocol number. Used (with ``sponsor``) by the
-            trainer for dedup so re-runs of the pipeline against the same
-            protocol don't create duplicate corpus rows.
+            trainer for Path-B (sponsor, protocol_number) dedup, and to
+            seed the Sponsor/Client column on the trainer board. Preferred
+            over ``sponsor_client``.
+        protocol_number: Protocol number. Forms half the dedup key on both
+            paths (Path B with sponsor, Path M with source_system). On
+            Path M migrations without a protocol number, pass the ODM
+            study OID instead — same column, different semantic.
         protocol_pdf_sha256: Hex SHA-256 of ``protocol_pdf``. Stored by the
-            trainer for warning-only PDF-drift detection on dedup hits.
-            Not used as a dedup key.
+            trainer for warning-only PDF-drift detection on Path-B dedup
+            hits. Not used as a dedup key. Ignored on Path M.
         study_spec_json: Pipeline-produced Study Spec JSON bytes. When
             present, the trainer skips its own protocol-analysis step and
             uses these pipeline outputs as the predicted side.
@@ -429,6 +444,17 @@ async def create_pending_row(
             present, the trainer skips its own predicted-build generation
             and uses this ZIP as the predicted EDC ZIP for accuracy
             scoring.
+        odm_xml: Raw source ODM XML bytes (Path M). Required when
+            ``protocol_pdf`` is omitted.
+        odm_xml_filename: Filename for the ODM XML upload. Ignored when
+            ``odm_xml`` is empty.
+        source_system: Vendor label (e.g. "Medidata Rave"). Written to the
+            Source System text column; forms half the Path-M dedup key.
+        path: One of "protocol" (Path B) or "migration" (Path M). Defaults
+            to None which the trainer treats as "protocol" for backward
+            compatibility with existing callers.
+        ingest_status_key: Status to set on the new row. Defaults to None,
+            which the trainer treats as "awaiting_build_completion".
         http_client: Injectable for tests. If None, a fresh one is
             created and closed inside this function.
 
@@ -436,15 +462,16 @@ async def create_pending_row(
         The new trainer-board item_id, or None on any error. Failure is
         graceful — caller should not treat None as fatal.
     """
-    if not protocol_pdf:
-        print("[trainer] create_pending_row: empty protocol_pdf — skipping", flush=True)
+    if not (protocol_pdf or odm_xml):
+        print("[trainer] create_pending_row: neither protocol_pdf nor odm_xml "
+              "supplied — skipping", flush=True)
         return None
     if not name:
         print("[trainer] create_pending_row: empty name — skipping", flush=True)
         return None
 
-    # Phase 1b.E: compute canonical PDF SHA-256 when caller didn't supply one.
-    if not protocol_pdf_sha256:
+    # Compute canonical PDF SHA-256 when caller didn't supply one.
+    if protocol_pdf and not protocol_pdf_sha256:
         protocol_pdf_sha256 = hashlib.sha256(protocol_pdf).hexdigest()
         print(f"[trainer] create_pending_row: computed protocol_pdf_sha256 "
               f"from {len(protocol_pdf)} pdf bytes",
@@ -475,10 +502,22 @@ async def create_pending_row(
         client = http_client
         owned_client = False
 
-    # Multipart form data: protocol_pdf as a file, others as form fields.
-    files = {
-        "protocol_pdf": (protocol_filename, protocol_pdf, "application/pdf"),
-    }
+    # Multipart form data: source artifact(s) as file parts, scalars as
+    # form fields. Either protocol_pdf (Path B) or odm_xml (Path M) is
+    # required; both being attached is permitted but unusual.
+    files: dict[str, tuple[str, bytes, str]] = {}
+    if protocol_pdf:
+        files["protocol_pdf"] = (
+            protocol_filename or f"{name}.pdf",
+            protocol_pdf,
+            "application/pdf",
+        )
+    if odm_xml:
+        files["odm_xml"] = (
+            odm_xml_filename or f"{name}_source.xml",
+            odm_xml,
+            "application/xml",
+        )
     if study_spec_json:
         files["study_spec_json"] = (
             f"{name}_study_spec.json", study_spec_json, "application/json",
@@ -498,6 +537,12 @@ async def create_pending_row(
         data["protocol_pdf_sha256"] = protocol_pdf_sha256
     if source_pipeline_item:
         data["source_pipeline_item"] = str(source_pipeline_item)
+    if source_system:
+        data["source_system"] = source_system
+    if path:
+        data["path"] = path
+    if ingest_status_key:
+        data["ingest_status_key"] = ingest_status_key
 
     try:
         response = await client.post(url, files=files, data=data)

@@ -74,6 +74,7 @@ if _MIG_DIR not in sys.path:
 from odm_validator import validate_odm, format_report
 from odm_reader import parse_odm_metadata
 from odm_to_spec import transform, transform_with_ai
+from trainer_integration import create_pending_row
 
 
 # ── ZIP unwrap ────────────────────────────────────────────────────────────────
@@ -212,6 +213,7 @@ async def run_migration(
     protocol_bytes: bytes | None = None,
     claude_client: Any = None,
     ai_assist: bool = False,
+    send_to_trainer: bool = False,
 ) -> dict:
     """
     Run the EDC migration path for a single AI Hub row.
@@ -237,6 +239,10 @@ async def run_migration(
     ai_assist      : legacy toggle for AI-assist without a protocol PDF.
                      Protocol-driven enrichment auto-engages whenever
                      protocol_bytes are present and is preferred.
+    send_to_trainer: when True, after a successful migration the trainer
+                     corpus board receives a "Pending PS Review" row with
+                     the source ODM XML attached. Mirrors the Path-B
+                     trainer-pending-row creation in pipeline.py.
 
     Returns
     -------
@@ -357,6 +363,48 @@ async def run_migration(
                f"({len(odm_study.get('forms', []))} forms, "
                f"{len(odm_study.get('items', []))} items)")
     await append_log(item_id, f"Migration OK: {summary}")
+
+    # ── Trainer: create pending corpus row on Path-M completion ──────────
+    # Mirrors pipeline.py's Path-B block (best-effort, never blocks).
+    # Path M's dedup key on the trainer side is (source_system,
+    # protocol_number) — fall back to the ODM study OID when the export
+    # carries no protocol_name (per project decision, study_oid is the
+    # most reliable fallback).
+    if send_to_trainer:
+        try:
+            sm = spec_json.get("study_meta", {}) or {}
+            protocol_num = (sm.get("protocol_number")
+                            or sm.get("study_title")
+                            or f"MIG-{item_id}")
+            dedup_key = (sm.get("protocol_number")
+                         or sm.get("study_id")
+                         or odm_study.get("study", {}).get("oid")
+                         or "")
+            print(f"[trainer] Path M: creating pending row name={protocol_num!r} "
+                  f"source_system={source_system!r} dedup_key={dedup_key!r}",
+                  flush=True)
+            new_trainer_item_id = await create_pending_row(
+                protocol_pdf=protocol_bytes if protocol_bytes else None,
+                protocol_filename=f"{protocol_num}.pdf",
+                odm_xml=raw,
+                odm_xml_filename=f"{protocol_num}_source.xml",
+                name=protocol_num,
+                source_system=source_system,
+                path="migration",
+                ingest_status_key="pending_ps_review",
+                protocol_number=dedup_key or None,
+                source_pipeline_item=str(item_id),
+                study_spec_json=spec_bytes,
+            )
+            if new_trainer_item_id:
+                await append_log(
+                    item_id,
+                    f"Trainer pending row created: item_id={new_trainer_item_id}",
+                )
+        except Exception as _trainer_exc:  # noqa: BLE001
+            print(f"[trainer] Path M create_pending_row failed: "
+                  f"{_trainer_exc} — continuing without trainer row",
+                  flush=True)
 
     return {
         "status": "ok",

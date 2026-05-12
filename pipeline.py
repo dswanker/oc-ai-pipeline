@@ -1319,6 +1319,7 @@ async def run_pipeline(item_id):
                 item_id,
                 raw_bytes=source_edc_export_bytes,
                 protocol_bytes=_proto_for_migration,
+                send_to_trainer=send_to_trainer,
             )
             if mig_result["status"] != "ok":
                 msg = f"Migration {mig_result['status']}: {mig_result['summary']}"
