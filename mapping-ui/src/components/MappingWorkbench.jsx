@@ -18,11 +18,11 @@ const TYPE_LABELS = {
 };
 
 const TYPE_COLORS = {
-  [MAPPING_TYPES.ONE_TO_ONE]:  "#0ea5e9",
-  [MAPPING_TYPES.MANY_TO_ONE]: "#7c3aed",
-  [MAPPING_TYPES.ONE_TO_MANY]: "#f59e0b",
-  [MAPPING_TYPES.UNMAPPED]:    "#ef4444",
-  [MAPPING_TYPES.NEW]:         "#475569",
+  [MAPPING_TYPES.ONE_TO_ONE]:  "#0073B1",  // --oc-blue
+  [MAPPING_TYPES.MANY_TO_ONE]: "#7C3AED",  // --oc-purple
+  [MAPPING_TYPES.ONE_TO_MANY]: "#D97706",  // --oc-amber
+  [MAPPING_TYPES.UNMAPPED]:    "#C0392B",  // --oc-red
+  [MAPPING_TYPES.NEW]:         "#6B7A8F",  // --text-muted
 };
 
 export default function MappingWorkbench({
@@ -203,23 +203,23 @@ export default function MappingWorkbench({
       {/* ── Stats bar ─────────────────────────────────────────────────── */}
       <div style={S.statsBar}>
         <span style={S.statItem}>
-          <span style={S.statDot("#10b981")} />
+          <span style={S.statDot("#2E7D5E")} />
           {stats.oneToOne} direct
         </span>
         <span style={S.statItem}>
-          <span style={S.statDot("#7c3aed")} />
+          <span style={S.statDot("#7C3AED")} />
           {stats.manyToOne} combined
         </span>
         <span style={S.statItem}>
-          <span style={S.statDot("#f59e0b")} />
+          <span style={S.statDot("#D97706")} />
           {stats.oneToMany} split
         </span>
         <span style={S.statItem}>
-          <span style={S.statDot("#ef4444")} />
+          <span style={S.statDot("#C0392B")} />
           {stats.unmapped} unmapped
         </span>
         <span style={S.statItem}>
-          <span style={S.statDot("#475569")} />
+          <span style={S.statDot("#6B7A8F")} />
           {stats.newField} new (no source)
         </span>
         <span style={{ ...S.statItem, marginLeft: "auto" }}>
@@ -237,15 +237,15 @@ export default function MappingWorkbench({
               {sourceTree && <span style={S.panelSub}> — {sourceTree.sourceSystem}</span>}
             </span>
             {noSource && (
-              <span style={{ fontSize: 10, color: "#f59e0b" }}>No ODM uploaded</span>
+              <span style={{ fontSize: 10, color: "var(--oc-amber)" }}>No ODM uploaded</span>
             )}
           </div>
 
           {noSource ? (
             <div style={S.noSource}>
               <div style={{ fontSize: 28, marginBottom: 8 }}>📄</div>
-              <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 4 }}>No source ODM XML found</div>
-              <div style={{ fontSize: 11, color: "#475569", textAlign: "center", lineHeight: 1.5 }}>
+              <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 4 }}>No source ODM XML found</div>
+              <div style={{ fontSize: 11, color: "var(--text-light)", textAlign: "center", lineHeight: 1.5 }}>
                 Upload the competitor ODM XML to the Monday row's<br/>
                 "Source EDC Export" column, then reload.
               </div>
@@ -259,21 +259,21 @@ export default function MappingWorkbench({
                     key={f.oid}
                     style={{
                       ...S.sourceFormTab,
-                      background: i === sourceFormIdx ? "#1e3a5f" : "transparent",
-                      color: i === sourceFormIdx ? "#7dd3fc" : "#475569",
-                      borderBottom: i === sourceFormIdx ? "2px solid #0ea5e9" : "2px solid transparent",
+                      background: i === sourceFormIdx ? "var(--oc-blue-light)" : "transparent",
+                      color: i === sourceFormIdx ? "var(--oc-blue)" : "var(--text-muted)",
+                      borderBottom: i === sourceFormIdx ? "2px solid var(--oc-blue)" : "2px solid transparent",
                     }}
                     onClick={() => setSourceFormIdx(i)}
                     title={f.name}
                   >
                     {f.name.length > 10 ? f.name.slice(0, 10) + "…" : f.name}
-                    {f.repeating && <span style={{ fontSize: 8, color: "#7c3aed", marginLeft: 3 }}>R</span>}
+                    {f.repeating && <span style={{ fontSize: 8, color: "var(--oc-purple)", marginLeft: 3 }}>R</span>}
                   </button>
                 ))}
               </div>
 
               {/* Search */}
-              <div style={{ padding: "6px 10px", borderBottom: "1px solid #1e3a5f" }}>
+              <div style={{ padding: "6px 10px", borderBottom: "1px solid var(--border)", background: "#fff" }}>
                 <input
                   style={S.searchInput}
                   placeholder="Search source fields…"
@@ -305,7 +305,7 @@ export default function MappingWorkbench({
                     <div key={group.oid}>
                       <div style={S.groupHeader}>
                         {group.name}
-                        {group.repeating && <span style={{ fontSize: 9, color: "#7c3aed", marginLeft: 4 }}>REPEAT</span>}
+                        {group.repeating && <span style={{ fontSize: 9, color: "var(--oc-purple)", marginLeft: 4 }}>REPEAT</span>}
                       </div>
                       {groupItems.map(item => {
                         const isUsed = Object.values(mappings).some(m => m.sources?.includes(item.oid));
@@ -315,8 +315,8 @@ export default function MappingWorkbench({
                             key={item.oid}
                             style={{
                               ...S.sourceItem,
-                              background: isSelected ? "#1e3a5f" : isUsed ? "#0f1f35" : "transparent",
-                              borderLeft: isSelected ? "3px solid #7c3aed" : isUsed ? "3px solid #0ea5e9" : "3px solid transparent",
+                              background: isSelected ? "var(--oc-blue-light)" : isUsed ? "var(--oc-blue-pale)" : "#fff",
+                              borderLeft: isSelected ? "3px solid var(--oc-purple)" : isUsed ? "3px solid var(--oc-blue)" : "3px solid transparent",
                             }}
                             onClick={() => {
                               if (!selectedTarget) return;
@@ -334,17 +334,17 @@ export default function MappingWorkbench({
                             <div style={S.sourceItemName}>
                               {item.name}
                               {item.cdashAlias && item.cdashAlias !== item.name && (
-                                <span style={{ fontSize: 9, color: "#7c3aed", marginLeft: 5 }}>{item.cdashAlias}</span>
+                                <span style={{ fontSize: 9, color: "var(--oc-purple)", marginLeft: 5 }}>{item.cdashAlias}</span>
                               )}
                               {isUsed && !isSelected && (
-                                <span style={{ fontSize: 9, color: "#0ea5e9", marginLeft: 5 }}>✓</span>
+                                <span style={{ fontSize: 9, color: "var(--oc-green)", marginLeft: 5 }}>✓</span>
                               )}
                             </div>
                             <div style={S.sourceItemLabel}>{item.label}</div>
                             <div style={S.sourceItemMeta}>
                               {item.dataType}
                               {item.length && ` · len:${item.length}`}
-                              {item.mandatory && <span style={{ color: "#ef4444", marginLeft: 4 }}>*</span>}
+                              {item.mandatory && <span style={{ color: "var(--oc-red)", marginLeft: 4 }}>*</span>}
                             </div>
                           </div>
                         );
@@ -366,34 +366,34 @@ export default function MappingWorkbench({
           {!selectedTarget ? (
             <div style={S.noSelection}>
               <div style={{ fontSize: 24, marginBottom: 8 }}>↔</div>
-              <div style={{ fontSize: 12, color: "#94a3b8" }}>Select a target field</div>
+              <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Select a target field</div>
             </div>
           ) : (
             <div style={S.mappingDetail}>
               {/* Target field info */}
               <div style={S.mappingTarget}>
-                <div style={{ fontSize: 10, color: "#475569", marginBottom: 3 }}>TARGET FIELD</div>
-                <div style={{ fontFamily: "monospace", fontSize: 13, color: "#7dd3fc", fontWeight: 600 }}>
+                <div style={{ fontSize: 10, color: "var(--text-light)", marginBottom: 3, fontWeight: 600, letterSpacing: ".06em" }}>TARGET FIELD</div>
+                <div style={{ fontFamily: "monospace", fontSize: 13, color: "var(--oc-blue)", fontWeight: 600 }}>
                   {activeRow?.name}
                 </div>
-                <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 2 }}>{activeRow?.label}</div>
-                <div style={{ fontSize: 10, color: "#475569", marginTop: 2 }}>
+                <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>{activeRow?.label}</div>
+                <div style={{ fontSize: 10, color: "var(--text-light)", marginTop: 2 }}>
                   {activeRow?.type} · {activeRow?.bind__oc_itemgroup}
                 </div>
               </div>
 
               {/* Mapping type selector */}
-              <div style={{ padding: "10px 12px", borderBottom: "1px solid #1e3a5f" }}>
-                <div style={{ fontSize: 10, color: "#475569", marginBottom: 6 }}>RELATIONSHIP TYPE</div>
+              <div style={{ padding: "10px 12px", borderBottom: "1px solid var(--border)" }}>
+                <div style={{ fontSize: 10, color: "var(--text-light)", marginBottom: 6, fontWeight: 600, letterSpacing: ".06em" }}>RELATIONSHIP TYPE</div>
                 <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                   {Object.entries(TYPE_LABELS).map(([type, label]) => (
                     <button
                       key={type}
                       style={{
                         ...S.typeBtn,
-                        background: activeMapping?.type === type ? TYPE_COLORS[type] + "22" : "transparent",
-                        borderColor: activeMapping?.type === type ? TYPE_COLORS[type] : "#1e3a5f",
-                        color: activeMapping?.type === type ? TYPE_COLORS[type] : "#475569",
+                        background: activeMapping?.type === type ? TYPE_COLORS[type] + "22" : "#fff",
+                        borderColor: activeMapping?.type === type ? TYPE_COLORS[type] : "var(--border)",
+                        color: activeMapping?.type === type ? TYPE_COLORS[type] : "var(--text-muted)",
                       }}
                       onClick={() => setMappingType(type)}
                     >
@@ -404,22 +404,22 @@ export default function MappingWorkbench({
               </div>
 
               {/* Source fields in this mapping */}
-              <div style={{ padding: "10px 12px", borderBottom: "1px solid #1e3a5f" }}>
-                <div style={{ fontSize: 10, color: "#475569", marginBottom: 6 }}>
+              <div style={{ padding: "10px 12px", borderBottom: "1px solid var(--border)" }}>
+                <div style={{ fontSize: 10, color: "var(--text-light)", marginBottom: 6, fontWeight: 600, letterSpacing: ".06em" }}>
                   SOURCE FIELDS ({activeSources.length})
                 </div>
                 {activeSources.length === 0 ? (
-                  <div style={{ fontSize: 11, color: "#334155", fontStyle: "italic" }}>
+                  <div style={{ fontSize: 11, color: "var(--text-light)", fontStyle: "italic" }}>
                     {noSource ? "No ODM loaded" : "Click a source field to assign"}
                   </div>
                 ) : (
                   <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                     {activeSources.map((src, i) => (
                       <div key={src.oid} style={S.srcChip}>
-                        <span style={{ fontFamily: "monospace", fontSize: 11, color: "#7dd3fc" }}>
+                        <span style={{ fontFamily: "monospace", fontSize: 11, color: "var(--oc-blue)" }}>
                           {src.name}
                         </span>
-                        <span style={{ fontSize: 10, color: "#475569", marginLeft: 6 }}>
+                        <span style={{ fontSize: 10, color: "var(--text-muted)", marginLeft: 6 }}>
                           {src.formName} / {src.groupName}
                         </span>
                         <button style={S.removeBtn} onClick={() => removeSource(src.oid)}>✕</button>
@@ -442,7 +442,7 @@ export default function MappingWorkbench({
 
               {/* Show expression toggle for 1:1 */}
               {activeMapping?.type === MAPPING_TYPES.ONE_TO_ONE && !showExpr && (
-                <div style={{ padding: "8px 12px", borderBottom: "1px solid #1e3a5f" }}>
+                <div style={{ padding: "8px 12px", borderBottom: "1px solid var(--border)" }}>
                   <button style={S.linkBtn} onClick={() => setShowExpr(true)}>
                     + Add transformation expression
                   </button>
@@ -459,8 +459,8 @@ export default function MappingWorkbench({
               )}
 
               {/* Notes */}
-              <div style={{ padding: "10px 12px", borderBottom: "1px solid #1e3a5f" }}>
-                <div style={{ fontSize: 10, color: "#475569", marginBottom: 4 }}>NOTES</div>
+              <div style={{ padding: "10px 12px", borderBottom: "1px solid var(--border)" }}>
+                <div style={{ fontSize: 10, color: "var(--text-light)", marginBottom: 4, fontWeight: 600, letterSpacing: ".06em" }}>NOTES</div>
                 <textarea
                   style={S.notesInput}
                   value={activeMapping?.notes || ""}
@@ -474,9 +474,9 @@ export default function MappingWorkbench({
               {(() => {
                 const errs = validateMapping(activeMapping);
                 return errs.length > 0 ? (
-                  <div style={{ padding: "8px 12px", borderBottom: "1px solid #1e3a5f" }}>
+                  <div style={{ padding: "8px 12px", borderBottom: "1px solid var(--border)" }}>
                     {errs.map((e, i) => (
-                      <div key={i} style={{ fontSize: 10, color: "#ef4444", marginBottom: 2 }}>⚠ {e}</div>
+                      <div key={i} style={{ fontSize: 10, color: "var(--oc-red)", marginBottom: 2 }}>⚠ {e}</div>
                     ))}
                   </div>
                 ) : null;
@@ -485,13 +485,13 @@ export default function MappingWorkbench({
               {/* Actions */}
               <div style={{ padding: "10px 12px", display: "flex", gap: 8, flexWrap: "wrap" }}>
                 <button
-                  style={{ ...S.actionBtn, background: "#065f46", color: "#d1fae5", border: "1px solid #10b981" }}
+                  style={{ ...S.actionBtn, background: "var(--oc-green-light)", color: "var(--oc-green)", border: "1px solid var(--oc-green)" }}
                   onClick={markReviewed}
                 >
                   {activeMapping?.reviewed ? "✓ Reviewed" : "Mark reviewed"}
                 </button>
                 <button
-                  style={{ ...S.actionBtn, color: "#94a3b8", border: "1px solid #1e3a5f" }}
+                  style={{ ...S.actionBtn, color: "var(--text-muted)", border: "1px solid var(--border)" }}
                   onClick={clearMapping}
                 >
                   Clear mapping
@@ -511,7 +511,7 @@ export default function MappingWorkbench({
           </div>
 
           {/* Target toolbar */}
-          <div style={{ padding: "6px 10px", borderBottom: "1px solid #1e3a5f", display: "flex", gap: 6, flexWrap: "wrap" }}>
+          <div style={{ padding: "6px 10px", borderBottom: "1px solid var(--border)", background: "#fff", display: "flex", gap: 6, flexWrap: "wrap" }}>
             <input
               style={{ ...S.searchInput, flex: 1 }}
               placeholder="Search target fields…"
@@ -523,9 +523,9 @@ export default function MappingWorkbench({
                 key={f}
                 style={{
                   ...S.filterBtn,
-                  background: targetFilter === f ? "#1e3a5f" : "transparent",
-                  borderColor: targetFilter === f ? "#0ea5e9" : "#1e3a5f",
-                  color: targetFilter === f ? "#7dd3fc" : "#475569",
+                  background: targetFilter === f ? "var(--oc-blue-light)" : "#fff",
+                  borderColor: targetFilter === f ? "var(--oc-blue)" : "var(--border)",
+                  color: targetFilter === f ? "var(--oc-blue)" : "var(--text-muted)",
                 }}
                 onClick={() => setTargetFilter(f)}
               >
@@ -548,13 +548,13 @@ export default function MappingWorkbench({
                   key={key}
                   style={{
                     ...S.targetItem,
-                    background: isActive ? "#1e3a5f" : "transparent",
-                    borderLeft: `3px solid ${isActive ? "#0ea5e9" : color}`,
+                    background: isActive ? "var(--oc-blue-light)" : "#fff",
+                    borderLeft: `3px solid ${isActive ? "var(--oc-blue)" : color}`,
                   }}
                   onClick={() => selectTarget(key)}
                 >
                   <div style={S.targetItemTop}>
-                    <span style={{ fontFamily: "monospace", fontSize: 12, color: "#7dd3fc" }}>
+                    <span style={{ fontFamily: "monospace", fontSize: 12, color: "var(--oc-blue)" }}>
                       {row.name}
                     </span>
                     <span style={{
@@ -564,10 +564,10 @@ export default function MappingWorkbench({
                       {TYPE_LABELS[mType]}
                     </span>
                   </div>
-                  <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 2 }}>{row.label}</div>
+                  <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 2 }}>{row.label}</div>
                   {/* Source fields summary */}
                   {m?.sources?.length > 0 && (
-                    <div style={{ fontSize: 10, color: "#475569", marginTop: 3, fontFamily: "monospace" }}>
+                    <div style={{ fontSize: 10, color: "var(--text-light)", marginTop: 3, fontFamily: "monospace" }}>
                       ← {m.sources.map(oid => {
                         // Find name for OID
                         for (const f of (sourceTree?.forms || [])) {
@@ -581,10 +581,10 @@ export default function MappingWorkbench({
                     </div>
                   )}
                   {errs.length > 0 && (
-                    <div style={{ fontSize: 9, color: "#ef4444", marginTop: 2 }}>⚠ {errs[0]}</div>
+                    <div style={{ fontSize: 9, color: "var(--oc-red)", marginTop: 2 }}>⚠ {errs[0]}</div>
                   )}
                   {m?.reviewed && (
-                    <div style={{ fontSize: 9, color: "#10b981", marginTop: 2 }}>✓ reviewed</div>
+                    <div style={{ fontSize: 9, color: "var(--oc-green)", marginTop: 2 }}>✓ reviewed</div>
                   )}
                 </div>
               );
@@ -603,74 +603,78 @@ const S = {
 
   statsBar: {
     display: "flex", alignItems: "center", gap: 16,
-    padding: "5px 14px", background: "#091525",
-    borderBottom: "1px solid #1e3a5f", flexShrink: 0, flexWrap: "wrap",
+    padding: "5px 14px", background: "var(--bg)",
+    borderBottom: "1px solid var(--border)", flexShrink: 0, flexWrap: "wrap",
   },
-  statItem: { display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: "#64748b" },
+  statItem: { display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: "var(--text-muted)" },
   statDot: col => ({ width: 7, height: 7, borderRadius: "50%", background: col, flexShrink: 0 }),
 
   panels: { display: "flex", flex: 1, overflow: "hidden" },
 
   // ── Source panel
   sourcePanel: {
-    width: 280, borderRight: "1px solid #1e3a5f", display: "flex",
+    width: 280, background: "var(--bg)",
+    borderRight: "1px solid var(--border)", display: "flex",
     flexDirection: "column", overflow: "hidden", flexShrink: 0,
   },
   panelHeader: {
-    padding: "8px 12px", background: "#0d1b2a",
-    borderBottom: "1px solid #1e3a5f", flexShrink: 0,
+    padding: "8px 12px", background: "var(--bg)",
+    borderBottom: "1px solid var(--border)", flexShrink: 0,
     display: "flex", alignItems: "center", justifyContent: "space-between",
   },
-  panelTitle:  { fontSize: 10, fontWeight: 700, color: "#475569", letterSpacing: ".08em" },
-  panelSub:    { fontSize: 10, color: "#0ea5e9", fontWeight: 400 },
+  panelTitle:  { fontSize: 10, fontWeight: 700, color: "var(--text-muted)", letterSpacing: ".08em", textTransform: "uppercase" },
+  panelSub:    { fontSize: 10, color: "var(--oc-blue)", fontWeight: 400 },
   noSource: {
     flex: 1, display: "flex", flexDirection: "column", alignItems: "center",
     justifyContent: "center", padding: 24, textAlign: "center",
+    background: "#fff",
   },
   sourceFormTabs: {
-    display: "flex", overflow: "auto", borderBottom: "1px solid #1e3a5f",
-    background: "#091525", flexShrink: 0,
+    display: "flex", overflow: "auto", borderBottom: "1px solid var(--border)",
+    background: "#fff", flexShrink: 0,
   },
   sourceFormTab: {
     padding: "5px 9px", border: "none", cursor: "pointer",
     fontSize: 10, fontWeight: 500, whiteSpace: "nowrap", flexShrink: 0,
   },
   selectionHint: {
-    padding: "4px 10px", background: "#0f2035", fontSize: 10,
-    color: "#64748b", borderBottom: "1px solid #1e3a5f", display: "flex",
+    padding: "4px 10px", background: "var(--oc-blue-pale)", fontSize: 10,
+    color: "var(--text-muted)", borderBottom: "1px solid var(--border)", display: "flex",
     alignItems: "center", gap: 6, flexShrink: 0,
   },
   applyBtn: {
-    padding: "2px 8px", borderRadius: 4, border: "1px solid #7c3aed",
-    background: "rgba(124,58,237,.15)", color: "#a78bfa", fontSize: 10, cursor: "pointer",
+    padding: "2px 8px", borderRadius: 4, border: "1px solid var(--oc-purple)",
+    background: "var(--oc-purple-light)", color: "var(--oc-purple)", fontSize: 10, cursor: "pointer", fontWeight: 600,
   },
-  itemList: { flex: 1, overflow: "auto" },
+  itemList: { flex: 1, overflow: "auto", background: "#fff" },
   groupHeader: {
-    padding: "4px 10px", background: "#091525", fontSize: 9,
-    fontWeight: 700, color: "#334155", letterSpacing: ".07em",
+    padding: "4px 10px", background: "var(--bg)", fontSize: 9,
+    fontWeight: 700, color: "var(--text-muted)", letterSpacing: ".07em",
     textTransform: "uppercase", position: "sticky", top: 0, zIndex: 1,
+    borderBottom: "1px solid var(--border)",
   },
   sourceItem: {
     padding: "7px 12px", cursor: "pointer", transition: "background .1s",
-    borderBottom: "1px solid #0f2035",
+    borderBottom: "1px solid var(--border)",
   },
-  sourceItemName:  { fontSize: 11, fontFamily: "monospace", color: "#7dd3fc", fontWeight: 500 },
-  sourceItemLabel: { fontSize: 10, color: "#64748b", marginTop: 1 },
-  sourceItemMeta:  { fontSize: 9,  color: "#334155", marginTop: 1 },
+  sourceItemName:  { fontSize: 11, fontFamily: "monospace", color: "var(--oc-blue)", fontWeight: 500 },
+  sourceItemLabel: { fontSize: 10, color: "var(--text-muted)", marginTop: 1 },
+  sourceItemMeta:  { fontSize: 9,  color: "var(--text-light)", marginTop: 1 },
 
   // ── Center panel
   centerPanel: {
-    width: 300, borderRight: "1px solid #1e3a5f", display: "flex",
+    width: 300, background: "#fff",
+    borderRight: "1px solid var(--border)", display: "flex",
     flexDirection: "column", overflow: "hidden", flexShrink: 0,
   },
   noSelection: {
     flex: 1, display: "flex", flexDirection: "column", alignItems: "center",
-    justifyContent: "center", color: "#334155",
+    justifyContent: "center", color: "var(--text-muted)",
   },
   mappingDetail: { flex: 1, overflow: "auto" },
   mappingTarget: {
-    padding: "10px 12px", background: "#0a1826",
-    borderBottom: "1px solid #1e3a5f",
+    padding: "10px 12px", background: "var(--bg)",
+    borderBottom: "1px solid var(--border)",
   },
   typeBtn: {
     padding: "3px 9px", borderRadius: 4, border: "1px solid",
@@ -678,16 +682,16 @@ const S = {
   },
   srcChip: {
     display: "flex", alignItems: "center", gap: 4,
-    background: "#0f2035", borderRadius: 4, padding: "4px 8px",
-    border: "1px solid #1e3a5f",
+    background: "var(--oc-blue-pale)", borderRadius: 4, padding: "4px 8px",
+    border: "1px solid var(--border)",
   },
   removeBtn: {
-    background: "transparent", border: "none", color: "#ef4444",
+    background: "transparent", border: "none", color: "var(--oc-red)",
     cursor: "pointer", fontSize: 11, padding: "0 2px", marginLeft: "auto",
   },
   notesInput: {
-    width: "100%", background: "#0a1826", border: "1px solid #1e3a5f",
-    borderRadius: 4, color: "#94a3b8", fontSize: 11, padding: "6px 8px",
+    width: "100%", background: "#fff", border: "1px solid var(--border)",
+    borderRadius: 4, color: "var(--text)", fontSize: 11, padding: "6px 8px",
     resize: "vertical", fontFamily: "inherit",
   },
   actionBtn: {
@@ -695,22 +699,22 @@ const S = {
     cursor: "pointer", fontSize: 11, fontWeight: 500,
   },
   linkBtn: {
-    background: "transparent", border: "none", color: "#0ea5e9",
+    background: "transparent", border: "none", color: "var(--oc-blue)",
     fontSize: 11, cursor: "pointer", padding: 0, textDecoration: "underline",
   },
 
   // ── Target panel
-  targetPanel: { flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" },
+  targetPanel: { flex: 1, background: "#fff", display: "flex", flexDirection: "column", overflow: "hidden" },
   targetItem: {
-    padding: "8px 12px", cursor: "pointer", borderBottom: "1px solid #0f2035",
+    padding: "8px 12px", cursor: "pointer", borderBottom: "1px solid var(--border)",
     transition: "background .1s",
   },
   targetItemTop: { display: "flex", alignItems: "center", justifyContent: "space-between" },
 
   // ── Shared
   searchInput: {
-    width: "100%", padding: "4px 8px", borderRadius: 4, border: "1px solid #1e3a5f",
-    background: "#0f2035", color: "#e2e8f0", fontSize: 11, outline: "none",
+    width: "100%", padding: "4px 8px", borderRadius: 4, border: "1px solid var(--border)",
+    background: "#fff", color: "var(--text)", fontSize: 11, outline: "none",
   },
   filterBtn: {
     padding: "2px 7px", borderRadius: 4, border: "1px solid",

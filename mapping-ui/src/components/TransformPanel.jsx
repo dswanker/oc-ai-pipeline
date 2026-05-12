@@ -18,23 +18,23 @@ const TRANSFORM_TYPES = [
 ];
 
 const EXCEPTION_ACTIONS = [
-  { value: "HALT",    label: "Halt — flag for DM review", color: "#ef4444" },
-  { value: "BLANK",   label: "Blank — write empty value", color: "#f59e0b" },
-  { value: "DEFAULT", label: "Default — use fallback value", color: "#0ea5e9" },
-  { value: "SKIP",    label: "Skip — pass original value through", color: "#10b981" },
+  { value: "HALT",    label: "Halt — flag for DM review",      color: "var(--oc-red)" },
+  { value: "BLANK",   label: "Blank — write empty value",      color: "var(--oc-amber)" },
+  { value: "DEFAULT", label: "Default — use fallback value",   color: "var(--oc-blue)" },
+  { value: "SKIP",    label: "Skip — pass original value through", color: "var(--oc-green)" },
 ];
 
 const STATUS_STYLES = {
-  PENDING:    { bg: "#1a2f1a", border: "#f59e0b", text: "#f59e0b", label: "⏳ Pending DM review" },
-  APPROVED:   { bg: "#0a1f0a", border: "#10b981", text: "#10b981", label: "✓ Approved" },
-  OVERRIDDEN: { bg: "#1a1a2f", border: "#7c3aed", text: "#a78bfa", label: "✎ Overridden by DM" },
-  REJECTED:   { bg: "#1f0a0a", border: "#ef4444", text: "#ef4444", label: "✕ Rejected" },
+  PENDING:    { bg: "var(--oc-amber-light)",  border: "var(--oc-amber)",  text: "var(--oc-amber)",  label: "⏳ Pending DM review" },
+  APPROVED:   { bg: "var(--oc-green-light)",  border: "var(--oc-green)",  text: "var(--oc-green)",  label: "✓ Approved" },
+  OVERRIDDEN: { bg: "var(--oc-purple-light)", border: "var(--oc-purple)", text: "var(--oc-purple)", label: "✎ Overridden by DM" },
+  REJECTED:   { bg: "var(--oc-red-light)",    border: "var(--oc-red)",    text: "var(--oc-red)",    label: "✕ Rejected" },
 };
 
 const SOURCE_STYLES = {
-  RULE: { color: "#0ea5e9", label: "RULE" },
-  AI:   { color: "#7c3aed", label: "AI"   },
-  DM:   { color: "#10b981", label: "DM"   },
+  RULE: { color: "var(--oc-blue)",   label: "RULE" },
+  AI:   { color: "var(--oc-purple)", label: "AI"   },
+  DM:   { color: "var(--oc-green)",  label: "DM"   },
 };
 
 export default function TransformPanel({ mapping, targetField, onUpdateMapping }) {
@@ -138,8 +138,8 @@ export default function TransformPanel({ mapping, targetField, onUpdateMapping }
               <option key={t.value} value={t.value}>{t.label}</option>
             ))}
           </select>
-          <button style={{ ...S.actionBtn, background: "#065f46", color: "#d1fae5" }} onClick={addTransform}>Add</button>
-          <button style={{ ...S.actionBtn, color: "#475569" }} onClick={() => setAddingNew(false)}>Cancel</button>
+          <button style={{ ...S.actionBtn, background: "var(--oc-green-light)", color: "var(--oc-green)" }} onClick={addTransform}>Add</button>
+          <button style={{ ...S.actionBtn, color: "var(--text-muted)" }} onClick={() => setAddingNew(false)}>Cancel</button>
         </div>
       )}
 
@@ -159,7 +159,7 @@ export default function TransformPanel({ mapping, targetField, onUpdateMapping }
                   {src.label}
                 </span>
                 <span style={S.tType}>{t.type}</span>
-                <span style={{ fontSize: 10, color: "#475569" }}>{conf}% confidence</span>
+                <span style={{ fontSize: 10, color: "var(--text-muted)" }}>{conf}% confidence</span>
               </div>
               <div style={S.cardHeaderRight}>
                 <span style={{ fontSize: 10, color: ss.text, fontWeight: 600 }}>{ss.label}</span>
@@ -172,7 +172,7 @@ export default function TransformPanel({ mapping, targetField, onUpdateMapping }
                 {/* Rationale */}
                 {t.rationale && (
                   <div style={S.rationale}>
-                    <span style={{ fontSize: 9, color: "#475569", display: "block", marginBottom: 3 }}>
+                    <span style={{ fontSize: 9, color: "var(--text-muted)", display: "block", marginBottom: 3 }}>
                       RATIONALE
                     </span>
                     {t.rationale}
@@ -184,7 +184,7 @@ export default function TransformPanel({ mapping, targetField, onUpdateMapping }
 
                 {/* Exception action */}
                 <div style={S.exceptionRow}>
-                  <span style={{ fontSize: 10, color: "#475569" }}>On failure:</span>
+                  <span style={{ fontSize: 10, color: "var(--text-muted)" }}>On failure:</span>
                   <select
                     style={S.typeSelect}
                     value={t.exception_action || "HALT"}
@@ -218,7 +218,7 @@ export default function TransformPanel({ mapping, targetField, onUpdateMapping }
                 <div style={S.actionRow}>
                   {t.status !== "APPROVED" && (
                     <button
-                      style={{ ...S.actionBtn, background: "#065f46", color: "#d1fae5", border: "1px solid #10b981" }}
+                      style={{ ...S.actionBtn, background: "var(--oc-green-light)", color: "var(--oc-green)", border: "1px solid var(--oc-green)" }}
                       onClick={() => setStatus(i, "APPROVED")}
                     >
                       Approve
@@ -226,7 +226,7 @@ export default function TransformPanel({ mapping, targetField, onUpdateMapping }
                   )}
                   {t.status !== "OVERRIDDEN" && t.proposed_by !== "DM" && (
                     <button
-                      style={{ ...S.actionBtn, color: "#a78bfa", border: "1px solid #7c3aed" }}
+                      style={{ ...S.actionBtn, color: "var(--oc-purple)", border: "1px solid var(--oc-purple)" }}
                       onClick={() => setStatus(i, "OVERRIDDEN")}
                     >
                       Override
@@ -234,7 +234,7 @@ export default function TransformPanel({ mapping, targetField, onUpdateMapping }
                   )}
                   {t.status !== "REJECTED" && (
                     <button
-                      style={{ ...S.actionBtn, color: "#ef4444", border: "1px solid #ef4444" }}
+                      style={{ ...S.actionBtn, color: "var(--oc-red)", border: "1px solid var(--oc-red)" }}
                       onClick={() => setStatus(i, "REJECTED")}
                     >
                       Reject
@@ -242,7 +242,7 @@ export default function TransformPanel({ mapping, targetField, onUpdateMapping }
                   )}
                   {t.status === "APPROVED" && (
                     <button
-                      style={{ ...S.actionBtn, color: "#f59e0b", border: "1px solid #f59e0b" }}
+                      style={{ ...S.actionBtn, color: "var(--oc-amber)", border: "1px solid var(--oc-amber)" }}
                       onClick={() => setStatus(i, "PENDING")}
                     >
                       Reopen
@@ -252,7 +252,7 @@ export default function TransformPanel({ mapping, targetField, onUpdateMapping }
                     <button style={S.moveBtn} onClick={() => moveTransform(i, -1)} title="Move up" disabled={i === 0}>↑</button>
                     <button style={S.moveBtn} onClick={() => moveTransform(i,  1)} title="Move down" disabled={i === transforms.length - 1}>↓</button>
                     {t.proposed_by === "DM" && (
-                      <button style={{ ...S.moveBtn, color: "#ef4444" }} onClick={() => removeTransform(i)} title="Remove">✕</button>
+                      <button style={{ ...S.moveBtn, color: "var(--oc-red)" }} onClick={() => removeTransform(i)} title="Remove">✕</button>
                     )}
                   </div>
                 </div>
@@ -274,11 +274,11 @@ function ConfigEditor({ type, config, onUpdate }) {
       const entries = Object.entries(mappings);
       return (
         <div style={S.configSection}>
-          <div style={S.configLabel}>VALUE MAPPINGS  <span style={{ color:"#475569", fontWeight:400 }}>(source → target)</span></div>
+          <div style={S.configLabel}>VALUE MAPPINGS  <span style={{ color:"var(--text-muted)", fontWeight:400 }}>(source → target)</span></div>
           {entries.map(([src, tgt], i) => (
             <div key={i} style={S.mappingRow}>
               <input style={S.mapInput} value={src} readOnly />
-              <span style={{ color:"#475569", fontSize:12 }}>→</span>
+              <span style={{ color:"var(--text-muted)", fontSize:12 }}>→</span>
               <input
                 style={S.mapInput}
                 value={tgt}
@@ -320,11 +320,11 @@ function ConfigEditor({ type, config, onUpdate }) {
             {Object.entries(allEntries).map(([src, tgt], i) => {
               const isUnmapped = !tgt;
               return (
-                <div key={i} style={{ ...S.mappingRow, background: isUnmapped ? "#1f0a0a" : "transparent" }}>
-                  <input style={{ ...S.mapInput, color: isUnmapped ? "#ef4444" : "#7dd3fc" }} value={src} readOnly />
-                  <span style={{ color: "#475569", fontSize: 12 }}>→</span>
+                <div key={i} style={{ ...S.mappingRow, background: isUnmapped ? "var(--oc-red-light)" : "transparent" }}>
+                  <input style={{ ...S.mapInput, color: isUnmapped ? "var(--oc-red)" : "var(--oc-blue)" }} value={src} readOnly />
+                  <span style={{ color: "var(--text-muted)", fontSize: 12 }}>→</span>
                   <input
-                    style={{ ...S.mapInput, borderColor: isUnmapped ? "#ef4444" : "#1e3a5f" }}
+                    style={{ ...S.mapInput, borderColor: isUnmapped ? "var(--oc-red)" : "var(--border)" }}
                     value={tgt}
                     placeholder="OC4 value…"
                     onChange={e => {
@@ -428,7 +428,7 @@ function ConfigEditor({ type, config, onUpdate }) {
             <label style={S.configRowLabel}>Strip unit strings:</label>
             <input type="checkbox" checked={!!config.strip_units}
               onChange={e => onUpdate({ strip_units: e.target.checked })} />
-            <span style={{ fontSize: 10, color: "#64748b", marginLeft: 4 }}>e.g. "5 mg" → 5</span>
+            <span style={{ fontSize: 10, color: "var(--text-muted)", marginLeft: 4 }}>e.g. "5 mg" → 5</span>
           </div>
         </div>
       );
@@ -534,41 +534,41 @@ function defaultConfigForType(type) {
 
 // ── Styles ─────────────────────────────────────────────────────────────────────
 const S = {
-  root: { borderTop: "1px solid #1e3a5f" },
+  root: { borderTop: "1px solid var(--border)" },
   header: {
     display: "flex", alignItems: "center", justifyContent: "space-between",
-    padding: "8px 12px", background: "#091525", borderBottom: "1px solid #1e3a5f",
+    padding: "8px 12px", background: "var(--bg)", borderBottom: "1px solid var(--border)",
   },
-  headerTitle: { fontSize: 9, fontWeight: 700, color: "#334155", letterSpacing: ".08em" },
-  pendingBadge: { fontSize: 9, padding: "1px 6px", borderRadius: 4, background: "rgba(245,158,11,.15)", color: "#f59e0b", border: "1px solid #f59e0b" },
-  approvedBadge:{ fontSize: 9, padding: "1px 6px", borderRadius: 4, background: "rgba(16,185,129,.12)", color: "#10b981", border: "1px solid #10b981" },
-  addBtn: { padding: "2px 8px", borderRadius: 4, border: "1px solid #0ea5e9", background: "transparent", color: "#0ea5e9", fontSize: 10, cursor: "pointer" },
-  empty: { padding: "12px", fontSize: 11, color: "#475569", fontStyle: "italic" },
-  linkBtn: { background: "transparent", border: "none", color: "#0ea5e9", fontSize: 11, cursor: "pointer", textDecoration: "underline", padding: 0 },
-  addRow: { display: "flex", gap: 8, alignItems: "center", padding: "8px 12px", borderBottom: "1px solid #1e3a5f", background: "#0a1826" },
+  headerTitle: { fontSize: 9, fontWeight: 700, color: "var(--text-light)", letterSpacing: ".08em" },
+  pendingBadge: { fontSize: 9, padding: "1px 6px", borderRadius: 4, background: "var(--oc-amber-light)", color: "var(--oc-amber)", border: "1px solid var(--oc-amber)" },
+  approvedBadge:{ fontSize: 9, padding: "1px 6px", borderRadius: 4, background: "var(--oc-green-light)", color: "var(--oc-green)", border: "1px solid var(--oc-green)" },
+  addBtn: { padding: "2px 8px", borderRadius: 4, border: "1px solid var(--oc-blue)", background: "#fff", color: "var(--oc-blue)", fontSize: 10, cursor: "pointer", fontWeight: 500 },
+  empty: { padding: "12px", fontSize: 11, color: "var(--text-muted)", fontStyle: "italic" },
+  linkBtn: { background: "transparent", border: "none", color: "var(--oc-blue)", fontSize: 11, cursor: "pointer", textDecoration: "underline", padding: 0 },
+  addRow: { display: "flex", gap: 8, alignItems: "center", padding: "8px 12px", borderBottom: "1px solid var(--border)", background: "var(--bg)" },
   transformCard: { border: "1px solid", margin: "6px", borderRadius: 5, overflow: "hidden" },
   cardHeader: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "7px 10px", cursor: "pointer", userSelect: "none" },
   cardHeaderLeft: { display: "flex", alignItems: "center", gap: 8 },
   cardHeaderRight:{ display: "flex", alignItems: "center", gap: 8 },
   srcBadge: { fontSize: 8, fontWeight: 700, padding: "1px 5px", borderRadius: 3, border: "1px solid", letterSpacing: ".05em" },
-  tType: { fontSize: 11, fontFamily: "monospace", color: "#cbd5e1" },
-  chevron:{ fontSize: 9, color: "#475569" },
-  cardBody: { padding: "10px", borderTop: "1px solid rgba(30,58,95,.5)" },
-  rationale: { fontSize: 10, color: "#64748b", background: "#091525", border: "1px solid #1e3a5f", borderRadius: 4, padding: "6px 8px", marginBottom: 8, lineHeight: 1.5 },
+  tType: { fontSize: 11, fontFamily: "monospace", color: "var(--text)" },
+  chevron:{ fontSize: 9, color: "var(--text-muted)" },
+  cardBody: { padding: "10px", borderTop: "1px solid var(--border)", background: "#fff" },
+  rationale: { fontSize: 10, color: "var(--text-muted)", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 4, padding: "6px 8px", marginBottom: 8, lineHeight: 1.5 },
   exceptionRow: { display: "flex", alignItems: "center", gap: 8, marginBottom: 8 },
-  noteInput: { width: "100%", padding: "3px 7px", borderRadius: 4, border: "1px solid #1e3a5f", background: "#091525", color: "#94a3b8", fontSize: 11, outline: "none", fontFamily: "inherit" },
-  defaultInput:{ padding: "2px 6px", borderRadius: 3, border: "1px solid #1e3a5f", background: "#091525", color: "#94a3b8", fontSize: 11, outline: "none", width: 120 },
+  noteInput: { width: "100%", padding: "3px 7px", borderRadius: 4, border: "1px solid var(--border)", background: "#fff", color: "var(--text)", fontSize: 11, outline: "none", fontFamily: "inherit" },
+  defaultInput:{ padding: "2px 6px", borderRadius: 3, border: "1px solid var(--border)", background: "#fff", color: "var(--text)", fontSize: 11, outline: "none", width: 120 },
   actionRow: { display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" },
-  actionBtn: { padding: "3px 10px", borderRadius: 4, border: "1px solid #1e3a5f", background: "transparent", cursor: "pointer", fontSize: 10, fontWeight: 500 },
-  moveBtn:   { padding: "2px 6px", borderRadius: 3, border: "1px solid #1e3a5f", background: "transparent", color: "#475569", cursor: "pointer", fontSize: 11 },
-  configSection: { background: "#0a1826", border: "1px solid #1e3a5f", borderRadius: 4, padding: "8px", marginBottom: 8 },
-  configLabel:   { fontSize: 9, fontWeight: 700, color: "#334155", letterSpacing: ".07em", marginBottom: 6 },
+  actionBtn: { padding: "3px 10px", borderRadius: 4, border: "1px solid var(--border)", background: "transparent", cursor: "pointer", fontSize: 10, fontWeight: 500 },
+  moveBtn:   { padding: "2px 6px", borderRadius: 3, border: "1px solid var(--border)", background: "transparent", color: "var(--text-muted)", cursor: "pointer", fontSize: 11 },
+  configSection: { background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 4, padding: "8px", marginBottom: 8 },
+  configLabel:   { fontSize: 9, fontWeight: 700, color: "var(--text-light)", letterSpacing: ".07em", marginBottom: 6 },
   configRow:     { display: "flex", alignItems: "center", gap: 8, marginBottom: 5 },
-  configRowLabel:{ fontSize: 10, color: "#64748b", minWidth: 110, flexShrink: 0 },
+  configRowLabel:{ fontSize: 10, color: "var(--text-muted)", minWidth: 110, flexShrink: 0 },
   mappingRow:    { display: "flex", alignItems: "center", gap: 6, marginBottom: 4, padding: "2px 0" },
-  mapInput:      { padding: "3px 6px", borderRadius: 3, border: "1px solid #1e3a5f", background: "#0d1b2a", color: "#e2e8f0", fontSize: 11, outline: "none", flex: 1, minWidth: 0, fontFamily: "monospace" },
-  removeBtn:     { background: "transparent", border: "none", color: "#ef4444", cursor: "pointer", fontSize: 11, padding: "0 3px", flexShrink: 0 },
-  addMappingBtn: { fontSize: 10, padding: "2px 8px", borderRadius: 3, border: "1px solid #1e3a5f", background: "transparent", color: "#0ea5e9", cursor: "pointer", marginTop: 4 },
-  unmappedWarning:{ fontSize: 10, color: "#f59e0b", background: "rgba(245,158,11,.1)", border: "1px solid #f59e0b", borderRadius: 3, padding: "3px 7px", marginBottom: 6 },
-  typeSelect:    { padding: "2px 5px", borderRadius: 3, border: "1px solid #1e3a5f", background: "#0d1b2a", color: "#94a3b8", fontSize: 10, outline: "none", cursor: "pointer" },
+  mapInput:      { padding: "3px 6px", borderRadius: 3, border: "1px solid var(--border)", background: "#fff", color: "var(--text)", fontSize: 11, outline: "none", flex: 1, minWidth: 0, fontFamily: "monospace" },
+  removeBtn:     { background: "transparent", border: "none", color: "var(--oc-red)", cursor: "pointer", fontSize: 11, padding: "0 3px", flexShrink: 0 },
+  addMappingBtn: { fontSize: 10, padding: "2px 8px", borderRadius: 3, border: "1px solid var(--border)", background: "transparent", color: "var(--oc-blue)", cursor: "pointer", marginTop: 4 },
+  unmappedWarning:{ fontSize: 10, color: "var(--oc-amber)", background: "var(--oc-amber-light)", border: "1px solid var(--oc-amber)", borderRadius: 3, padding: "3px 7px", marginBottom: 6 },
+  typeSelect:    { padding: "2px 5px", borderRadius: 3, border: "1px solid var(--border)", background: "#fff", color: "var(--text)", fontSize: 10, outline: "none", cursor: "pointer" },
 };

@@ -155,9 +155,9 @@ export default function ExpressionEditor({ mapping, sourceItems, onUpdate }) {
         <div style={S.dropdown}>
           {QUICK_TEMPLATES.map((tpl, i) => (
             <button key={i} style={S.dropdownItem} onClick={() => applyQuickTemplate(tpl)}>
-              <div style={{ fontSize: 11, fontWeight: 600, color: "#e2e8f0" }}>{tpl.label}</div>
-              <div style={{ fontSize: 10, color: "#64748b", marginTop: 2 }}>{tpl.desc}</div>
-              <div style={{ fontSize: 9, fontFamily: "monospace", color: "#7c3aed", marginTop: 2 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text)" }}>{tpl.label}</div>
+              <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 2 }}>{tpl.desc}</div>
+              <div style={{ fontSize: 9, fontFamily: "monospace", color: "var(--oc-purple)", marginTop: 2 }}>
                 {tpl.template.slice(0, 60)}{tpl.template.length > 60 ? "…" : ""}
               </div>
             </button>
@@ -170,8 +170,8 @@ export default function ExpressionEditor({ mapping, sourceItems, onUpdate }) {
         <div style={S.dropdown}>
           {XPATH_FUNCTIONS.map((fn, i) => (
             <button key={i} style={S.dropdownItem} onClick={() => { insertFn(fn.fn); setShowFunctions(false); }}>
-              <span style={{ fontFamily: "monospace", fontSize: 11, color: "#7dd3fc" }}>{fn.fn}</span>
-              <span style={{ fontSize: 10, color: "#64748b", marginLeft: 8 }}>{fn.desc}</span>
+              <span style={{ fontFamily: "monospace", fontSize: 11, color: "var(--oc-blue)" }}>{fn.fn}</span>
+              <span style={{ fontSize: 10, color: "var(--text-muted)", marginLeft: 8 }}>{fn.desc}</span>
             </button>
           ))}
         </div>
@@ -200,7 +200,7 @@ export default function ExpressionEditor({ mapping, sourceItems, onUpdate }) {
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6, margin: "6px 0" }}>
             {sourceItems.map(item => (
               <div key={item.oid} style={S.previewField}>
-                <span style={{ fontSize: 9, color: "#475569", display: "block" }}>{item.name}</span>
+                <span style={{ fontSize: 9, color: "var(--text-light)", display: "block" }}>{item.name}</span>
                 <input
                   style={S.previewInput}
                   value={previewValues[item.name] || ""}
@@ -211,9 +211,9 @@ export default function ExpressionEditor({ mapping, sourceItems, onUpdate }) {
             ))}
           </div>
           <div style={S.previewResult}>
-            <span style={{ fontSize: 9, color: "#475569" }}>Result: </span>
-            <span style={{ fontFamily: "monospace", fontSize: 11, color: "#7dd3fc" }}>
-              {preview || <span style={{ color: "#334155" }}>enter sample values above</span>}
+            <span style={{ fontSize: 9, color: "var(--text-light)" }}>Result: </span>
+            <span style={{ fontFamily: "monospace", fontSize: 11, color: "var(--oc-blue)" }}>
+              {preview || <span style={{ color: "var(--text-light)" }}>enter sample values above</span>}
             </span>
           </div>
         </div>
@@ -224,8 +224,8 @@ export default function ExpressionEditor({ mapping, sourceItems, onUpdate }) {
         <div style={{ padding: "0 12px 10px" }}>
           <div style={S.xpathNote}>
             XPath expressions are evaluated against the OC4 form at runtime.
-            Use field OIDs or names in curly braces: <code style={{ color: "#7c3aed" }}>{"{AETERM}"}</code>.
-            Standard XPath 1.0 functions are supported plus <code style={{ color: "#7c3aed" }}>lpad()</code>, <code style={{ color: "#7c3aed" }}>coalesce()</code>.
+            Use field OIDs or names in curly braces: <code style={{ color: "var(--oc-purple)" }}>{"{AETERM}"}</code>.
+            Standard XPath 1.0 functions are supported plus <code style={{ color: "var(--oc-purple)" }}>lpad()</code>, <code style={{ color: "var(--oc-purple)" }}>coalesce()</code>.
           </div>
         </div>
       )}
@@ -234,60 +234,60 @@ export default function ExpressionEditor({ mapping, sourceItems, onUpdate }) {
 }
 
 const S = {
-  root: { borderTop: "1px solid #1e3a5f", borderBottom: "1px solid #1e3a5f", background: "#091525" },
+  root: { borderTop: "1px solid var(--border)", borderBottom: "1px solid var(--border)", background: "var(--bg)" },
   header: {
     display: "flex", alignItems: "center", justifyContent: "space-between",
     padding: "8px 12px 4px",
   },
-  label: { fontSize: 9, fontWeight: 700, color: "#334155", letterSpacing: ".08em" },
-  modeToggle: { display: "flex", borderRadius: 4, overflow: "hidden", border: "1px solid #1e3a5f" },
+  label: { fontSize: 9, fontWeight: 700, color: "var(--text-light)", letterSpacing: ".08em" },
+  modeToggle: { display: "flex", borderRadius: 4, overflow: "hidden", border: "1px solid var(--border)" },
   modeBtn: {
-    padding: "2px 10px", border: "none", background: "transparent",
-    fontSize: 10, color: "#475569", cursor: "pointer",
+    padding: "2px 10px", border: "none", background: "#fff",
+    fontSize: 10, color: "var(--text-muted)", cursor: "pointer",
   },
-  modeBtnOn: { background: "#1e3a5f", color: "#7dd3fc", fontWeight: 600 },
+  modeBtnOn: { background: "var(--oc-blue-light)", color: "var(--oc-blue)", fontWeight: 600 },
 
   fieldChips: {
     display: "flex", flexWrap: "wrap", gap: 4, padding: "4px 12px 6px",
     alignItems: "center",
   },
-  chipLabel: { fontSize: 9, color: "#334155", marginRight: 2 },
+  chipLabel: { fontSize: 9, color: "var(--text-light)", marginRight: 2 },
   fieldChip: {
-    padding: "2px 7px", borderRadius: 4, border: "1px solid #7c3aed",
-    background: "rgba(124,58,237,.1)", color: "#a78bfa", fontSize: 10,
-    fontFamily: "monospace", cursor: "pointer",
+    padding: "2px 7px", borderRadius: 4, border: "1px solid var(--oc-purple)",
+    background: "var(--oc-purple-light)", color: "var(--oc-purple)", fontSize: 10,
+    fontFamily: "monospace", cursor: "pointer", fontWeight: 600,
   },
   quickBtn: {
-    padding: "2px 8px", borderRadius: 4, border: "1px solid #1e3a5f",
-    background: "transparent", color: "#64748b", fontSize: 10, cursor: "pointer",
+    padding: "2px 8px", borderRadius: 4, border: "1px solid var(--border)",
+    background: "#fff", color: "var(--text-muted)", fontSize: 10, cursor: "pointer",
   },
   dropdown: {
-    margin: "0 12px 8px", background: "#0d1b2a", border: "1px solid #1e3a5f",
+    margin: "0 12px 8px", background: "#fff", border: "1px solid var(--border)",
     borderRadius: 6, overflow: "hidden", maxHeight: 220, overflow: "auto",
   },
   dropdownItem: {
     width: "100%", textAlign: "left", padding: "7px 10px",
-    border: "none", borderBottom: "1px solid #1e3a5f",
+    border: "none", borderBottom: "1px solid var(--border)",
     background: "transparent", cursor: "pointer", display: "block",
   },
   exprInput: {
-    width: "100%", background: "#0a1826", border: "1px solid #1e3a5f",
-    borderRadius: 4, color: "#e2e8f0", fontSize: 11, padding: "6px 8px",
+    width: "100%", background: "#fff", border: "1px solid var(--border)",
+    borderRadius: 4, color: "var(--text)", fontSize: 11, padding: "6px 8px",
     fontFamily: "monospace", resize: "vertical",
     outline: "none",
   },
   previewSection: { padding: "0 12px 10px" },
   previewField: { display: "flex", flexDirection: "column" },
   previewInput: {
-    width: 70, padding: "2px 5px", borderRadius: 3, border: "1px solid #1e3a5f",
-    background: "#0a1826", color: "#e2e8f0", fontSize: 10, outline: "none",
+    width: 70, padding: "2px 5px", borderRadius: 3, border: "1px solid var(--border)",
+    background: "#fff", color: "var(--text)", fontSize: 10, outline: "none",
   },
   previewResult: {
-    background: "#0d1b2a", border: "1px solid #1e3a5f", borderRadius: 4,
+    background: "#fff", border: "1px solid var(--border)", borderRadius: 4,
     padding: "6px 8px", marginTop: 6,
   },
   xpathNote: {
-    fontSize: 10, color: "#475569", background: "#0a1826",
-    border: "1px solid #1e3a5f", borderRadius: 4, padding: "6px 8px", lineHeight: 1.6,
+    fontSize: 10, color: "var(--text-muted)", background: "#fff",
+    border: "1px solid var(--border)", borderRadius: 4, padding: "6px 8px", lineHeight: 1.6,
   },
 };
