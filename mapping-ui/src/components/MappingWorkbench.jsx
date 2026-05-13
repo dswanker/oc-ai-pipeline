@@ -48,6 +48,15 @@ export default function MappingWorkbench({
   const sourceRefs = useRef(new Map());
   const targetRefs = useRef(new Map());
   const [connections, setConnections] = useState([]);
+  const [hiddenLines, setHiddenLines] = useState(new Set());
+
+  const toggleLineVisibility = useCallback(key => {
+    setHiddenLines(prev => {
+      const next = new Set(prev);
+      next.has(key) ? next.delete(key) : next.add(key);
+      return next;
+    });
+  }, []);
 
   const stats = useMemo(() => getMappingStats(mappings), [mappings]);
 
@@ -772,19 +781,51 @@ export default function MappingWorkbench({
           }}
         >
           {connections.map(c => {
-            const midX  = (c.x1 + c.x2) / 2;
-            const color = c.status === "reviewed" ? "var(--oc-green)" : "var(--oc-amber)";
+            const midX     = (c.x1 + c.x2) / 2;
+            const color    = c.status === "reviewed" ? "var(--oc-green)" : "var(--oc-amber)";
+            const isHidden = hiddenLines.has(c.key);
+            const tipText  = isHidden ? "Click to show line" : "Click to hide line";
             return (
               <g key={c.key}>
-                <path
-                  d={`M ${c.x1} ${c.y1} C ${midX} ${c.y1}, ${midX} ${c.y2}, ${c.x2} ${c.y2}`}
-                  fill="none"
+                {!isHidden && (
+                  <path
+                    d={`M ${c.x1} ${c.y1} C ${midX} ${c.y1}, ${midX} ${c.y2}, ${c.x2} ${c.y2}`}
+                    fill="none"
+                    stroke={color}
+                    strokeWidth="2.5"
+                    opacity="0.85"
+                  />
+                )}
+                {/* Visible dots — solid when line shown, hollow when hidden */}
+                <circle
+                  cx={c.x1} cy={c.y1} r="4.5"
+                  fill={isHidden ? "#fff" : color}
                   stroke={color}
-                  strokeWidth="2.5"
-                  opacity="0.85"
+                  strokeWidth="2"
                 />
-                <circle cx={c.x1} cy={c.y1} r="3.5" fill={color} />
-                <circle cx={c.x2} cy={c.y2} r="3.5" fill={color} />
+                <circle
+                  cx={c.x2} cy={c.y2} r="4.5"
+                  fill={isHidden ? "#fff" : color}
+                  stroke={color}
+                  strokeWidth="2"
+                />
+                {/* Invisible larger hit targets for easier clicking */}
+                <circle
+                  cx={c.x1} cy={c.y1} r="10"
+                  fill="transparent"
+                  style={{ pointerEvents: "auto", cursor: "pointer" }}
+                  onClick={() => toggleLineVisibility(c.key)}
+                >
+                  <title>{tipText}</title>
+                </circle>
+                <circle
+                  cx={c.x2} cy={c.y2} r="10"
+                  fill="transparent"
+                  style={{ pointerEvents: "auto", cursor: "pointer" }}
+                  onClick={() => toggleLineVisibility(c.key)}
+                >
+                  <title>{tipText}</title>
+                </circle>
               </g>
             );
           })}
