@@ -962,7 +962,12 @@ directly by the `edc-builder` skill.
     ],
     "arm_mappings": [
       { "source_arm": null, "target_arm": "TRT", "action": "pending" }
-    ],
+    ]
+  },
+  "study_settings": {
+    "migration_status": "draft",
+    "approved_by": "",
+    "approved_at": "",
     "subject_id_rule": {
       "mode": "passthrough", "template": "", "pattern": "", "replacement": ""
     }

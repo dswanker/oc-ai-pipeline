@@ -1104,13 +1104,29 @@ def _backfill_migration_fields(spec):
             "visit_mappings": visit_mappings,
             "form_placements": form_placements,
             "arm_mappings": arm_mappings,
-            "subject_id_rule": {
+        }
+
+    # Top-level study_settings — separate from SOE per UX design
+    if "study_settings" not in spec:
+        # Migrate subject_id_rule from old SOE-nested location if present
+        legacy_rule = (spec.get("schedule_of_events") or {}).pop("subject_id_rule", None)
+        spec["study_settings"] = {
+            "migration_status": "draft",
+            "approved_by": "",
+            "approved_at": "",
+            "subject_id_rule": legacy_rule or {
                 "mode": "passthrough",
                 "template": "",
                 "pattern": "",
                 "replacement": "",
             },
         }
+    else:
+        # study_settings exists, but if SOE still has subject_id_rule from
+        # an in-flight spec, fold it in (preferring study_settings if both)
+        soe = spec.get("schedule_of_events") or {}
+        if "subject_id_rule" in soe:
+            spec["study_settings"].setdefault("subject_id_rule", soe.pop("subject_id_rule"))
 
     # Per-form lifecycle fields
     for f in spec.get("forms") or []:

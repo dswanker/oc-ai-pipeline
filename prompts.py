@@ -31,7 +31,7 @@ OUTPUT FORMAT — READ CAREFULLY:
   ✓ No reasoning or commentary anywhere in the output — not even inside
     the JSON as string values. Keep all string values concise and factual.
   ✓ The object's top-level keys MUST include: study_meta, timepoint_csv,
-    labranges_csv, forms, schedule_of_events, review_flags.
+    labranges_csv, forms, schedule_of_events, study_settings, review_flags.
   ✗ Do NOT output multiple JSON fragments.
   ✗ Do NOT output an example/stub object first and then the real one.
   ✗ Do NOT truncate — if you approach the token limit, shorten string
@@ -907,13 +907,34 @@ schedule_of_events: (REQUIRED — pre-populated for downstream migration tooling
         "action":     "pending"
       }
 
-  subject_id_rule (object) — always default on freshly-generated specs:
+────────────────────────────────────────────────────────────────────────────
+study_settings: (REQUIRED — study-wide migration configuration)
+
+  This section captures study-level settings used by the migration
+  engine. Unlike schedule_of_events (which describes visit/form
+  structure), study_settings configures HOW the migration runs:
+  subject identifier translation, target environment, etc.
+
+  Like schedule_of_events, this section is approved separately and
+  must be in migration_status="migrated" before any form migration
+  can run.
+
+  migration_status (str) — always "draft" on freshly-generated specs
+  approved_by      (str) — always "" on freshly-generated specs
+  approved_at      (str) — always "" on freshly-generated specs
+
+  subject_id_rule (object) — how source SubjectKey becomes target
+  SubjectKey. Always default on freshly-generated specs:
       {
         "mode":        "passthrough",
         "template":    "",
         "pattern":     "",
         "replacement": ""
       }
+    Modes:
+      "passthrough" — source SubjectKey copied unchanged (most common)
+      "template"    — apply a template string like "OC4-${source}"
+      "regex"       — apply a regex find/replace
 
 ────────────────────────────────────────────────────────────────────────────
 review_flags: (ALL eight categories must be present, even if empty list)
@@ -953,9 +974,8 @@ QUALITY CHECKLIST (verify before returning)
   ✓ Every form has cross_form_dependencies list (may be empty [])
   ✓ Every cross_form_dependencies entry has xpath_expression populated
   ✓ review_flags has all 8 categories as lists (may be empty)
-  ✓ schedule_of_events is present with all five sub-keys
-    (migration_status, visit_mappings, form_placements, arm_mappings,
-     subject_id_rule)
+  ✓ schedule_of_events is present with all four sub-keys
+    (migration_status, visit_mappings, form_placements, arm_mappings)
   ✓ schedule_of_events.visit_mappings has exactly one entry per unique
     event in timepoint_csv.rows, with source_oid=null and target_oid
     matching the event
@@ -963,7 +983,9 @@ QUALITY CHECKLIST (verify before returning)
     pair from forms[].visits_assigned (flat list, NOT nested by form)
   ✓ schedule_of_events.arm_mappings has one entry per arm in
     study_meta.arms, with source_arm=null
-  ✓ schedule_of_events.subject_id_rule has mode="passthrough" and
+  ✓ study_settings is present with migration_status, approved_by,
+    approved_at, subject_id_rule
+  ✓ study_settings.subject_id_rule has mode="passthrough" and
     empty template/pattern/replacement
   ✓ Every form in forms[] has migration_status="draft", empty
     approved_by, approved_at, rejected_reason
