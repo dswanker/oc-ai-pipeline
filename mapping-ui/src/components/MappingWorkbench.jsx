@@ -285,13 +285,39 @@ export default function MappingWorkbench({
               {/* Multi-select hint */}
               {selectedTarget && (
                 <div style={S.selectionHint}>
-                  {selectedSources.size === 0
-                    ? "Click a field to map 1:1 · Shift-click multiple for many:1"
-                    : `${selectedSources.size} selected — `}
-                  {selectedSources.size >= 2 && (
-                    <button style={S.applyBtn} onClick={applyManyToOne}>
-                      Apply many:1 →
-                    </button>
+                  {selectedSources.size === 0 ? (
+                    <span>Click to select · Cmd+click to multi-select · Double-click to apply 1:1</span>
+                  ) : (
+                    <>
+                      <span style={{ fontWeight: 600, color: "var(--oc-blue)" }}>
+                        {selectedSources.size} selected
+                      </span>
+                      {selectedSources.size === 1 && (
+                        <button
+                          style={S.applyBtn}
+                          onClick={() => applyOneToOne([...selectedSources][0])}
+                        >
+                          Apply 1:1 →
+                        </button>
+                      )}
+                      {selectedSources.size >= 2 && (
+                        <button style={S.applyBtn} onClick={applyManyToOne}>
+                          Apply many:1 →
+                        </button>
+                      )}
+                      <button
+                        style={{
+                          ...S.applyBtn,
+                          background: "transparent",
+                          border: "1px solid var(--border)",
+                          color: "var(--text-muted)",
+                          fontWeight: 500,
+                        }}
+                        onClick={() => setSelectedSources(new Set())}
+                      >
+                        Clear
+                      </button>
+                    </>
                   )}
                 </div>
               )}
@@ -315,29 +341,50 @@ export default function MappingWorkbench({
                             key={item.oid}
                             style={{
                               ...S.sourceItem,
-                              background: isSelected ? "var(--oc-blue-light)" : isUsed ? "var(--oc-blue-pale)" : "#fff",
-                              borderLeft: isSelected ? "3px solid var(--oc-purple)" : isUsed ? "3px solid var(--oc-blue)" : "3px solid transparent",
+                              background: isSelected ? "var(--oc-blue-light)" : "#fff",
+                              borderLeft: isSelected ? "4px solid var(--oc-blue)" : "4px solid transparent",
+                              fontWeight: isSelected ? 600 : 400,
                             }}
-                            onClick={() => {
-                              if (!selectedTarget) return;
-                              if (selectedSources.size > 0) {
+                            onClick={e => {
+                              if (!selectedTarget) {
+                                showToast("Select a target field on the right first", "error");
+                                return;
+                              }
+                              if (e.shiftKey || e.metaKey || e.ctrlKey) {
+                                // multi-select toggle
                                 toggleSourceSelect(item.oid);
                               } else {
-                                applyOneToOne(item.oid);
+                                // single-select replace
+                                setSelectedSources(new Set([item.oid]));
                               }
+                            }}
+                            onDoubleClick={() => {
+                              if (!selectedTarget) {
+                                showToast("Select a target field on the right first", "error");
+                                return;
+                              }
+                              applyOneToOne(item.oid);
                             }}
                             onContextMenu={e => {
                               e.preventDefault();
+                              if (!selectedTarget) return;
                               toggleSourceSelect(item.oid);
                             }}
                           >
-                            <div style={S.sourceItemName}>
+                            <div style={{
+                              ...S.sourceItemName,
+                              color: isSelected ? "var(--oc-blue)" : "var(--oc-blue)",
+                              fontWeight: isSelected ? 700 : 500,
+                            }}>
                               {item.name}
                               {item.cdashAlias && item.cdashAlias !== item.name && (
-                                <span style={{ fontSize: 9, color: "var(--oc-purple)", marginLeft: 5 }}>{item.cdashAlias}</span>
+                                <span style={{ fontSize: 9, color: "var(--oc-purple)", marginLeft: 5, fontWeight: 600 }}>{item.cdashAlias}</span>
                               )}
-                              {isUsed && !isSelected && (
-                                <span style={{ fontSize: 9, color: "var(--oc-green)", marginLeft: 5 }}>✓</span>
+                              {isUsed && (
+                                <span style={{
+                                  fontSize: 9, color: "var(--oc-green)", marginLeft: 6, fontWeight: 700,
+                                  background: "var(--oc-green-light)", padding: "1px 5px", borderRadius: 3, border: "1px solid var(--oc-green)",
+                                }}>✓ mapped</span>
                               )}
                             </div>
                             <div style={S.sourceItemLabel}>{item.label}</div>
