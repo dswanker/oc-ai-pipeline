@@ -32,7 +32,7 @@ COL = {
     "pipeline_status":   "color_mm2h9g3m",
     "ai_run_log":        "long_text_mm2h9mnq",
     # OpenClinica
-    "oc_subdomain":      "color_mm2n247s",
+    "oc_subdomain":      "text_mm3aa7cx",   # text column (was status color_mm2n247s pre-2026-05-13)
     "create_study":      "boolean_mm2nbn5c",
     "oc_production":     "boolean_mm2ptpzd",
     "oc_study_url":      "text_mm2nbce5",
