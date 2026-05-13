@@ -40,27 +40,44 @@ export function buildInitialMappings(sourceTree, spec) {
   const mappings = {};
   if (!sourceTree || !spec) return mappings;
 
-  // Build lookup: source item name (upper) → item OID
-  const nameToOid = {};
+  // Build TWO lookups:
+  //   - perFormNameToOid: maps formName.upper → { fieldName.upper: oid }
+  //     so SUBJID in target form DM resolves to DM.SUBJID, not VS.SUBJID
+  //   - globalNameToOid: cross-form fallback when no same-form match exists.
+  //     First-wins so behavior is stable regardless of FormDef parse order.
+  const perFormNameToOid = {};
+  const globalNameToOid  = {};
   (sourceTree.forms || []).forEach(form => {
+    const formKey = (form.name || "").toUpperCase();
+    if (!perFormNameToOid[formKey]) perFormNameToOid[formKey] = {};
     (form.item_groups || []).forEach(group => {
       (group.items || []).forEach(item => {
-        nameToOid[item.name.toUpperCase()] = item.oid;
-        // Also index by cdashAlias if present
-        if (item.cdashAlias) nameToOid[item.cdashAlias.toUpperCase()] = item.oid;
+        const nameKey = item.name.toUpperCase();
+        perFormNameToOid[formKey][nameKey] = item.oid;
+        if (!(nameKey in globalNameToOid)) globalNameToOid[nameKey] = item.oid;
+        if (item.cdashAlias) {
+          const aliasKey = item.cdashAlias.toUpperCase();
+          perFormNameToOid[formKey][aliasKey] = item.oid;
+          if (!(aliasKey in globalNameToOid)) globalNameToOid[aliasKey] = item.oid;
+        }
       });
     });
   });
 
   (spec.forms || []).forEach(form => {
+    const targetFormKey = (form.form_id || "").toUpperCase();
+    const sameFormMap   = perFormNameToOid[targetFormKey] || {};
     (form.survey || []).forEach(row => {
       const targetName  = row.name;
       const sourceField = row.source_field || "";
       const formId      = form.form_id;
 
+      // Same-form match takes priority; fall back to any-form match.
       const matchedOid =
-        nameToOid[sourceField.toUpperCase()] ||
-        nameToOid[targetName.toUpperCase()] ||
+        sameFormMap[sourceField.toUpperCase()]   ||
+        sameFormMap[targetName.toUpperCase()]    ||
+        globalNameToOid[sourceField.toUpperCase()] ||
+        globalNameToOid[targetName.toUpperCase()]  ||
         null;
 
       // Detect many-to-one split-date pattern

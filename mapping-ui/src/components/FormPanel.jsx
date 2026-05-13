@@ -181,11 +181,18 @@ export default function FormPanel({ spec, formIdx, onUpdateForm, onUpdateSetting
       {/* Library match info */}
       <div className="fp-section">
         <div className="fp-section-head">Library Match</div>
+        <p style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 14, lineHeight: 1.5, maxWidth: 720 }}>
+          Where the fields on this form came from. Every field has one
+          origin: the customer's CRF library template, the protocol text
+          (added on top of the library), or a CDASH industry-standard
+          default when neither source defined it.
+        </p>
         <div className="fp-grid">
           {fld("Match status",   <div className="fp-val">{lm.status || "—"}</div>)}
           {fld("Source type",    <div className="fp-val">{lm.source_type || "—"}</div>)}
           {fld("From library",   <div className="fp-val">{lm.fields_from_library ?? "—"}</div>)}
-          {fld("Extended",       <div className="fp-val">{lm.fields_extended ?? "—"}</div>)}
+          {fld("From protocol",  <div className="fp-val">{lm.fields_extended_from_protocol ?? lm.fields_extended ?? "—"}</div>)}
+          {fld("From CDASH default", <div className="fp-val">{lm.fields_from_cdash_default ?? "—"}</div>)}
         </div>
       </div>
     </div>
