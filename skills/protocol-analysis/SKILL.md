@@ -940,9 +940,33 @@ directly by the `edc-builder` skill.
         { "source_form": "", "source_field": "", "purpose": "",
           "xpath_pattern": "", "visit_context": "",
           "status": "COMPLETE | FLAGGED" }
-      ]
+      ],
+      "migration_status": "draft",
+      "approved_by": "",
+      "approved_at": "",
+      "rejected_reason": ""
     }
   ],
+  "schedule_of_events": {
+    "migration_status": "draft",
+    "approved_by": "",
+    "approved_at": "",
+    "visit_mappings": [
+      { "source_oid": null, "source_name": null,
+        "target_oid": "SE_BASELINE", "target_name": "Baseline",
+        "action": "pending", "notes": "" }
+    ],
+    "form_placements": [
+      { "target_visit_oid": "SE_BASELINE", "form_id": "DM",
+        "required": true, "repeating": false, "notes": "" }
+    ],
+    "arm_mappings": [
+      { "source_arm": null, "target_arm": "TRT", "action": "pending" }
+    ],
+    "subject_id_rule": {
+      "mode": "passthrough", "template": "", "pattern": "", "replacement": ""
+    }
+  },
   "review_flags": {
     "site_specific": [],
     "oid_confirmation": [],

@@ -31,7 +31,7 @@ OUTPUT FORMAT — READ CAREFULLY:
   ✓ No reasoning or commentary anywhere in the output — not even inside
     the JSON as string values. Keep all string values concise and factual.
   ✓ The object's top-level keys MUST include: study_meta, timepoint_csv,
-    labranges_csv, forms, review_flags.
+    labranges_csv, forms, schedule_of_events, review_flags.
   ✗ Do NOT output multiple JSON fragments.
   ✗ Do NOT output an example/stub object first and then the real one.
   ✗ Do NOT truncate — if you approach the token limit, shorten string
@@ -644,6 +644,10 @@ forms: list of CRF form objects. For EACH form include:
   choices                  (list of {list_name, label, name, source})
   survey                   (list of survey rows — see below)
   cross_form_dependencies  (list — see below)
+  migration_status         (str, always "draft" on freshly-generated specs)
+  approved_by              (str, always "" on freshly-generated specs)
+  approved_at              (str, always "" on freshly-generated specs)
+  rejected_reason          (str, always "" on freshly-generated specs)
 
 ════════════════════════════════════════════════════════════════════════════
 FORM → VISIT ASSIGNMENT RULES (critical — read carefully)
@@ -860,6 +864,58 @@ for creatinine clearance calc. Populate these wherever the protocol
 implies cross-form data lookups.
 
 ────────────────────────────────────────────────────────────────────────────
+schedule_of_events: (REQUIRED — pre-populated for downstream migration tooling)
+
+  This section captures Schedule of Events mapping data used by the
+  migration engine when transitioning a customer from another EDC into
+  OpenClinica 4. For specs generated from a protocol alone, populate
+  the TARGET side from the protocol; the SOURCE side stays null until
+  an ODM XML is uploaded and a human pairs source visits to target
+  visits in Syndeo's SOE tab.
+
+  migration_status (str) — always "draft" on freshly-generated specs
+  approved_by      (str) — always "" on freshly-generated specs
+  approved_at      (str) — always "" on freshly-generated specs
+
+  visit_mappings (list) — one entry per protocol visit (target side).
+    For each row in timepoint_csv.rows, emit:
+      {
+        "source_oid":  null,
+        "source_name": null,
+        "target_oid":  "<SE_event_oid from timepoint_csv>",
+        "target_name": "<event title / timepoint label from protocol>",
+        "action":      "pending",
+        "notes":       ""
+      }
+
+  form_placements (list) — FLAT list, one entry per (form, visit) pair.
+    For each form in forms[] and each visit in form.visits_assigned, emit:
+      {
+        "target_visit_oid": "<SE_event_oid>",
+        "form_id":          "<form.form_id>",
+        "required":         true,
+        "repeating":        <form.has_repeating_group>,
+        "notes":             ""
+      }
+    A form appearing at three visits produces three placement rows.
+
+  arm_mappings (list) — one entry per study arm (target side).
+    For each arm in study_meta.arms, emit:
+      {
+        "source_arm": null,
+        "target_arm": "<arm.arm_code>",
+        "action":     "pending"
+      }
+
+  subject_id_rule (object) — always default on freshly-generated specs:
+      {
+        "mode":        "passthrough",
+        "template":    "",
+        "pattern":     "",
+        "replacement": ""
+      }
+
+────────────────────────────────────────────────────────────────────────────
 review_flags: (ALL eight categories must be present, even if empty list)
   site_specific           : values that must be set per site (lab ranges, units, site codes)
   oid_confirmation        : fields whose OID path needs runtime confirmation
@@ -897,6 +953,20 @@ QUALITY CHECKLIST (verify before returning)
   ✓ Every form has cross_form_dependencies list (may be empty [])
   ✓ Every cross_form_dependencies entry has xpath_expression populated
   ✓ review_flags has all 8 categories as lists (may be empty)
+  ✓ schedule_of_events is present with all five sub-keys
+    (migration_status, visit_mappings, form_placements, arm_mappings,
+     subject_id_rule)
+  ✓ schedule_of_events.visit_mappings has exactly one entry per unique
+    event in timepoint_csv.rows, with source_oid=null and target_oid
+    matching the event
+  ✓ schedule_of_events.form_placements has one entry per (form, visit)
+    pair from forms[].visits_assigned (flat list, NOT nested by form)
+  ✓ schedule_of_events.arm_mappings has one entry per arm in
+    study_meta.arms, with source_arm=null
+  ✓ schedule_of_events.subject_id_rule has mode="passthrough" and
+    empty template/pattern/replacement
+  ✓ Every form in forms[] has migration_status="draft", empty
+    approved_by, approved_at, rejected_reason
 """
 
 PRICING_SUMMARY_PROMPT = """\

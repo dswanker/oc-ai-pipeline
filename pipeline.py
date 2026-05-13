@@ -1053,6 +1053,75 @@ def _enforce_common_visit(struct_json):
     return struct_json
 
 
+def _backfill_migration_fields(spec):
+    """Add schedule_of_events + per-form migration lifecycle fields if
+    missing. Idempotent — safe to call on every spec load."""
+    if not isinstance(spec, dict):
+        return spec
+
+    # Top-level schedule_of_events
+    if "schedule_of_events" not in spec:
+        # Derive target-side visit_mappings from timepoint_csv
+        tpt_rows = (spec.get("timepoint_csv") or {}).get("rows") or []
+        visit_mappings = []
+        seen_events = set()
+        for row in tpt_rows:
+            ev = row.get("event")
+            if ev and ev not in seen_events:
+                seen_events.add(ev)
+                visit_mappings.append({
+                    "source_oid": None,
+                    "source_name": None,
+                    "target_oid": ev,
+                    "target_name": row.get("timepoint", ""),
+                    "action": "pending",
+                    "notes": "",
+                })
+
+        # Derive form_placements as a flat list (one row per form/visit)
+        form_placements = []
+        for f in spec.get("forms") or []:
+            for v in f.get("visits_assigned") or []:
+                form_placements.append({
+                    "target_visit_oid": v,
+                    "form_id": f.get("form_id", ""),
+                    "required": True,
+                    "repeating": bool(f.get("has_repeating_group")),
+                    "notes": "",
+                })
+
+        # Arm mappings from study_meta.arms
+        arms = (spec.get("study_meta") or {}).get("arms") or []
+        arm_mappings = [
+            {"source_arm": None, "target_arm": a.get("arm_code", ""), "action": "pending"}
+            for a in arms
+        ]
+
+        spec["schedule_of_events"] = {
+            "migration_status": "draft",
+            "approved_by": "",
+            "approved_at": "",
+            "visit_mappings": visit_mappings,
+            "form_placements": form_placements,
+            "arm_mappings": arm_mappings,
+            "subject_id_rule": {
+                "mode": "passthrough",
+                "template": "",
+                "pattern": "",
+                "replacement": "",
+            },
+        }
+
+    # Per-form lifecycle fields
+    for f in spec.get("forms") or []:
+        f.setdefault("migration_status", "draft")
+        f.setdefault("approved_by", "")
+        f.setdefault("approved_at", "")
+        f.setdefault("rejected_reason", "")
+
+    return spec
+
+
 # ── Main pipeline ──────────────────────────────────────────────────────────────
 
 async def run_pipeline(item_id):
@@ -1343,6 +1412,7 @@ async def run_pipeline(item_id):
                         print("Extracted JSON from edited Study Spec XLSX.", flush=True)
                         # OC-9 backstop: apply to edited-XLSX path as well
                         struct_json = _enforce_common_visit(struct_json)
+                        struct_json = _backfill_migration_fields(struct_json)
                         break
                     except ValueError:
                         pass
@@ -1384,6 +1454,7 @@ async def run_pipeline(item_id):
             spec_bytes = await download_column_file(item_id, COL["spec_json"])
             struct_json = json.loads(spec_bytes.decode("utf-8"))
             struct_json = _enforce_common_visit(struct_json)
+            struct_json = _backfill_migration_fields(struct_json)
             print(f"Path M: struct_json loaded — "
                   f"{len(struct_json.get('forms', []))} forms, "
                   f"source={mig_result.get('source_system')}", flush=True)
@@ -1579,6 +1650,7 @@ async def run_pipeline(item_id):
             # OC-9 backstop: ensure SE_COMMON exists and AE/CM/DV/AESAE
             # forms live only there. Deterministic fix-up if Claude missed it.
             struct_json = _enforce_common_visit(struct_json)
+            struct_json = _backfill_migration_fields(struct_json)
 
             # Inject library filenames from monday columns into study_meta —
             # overrides whatever Claude may have guessed for
