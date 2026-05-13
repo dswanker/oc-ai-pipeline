@@ -14,7 +14,6 @@ const TRANSFORM_TYPES = [
   { value: "regex_replace",      label: "Regex replace" },
   { value: "conditional_default",label: "Conditional default" },
   { value: "truncate",           label: "Truncate to length" },
-  { value: "custom",             label: "Custom (manual)" },
 ];
 
 const EXCEPTION_ACTIONS = [
