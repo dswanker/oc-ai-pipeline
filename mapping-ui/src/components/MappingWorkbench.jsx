@@ -359,11 +359,13 @@ export default function MappingWorkbench({
                         {group.repeating && <span style={{ fontSize: 9, color: "var(--oc-purple)", marginLeft: 4 }}>REPEAT</span>}
                       </div>
                       {groupItems.map(item => {
-                        const usedInMappings = Object.values(mappings).filter(m => m.sources?.includes(item.oid));
+                        const usedInMappings = Object.entries(mappings).filter(([_, m]) => m.sources?.includes(item.oid));
                         const isUsed     = usedInMappings.length > 0;
-                        const isReviewed = isUsed && usedInMappings.some(m => m.reviewed);
+                        const isReviewed = isUsed && usedInMappings.some(([_, m]) => m.reviewed);
                         const isProposed = isUsed && !isReviewed;
                         const isSelected = selectedSources.has(item.oid);
+                        // Target field names this source maps to (strip "FORM::" prefix)
+                        const mappedToTargets = usedInMappings.map(([key]) => key.split("::")[1]);
                         return (
                           <div
                             key={item.oid}
@@ -417,6 +419,15 @@ export default function MappingWorkbench({
                               )}
                             </div>
                             <div style={S.sourceItemLabel}>{item.label}</div>
+                            {mappedToTargets.length > 0 && (
+                              <div style={{
+                                fontSize: 10, marginTop: 3, fontFamily: "monospace",
+                                color: isReviewed ? "var(--oc-green)" : "var(--oc-amber)",
+                                fontWeight: 600,
+                              }}>
+                                → {mappedToTargets.join(", ")}
+                              </div>
+                            )}
                             <div style={S.sourceItemMeta}>
                               {item.dataType}
                               {item.length && ` · len:${item.length}`}
@@ -619,6 +630,9 @@ export default function MappingWorkbench({
               const mType = m?.type || MAPPING_TYPES.NEW;
               const color = TYPE_COLORS[mType];
               const errs  = validateMapping(m);
+              const hasMapping = m?.sources?.length > 0;
+              const isReviewedT = hasMapping && m?.reviewed;
+              const isProposedT = hasMapping && !m?.reviewed;
               return (
                 <div
                   key={key}
@@ -630,7 +644,9 @@ export default function MappingWorkbench({
                   onClick={() => selectTarget(key)}
                 >
                   <div style={S.targetItemTop}>
-                    <span style={{ fontFamily: "monospace", fontSize: 12, color: "var(--oc-blue)" }}>
+                    <span style={{ fontFamily: "monospace", fontSize: 12, color: "var(--oc-blue)", fontWeight: isActive ? 700 : 500 }}>
+                      {isReviewedT && <span style={{ color: "var(--oc-green)", marginRight: 4, fontWeight: 700 }}>✓</span>}
+                      {isProposedT && <span style={{ color: "var(--oc-amber)", marginRight: 4, fontWeight: 700 }}>○</span>}
                       {row.name}
                     </span>
                     <span style={{
@@ -642,8 +658,11 @@ export default function MappingWorkbench({
                   </div>
                   <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 2 }}>{row.label}</div>
                   {/* Source fields summary */}
-                  {m?.sources?.length > 0 && (
-                    <div style={{ fontSize: 10, color: "var(--text-light)", marginTop: 3, fontFamily: "monospace" }}>
+                  {hasMapping && (
+                    <div style={{
+                      fontSize: 11, marginTop: 4, fontFamily: "monospace", fontWeight: 600,
+                      color: isReviewedT ? "var(--oc-green)" : "var(--oc-amber)",
+                    }}>
                       ← {m.sources.map(oid => {
                         // Find name for OID
                         for (const f of (sourceTree?.forms || [])) {
@@ -658,9 +677,6 @@ export default function MappingWorkbench({
                   )}
                   {errs.length > 0 && (
                     <div style={{ fontSize: 9, color: "var(--oc-red)", marginTop: 2 }}>⚠ {errs[0]}</div>
-                  )}
-                  {m?.reviewed && (
-                    <div style={{ fontSize: 9, color: "var(--oc-green)", marginTop: 2 }}>✓ reviewed</div>
                   )}
                 </div>
               );
