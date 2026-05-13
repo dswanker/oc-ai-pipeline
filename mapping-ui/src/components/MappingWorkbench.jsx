@@ -282,45 +282,70 @@ export default function MappingWorkbench({
                 />
               </div>
 
-              {/* Multi-select hint */}
-              {selectedTarget && (
-                <div style={S.selectionHint}>
-                  {selectedSources.size === 0 ? (
-                    <span>Click to select · Cmd+click to multi-select · Double-click to apply 1:1</span>
-                  ) : (
-                    <>
-                      <span style={{ fontWeight: 600, color: "var(--oc-blue)" }}>
-                        {selectedSources.size} selected
-                      </span>
-                      {selectedSources.size === 1 && (
-                        <button
-                          style={S.applyBtn}
-                          onClick={() => applyOneToOne([...selectedSources][0])}
-                        >
-                          Apply 1:1 →
-                        </button>
-                      )}
-                      {selectedSources.size >= 2 && (
-                        <button style={S.applyBtn} onClick={applyManyToOne}>
-                          Apply many:1 →
-                        </button>
-                      )}
+              {/* Selection hint */}
+              <div style={S.selectionHint}>
+                {!selectedTarget && selectedSources.size === 0 && (
+                  <span>Click a source to inspect it. Pick a target on the right to map.</span>
+                )}
+                {!selectedTarget && selectedSources.size > 0 && (
+                  <>
+                    <span style={{ fontWeight: 600, color: "var(--oc-blue)" }}>
+                      {selectedSources.size} selected
+                    </span>
+                    <span style={{ color: "var(--text-muted)" }}>
+                      · pick a target on the right to map
+                    </span>
+                    <button
+                      style={{
+                        ...S.applyBtn,
+                        background: "transparent",
+                        border: "1px solid var(--border)",
+                        color: "var(--text-muted)",
+                        fontWeight: 500,
+                        marginLeft: "auto",
+                      }}
+                      onClick={() => setSelectedSources(new Set())}
+                    >
+                      Clear
+                    </button>
+                  </>
+                )}
+                {selectedTarget && selectedSources.size === 0 && (
+                  <span>Click to select · Cmd+click to multi-select · Double-click to apply 1:1</span>
+                )}
+                {selectedTarget && selectedSources.size > 0 && (
+                  <>
+                    <span style={{ fontWeight: 600, color: "var(--oc-blue)" }}>
+                      {selectedSources.size} selected
+                    </span>
+                    {selectedSources.size === 1 && (
                       <button
-                        style={{
-                          ...S.applyBtn,
-                          background: "transparent",
-                          border: "1px solid var(--border)",
-                          color: "var(--text-muted)",
-                          fontWeight: 500,
-                        }}
-                        onClick={() => setSelectedSources(new Set())}
+                        style={S.applyBtn}
+                        onClick={() => applyOneToOne([...selectedSources][0])}
                       >
-                        Clear
+                        Apply 1:1 →
                       </button>
-                    </>
-                  )}
-                </div>
-              )}
+                    )}
+                    {selectedSources.size >= 2 && (
+                      <button style={S.applyBtn} onClick={applyManyToOne}>
+                        Apply many:1 →
+                      </button>
+                    )}
+                    <button
+                      style={{
+                        ...S.applyBtn,
+                        background: "transparent",
+                        border: "1px solid var(--border)",
+                        color: "var(--text-muted)",
+                        fontWeight: 500,
+                      }}
+                      onClick={() => setSelectedSources(new Set())}
+                    >
+                      Clear
+                    </button>
+                  </>
+                )}
+              </div>
 
               {/* Source item list */}
               <div style={S.itemList}>
@@ -334,7 +359,10 @@ export default function MappingWorkbench({
                         {group.repeating && <span style={{ fontSize: 9, color: "var(--oc-purple)", marginLeft: 4 }}>REPEAT</span>}
                       </div>
                       {groupItems.map(item => {
-                        const isUsed = Object.values(mappings).some(m => m.sources?.includes(item.oid));
+                        const usedInMappings = Object.values(mappings).filter(m => m.sources?.includes(item.oid));
+                        const isUsed     = usedInMappings.length > 0;
+                        const isReviewed = isUsed && usedInMappings.some(m => m.reviewed);
+                        const isProposed = isUsed && !isReviewed;
                         const isSelected = selectedSources.has(item.oid);
                         return (
                           <div
@@ -346,45 +374,46 @@ export default function MappingWorkbench({
                               fontWeight: isSelected ? 600 : 400,
                             }}
                             onClick={e => {
-                              if (!selectedTarget) {
-                                showToast("Select a target field on the right first", "error");
-                                return;
-                              }
                               if (e.shiftKey || e.metaKey || e.ctrlKey) {
                                 // multi-select toggle
                                 toggleSourceSelect(item.oid);
                               } else {
-                                // single-select replace
+                                // single-select replace — always allowed, even without a target
                                 setSelectedSources(new Set([item.oid]));
                               }
                             }}
                             onDoubleClick={() => {
                               if (!selectedTarget) {
-                                showToast("Select a target field on the right first", "error");
+                                showToast("Select a target field on the right to map this", "error");
                                 return;
                               }
                               applyOneToOne(item.oid);
                             }}
                             onContextMenu={e => {
                               e.preventDefault();
-                              if (!selectedTarget) return;
                               toggleSourceSelect(item.oid);
                             }}
                           >
                             <div style={{
                               ...S.sourceItemName,
-                              color: isSelected ? "var(--oc-blue)" : "var(--oc-blue)",
+                              color: "var(--oc-blue)",
                               fontWeight: isSelected ? 700 : 500,
                             }}>
                               {item.name}
                               {item.cdashAlias && item.cdashAlias !== item.name && (
                                 <span style={{ fontSize: 9, color: "var(--oc-purple)", marginLeft: 5, fontWeight: 600 }}>{item.cdashAlias}</span>
                               )}
-                              {isUsed && (
+                              {isReviewed && (
                                 <span style={{
                                   fontSize: 9, color: "var(--oc-green)", marginLeft: 6, fontWeight: 700,
                                   background: "var(--oc-green-light)", padding: "1px 5px", borderRadius: 3, border: "1px solid var(--oc-green)",
                                 }}>✓ mapped</span>
+                              )}
+                              {isProposed && (
+                                <span style={{
+                                  fontSize: 9, color: "var(--oc-amber)", marginLeft: 6, fontWeight: 600,
+                                  background: "var(--oc-amber-light)", padding: "1px 5px", borderRadius: 3, border: "1px solid var(--oc-amber)",
+                                }}>○ proposed</span>
                               )}
                             </div>
                             <div style={S.sourceItemLabel}>{item.label}</div>
