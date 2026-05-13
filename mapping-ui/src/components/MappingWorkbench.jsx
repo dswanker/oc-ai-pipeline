@@ -1,6 +1,6 @@
 // src/components/MappingWorkbench.jsx
 // Two-panel source ↔ target mapping workbench
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useRef, useEffect, useLayoutEffect } from "react";
 import {
   MAPPING_TYPES, EXPR_MODES,
   createMapping, buildTemplateFromSources,
@@ -42,6 +42,12 @@ export default function MappingWorkbench({
   const [targetSearch,  setTargetSearch]    = useState("");
   const [targetFilter,  setTargetFilter]    = useState("ALL"); // ALL | MAPPED | UNMAPPED | ISSUES
   const [showExpr, setShowExpr] = useState(false);
+
+  // ── Refs + state for connector lines overlay ─────────────────────────────
+  const panelsRef  = useRef(null);
+  const sourceRefs = useRef(new Map());
+  const targetRefs = useRef(new Map());
+  const [connections, setConnections] = useState([]);
 
   const stats = useMemo(() => getMappingStats(mappings), [mappings]);
 
@@ -99,9 +105,70 @@ export default function MappingWorkbench({
           if (found) return { ...found, groupName: g.name, formName: f.name };
         }
       }
-      return { oid, name: oid, label: oid, groupName: "?", formName: "?" };
+    return { oid, name: oid, label: oid, groupName: "?", formName: "?" };
     });
   }, [activeMapping, sourceTree]);
+
+  // ── Compute line endpoints whenever selection or layout changes ──────────
+  const recomputeLines = useCallback(() => {
+    if (!panelsRef.current) return;
+    const containerRect = panelsRef.current.getBoundingClientRect();
+    const lines = [];
+    const seen  = new Set();
+
+    const addLine = (sourceOid, targetKey, reviewed) => {
+      const id = `${sourceOid}|${targetKey}`;
+      if (seen.has(id)) return;
+      seen.add(id);
+      const sEl = sourceRefs.current.get(sourceOid);
+      const tEl = targetRefs.current.get(targetKey);
+      if (!sEl || !tEl) return;
+      const sR = sEl.getBoundingClientRect();
+      const tR = tEl.getBoundingClientRect();
+      lines.push({
+        x1: sR.right - containerRect.left,
+        y1: sR.top + sR.height / 2 - containerRect.top,
+        x2: tR.left  - containerRect.left,
+        y2: tR.top + tR.height / 2 - containerRect.top,
+        status: reviewed ? "reviewed" : "proposed",
+        key: id,
+      });
+    };
+
+    // Lines from each selected source to all targets that include it
+    for (const sourceOid of selectedSources) {
+      for (const [key, m] of Object.entries(mappings)) {
+        if (m.sources?.includes(sourceOid)) addLine(sourceOid, key, !!m.reviewed);
+      }
+    }
+
+    // Lines from the selected target back to its sources
+    if (selectedTarget) {
+      const m = mappings[selectedTarget];
+      if (m?.sources?.length) {
+        for (const sourceOid of m.sources) addLine(sourceOid, selectedTarget, !!m.reviewed);
+      }
+    }
+
+    setConnections(lines);
+  }, [selectedSources, selectedTarget, mappings]);
+
+  // Recompute on layout-relevant changes (selection, filters, form swap, list contents)
+  useLayoutEffect(() => {
+    recomputeLines();
+  }, [recomputeLines, sourceFormIdx, targetFilter, targetSearch, sourceSearch]);
+
+  // Recompute on scroll (capture mode catches inner scroll containers) and window resize
+  useEffect(() => {
+    const handler = () => recomputeLines();
+    window.addEventListener("resize", handler);
+    document.addEventListener("scroll", handler, true);
+    return () => {
+      window.removeEventListener("resize", handler);
+      document.removeEventListener("scroll", handler, true);
+    };
+  }, [recomputeLines]);
+
 
   // ── Actions ──────────────────────────────────────────────────────────────
   function selectTarget(key) {
@@ -227,7 +294,7 @@ export default function MappingWorkbench({
         </span>
       </div>
 
-      <div style={S.panels}>
+      <div style={{ ...S.panels, position: "relative" }} ref={panelsRef}>
 
         {/* ── LEFT: Source panel ──────────────────────────────────────── */}
         <div style={S.sourcePanel}>
@@ -369,6 +436,10 @@ export default function MappingWorkbench({
                         return (
                           <div
                             key={item.oid}
+                            ref={el => {
+                              if (el) sourceRefs.current.set(item.oid, el);
+                              else sourceRefs.current.delete(item.oid);
+                            }}
                             style={{
                               ...S.sourceItem,
                               background: isSelected ? "var(--oc-blue-light)" : "#fff",
@@ -636,6 +707,10 @@ export default function MappingWorkbench({
               return (
                 <div
                   key={key}
+                  ref={el => {
+                    if (el) targetRefs.current.set(key, el);
+                    else targetRefs.current.delete(key);
+                  }}
                   style={{
                     ...S.targetItem,
                     background: isActive ? "var(--oc-blue-light)" : "#fff",
@@ -683,6 +758,37 @@ export default function MappingWorkbench({
             })}
           </div>
         </div>
+
+        {/* ── Connector-line overlay ──────────────────────────────────── */}
+        <svg
+          style={{
+            position: "absolute",
+            top: 0,
+            left: 0,
+            width: "100%",
+            height: "100%",
+            pointerEvents: "none",
+            zIndex: 5,
+          }}
+        >
+          {connections.map(c => {
+            const midX  = (c.x1 + c.x2) / 2;
+            const color = c.status === "reviewed" ? "var(--oc-green)" : "var(--oc-amber)";
+            return (
+              <g key={c.key}>
+                <path
+                  d={`M ${c.x1} ${c.y1} C ${midX} ${c.y1}, ${midX} ${c.y2}, ${c.x2} ${c.y2}`}
+                  fill="none"
+                  stroke={color}
+                  strokeWidth="2.5"
+                  opacity="0.85"
+                />
+                <circle cx={c.x1} cy={c.y1} r="3.5" fill={color} />
+                <circle cx={c.x2} cy={c.y2} r="3.5" fill={color} />
+              </g>
+            );
+          })}
+        </svg>
 
       </div>
     </div>
