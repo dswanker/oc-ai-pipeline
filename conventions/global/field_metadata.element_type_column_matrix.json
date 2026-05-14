@@ -1,0 +1,40 @@
+{
+  "id": "field_metadata.element_type_column_matrix",
+  "title": "Element-type column matrix governs which columns each row type accepts",
+  "kind": "hybrid",
+  "scope": "global",
+  "status": "active",
+  "natural_key": "element_type_column_matrix",
+  "description": "Each row type has an explicit allowed/forbidden column set. Data-type rows accept all columns. Local calculate rows forbid readonly/constraint/required. External-lookup calculate rows (bind__oc_external='clinicaldata') additionally forbid bind__oc_itemgroup and (usually) label. note rows forbid bind__oc_itemgroup, required, and constraint. begin/end group + begin/end repeat rows accept only type, name, appearance, relevant, and bind__oc_itemgroup. OC silently hides fields that violate this and emits diagnostic errors at runtime.",
+  "rationale": "OC4's XLSForm parser rejects rows where the column population doesn't match the row type. Violations are silent at form upload but surface as 'cannot be defined as type = calculate and readonly' diagnostics when the form is opened \u2014 by which point the field has already been dropped from the active definition.",
+  "target": "field",
+  "applies_when": {
+    "field.type": {
+      "non_empty": true
+    }
+  },
+  "effect": {
+    "flag": {
+      "category": "review_flags.element_type_column_violation",
+      "message": "Field ${field.name} (type=${field.type}) \u2014 verify allowed/forbidden columns per the OC-5a element-type matrix. Local calculate forbids readonly/constraint/required; external-lookup calculate additionally forbids bind__oc_itemgroup and usually label; note forbids bind__oc_itemgroup/required/constraint; begin/end group/repeat accept only type/name/appearance/relevant/bind__oc_itemgroup."
+    },
+    "soft": "Six element-type categories \u2014 data types (text/integer/decimal/date/time/dateTime/select_one/select_multiple), local calculate, external-lookup calculate (bind__oc_external='clinicaldata'), note, begin/end group, begin/end repeat \u2014 each with an explicit allowed-and-forbidden column set. Validate every row's column population against its row type before emitting the XLSForm."
+  },
+  "created_at": "2026-05-14T22:00:00Z",
+  "created_by": "system:phase_b1a_translation",
+  "source": "consolidation:prompts.py:RULE_OC-5a",
+  "tags": [
+    "field_metadata",
+    "validation",
+    "structural"
+  ],
+  "history": [
+    {
+      "at": "2026-05-14T22:00:00Z",
+      "by": "system:phase_b1a_translation",
+      "action": "created",
+      "status": "active",
+      "note": "Imported from prompts.py RULE OC-5a during Phase B.1a. The full 6-by-N allowed-columns matrix is too rich for the current DSL \u2014 it would benefit from a 'match_type' operator that picks an effect block per field.type value. Deferred to Phase B/C DSL extension. Today's flag + soft directive carries the matrix prose to Claude and review_flags. Kind revised from `structured` to `hybrid` during B.1a translation because the 6-by-N allowed/forbidden columns matrix requires AI judgment per row type until DSL gains a `match_type` operator; soft directive carries the matrix prose."
+    }
+  ]
+}

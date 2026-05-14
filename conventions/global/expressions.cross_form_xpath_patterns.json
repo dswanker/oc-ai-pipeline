@@ -1,0 +1,42 @@
+{
+  "id": "expressions.cross_form_xpath_patterns",
+  "title": "Cross-form and cross-event references use four canonical XPath shapes",
+  "kind": "hybrid",
+  "scope": "global",
+  "status": "active",
+  "natural_key": "cross_form_xpath_patterns",
+  "description": "Cross-form / cross-event field references use one of four exact XPath shapes: (1) same-event-same-form direct reference, (2) different-event lookup by event OID, (3) current-event-OID lookup, (4) pulldata from <study_id>_tpt. All cross-form references require bind__oc_external='clinicaldata' (or the CSV name for pulldata). Referenced event OIDs go into settings.crossform_references as a comma-separated list.",
+  "rationale": "OC4's expression evaluator only resolves cross-form references via these four canonical patterns. Any other shape (custom XPath, missing bind::oc:external marker, unregistered event OID) silently returns empty at runtime \u2014 the field appears blank to data entry without raising an error.",
+  "target": "field",
+  "applies_when": {
+    "field.cross_form_dependencies": {
+      "present": true
+    }
+  },
+  "effect": {
+    "require": "field.bind__oc_external",
+    "flag": {
+      "category": "review_flags.cross_form_pattern",
+      "message": "Field ${field.name} has cross-form dependency; verify calculation matches one of the four canonical XPath shapes (same-event-same-form / different-event-by-OID / current-event-OID / pulldata <study_id>_tpt) and bind__oc_external is set to 'clinicaldata' or the pulldata CSV name."
+    },
+    "soft": "Inspect field.calculation against the four canonical XPath shapes. If the shape is unfamiliar, prefer pulldata from <study_id>_tpt or document the reasoning. Add referenced event OIDs to settings.crossform_references."
+  },
+  "created_at": "2026-05-14T22:00:00Z",
+  "created_by": "system:phase_b1a_translation",
+  "source": "consolidation:prompts.py:RULE_OC-4",
+  "tags": [
+    "expressions",
+    "cross_form",
+    "xpath",
+    "structural"
+  ],
+  "history": [
+    {
+      "at": "2026-05-14T22:00:00Z",
+      "by": "system:phase_b1a_translation",
+      "action": "created",
+      "status": "active",
+      "note": "Imported from prompts.py RULE OC-4 during Phase B.1a. Pattern-matching the four XPath shapes from the calculation string is a regex-shaped check; deferred to Phase B/C DSL extension. require + flag covers the mechanical bind__oc_external presence today; soft directive carries the pattern-match guidance to Claude. Kind revised from `structured` (per B.0 inventory) to `hybrid` during B.1a translation because the four-canonical-XPath-shapes pattern-match requires AI judgment until DSL extension lands; soft directive carries the guidance."
+    }
+  ]
+}
