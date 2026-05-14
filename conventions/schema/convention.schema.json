@@ -1,0 +1,157 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://oc-ai-pipeline/conventions/schema/convention.schema.json",
+  "title": "OpenClinica Build Convention",
+  "description": "A single convention record. One file = one convention.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "title",
+    "kind",
+    "scope",
+    "status",
+    "natural_key",
+    "description",
+    "target",
+    "created_at",
+    "created_by",
+    "source"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$",
+      "description": "Stable identifier in dotted snake_case (e.g. form_placement.common_visit_safety_admin). Lowercase letters, digits, underscores, separated by dots."
+    },
+    "title": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 120,
+      "description": "Short human-readable title."
+    },
+    "kind": {
+      "type": "string",
+      "enum": ["structured", "hybrid", "advisory"]
+    },
+    "scope": {
+      "type": "string",
+      "enum": ["global", "customer", "study"]
+    },
+    "scope_id": {
+      "type": "string",
+      "description": "Customer subdomain (e.g. 'cust1') for scope=customer, or study_id (e.g. 'PRTK05') for scope=study. Omitted for scope=global."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["proposed", "active", "archived"]
+    },
+    "natural_key": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$",
+      "description": "Topic tag for cascade resolution and conflict detection. Lowercase snake_case."
+    },
+    "description": {
+      "type": "string",
+      "minLength": 10,
+      "description": "1-3 sentence prose explanation for humans."
+    },
+    "rationale": {
+      "type": "string",
+      "description": "Why this convention exists."
+    },
+    "target": {
+      "type": "string",
+      "enum": ["study", "form", "field", "event", "choice"]
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "created_by": {
+      "type": "string",
+      "pattern": "^(human:|system:).+$",
+      "description": "Provenance — 'human:<username>' or 'system:<source>'."
+    },
+    "source": {
+      "type": "string",
+      "description": "Where this convention came from (e.g. 'consolidation:prompts_py:RULE_OC-9', 'diff_appendix:STUDY_PRTK05:run_42')."
+    },
+    "tags": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "applies_when": {
+      "type": "object",
+      "description": "Filter conditions. See dsl-operators.md."
+    },
+    "effect": {
+      "type": "object",
+      "description": "Action to take when applies_when matches. See dsl-operators.md."
+    },
+    "history": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["at", "by", "action"],
+        "properties": {
+          "at": { "type": "string", "format": "date-time" },
+          "by": { "type": "string", "pattern": "^(human:|system:).+$" },
+          "action": {
+            "type": "string",
+            "enum": ["created", "edited", "activated", "archived", "reactivated"]
+          },
+          "status": {
+            "type": "string",
+            "enum": ["proposed", "active", "archived"]
+          },
+          "diff": { "type": "string" },
+          "note": { "type": "string" }
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "comment": "structured kind requires applies_when AND effect, neither containing soft markers",
+      "if": { "properties": { "kind": { "const": "structured" } } },
+      "then": {
+        "required": ["applies_when", "effect"],
+        "properties": {
+          "applies_when": {
+            "not": { "required": ["soft"] }
+          },
+          "effect": {
+            "not": { "required": ["soft"] }
+          }
+        }
+      }
+    },
+    {
+      "comment": "hybrid kind requires applies_when AND effect, with at least one soft marker somewhere",
+      "if": { "properties": { "kind": { "const": "hybrid" } } },
+      "then": {
+        "required": ["applies_when", "effect"]
+      }
+    },
+    {
+      "comment": "advisory kind forbids applies_when and effect",
+      "if": { "properties": { "kind": { "const": "advisory" } } },
+      "then": {
+        "not": {
+          "anyOf": [
+            { "required": ["applies_when"] },
+            { "required": ["effect"] }
+          ]
+        }
+      }
+    },
+    {
+      "comment": "global scope forbids scope_id; customer and study scopes require it",
+      "if": { "properties": { "scope": { "const": "global" } } },
+      "then": { "not": { "required": ["scope_id"] } },
+      "else": { "required": ["scope_id"] }
+    }
+  ]
+}
