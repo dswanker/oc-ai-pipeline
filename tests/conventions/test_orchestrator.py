@@ -9,7 +9,7 @@ from conventions_engine import apply_conventions
 
 def test_empty_store_is_noop(spec_with_two_forms, tmp_repo_root):
     """With no conventions on disk, apply_conventions should be a no-op
-    except for guaranteeing study_meta.conventions_applied exists."""
+    except for guaranteeing study_meta.conventions_engine_applied exists."""
     original_forms = json.dumps(spec_with_two_forms["forms"], sort_keys=True)
     result = apply_conventions(
         spec_with_two_forms,
@@ -18,7 +18,7 @@ def test_empty_store_is_noop(spec_with_two_forms, tmp_repo_root):
         repo_root=tmp_repo_root,
     )
     assert json.dumps(result["forms"], sort_keys=True) == original_forms
-    assert result["study_meta"]["conventions_applied"] == []
+    assert result["study_meta"]["conventions_engine_applied"] == []
 
 
 def test_structured_global_rule_applied(spec_with_two_forms, tmp_repo_root,
@@ -82,10 +82,10 @@ def test_advisory_contributes_to_prompt_block(spec_with_two_forms, tmp_repo_root
     assert "Active Conventions" in block
 
 
-def test_override_recorded_in_conventions_applied(spec_with_two_forms,
+def test_override_recorded_in_conventions_engine_applied(spec_with_two_forms,
                                                     tmp_repo_root, make_convention):
     """Study-scope rule overrides global; both should be visible in
-    conventions_applied."""
+    conventions_engine_applied."""
     g = make_convention(
         id="g.ae", scope="global", natural_key="ae_topic",
         applies_when={"form.form_id": "AE"},
@@ -111,7 +111,7 @@ def test_override_recorded_in_conventions_applied(spec_with_two_forms,
     assert ae_form["visits_assigned"] == ["SE_BASELINE"]
 
     # Both should be visible — winning rule recorded, overrode array populated
-    entries = result["study_meta"]["conventions_applied"]
+    entries = result["study_meta"]["conventions_engine_applied"]
     matching = [e for e in entries if e["convention_id"] == "s.ae"]
     assert len(matching) >= 1
     assert "overrode" in matching[0]

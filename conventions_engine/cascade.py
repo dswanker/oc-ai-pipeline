@@ -81,7 +81,7 @@ def resolve(loaded: Dict[str, Any]) -> List[ResolvedConvention]:
         out.append(ResolvedConvention(convention=conv, overrode=[]))
 
     # Sort for deterministic application order: by scope (global first
-    # so study overrides are obvious in conventions_applied output),
+    # so study overrides are obvious in conventions_engine_applied output),
     # then by id alphabetically.
     scope_order = {"global": 0, "customer": 1, "study": 2}
     out.sort(key=lambda r: (

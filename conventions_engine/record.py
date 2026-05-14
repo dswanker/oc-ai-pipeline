@@ -1,8 +1,8 @@
 """
-Accumulate conventions_applied entries into study_meta.
+Accumulate conventions_engine_applied entries into study_meta.
 
 Each application of a convention to a single entity produces one
-entry. The list lives at spec.study_meta.conventions_applied and is
+entry. The list lives at spec.study_meta.conventions_engine_applied and is
 rendered into the spec PDF/XLSX output by the spec builder.
 """
 from __future__ import annotations
@@ -12,10 +12,10 @@ from . import ApplyResult, Overridden
 
 
 def ensure_section(spec: Dict[str, Any]) -> None:
-    """Guarantee study_meta.conventions_applied exists as a list."""
+    """Guarantee study_meta.conventions_engine_applied exists as a list."""
     sm = spec.setdefault("study_meta", {})
-    if not isinstance(sm.get("conventions_applied"), list):
-        sm["conventions_applied"] = []
+    if not isinstance(sm.get("conventions_engine_applied"), list):
+        sm["conventions_engine_applied"] = []
 
 
 def _summarize_effects(effects_done: ApplyResult) -> str:
@@ -33,7 +33,7 @@ def _summarize_effects(effects_done: ApplyResult) -> str:
 def record_application(spec: Dict[str, Any], convention: Dict[str, Any],
                        applied_to: str, effects_done: ApplyResult,
                        overrode: List[Overridden]) -> None:
-    """Append one conventions_applied entry to study_meta."""
+    """Append one conventions_engine_applied entry to study_meta."""
     ensure_section(spec)
 
     entry: Dict[str, Any] = {
@@ -55,4 +55,4 @@ def record_application(spec: Dict[str, Any], convention: Dict[str, Any],
             for ov in overrode
         ]
 
-    spec["study_meta"]["conventions_applied"].append(entry)
+    spec["study_meta"]["conventions_engine_applied"].append(entry)

@@ -183,10 +183,10 @@ def apply_conventions(
 
     Mutates spec in place AND returns it. Idempotent (re-running on the
     same spec produces the same result) modulo timestamps in
-    conventions_applied entries.
+    conventions_engine_applied entries.
 
     On a build with an empty conventions/ store, this function is a
-    no-op aside from ensuring spec["study_meta"]["conventions_applied"]
+    no-op aside from ensuring spec["study_meta"]["conventions_engine_applied"]
     exists as an empty list.
     """
     # Local imports keep this module's import graph clean from
