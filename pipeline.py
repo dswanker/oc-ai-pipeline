@@ -1429,6 +1429,19 @@ async def run_pipeline(item_id):
                         # OC-9 backstop: apply to edited-XLSX path as well
                         struct_json = _enforce_common_visit(struct_json)
                         struct_json = _backfill_migration_fields(struct_json)
+                        # ── Conventions engine pass (no-op until conventions/ store is populated) ─
+                        try:
+                            from conventions_engine import apply_conventions
+                            _study_id = (struct_json.get("study_meta") or {}).get("protocol_number") or protocol_num
+                            apply_conventions(struct_json, study_id=_study_id,
+                                              customer_subdomain=oc_subdomain)
+                        except Exception as _ce:
+                            print(f"conventions_engine FAILED — continuing without conventions: {_ce}",
+                                  flush=True)
+                            try:
+                                await append_log(item_id, f"Conventions engine error (build continues): {_ce}")
+                            except Exception:
+                                pass
                         break
                     except ValueError:
                         pass
@@ -1471,6 +1484,19 @@ async def run_pipeline(item_id):
             struct_json = json.loads(spec_bytes.decode("utf-8"))
             struct_json = _enforce_common_visit(struct_json)
             struct_json = _backfill_migration_fields(struct_json)
+            # ── Conventions engine pass (no-op until conventions/ store is populated) ─
+            try:
+                from conventions_engine import apply_conventions
+                _study_id = (struct_json.get("study_meta") or {}).get("protocol_number") or protocol_num
+                apply_conventions(struct_json, study_id=_study_id,
+                                  customer_subdomain=oc_subdomain)
+            except Exception as _ce:
+                print(f"conventions_engine FAILED — continuing without conventions: {_ce}",
+                      flush=True)
+                try:
+                    await append_log(item_id, f"Conventions engine error (build continues): {_ce}")
+                except Exception:
+                    pass
             print(f"Path M: struct_json loaded — "
                   f"{len(struct_json.get('forms', []))} forms, "
                   f"source={mig_result.get('source_system')}", flush=True)
@@ -1667,6 +1693,19 @@ async def run_pipeline(item_id):
             # forms live only there. Deterministic fix-up if Claude missed it.
             struct_json = _enforce_common_visit(struct_json)
             struct_json = _backfill_migration_fields(struct_json)
+            # ── Conventions engine pass (no-op until conventions/ store is populated) ─
+            try:
+                from conventions_engine import apply_conventions
+                _study_id = (struct_json.get("study_meta") or {}).get("protocol_number") or protocol_num
+                apply_conventions(struct_json, study_id=_study_id,
+                                  customer_subdomain=oc_subdomain)
+            except Exception as _ce:
+                print(f"conventions_engine FAILED — continuing without conventions: {_ce}",
+                      flush=True)
+                try:
+                    await append_log(item_id, f"Conventions engine error (build continues): {_ce}")
+                except Exception:
+                    pass
 
             # Inject library filenames from monday columns into study_meta —
             # overrides whatever Claude may have guessed for
