@@ -9,6 +9,7 @@ Usage:
 """
 
 import os, zipfile, datetime
+from build_checklist import run_qa_checks
 
 README_TEMPLATE = """EDC BUILD PACKAGE
 =================
@@ -65,6 +66,13 @@ def build_package(spec_data, build_log, forms_dir, csv_dir,
     Assemble all build outputs into a zip file.
     Returns the path to the zip file.
     """
+    # CRS-136 fix: block-on-FAIL gate. Refuse to package if any QA check
+    # in the per-form checklist has status FAIL. Patch 1's ValueError in
+    # build_single_xlsform should catch the yn case earlier; this gate is
+    # the safety net for everything else (groups_balanced, repeats_balanced,
+    # and any future structured-FAIL checks).
+    _enforce_no_fail(spec_data, build_log)
+
     meta     = spec_data.get('study_meta', {})
     protocol = meta.get('protocol_number', 'STUDY')
     study_id = meta.get('study_id', 'study')
@@ -178,6 +186,41 @@ def build_package(spec_data, build_log, forms_dir, csv_dir,
         print(f"  {n}")
 
     return zip_path
+
+
+# ── QA gate (CRS-136 fix) ────────────────────────────────────────────────────
+def _enforce_no_fail(spec_data, build_log):
+    """
+    Run the in-memory QA checks for every form and refuse to package if
+    any check returns status "FAIL".
+
+    "NEEDS ATTENTION" stays informational (e.g. required_cols missing
+    type/name/label) — keeps blast radius narrow and matches Patch 1's
+    "auto-fix narrow, hard-block narrow" symmetry.
+
+    Raises ValueError on any FAIL. The partial forms/csv/checklist
+    directories remain on disk for human triage.
+    """
+    failures = []  # list of (form_id, check_name, detail)
+    for form in spec_data.get('forms', []) or []:
+        form_id = form.get('form_id') or form.get('settings', {}).get('form_id') or '?'
+        try:
+            results = run_qa_checks(form, build_log)
+        except Exception as exc:
+            # If the checklist itself crashes on a form, that's also a fail.
+            failures.append((form_id, 'qa_checks_crashed', repr(exc)))
+            continue
+        for check_name, status, detail in results:
+            if status == "FAIL":
+                failures.append((form_id, check_name, detail))
+
+    if failures:
+        lines = [f"  - {fid}: {check} — {detail}" for fid, check, detail in failures]
+        raise ValueError(
+            "EDC build package blocked: QA check FAIL(s) detected.\n"
+            + "\n".join(lines)
+            + "\nFix the underlying spec/build and re-run; do not bypass."
+        )
 
 
 if __name__ == "__main__":

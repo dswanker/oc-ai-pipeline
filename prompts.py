@@ -559,6 +559,24 @@ RULE OC-9 — COMMON VISIT FOR CROSS-VISIT FORMS
   itself should still exist as long as ANY of the four forms are in scope.
 
 
+RULE OC-10 — CHOICES SHEET COMPLETE FOR EVERY REFERENCED LIST
+  Every `list_name` referenced by a survey row's `type` column —
+  whether `select_one X` or `select_multiple X` — MUST appear in the
+  form's `choices` sheet with at least one `list_name`/`name`/`label`
+  triple. Pyxform validates each form's choices independently; a
+  reference to an undefined list halts the build with the error
+  `[row:N] List name not in choices sheet: X`.
+  Common boilerplate lists must be present whenever referenced:
+    yn   — `Y/Yes`, `N/No` (the standard YN gate from OC-8)
+  Study-specific lists (e.g. `dvcat`, `peres`, `sev`, `rel`) must
+  be defined alongside the survey rows that reference them, in the
+  same form. Choice lists are NOT shared across forms; pyxform reads
+  each .xlsx independently.
+  The build pipeline auto-templates `yn` if missing, but every other
+  missing list hard-fails at build_xlsforms time — there is no silent
+  ship path. Always emit every referenced list explicitly.
+
+
 ────────────────────────────────────────────────────────────────────────────
 REQUIRED TOP-LEVEL KEYS
 ────────────────────────────────────────────────────────────────────────────

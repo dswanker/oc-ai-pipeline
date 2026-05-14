@@ -377,6 +377,76 @@ def _normalize_survey_rows(rows):
     return normalized
 
 
+# ── Choice-list back-fill (CRS-136 fix) ───────────────────────────────────────
+def _ensure_referenced_choice_lists(survey, choices):
+    """
+    Guarantee every list_name referenced by a survey row's `type`
+    column also appears in the choices sheet for this form.
+
+    XLSForm requires each form to be self-contained — pyxform validates
+    each .xlsx independently against its own choices sheet. Upstream
+    Claude sometimes drops a boilerplate list (notably `yn`) when a
+    form has exactly one yn reference plus its own study-specific
+    list (CRS-136 root cause: DV and PE shipped without yn defined).
+
+    Behaviour:
+      - For each survey row whose type is "select_one X" or
+        "select_multiple X", record X as referenced.
+      - Compare against list_name values present in `choices`.
+      - For any referenced list missing from choices:
+          * If the list is `yn` → inject canonical Y/N rows.
+          * Otherwise → return it as a hard error to the caller.
+
+    Returns a tuple: (augmented_choices, missing_non_yn_lists).
+    The caller raises on a non-empty missing_non_yn_lists.
+
+    Doctest (acts as inline unit test, runnable with python -m doctest):
+    >>> survey = [{'type': 'select_one yn', 'name': 'DVYN'}]
+    >>> choices = [{'list_name': 'dvcat', 'name': 'C1', 'label': 'Cat 1'}]
+    >>> aug, missing = _ensure_referenced_choice_lists(survey, choices)
+    >>> sorted({c['list_name'] for c in aug})
+    ['dvcat', 'yn']
+    >>> missing
+    []
+    >>> survey = [{'type': 'select_one rel', 'name': 'AEREL'}]
+    >>> aug, missing = _ensure_referenced_choice_lists(survey, [])
+    >>> missing
+    ['rel']
+    """
+    SELECT_PREFIXES = ('select_one ', 'select_multiple ')
+    YN_ROWS = [
+        {'list_name': 'yn', 'name': 'Y', 'label': 'Yes', 'image': ''},
+        {'list_name': 'yn', 'name': 'N', 'label': 'No',  'image': ''},
+    ]
+
+    referenced = []
+    seen_ref = set()
+    for row in survey:
+        t = str(row.get('type', '') or '').strip()
+        for prefix in SELECT_PREFIXES:
+            if t.startswith(prefix):
+                list_name = t[len(prefix):].strip().split()[0] if t[len(prefix):].strip() else ''
+                if list_name and list_name not in seen_ref:
+                    seen_ref.add(list_name)
+                    referenced.append(list_name)
+                break
+
+    defined = {str(c.get('list_name', '') or '').strip() for c in choices}
+    defined.discard('')
+
+    augmented = list(choices)
+    missing_non_yn = []
+    for list_name in referenced:
+        if list_name in defined:
+            continue
+        if list_name == 'yn':
+            augmented.extend(YN_ROWS)
+        else:
+            missing_non_yn.append(list_name)
+
+    return augmented, missing_non_yn
+
+
 # ── Build a single XLSForm .xlsx ───────────────────────────────────────────────
 def build_single_xlsform(form_data, output_path, build_log):
     """Build one XLSForm .xlsx file from form_data dict.
@@ -393,6 +463,22 @@ def build_single_xlsform(form_data, output_path, build_log):
     choices  = form_data.get('choices', [])
     survey   = form_data.get('survey', [])
     extra_c  = form_data.get('extra_cols', [])
+
+    # CRS-136 fix: back-fill `yn` and detect any other missing list_names
+    # BEFORE the choices/survey loops run, so the rest of the function
+    # operates on consistent data.
+    choices, missing_lists = _ensure_referenced_choice_lists(survey, choices)
+    if missing_lists:
+        form_id_for_err = form_data.get('settings', {}).get('form_id') or output_path
+        raise ValueError(
+            f"Form {form_id_for_err}: survey references choice list(s) "
+            f"{missing_lists!r} but they are not defined in the choices "
+            f"sheet. yn is auto-templated; all other lists must be supplied."
+        )
+
+    # The rest of the function reads `choices` and `survey` only via the
+    # local variables above, so the back-fill applies to both template
+    # and scratch paths.
     form_id  = form_data.get('form_id', 'FORM')
 
     # Apply OpenClinica XLSForm defaults for missing settings fields.
