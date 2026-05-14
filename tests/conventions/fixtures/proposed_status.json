@@ -1,0 +1,15 @@
+{
+  "id": "test.proposed_should_be_skipped",
+  "title": "A proposed rule",
+  "kind": "structured",
+  "scope": "global",
+  "status": "proposed",
+  "natural_key": "proposed_test",
+  "description": "This convention is proposed (not yet active) and the loader should drop it.",
+  "target": "form",
+  "applies_when": { "form.form_id": "YY" },
+  "effect": { "set": { "form.form_id": "YY_PROPOSED" } },
+  "created_at": "2026-05-13T14:00:00Z",
+  "created_by": "system:test_fixture",
+  "source": "test:fixtures"
+}

@@ -1,0 +1,20 @@
+{
+  "id": "field_naming.vs_results_cdash",
+  "title": "Vital sign result fields use CDASH names",
+  "kind": "hybrid",
+  "scope": "global",
+  "status": "active",
+  "natural_key": "vs_field_naming",
+  "description": "VS form fields that measure vital sign results should use CDASH-standard naming (VSORRES, VSORRESU).",
+  "target": "field",
+  "applies_when": {
+    "form.form_id": "VS",
+    "soft": "field captures a vital sign measurement result"
+  },
+  "effect": {
+    "soft": "use CDASH naming convention (e.g., VSORRES, VSORRESU)"
+  },
+  "created_at": "2026-05-13T14:00:00Z",
+  "created_by": "system:test_fixture",
+  "source": "test:fixtures"
+}

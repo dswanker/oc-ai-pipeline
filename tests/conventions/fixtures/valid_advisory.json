@@ -1,0 +1,14 @@
+{
+  "id": "process.source_ambiguity",
+  "title": "Document reasoning when source label is ambiguous",
+  "kind": "advisory",
+  "scope": "global",
+  "status": "active",
+  "natural_key": "source_ambiguity_reasoning",
+  "description": "When the protocol uses an ambiguous source label, document the chosen interpretation in field notes and add an entry to review_flags.protocol_ambiguous.",
+  "rationale": "Reviewers need to understand why Claude chose one mapping over another.",
+  "target": "field",
+  "created_at": "2026-05-13T14:00:00Z",
+  "created_by": "system:test_fixture",
+  "source": "test:fixtures"
+}
