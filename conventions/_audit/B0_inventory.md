@@ -26,18 +26,15 @@ consumed by anything. This validates the architecture doc's premise that
 on future builds." (System 3 detail below.)
 
 ### F2. The vendor cascade axis is parallel to, not part of, the OC-tenant cascade
-`migration/vendor_conventions/*.md` files use "customer" to mean *source
-EDC vendor* (REDCap, Castor, Medidata Rave, …), NOT OpenClinica customer
-tenants. A build is sourced from one vendor and targets one OC tenant —
-two independent dimensions. The architecture doc's cascade
-(`global > customer > study`) assumes customer = OC subdomain. Options
-visible from B.0, none decided here:
-  1. Add `migration_source` as a fourth cascade level.
-  2. Keep vendor conventions outside the cascade as enrichment-prompt input.
-  3. Promote only the truly vendor-specific subset (~36 rows) under a
-     new scope kind.
-
-Architecture decision needed before Phase B.1 on the vendor layer.
+**Resolved 2026-05-14.** See `conventions/_audit/F2_resolution.md`.
+The decision: vendor becomes a peer-axis to customer in the cascade,
+with customer-wins tie-breaking and every conflict logged. Vendor
+identifier comes from monday column `dropdown_mm382w7d`. The ~36
+truly vendor-specific rows from System 4 translate into
+`conventions/vendors/<slug>/*.json` during Phase B.1b; reaffirmations
+are dropped (cascade resolves them from `global/`). Migration
+`vendor_conventions/*.md` files stay during transition and get
+deleted in Phase C.
 
 ### F3. System 3 + System 4 sources do not match `convention.schema.json`
 The trainer writer emits `{id: "CONV-NNNN", layer, source_study, rule,
