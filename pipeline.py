@@ -87,6 +87,45 @@ async def _noop_bytes():
     return None
 
 
+def _vendor_slug_from_display_name(display_name):
+    """Translate a monday `source_edc_system` display name (e.g. "REDCap")
+    to a conventions/vendors/ slug (e.g. "redcap") via the existing
+    VENDOR_CONVENTION_FILES dict in migration/odm_to_spec.py.
+
+    Returns None for unknown / empty input — caller treats that as
+    non-migration build (cascade vendor bucket is skipped).
+
+    odm_to_spec.py lives in migration/ but uses bare-name imports
+    (`from odm_reader import ...`), so we add migration/ to sys.path
+    on first use — same pattern as migration_pipeline.py.
+
+    >>> _vendor_slug_from_display_name("REDCap")
+    'redcap'
+    >>> _vendor_slug_from_display_name("Castor EDC")
+    'castor'
+    >>> _vendor_slug_from_display_name("UnknownEDC") is None
+    True
+    >>> _vendor_slug_from_display_name("") is None
+    True
+    >>> _vendor_slug_from_display_name(None) is None
+    True
+    """
+    if not display_name:
+        return None
+    import os as _os, sys as _sys
+    _mig_dir = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "migration")
+    if _mig_dir not in _sys.path:
+        _sys.path.insert(0, _mig_dir)
+    try:
+        from odm_to_spec import VENDOR_CONVENTION_FILES
+    except ImportError:
+        return None
+    filename = VENDOR_CONVENTION_FILES.get(display_name)
+    if not filename:
+        return None
+    return filename[:-3] if filename.endswith(".md") else filename
+
+
 # ── Customer Convention Questions (CQ) ─────────────────────────────────────────
 # Customers can supply convention preferences via columns on the AI Hub board
 # whose titles start with "CQ " (preferred, full question becomes the key) or
@@ -1433,6 +1472,11 @@ async def run_pipeline(item_id):
                         try:
                             from conventions_engine import apply_conventions
                             _study_id = (struct_json.get("study_meta") or {}).get("protocol_number") or protocol_num
+                            # TODO(B.1b follow-up): This path does not currently extract monday's
+                            # source_edc_system column (dropdown_mm382w7d). Vendor conventions
+                            # apply only on migration path (Path M). If non-migration builds need
+                            # vendor conventions in future, extract the column at build entry and
+                            # thread it through as migration_source here.
                             apply_conventions(struct_json, study_id=_study_id,
                                               customer_subdomain=oc_subdomain)
                         except Exception as _ce:
@@ -1488,8 +1532,10 @@ async def run_pipeline(item_id):
             try:
                 from conventions_engine import apply_conventions
                 _study_id = (struct_json.get("study_meta") or {}).get("protocol_number") or protocol_num
+                _vendor_slug = _vendor_slug_from_display_name(mig_result.get("source_system"))
                 apply_conventions(struct_json, study_id=_study_id,
-                                  customer_subdomain=oc_subdomain)
+                                  customer_subdomain=oc_subdomain,
+                                  migration_source=_vendor_slug)
             except Exception as _ce:
                 print(f"conventions_engine FAILED — continuing without conventions: {_ce}",
                       flush=True)
@@ -1697,6 +1743,11 @@ async def run_pipeline(item_id):
             try:
                 from conventions_engine import apply_conventions
                 _study_id = (struct_json.get("study_meta") or {}).get("protocol_number") or protocol_num
+                # TODO(B.1b follow-up): This path does not currently extract monday's
+                # source_edc_system column (dropdown_mm382w7d). Vendor conventions
+                # apply only on migration path (Path M). If non-migration builds need
+                # vendor conventions in future, extract the column at build entry and
+                # thread it through as migration_source here.
                 apply_conventions(struct_json, study_id=_study_id,
                                   customer_subdomain=oc_subdomain)
             except Exception as _ce:

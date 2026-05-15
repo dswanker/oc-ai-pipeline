@@ -177,10 +177,17 @@ def apply_conventions(
     spec: Dict[str, Any],
     study_id: str,
     customer_subdomain: str,
+    migration_source: Optional[str] = None,
     repo_root: Optional[Path] = None,
 ) -> Dict[str, Any]:
     """
     Load active conventions, resolve cascade, apply to spec.
+
+    `migration_source` is the vendor slug (e.g. "redcap", "castor") for
+    migration builds, drawn from monday's source_edc_system column via
+    `_vendor_slug_from_display_name` in pipeline.py. None or "" skips
+    the vendor cascade bucket — correct for non-migration builds
+    (fresh-protocol path).
 
     Mutates spec in place AND returns it. Idempotent (re-running on the
     same spec produces the same result) modulo timestamps in
@@ -199,7 +206,8 @@ def apply_conventions(
 
     record.ensure_section(spec)
 
-    loaded = loader.load_all(repo_root, customer_subdomain, study_id)
+    loaded = loader.load_all(repo_root, customer_subdomain, study_id,
+                             migration_source=migration_source or "")
 
     # Surface load errors as review_flags entries so humans see them
     # — don't crash the whole pipeline on a single malformed file.

@@ -159,3 +159,107 @@ def test_prompt_block_empty_when_no_conventions(spec_with_two_forms, tmp_repo_ro
         customer_subdomain="anyone", repo_root=tmp_repo_root,
     )
     assert result["study_meta"]["conventions_prompt_block"] == ""
+
+
+# ─────────────────── migration_source threading (B.1b Patch 4) ───────────────────
+
+def test_apply_conventions_accepts_migration_source(spec_with_two_forms, tmp_repo_root):
+    """Signature smoke test — migration_source kwarg is accepted without crashing
+    and result still contains conventions_engine_applied."""
+    result = apply_conventions(
+        spec_with_two_forms, study_id="TEST-001",
+        customer_subdomain="anyone", migration_source="redcap",
+        repo_root=tmp_repo_root,
+    )
+    assert "conventions_engine_applied" in result["study_meta"]
+
+
+def test_apply_conventions_migration_source_loads_vendor_scope(
+    spec_with_two_forms, tmp_repo_root, make_convention,
+):
+    """A convention in conventions/vendors/<slug>/ applies when
+    migration_source matches the slug."""
+    vendor_rule = make_convention(
+        id="v.ae_common", scope="vendor", scope_id="redcap",
+        natural_key="vendor_ae_visit",
+        applies_when={"form.form_id": "AE"},
+        effect={"set": {"form.visits_assigned": ["SE_COMMON"]}},
+    )
+    vendors_dir = tmp_repo_root / "conventions" / "vendors" / "redcap"
+    vendors_dir.mkdir(parents=True)
+    (vendors_dir / "rule.json").write_text(json.dumps(vendor_rule))
+
+    result = apply_conventions(
+        spec_with_two_forms, study_id="TEST-001",
+        customer_subdomain="anyone", migration_source="redcap",
+        repo_root=tmp_repo_root,
+    )
+    ae_form = next(f for f in result["forms"] if f["form_id"] == "AE")
+    assert ae_form["visits_assigned"] == ["SE_COMMON"]
+
+
+def test_apply_conventions_default_migration_source_skips_vendor(
+    spec_with_two_forms, tmp_repo_root, make_convention,
+):
+    """Same vendor convention on disk, but no migration_source passed →
+    vendor cascade bucket is skipped, spec untouched by vendor rule."""
+    vendor_rule = make_convention(
+        id="v.ae_common", scope="vendor", scope_id="redcap",
+        natural_key="vendor_ae_visit",
+        applies_when={"form.form_id": "AE"},
+        effect={"set": {"form.visits_assigned": ["SE_COMMON"]}},
+    )
+    vendors_dir = tmp_repo_root / "conventions" / "vendors" / "redcap"
+    vendors_dir.mkdir(parents=True)
+    (vendors_dir / "rule.json").write_text(json.dumps(vendor_rule))
+
+    original_forms = json.dumps(spec_with_two_forms["forms"], sort_keys=True)
+    result = apply_conventions(
+        spec_with_two_forms, study_id="TEST-001",
+        customer_subdomain="anyone",
+        # No migration_source kwarg — defaults to None.
+        repo_root=tmp_repo_root,
+    )
+    # AE form's visits_assigned untouched — vendor rule did NOT apply.
+    assert json.dumps(result["forms"], sort_keys=True) == original_forms
+
+
+def test_apply_conventions_customer_wins_over_vendor_via_orchestrator(
+    spec_with_two_forms, tmp_repo_root, make_convention,
+):
+    """End-to-end F2 sub-decision A — customer rule + vendor rule on same
+    natural_key. Customer wins; study_meta.customer_vendor_conflicts populated."""
+    vendor_rule = make_convention(
+        id="v.ae", scope="vendor", scope_id="redcap",
+        natural_key="ae_visit_topic",
+        applies_when={"form.form_id": "AE"},
+        effect={"set": {"form.visits_assigned": ["SE_COMMON"]}},
+    )
+    customer_rule = make_convention(
+        id="c.ae", scope="customer", scope_id="acme",
+        natural_key="ae_visit_topic",
+        applies_when={"form.form_id": "AE"},
+        effect={"set": {"form.visits_assigned": ["SE_BASELINE"]}},
+    )
+    (tmp_repo_root / "conventions" / "vendors" / "redcap").mkdir(parents=True)
+    (tmp_repo_root / "conventions" / "vendors" / "redcap" / "v.json"
+     ).write_text(json.dumps(vendor_rule))
+    (tmp_repo_root / "conventions" / "customers" / "acme").mkdir(parents=True)
+    (tmp_repo_root / "conventions" / "customers" / "acme" / "c.json"
+     ).write_text(json.dumps(customer_rule))
+
+    result = apply_conventions(
+        spec_with_two_forms, study_id="TEST-001",
+        customer_subdomain="acme", migration_source="redcap",
+        repo_root=tmp_repo_root,
+    )
+    # Customer rule won — visits_assigned reflects customer's effect.
+    ae_form = next(f for f in result["forms"] if f["form_id"] == "AE")
+    assert ae_form["visits_assigned"] == ["SE_BASELINE"]
+    # Conflict bucket populated.
+    conflicts = result["study_meta"]["customer_vendor_conflicts"]
+    assert len(conflicts) == 1
+    assert conflicts[0]["customer_id"] == "acme"
+    assert conflicts[0]["vendor_slug"] == "redcap"
+    assert conflicts[0]["winner"] == "customer"
+    assert conflicts[0]["natural_key"] == "ae_visit_topic"
