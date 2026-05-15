@@ -36,11 +36,11 @@
     },
     "scope": {
       "type": "string",
-      "enum": ["global", "customer", "study"]
+      "enum": ["global", "customer", "vendor", "study"]
     },
     "scope_id": {
       "type": "string",
-      "description": "Customer subdomain (e.g. 'cust1') for scope=customer, or study_id (e.g. 'PRTK05') for scope=study. Omitted for scope=global."
+      "description": "Customer subdomain (e.g. 'cust1') for scope=customer, vendor slug (e.g. 'redcap', 'castor') for scope=vendor, or study_id (e.g. 'PRTK05') for scope=study. Omitted for scope=global."
     },
     "status": {
       "type": "string",
@@ -148,7 +148,7 @@
       }
     },
     {
-      "comment": "global scope forbids scope_id; customer and study scopes require it",
+      "comment": "global scope forbids scope_id; customer, vendor, and study scopes require it",
       "if": { "properties": { "scope": { "const": "global" } } },
       "then": { "not": { "required": ["scope_id"] } },
       "else": { "required": ["scope_id"] }

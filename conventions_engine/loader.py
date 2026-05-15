@@ -98,6 +98,12 @@ def load_scope(repo_root: Path, scope: str, scope_id: str = ""
         if not scope_id:
             return [], []
         scope_dir = repo_root / "conventions" / "customers" / scope_id
+    elif scope == "vendor":
+        # Vendor slug (e.g. "redcap", "castor"). Empty slug means
+        # non-migration build — vendor scope returns empty silently.
+        if not scope_id:
+            return [], []
+        scope_dir = repo_root / "conventions" / "vendors" / scope_id
     elif scope == "study":
         if not scope_id:
             return [], []
@@ -108,16 +114,24 @@ def load_scope(repo_root: Path, scope: str, scope_id: str = ""
     return _load_scope_dir(scope_dir, schema)
 
 
-def load_all(repo_root: Path, customer_subdomain: str, study_id: str
+def load_all(repo_root: Path, customer_subdomain: str, study_id: str,
+             migration_source: str = ""
              ) -> Dict[str, Any]:
-    """Load all three scopes plus aggregated errors."""
+    """Load all four scopes plus aggregated errors.
+
+    `migration_source` is the vendor slug (e.g. "redcap", "castor")
+    from monday column `dropdown_mm382w7d`. Empty string means
+    non-migration build — vendor scope returns empty.
+    """
     global_recs, global_errs = load_scope(repo_root, "global")
     customer_recs, customer_errs = load_scope(repo_root, "customer", customer_subdomain)
+    vendor_recs, vendor_errs = load_scope(repo_root, "vendor", migration_source)
     study_recs, study_errs = load_scope(repo_root, "study", study_id)
 
     return {
         "global": global_recs,
         "customer": customer_recs,
+        "vendor": vendor_recs,
         "study": study_recs,
-        "errors": [*global_errs, *customer_errs, *study_errs],
+        "errors": [*global_errs, *customer_errs, *vendor_errs, *study_errs],
     }

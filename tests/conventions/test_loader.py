@@ -124,3 +124,79 @@ def test_version_file_non_integer_raises(tmp_path):
     (schema_dir / "convention.schema.json").write_text("{}")
     with pytest.raises(SchemaValidationError, match="integer"):
         loader.load_scope(tmp_path, "global")
+
+
+# ─────────────────── vendor scope (B.1b Patch 1) ───────────────────
+
+def test_load_scope_vendor_happy_path(tmp_repo_root):
+    """A valid convention in conventions/vendors/<slug>/ loads cleanly."""
+    vendors_dir = tmp_repo_root / "conventions" / "vendors" / "redcap"
+    vendors_dir.mkdir(parents=True)
+    conv = {
+        "id": "vendor.redcap.field_naming",
+        "title": "REDCap field naming",
+        "kind": "structured",
+        "scope": "vendor",
+        "scope_id": "redcap",
+        "status": "active",
+        "natural_key": "vendor_redcap_field_naming",
+        "description": "REDCap fields use lowercase by convention.",
+        "target": "field",
+        "created_at": "2026-05-15T00:00:00Z",
+        "created_by": "system:test",
+        "source": "test:vendor_loader",
+        "applies_when": {"field.name": {"matches": "^[a-z_]+$"}},
+        "effect": {"flag": {"category": "review_flags.style",
+                            "message": "REDCap field"}},
+    }
+    (vendors_dir / "rule.json").write_text(json.dumps(conv))
+
+    records, errors = loader.load_scope(tmp_repo_root, "vendor", "redcap")
+    assert errors == []
+    assert len(records) == 1
+    assert records[0]["id"] == "vendor.redcap.field_naming"
+
+
+def test_load_scope_vendor_missing_slug_returns_empty(tmp_repo_root):
+    """Empty slug (non-migration build) returns no records, no errors."""
+    records, errors = loader.load_scope(tmp_repo_root, "vendor", "")
+    assert records == []
+    assert errors == []
+
+
+def test_load_scope_vendor_missing_directory_returns_empty(tmp_repo_root):
+    """When conventions/vendors/ doesn't exist at all (fresh repo),
+    load_scope(root, 'vendor', 'redcap') returns ([], []) cleanly —
+    no crash, no LoadError. Pinned explicitly because vendors/ is
+    new infrastructure most repos won't have yet."""
+    # tmp_repo_root from conftest only creates conventions/global/ and
+    # the schema dir — no vendors/ at all.
+    assert not (tmp_repo_root / "conventions" / "vendors").exists()
+    records, errors = loader.load_scope(tmp_repo_root, "vendor", "redcap")
+    assert records == []
+    assert errors == []
+
+
+def test_load_scope_vendor_malformed_json_surfaces_error(tmp_repo_root):
+    """A malformed JSON file in vendors/<slug>/ becomes a LoadError, not a crash."""
+    vendors_dir = tmp_repo_root / "conventions" / "vendors" / "castor"
+    vendors_dir.mkdir(parents=True)
+    (vendors_dir / "broken.json").write_text("{not valid json")
+
+    records, errors = loader.load_scope(tmp_repo_root, "vendor", "castor")
+    assert records == []
+    assert len(errors) == 1
+    assert "broken.json" in errors[0].path
+    assert "parse error" in errors[0].reason
+
+
+def test_load_all_populates_vendor_when_migration_source_given(tmp_repo_root):
+    """load_all() returns a 'vendor' key alongside global/customer/study."""
+    result = loader.load_all(
+        tmp_repo_root,
+        customer_subdomain="any_customer",
+        study_id="any_study",
+        migration_source="redcap",
+    )
+    assert set(result.keys()) >= {"global", "customer", "vendor", "study", "errors"}
+    assert result["vendor"] == []  # empty because no file written, but key exists
