@@ -1,0 +1,38 @@
+{
+  "id": "appearance.table_appearance_short_labels",
+  "title": "appearance=table-list only when every choice label is ≤15 characters",
+  "kind": "hybrid",
+  "scope": "global",
+  "status": "active",
+  "natural_key": "table_appearance_short_labels",
+  "description": "OC's internal Participate Form Design best-practice doc: 'Only use Table appearance if the Choice Labels are short.' DEFAULT: the skill emits appearance=table-list (or the OC table appearance keyword in current use) only when every choice label in the referenced list is 15 characters or fewer. When labels exceed the threshold, fall back to vertical layout (default — labels wrap naturally on small screens) or appearance=minimal for very long lists. Override: customer library specifies table appearance despite long labels; carry forward with FLAGGED status.",
+  "rationale": "Table-list rendering puts choice labels in column headers, which need to fit in narrow columns. Labels exceeding 15 characters force truncation, wrapping, or horizontal scrolling — all of which degrade legibility. Vertical layout handles long labels gracefully because each label gets its own full-width row. The 15-character threshold is the empirical limit where standard table-column widths start to break down on portrait phone screens.",
+  "target": "field",
+  "applies_when": {
+    "any_of": [
+      { "field.appearance": "table-list" },
+      { "field.appearance": "table" },
+      { "field.appearance": { "matches": "table" } }
+    ]
+  },
+  "effect": {
+    "flag": {
+      "category": "review_flags.table_appearance_label_length",
+      "message": "Field ${field.name} has appearance=${field.appearance} (table-style) — verify every choice label in the referenced list is ≤15 characters. If any label exceeds: fall back to vertical layout for normal lists, or appearance=minimal for very long lists. Customer-override-with-FLAGGED is the only path to keeping table appearance beyond the threshold."
+    },
+    "soft": "When emitting select_one/select_multiple fields with table appearance, check max(len(label)) across the referenced choice list. If > 15, change to vertical or minimal appearance. Customer-library overrides preserved. Surface in conventions_applied.table_appearance_rule.{table_fields, table_compliant}."
+  },
+  "created_at": "2026-05-15T00:00:00Z",
+  "created_by": "system:phase_b1d_translation",
+  "source": "consolidation:skills/protocol-analysis/references/conventions.md:§19",
+  "tags": ["appearance", "table_list", "label_length", "mobile_optimization"],
+  "history": [
+    {
+      "at": "2026-05-15T00:00:00Z",
+      "by": "system:phase_b1d_translation",
+      "action": "created",
+      "status": "active",
+      "note": "Imported from conventions.md §19 during Phase B.1d. Same shape as §17 (Likert appearance threshold) — the check needs choice-list resolution from a field-target context. A future field.choice_max_label_length DSL primitive would promote this and §17 both to structured."
+    }
+  ]
+}

@@ -3,15 +3,21 @@
   "title": "Race multi-select cannot mix Unknown / Not-Reported with other choices",
   "kind": "hybrid",
   "scope": "global",
-  "status": "active",
+  "status": "archived",
   "natural_key": "race_multiselect_exclusivity",
   "description": "When RACE is a select_multiple field with Unknown (UNK) and/or Not-Reported (NOT_REP) options, the field gets a constraint preventing mixing those sentinel values with any other selection: `not(selected(.,'UNK') and count-selected(.) > 1) and not(selected(.,'NOT_REP') and count-selected(.) > 1)`. Constraint message clarifies the rule. Option names UNK and NOT_REP are the canonical OC defaults; studies using different option keys for these concepts need study-scope override.",
   "rationale": "RACE is a multi-select because subjects can have mixed-race ancestry. Unknown and Not-Reported are sentinel values that semantically exclude selecting any specific race: if the answer is unknown, then no specific race can be reported alongside it. Without the constraint, coordinators can produce nonsensical entries like ['White', 'Unknown'] that complicate downstream demographic analysis.",
   "target": "field",
   "applies_when": {
     "all_of": [
-      { "field.name": "RACE" },
-      { "field.type": { "matches": "^select_multiple" } }
+      {
+        "field.name": "RACE"
+      },
+      {
+        "field.type": {
+          "matches": "^select_multiple"
+        }
+      }
     ]
   },
   "effect": {
@@ -28,14 +34,27 @@
   "created_at": "2026-05-14T22:00:00Z",
   "created_by": "system:phase_b1c_final_translation",
   "source": "consolidation:prompts.py:RULE_OC-7I",
-  "tags": ["clinical_patterns", "constraints", "select_multiple", "demographics", "race"],
+  "tags": [
+    "clinical_patterns",
+    "constraints",
+    "select_multiple",
+    "demographics",
+    "race"
+  ],
   "history": [
     {
       "at": "2026-05-14T22:00:00Z",
       "by": "system:phase_b1c_final_translation",
       "action": "created",
       "status": "active",
-      "note": "Imported from prompts.py RULE OC-7I during Phase B.1c-final. Overlap candidate with B.0 inventory §27 (general sentinel_exclusivity_constraint) — when System 2 lands in Phase B.1d, §27 becomes the cascade-resolved general rule and 7I becomes its RACE-specific reaffirmation OR §27 absorbs 7I and 7I retires. Decision deferred to B.1d. Hybrid because the canonical UNK/NOT_REP option keys are assumed; the soft directive carries the override guidance for studies using different keys."
+      "note": "Imported from prompts.py RULE OC-7I during Phase B.1c-final. Overlap candidate with B.0 inventory \u00a727 (general sentinel_exclusivity_constraint) \u2014 when System 2 lands in Phase B.1d, \u00a727 becomes the cascade-resolved general rule and 7I becomes its RACE-specific reaffirmation OR \u00a727 absorbs 7I and 7I retires. Decision deferred to B.1d. Hybrid because the canonical UNK/NOT_REP option keys are assumed; the soft directive carries the override guidance for studies using different keys."
+    },
+    {
+      "at": "2026-05-15T00:00:00Z",
+      "by": "system:phase_b1d_translation",
+      "action": "archived",
+      "status": "archived",
+      "note": "Superseded by \u00a727 (validation.sentinel_value_exclusivity_constraint) imported in Phase B.1d. 7I was RACE-field-specific with the DECLINED sentinel hardcoded as the trigger. \u00a727 generalizes: covers ALL select_multiple fields with ANY recognized sentinel value (DECLINED, UNKNOWN, NONE, N/A, REFUSED \u2014 case-insensitive). Crucially \u00a727 explicitly EXCLUDES `OTHER` from sentinel treatment because OTHER semantically combines with real values. The RACE field will still get the constraint under \u00a727 because DECLINED is in its choice list; coverage is preserved and broadened. Cascade resolution skips archived conventions; queries for the sentinel-exclusivity rule will resolve to \u00a727."
     }
   ]
 }

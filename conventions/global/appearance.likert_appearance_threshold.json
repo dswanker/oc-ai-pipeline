@@ -1,0 +1,34 @@
+{
+  "id": "appearance.likert_appearance_threshold",
+  "title": "appearance=likert only with ≤5 choices and ≤20 chars per label",
+  "kind": "hybrid",
+  "scope": "global",
+  "status": "active",
+  "natural_key": "likert_appearance_threshold",
+  "description": "OC's internal Participate Form Design best-practice doc: 'Use the Likert Scale appearance with ~5 values or less. The length of the text for the Choice Labels will also affect how well this renders on smaller screens.' DEFAULT: the skill emits appearance=likert only when BOTH conditions hold: (a) choice list has 5 or fewer options, AND (b) every choice label is 20 characters or fewer. When either condition fails, fall back to vertical radio buttons (default appearance) for site-staff forms, or appearance=minimal (dropdown) for Participate forms. NOTE: affects scales like 7-point expectation/satisfaction scales — those should NOT use likert appearance. Override: customer library explicitly specifies likert despite exceeding the threshold; carry forward with FLAGGED status and a note.",
+  "rationale": "Likert rendering on small screens degrades badly when there are too many options or labels are too long. The horizontal-buttons-with-labels layout that defines a Likert presentation needs each option's label to fit in roughly a fifth of the screen width on mobile; 5 options at 20 characters each is the empirical sweet spot. A 7-point Likert on a portrait phone forces label truncation or wrapping that makes the scale visually inconsistent and unreadable. The fallbacks (vertical radio for site forms, minimal/dropdown for Participate) preserve the underlying single-select semantics without the rendering failure.",
+  "target": "field",
+  "applies_when": {
+    "field.appearance": "likert"
+  },
+  "effect": {
+    "flag": {
+      "category": "review_flags.likert_compliance",
+      "message": "Field ${field.name} has appearance=likert — verify (a) choice list has ≤5 options AND (b) every choice label is ≤20 characters. If either fails: fall back to vertical radio for site-staff forms, or appearance=minimal for Participate forms. Customer-library override-with-FLAGGED is the only path to keeping likert beyond the threshold."
+    },
+    "soft": "When emitting select_one fields, check the referenced choice list before applying appearance=likert. Both conditions must hold: ≤5 choices and max-label-length ≤20. Otherwise emit default vertical (site-staff) or minimal (Participate). Surface in conventions_applied.likert_appearance_rule.{likert_fields, likert_compliant, likert_non_compliant}. The choice-list-resolution-from-field-target join isn't a current DSL primitive — handled in soft."
+  },
+  "created_at": "2026-05-15T00:00:00Z",
+  "created_by": "system:phase_b1d_translation",
+  "source": "consolidation:skills/protocol-analysis/references/conventions.md:§17",
+  "tags": ["appearance", "likert", "thresholds", "mobile_optimization"],
+  "history": [
+    {
+      "at": "2026-05-15T00:00:00Z",
+      "by": "system:phase_b1d_translation",
+      "action": "created",
+      "status": "active",
+      "note": "Imported from conventions.md §17 during Phase B.1d. In the new `appearance.*` category. Hybrid because the dual-condition check (list size + max label length) requires resolving the field's choice list and computing max(len(label)) across rows — a join the engine doesn't currently support. Future DSL primitives field.choice_list_size and field.choice_max_label_length would make this structured."
+    }
+  ]
+}

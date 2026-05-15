@@ -1,0 +1,32 @@
+{
+  "id": "build_artifacts.item_count_caps_as_warnings",
+  "title": "Forms exceeding item-count thresholds raise amber build-time warnings",
+  "kind": "hybrid",
+  "scope": "global",
+  "status": "active",
+  "natural_key": "item_count_caps_as_warnings",
+  "description": "OC4 documentation: 'OpenClinica recommends having no more than 100-200 items on a form and no more than 50 items on a Participate form, specifically when it is likely to be accessed from a mobile device.' This is a BUILD-TIME CHECK, not a default. Forms over the cap aren't broken — they load slowly. No automatic remediation; this is human judgment territory. After all forms are defined, count survey rows EXCLUDING note, calculate, and group-marker rows. SITE-FACING forms: amber flag at 200 items, recommend splitting form or paginating with Style=pages. PARTICIPATE/EPRO forms: amber flag at 50 items, recommend pagination with Style=pages. Surface form_id + count for each over-cap form in conventions_applied.item_count_caps.{site_forms_over_200, participate_forms_over_50}.",
+  "rationale": "Form length affects load performance and operator cognitive load. The OC-recommended thresholds aren't enforced limits, but exceeding them produces forms that data-entry users find painful. The 50-item cap on Participate/ePRO is much stricter because mobile screens compound cognitive load — long forms on phones are functionally broken even when technically loadable. Build-time amber-flagging the over-cap forms gives reviewers a chance to split or paginate before the data-entry experience degrades.",
+  "target": "form",
+  "applies_when": {},
+  "effect": {
+    "flag": {
+      "category": "review_flags.item_count_caps",
+      "message": "Form ${form.form_id} — count survey rows (excluding note/calculate/group-marker rows). Site-facing forms: amber at 200+ items; recommend splitting or paginating with Style=pages. Participate/ePRO forms: amber at 50+ items; recommend pagination with Style=pages. Surface form_id + count in conventions_applied.item_count_caps."
+    },
+    "soft": "Count data rows in form.survey (excluding type in [note, calculate, begin group, end group, begin repeat, end repeat]). If form.is_epro=true OR form.is_participate=true: amber flag at count >= 50. Otherwise: amber flag at count >= 200. Recommend pagination with Style=pages or splitting the form into multiple forms. No automatic remediation — this is a reviewer prompt, not an enforcement action. Survey-row counting at field-target scope isn't directly expressible in the current DSL — handled in soft."
+  },
+  "created_at": "2026-05-15T00:00:00Z",
+  "created_by": "system:phase_b1d_translation",
+  "source": "consolidation:skills/protocol-analysis/references/conventions.md:§12",
+  "tags": ["build_artifacts", "form_size", "warnings", "performance"],
+  "history": [
+    {
+      "at": "2026-05-15T00:00:00Z",
+      "by": "system:phase_b1d_translation",
+      "action": "created",
+      "status": "active",
+      "note": "Imported from conventions.md §12 during Phase B.1d. Hybrid because the data-row-count predicate (form.survey filtered by type not in [note, calculate, begin group, ...]) isn't a current DSL primitive. A 'form.data_row_count' computed attribute, or a 'count_where' operator over fan-out paths, would make this structured. Second convention in the new `build_artifacts.*` category — sized at the build-output layer rather than the spec-content layer."
+    }
+  ]
+}

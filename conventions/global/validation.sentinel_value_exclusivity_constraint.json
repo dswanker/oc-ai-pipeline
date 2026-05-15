@@ -1,0 +1,56 @@
+{
+  "id": "validation.sentinel_value_exclusivity_constraint",
+  "title": "Multi-select fields with sentinel choices (DECLINED, UNKNOWN, etc.) get auto-exclusivity constraints",
+  "kind": "hybrid",
+  "scope": "global",
+  "status": "active",
+  "natural_key": "sentinel_value_exclusivity_constraint",
+  "description": "Multi-select fields whose choice list contains a sentinel value meaning 'no real value provided' (e.g. DECLINED, UNKNOWN, NONE, N/A, REFUSED) get an auto-generated exclusivity constraint preventing the sentinel from being co-selected with any real value. AUTO-DETECTION: the skill applies the constraint when (a) field type is select_multiple, AND (b) the field's choice list contains at least one of the sentinel values DECLINED, UNKNOWN, NONE, N_A, NA, REFUSED (case-insensitive match on choice name), AND (c) the field's choice list also contains at least one non-sentinel value. OTHER IS NOT A SENTINEL \u2014 semantically means 'a real value that doesn't fit listed categories' and can legitimately co-occur with listed values. AUTO-APPLIED CONSTRAINT: `not(selected(., '<SENTINEL>') and (selected(., '<other1>') or selected(., '<other2>') or ...))`. AUTO-APPLIED MESSAGE: 'Cannot select \\'<sentinel_label>\\' and other options. Please correct or clarify.' The <sentinel_label> uses the choice's display label (e.g. 'Declined', not 'DECLINED'). UNIVERSAL SCOPE per \u00a70. Override: customer library specifies different exclusivity rule (or none); carry forward with FLAGGED status.",
+  "rationale": "If a multi-select field allows both real values and a 'no value' sentinel (DECLINED, UNKNOWN), data-entry users can select both \u2014 producing nonsense like 'DECLINED, Hypertension, Diabetes' which is logically incoherent (the response was either declined or it specified real conditions, not both). The exclusivity constraint catches this at entry time. The OTHER carve-out matters because OTHER is a real value of unspecified type that legitimately combines with listed categories ('Hypertension, Diabetes, Other: thyroid disease'). Distinguishing real-other from null-sentinel is the crux of getting the rule right.",
+  "target": "field",
+  "applies_when": {
+    "all_of": [
+      {
+        "field.type": {
+          "matches": "^select_multiple"
+        }
+      },
+      {
+        "field.choices_contain_sentinel": true
+      }
+    ]
+  },
+  "effect": {
+    "flag": {
+      "category": "review_flags.sentinel_exclusivity",
+      "message": "Field ${field.name} on ${form.form_id} is select_multiple with a sentinel value in its choice list (DECLINED / UNKNOWN / NONE / N/A / REFUSED \u2014 NOT OTHER). Auto-apply constraint preventing sentinel + real-value co-selection: `not(selected(., '<SENTINEL>') and (selected(., '<real1>') or selected(., '<real2>') or ...))`. Constraint message uses the sentinel's display label."
+    },
+    "soft": "Identify the sentinel choice name in the field's choice list (DECLINED, UNKNOWN, NONE, N_A, NA, REFUSED \u2014 case-insensitive). Build the OR-clause of `selected(., '<real_name>')` over all non-sentinel-and-non-OTHER choice names. Combine as `not(selected(., '<SENTINEL>') and (<or_clause>))`. Constraint message: \"Cannot select '<sentinel_display_label>' and other options. Please correct or clarify.\" The choice-list iteration and constraint-string construction aren't current DSL effect primitives \u2014 handled in soft. Surface in conventions_applied.sentinel_exclusivity.{applied_count, fields[{form, field, sentinel}]}."
+  },
+  "created_at": "2026-05-15T00:00:00Z",
+  "created_by": "system:phase_b1d_translation",
+  "source": "consolidation:skills/protocol-analysis/references/conventions.md:\u00a727",
+  "tags": [
+    "validation",
+    "sentinel_exclusivity",
+    "select_multiple",
+    "constraints",
+    "universal_scope"
+  ],
+  "history": [
+    {
+      "at": "2026-05-15T00:00:00Z",
+      "by": "system:phase_b1d_translation",
+      "action": "created",
+      "status": "active",
+      "note": "Imported from conventions.md \u00a727 during Phase B.1d. SUPERSEDES OC-7 sub-rule 7I (clinical_patterns.race_multiselect_exclusivity) from Phase B.1c-final. 7I was RACE-field-specific with the DECLINED sentinel hardcoded; \u00a727 is the general rule covering ALL select_multiple fields with ANY of the recognized sentinel values (DECLINED, UNKNOWN, NONE, N/A, REFUSED). Crucially, \u00a727 explicitly EXCLUDES `OTHER` from sentinel treatment because OTHER semantically combines with real values. 7I is being archived in this commit (status set to 'archived' in clinical_patterns.race_multiselect_exclusivity.json) with a history note pointing at \u00a727. Structured detection (matches on type + computed attribute field.choices_contain_sentinel). The require directive raises flags if constraint/constraint_message are missing; the soft directive carries the construction guidance for the specific constraint expression."
+    },
+    {
+      "at": "2026-05-15T00:00:00Z",
+      "by": "system:phase_b1d_translation",
+      "action": "edited",
+      "status": "active",
+      "note": "Corrected kind from 'structured' to 'hybrid' during B.1d validation pass. The two require directives (field.constraint, field.constraint_message) were incompatible with the soft directive under the schema's mutual-exclusion rule. The detection IS structured (matches on type + field.choices_contain_sentinel), but the constraint-string construction requires iterating the choice list and building a long OR-clause \u2014 a DSL gap. requires dropped; soft carries the construction guidance. When choice-list iteration plus OR-clause building lands as an effect feature, this can promote back to structured."
+    }
+  ]
+}

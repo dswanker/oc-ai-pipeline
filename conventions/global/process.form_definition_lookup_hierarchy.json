@@ -1,0 +1,24 @@
+{
+  "id": "process.form_definition_lookup_hierarchy",
+  "title": "Walk the three-level lookup hierarchy when choosing each form's definition source",
+  "kind": "advisory",
+  "scope": "global",
+  "status": "active",
+  "natural_key": "form_definition_lookup_hierarchy",
+  "description": "For every form the protocol requires, the skill walks down a three-level hierarchy and stops at the first level with a match: (1) Customer OC4 XLSForm Standard — sponsor-level reusable templates maintained at the customer level, matched by form_id / CDASH domain / explicit form_name token; (2) Customer CRF Library — study-specific files supplied with the protocol upload, matched by filename token / CDASH domain / explicit form_name token; (3) CDASH form definition — the skill's built-in default fallback from references/cdash-domain-library.md. The output spec records `definition_source` per form (`customer_oc4_standard` / `customer_crf_library` / `cdash_default`). Many downstream conventions filter by this attribute — they apply only to fields generated at level 3 (CDASH defaults) and leave customer-sourced content as-authored.",
+  "rationale": "Sponsors invest in reusable form templates so they don't redefine the same AE/CM/VS/LB forms for every study. The hierarchy gives those investments priority over generic CDASH defaults. The three-level walk also makes the decision auditable — every form's spec includes the level that produced it, so reviewers can trace why a form looks the way it does. Conventions §3, §4, §5, §13, §14 and others explicitly gate themselves on `definition_source: cdash_default` for the same reason: customer-sourced content has its own logic and shouldn't be silently overridden by skill-default conventions.",
+  "target": "study",
+  "created_at": "2026-05-15T00:00:00Z",
+  "created_by": "system:phase_b1d_translation",
+  "source": "consolidation:skills/protocol-analysis/references/conventions.md:§0.B",
+  "tags": ["process", "library", "cascade", "foundational"],
+  "history": [
+    {
+      "at": "2026-05-15T00:00:00Z",
+      "by": "system:phase_b1d_translation",
+      "action": "created",
+      "status": "active",
+      "note": "Imported from conventions.md §0.B during Phase B.1d. Advisory because the rule documents the skill's form-definition selection process, which happens before the engine evaluates per-field conventions. Many downstream §-rules filter on the `definition_source` attribute this rule populates — it is the foundational dependency for the §0-scoped conventions throughout the rest of System 2. The three levels conceptually parallel the conventions engine's own cascade (global / customer / study) but operate at the form-definition layer, not the conventions layer."
+    }
+  ]
+}

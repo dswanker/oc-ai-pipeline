@@ -1,0 +1,34 @@
+{
+  "id": "form_metadata.form_style_per_purpose",
+  "title": "Form style declared explicitly per form purpose on the settings sheet",
+  "kind": "hybrid",
+  "scope": "global",
+  "status": "active",
+  "natural_key": "form_style_per_purpose",
+  "description": "OC4 supports four form styles. The recent OC4 default flipped to 'Simple-Single Page' per release notes. Each form's `style` column on the settings sheet should be populated deliberately, never left blank by default. DEFAULTS BY FORM PURPOSE: site-staff form with <=30 items → (blank) Simple-single (default; clean for short forms); site-staff form with dense tabular data (LB, VS panels) → theme-grid (grid layout suits tabular data); site-staff form with >50 items → pages (pagination helps cognitive load); Participate/ePRO form → pages (OC blog: 'fewer questions on more pages is preferable' + portrait-phone optimization). Forms sourced from customer_oc4_standard or customer_crf_library are used as-authored.",
+  "rationale": "Explicit style assignment makes form rendering predictable and matches each form's content shape to the optimal layout. Dense tabular forms (vital signs, lab panels) read better in a grid; long forms benefit from pagination to reduce cognitive load; short site-staff forms are fine as a single page. ePRO forms on mobile particularly benefit from pagination since portrait-phone screens force long forms into excessive scrolling.",
+  "target": "form",
+  "applies_when": {
+    "form.definition_source": "cdash_default"
+  },
+  "effect": {
+    "flag": {
+      "category": "review_flags.form_style_explicit",
+      "message": "Form ${form.form_id} (definition_source=cdash_default) — set settings.style explicitly. Defaults: site-staff <=30 items → blank (Simple-single); site-staff dense tabular (LB, VS) → theme-grid; site-staff >50 items → pages; Participate/ePRO → pages. Customer-sourced forms exempt."
+    },
+    "soft": "Determine form purpose: is_participate / is_epro flag, or item count (excluding note/calculate/group-marker rows). Apply style per the defaults: blank for short site forms; theme-grid for dense tabular site forms; pages for long site forms (>50 items) or any Participate/ePRO form. Surface counts in conventions_applied.form_style_explicit.{site_simple_single, site_simple_pages, site_theme_grid, participate_simple_pages, missing_style}."
+  },
+  "created_at": "2026-05-15T00:00:00Z",
+  "created_by": "system:phase_b1d_translation",
+  "source": "consolidation:skills/protocol-analysis/references/conventions.md:§14",
+  "tags": ["form_metadata", "settings_sheet", "form_style", "ux", "cdash_scope"],
+  "history": [
+    {
+      "at": "2026-05-15T00:00:00Z",
+      "by": "system:phase_b1d_translation",
+      "action": "created",
+      "status": "active",
+      "note": "Imported from conventions.md §14 during Phase B.1d. Hybrid: the form-purpose detection (Participate/ePRO vs site-staff, item-count thresholds) requires resolving spec attributes plus survey row counting which isn't a clean DSL primitive yet. Delegated to soft directive. A future DSL extension could surface form.purpose and form.data_row_count as resolvable attributes, promoting this to structured."
+    }
+  ]
+}

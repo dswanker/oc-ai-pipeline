@@ -1,0 +1,24 @@
+{
+  "id": "validation.soft_edit_checks_by_default",
+  "title": "Required fields and constraints emit as soft by default; strict only on explicit need",
+  "kind": "advisory",
+  "scope": "global",
+  "status": "active",
+  "natural_key": "soft_edit_checks_by_default",
+  "description": "OpenClinica supports two strictness levels for required fields and constraints: soft (default) and strict (hard-stop). Strict checks make data entry painful; OC explicitly recommends them only when data quality justifies the cost. OC documentation: 'All checks that are not explicitly defined as hard edit checks are soft edit checks in all forms'; Participate forms auto-promote everything to strict regardless. DEFAULT BEHAVIOR: the skill never emits bind__oc_required_type='strict' or bind__oc_constraint_type='strict' on any survey row. All required fields and constraints are soft. STRICT applies only when (a) the protocol explicitly mandates hard-stop validation (e.g. subject ID format must match a regex, consent date must equal today), or (b) the customer library carries strict — carry forward as-is. When applied, count strict-typed rows in conventions_applied.soft_edit_checks_applied.strict_required_count and strict_constraint_count.",
+  "rationale": "Strict validation creates UI friction that's appropriate for data-integrity-critical fields and harmful for everything else. Clinical trial coordinators capturing imperfect real-world data need flexibility to record what actually happened with documentation, not to be locked out of saving a form because one value doesn't match the validator's expectation. The default-soft posture preserves coordinator agency; the explicit-opt-in for strict reserves friction for fields where saving a wrong value would cause downstream harm (eligibility verdicts, randomization-blocking inputs, regulatory-required formatting).",
+  "target": "field",
+  "created_at": "2026-05-15T00:00:00Z",
+  "created_by": "system:phase_b1d_translation",
+  "source": "consolidation:skills/protocol-analysis/references/conventions.md:§8",
+  "tags": ["validation", "soft_strict", "constraints", "defaults"],
+  "history": [
+    {
+      "at": "2026-05-15T00:00:00Z",
+      "by": "system:phase_b1d_translation",
+      "action": "created",
+      "status": "active",
+      "note": "Imported from conventions.md §8 during Phase B.1d. SUPERSEDES OC-6 (validation.hard_edit_checks_opt_in) from Phase B.1a. §8 is more comprehensive: it explicitly states the default behavior ('never emits strict'), names the two override conditions (protocol mandate, customer library), and specifies the conventions_applied reporting fields. OC-6 was descriptive of how the opt-in mechanism works; §8 is prescriptive about how the skill should USE the mechanism. OC-6 is being archived in this commit. Advisory: the rule describes default behavior the skill should follow rather than firing as a per-entity check. The 'never emit strict' default is enforced upstream in the form-generation step, not at convention-evaluation time."
+    }
+  ]
+}
