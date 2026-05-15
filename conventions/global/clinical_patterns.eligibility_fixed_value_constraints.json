@@ -1,0 +1,34 @@
+{
+  "id": "clinical_patterns.eligibility_fixed_value_constraints",
+  "title": "Inclusion criteria must equal 'Y'; exclusion criteria must equal 'N'",
+  "kind": "hybrid",
+  "scope": "global",
+  "status": "active",
+  "natural_key": "eligibility_fixed_value_constraints",
+  "description": "On the IE (Inclusion/Exclusion) form, each inclusion criterion field gets constraint `. = 'Y'` with message 'Subject is ineligible if this criterion is not met.' Each exclusion criterion field gets constraint `. = 'N'` with message 'Subject is ineligible if this exclusion criterion is present.' Whether a field is an inclusion or an exclusion criterion is determined by the protocol and the field's intent — not always derivable from the field name alone.",
+  "rationale": "Eligibility verification is the most regulatory-critical workflow in the build. Hard constraints on the expected answer prevent enrollment of ineligible subjects at the data-entry level rather than catching the error in post-hoc monitoring. The convention's strict form (Y for inclusion, N for exclusion) reflects the standard practice where eligibility criteria are phrased so the 'eligible' answer is always affirmative for inclusion and negative for exclusion.",
+  "target": "field",
+  "applies_when": {
+    "form.form_id": { "matches": "^I[EI]$|^IE_" }
+  },
+  "effect": {
+    "flag": {
+      "category": "review_flags.eligibility_constraint",
+      "message": "Field ${field.name} on IE/II form ${form.form_id} — verify whether this is an inclusion criterion (constraint `. = 'Y'`, eligibility message about criterion-not-met) or an exclusion criterion (constraint `. = 'N'`, message about exclusion-criterion-present). Determining inclusion-vs-exclusion requires reading the field's label and the protocol context."
+    },
+    "soft": "For each eligibility criterion field on the form, determine from the field's label and protocol context whether it is an inclusion (expected answer Y) or exclusion (expected answer N) criterion. Emit constraint and constraint_message accordingly. The protocol-document parsing required to make this determination is upstream of the engine — handled in soft for now. A future structured form (e.g. customer-scope conventions naming specific IE field IDs as inclusion vs exclusion) can override this."
+  },
+  "created_at": "2026-05-14T22:00:00Z",
+  "created_by": "system:phase_b1c_final_translation",
+  "source": "consolidation:prompts.py:RULE_OC-7G",
+  "tags": ["clinical_patterns", "eligibility", "constraints", "inclusion_exclusion"],
+  "history": [
+    {
+      "at": "2026-05-14T22:00:00Z",
+      "by": "system:phase_b1c_final_translation",
+      "action": "created",
+      "status": "active",
+      "note": "Imported from prompts.py RULE OC-7G during Phase B.1c-final. Form-name match pattern `^I[EI]$|^IE_` is intentionally loose to cover both 'IE' and 'II' and any IE_<suffix> form variants. Hybrid because the inclusion-vs-exclusion classification per field requires protocol-document context not yet in the engine. A future B.1d / customer-scope convention can express the per-field classification structurally; for now the convention surfaces the field for human review."
+    }
+  ]
+}

@@ -1,193 +1,88 @@
-# OC-7 Decomposition Plan
+# OC-7 Decomposition Plan (B.1c-final completion record)
 
-**Status:** Plan only. Decomposition deferred to Phase B.1c.
+**Status:** Decomposition complete. 16 sub-rule conventions emitted in Phase B.1c-final.
 **Source:** `prompts.py` lines 266–474 (RULE OC-7 — UNIVERSAL CLINICAL DATA PATTERNS).
-**Captured as umbrella:** `conventions/global/clinical_patterns.universal_clinical_data_patterns.json` (Phase B.1a, commit pending).
-**Decision context:** B.1a Option 3 (umbrella now, decomposition tracked).
+**Umbrella convention retained:** `conventions/global/clinical_patterns.universal_clinical_data_patterns.json` from Phase B.1a (commit `4651d53`). It now points to the 16 sub-rule conventions for the engine-resolvable per-sub-rule details.
 
-## Purpose
+## What changed from the B.1a plan-doc draft
 
-OC-7 in `prompts.py` is an umbrella rule covering 16 sub-patterns (7A–7P). B.1a translates it as a single hybrid convention to keep B.1a scoped. This document captures the 16 sub-rules with their proposed kinds, applies_when shapes, effect shapes, and decomposition risks so Phase B.1c has a complete spec to work from.
+Phase B.1a's plan doc proposed a 16-sub-rule decomposition based on names, but several sub-letter assignments were incorrect (the B.1a author hadn't yet pulled the actual prose from `prompts.py`). The corrections:
 
-## Sub-rule catalog
+| Sub-letter | B.1a plan-doc guess | Actual `prompts.py` text |
+|---|---|---|
+| 7K | "CF helpers" | duration-in-days calculation (optional) |
+| 7L | "sex-dependent fields" | CF helper pattern (cross-form value fetch) |
+| 7M | "repeat-key calculate + display pair" (duplicate of OC-5) | sex-dependent fields require SEX_CF |
+| 7N | (placeholder) | consent date floor for event dates |
+| 7O | (placeholder) | universal relevance patterns (umbrella with 7 sub-cases) |
+| 7P | (placeholder) | universal conditional branching patterns (umbrella with 6 sub-cases) |
 
-Each entry lists: sub-letter, proposed natural_key, proposed kind, proposed target, brief description, decomposition notes.
+The B.1a plan's "skip 7M as duplicate of OC-5" recommendation is rescinded — 7M in actual `prompts.py` is sex-dependent fields, not a repeat-key duplicate. **No skip. 16 sub-rules emitted, none retired.**
 
-### 7A. Paired *STDAT / *ENDAT cross-date constraints
+## Sub-rule catalogue (final)
 
-- **natural_key:** `clinical_patterns.paired_start_end_date_constraint`
-- **kind:** structured
-- **target:** field
-- **description:** Any field whose name ends in `STDAT` paired with a sibling ending in `ENDAT` (in the same form, same itemgroup) gets a constraint that the start date is on or before the end date. Constraint expression: `. <= ${<base>ENDAT}` on STDAT; `. >= ${<base>STDAT}` on ENDAT.
-- **applies_when:** `field.name matches "^.*STDAT$"` AND sibling exists `field.form.survey[?(@.name=~/^.*ENDAT$/ && @.bind__oc_itemgroup == $.field.bind__oc_itemgroup)]`
-- **effect:** `ensure: field.constraint = ". <= ${<sibling>}"`, paired constraint on sibling.
-- **decomposition_risk:** Sibling-lookup operator needs to be added to the DSL (the JSONPath shape above isn't in the current `applies_when` operator set). Phase B.1c work item: extend DSL with `has_sibling` or `field_pair` operator.
+Each entry: sub-letter → natural_key, kind, target, DSL operators used. Detailed prose lives in the corresponding JSON file under `conventions/global/`.
 
-### 7B. Future-date block on start dates
+| Sub | natural_key | kind | target | DSL ops used |
+|---|---|---|---|---|
+| 7A | `paired_start_end_date_constraint` | hybrid | field | `has_sibling` |
+| 7B | `start_date_not_in_future` | hybrid | field | `matches`, `any_of`, `ensure`, `flag` |
+| 7C | `endat_relevance_on_ongoing_status` | hybrid | field | `has_sibling` |
+| 7D | `sequential_dates_cascade` | hybrid | form | soft-only |
+| 7E | `bmi_calculation` | hybrid | form | `has_field` (×2, in `all_of`) |
+| 7F | `ae_severity_serious_logic` | hybrid | field | `has_sibling`, `ensure`, `flag` |
+| 7G | `eligibility_fixed_value_constraints` | hybrid | field | `matches`, `flag` |
+| 7H | `physiological_range_sanity_check` | **structured** | field | `in`, **`match`** |
+| 7I | `race_multiselect_exclusivity` | hybrid | field | `all_of`, `ensure`, `flag` |
+| 7J | `dose_calculation_optional` | hybrid | form | soft-only |
+| 7K | `duration_in_days_optional` | hybrid | form | soft-only |
+| 7L | `cross_form_value_fetch_cf` | hybrid | field | `matches`, `ensure` |
+| 7M | `sex_dependent_fields_via_sex_cf` | hybrid | form | `has_field` (regex), `any_of` |
+| 7N | `consent_date_floor` | hybrid | field | `all_of`, `not_in` |
+| 7O | `universal_relevance_patterns` | **advisory** | field | none |
+| 7P | `universal_conditional_branching` | **advisory** | field | none |
 
-- **natural_key:** `clinical_patterns.future_date_block_on_start_dates`
-- **kind:** structured
-- **target:** field
-- **description:** Fields whose name ends in `STDAT` or matches a clinical-event start-date pattern get a constraint `. <= today()` and constraint_message "Future dates are not allowed for start dates."
-- **applies_when:** `field.type == 'date'` AND `field.name matches "^.*STDAT$|^(VISITDAT|TRTDAT|...)"`
-- **effect:** `ensure: field.constraint = ". <= today()"`, `ensure: field.constraint_message`
-- **decomposition_risk:** Overlaps with §2 (`future_date_constraint_on_dates`) from B.0 — §2 applies to ALL dates, 7B applies to start dates specifically. Resolution at decomposition: §2 is the general rule, 7B is a stricter-message override for start dates. May merge into a single rule with a soft "use start-date-specific message when name ends in STDAT" clause.
+Kind distribution: 1 structured, 13 hybrid, 2 advisory. Only 7H (physiological ranges) is fully structured today — the rest carry soft directives because their effects require capabilities the engine doesn't yet have (sibling-name interpolation, constraint-text append, row insertion into form.survey).
 
-### 7C. *ENDAT relevance gated on *ONGO status
+7O and 7P are advisory because they document XPath idiom libraries rather than fire-on-entity rules. They render into Claude's prompt context during builds without triggering any mechanical evaluation.
 
-- **natural_key:** `clinical_patterns.endat_relevance_on_ongo_status`
-- **kind:** structured
-- **target:** field
-- **description:** Fields ending in `ENDAT` get `relevant: ${<base>ONGO}='N'` — end-date only visible when the corresponding "ongoing" flag is "No". Pairs with the *STDAT / *ENDAT pattern (7A).
-- **applies_when:** `field.name matches "^.*ENDAT$"` AND sibling `${<base>ONGO}` exists.
-- **effect:** `ensure: field.relevant = "${<base>ONGO}='N'"`
-- **decomposition_risk:** Same sibling-lookup operator dependency as 7A.
+## DSL gaps surfaced during decomposition
 
-### 7D. Sequential dates cascade
+The translation exercise surfaced four DSL gaps. Each one could promote one or more hybrid conventions to structured if implemented:
 
-- **natural_key:** `clinical_patterns.sequential_dates_cascade`
-- **kind:** hybrid
-- **target:** form
-- **description:** When a form has multiple sequential date fields (screening → consent → enrollment → randomization), each date constraint references the previous date in the sequence: `. >= ${<prev_date>}`. The sequence order comes from the protocol's visit schedule.
-- **applies_when (soft):** "form has multiple date fields representing sequential clinical events"
-- **effect (soft):** "emit constraints linking each date to the previous in protocol order"
-- **decomposition_risk:** "Sequential" requires AI judgment — kind stays hybrid. May be partially mechanized if the orchestrator passes the visit-schedule ordering as context.
+1. **Sibling-name string interpolation in effect expressions.** 7A, 7C, 7F all reference a sibling's actual field name in their constraint/relevant expressions (e.g. `${AESTDAT}` for the STDAT sibling of AEENDAT). Today the convention author has to write the expression in soft prose. A DSL primitive `${sibling.field.name}` resolved at effect-apply time would make these structured.
 
-### 7E. BMI calculation
+2. **Constraint-text append (extend, don't overwrite).** 7N's consent-date-floor extends an existing constraint with ` and . >= ${ICFDAT_CF}` rather than overwriting. `effects.set` overwrites; `effects.ensure` fires only when empty. A new `effects.extend` directive (read current, AND-join with addition, write result) would close this gap.
 
-- **natural_key:** `clinical_patterns.bmi_calculation`
-- **kind:** structured
-- **target:** field
-- **description:** When a form contains both HEIGHT and WEIGHT fields, emit a BMI calculate field with `type=text` (per OC-5b), `calculation = round(${WEIGHT} div (${HEIGHT} div 100) div (${HEIGHT} div 100), 1)`, `readonly=yes`. Unit assumption: HEIGHT in cm, WEIGHT in kg.
-- **applies_when:** `form.survey` contains a field named HEIGHT AND a field named WEIGHT.
-- **effect:** `ensure: form contains a BMI calculate row with the canonical formula`.
-- **decomposition_risk:** "Form contains field X" predicate needs DSL support. Workaround: orchestrator-level check before convention runs.
+3. **Form-survey row insertion at form scope.** 7E (BMI), 7J (dose calc), 7K (duration), 7L (CF helpers), 7M (sex-dependent helpers), 7N (consent helper) all need to emit a calculate row into a form's survey. Today this is soft-only. An `effects.emit_row` directive at form scope, taking a row dict and an insertion position (head/tail/after-field-X), would make these structured.
 
-### 7F. AE severity/serious logic
+4. **Per-field structural metadata beyond bind__oc_itemgroup.** Several conventions need to read or write XLSForm columns we don't currently surface in the spec model (constraint_message, readonly, bind__oc_external). These columns exist in the underlying XLSForm files; the engine's spec representation needs to surface them as first-class field attributes. Today they're accessed via `_set_path("field.constraint_message", ...)` which writes to the field dict but isn't read back by anything in the engine.
 
-- **natural_key:** `clinical_patterns.ae_severity_serious_logic`
-- **kind:** hybrid
-- **target:** form
-- **description:** AE form's AESEV (severity: Mild/Moderate/Severe) drives a default for AESER (serious flag): when AESEV='Severe', AESER defaults to 'Y' but remains editable. Pairs with AE termination logic.
-- **applies_when:** `form.form_id == 'AE'` (or repeating AE log-line variant)
-- **effect (soft):** "emit AESEV → AESER default-Y cascade with override allowed"
-- **decomposition_risk:** "Default but editable" semantics aren't in the current effect operators. Phase B.1c may extend DSL with a `default_value` directive distinct from `set`.
+These gaps are independent of B.1c. They'd land in a future B.1d-or-later DSL-extension pass.
 
-### 7G. Eligibility fixed-value constraints
+## Overlaps with System 2 (B.1d candidates)
 
-- **natural_key:** `clinical_patterns.eligibility_fixed_value_constraints`
-- **kind:** structured
-- **target:** field
-- **description:** Inclusion/exclusion criteria fields are select_one yn with a hard constraint that the value matches the protocol-required answer (e.g. IE01: "Subject is 18+" must be Y). Failure to meet causes ineligibility.
-- **applies_when:** `field.form.form_id matches "^I[EI]"` AND `field.type == 'select_one yn'`
-- **effect:** `ensure: field.constraint = ". = '<expected>'"`, with `<expected>` driven by protocol parsing.
-- **decomposition_risk:** The `<expected>` value comes from protocol analysis, not from the convention itself. The convention captures the structural pattern; the value is per-criterion.
+The B.0 inventory's System 2 (29 §-numbered rules, not yet translated) contains several rules that look like specific OC-7 sub-rule applications. These overlaps need resolution when System 2 lands:
 
-### 7H. Physiological range sanity checks
+- **§2 (general future-date constraint) ↔ 7B.** Likely merge: §2 is the general rule, 7B becomes a specific instance for *STDAT fields. Or §2 retires and 7B absorbs.
+- **§27 (sentinel exclusivity) ↔ 7I.** Same shape: §27 is the general pattern, 7I is the RACE-specific application. Likely keep both — §27 as cascade-resolved general rule, 7I as canonical reaffirmation for the RACE field.
+- **§22 (note-after-YN) ↔ 7O.a (YES-BRANCH).** Same idiom written in two places. §22 retires when 7O.a covers it.
+- **§23 (hidden-parent-context label) ↔ 7O.b, 7O.c, 7O.f.** §23 collects several relevance idioms into one rule; 7O distributes them. §23 retires when System 2 lands.
+- **§25 / §26 / §28.** Unknown overlap shape until System 2's text is read. Plan accordingly.
 
-- **natural_key:** `clinical_patterns.physiological_range_sanity_check`
-- **kind:** structured
-- **target:** field
-- **description:** Numeric fields measuring physiological quantities get range-check constraints with warning-level (soft) defaults. HEIGHT 50–250 cm. WEIGHT 2–300 kg. TEMP 30–45 °C. Systolic BP 50–250 mmHg. Etc.
-- **applies_when:** `field.name in ['HEIGHT', 'WEIGHT', 'TEMP', 'SBP', 'DBP', 'HR', ...]` AND `field.type in ['integer', 'decimal']`
-- **effect:** `ensure: field.constraint = ". >= <min> and . <= <max>"`, ranges per-name
-- **decomposition_risk:** Requires a per-name range table (HEIGHT=50–250, WEIGHT=2–300, etc.) — same DSL gap as §28's PRECISION_TABLE per B.0 Finding F5. Phase B.1c work item: extend DSL with a `match` operator that picks a value from a table.
+## What is NOT decomposed in B.1c-final
 
-### 7I. RACE multi-select exclusivity
+- **OC-7's umbrella convention** (`clinical_patterns.universal_clinical_data_patterns.json` from B.1a) is **retained**, not removed. It serves as the catalog pointer and the prompt-rendering anchor. The 16 sub-rules are addressable independently for cascade resolution; the umbrella is for orchestrator-level discovery.
+- **Stale duplicates of 7A–7P in skills/edc-builder/references/xlsform-build-rules.md and skills/protocol-analysis/references/xlsform-patterns.md** — deletion deferred to Phase C, per architecture doc §11.
+- **Per-helper CF convention bundle.** 7L's seven pre-blessed helpers (SEX_CF, AGE_CF, WEIGHT_CF, ICFDAT_CF, ARMCD_CF, ENRLDAT_CF, BRTHDAT_CF) could each get their own structured convention with the source OID coordinates hard-coded. Deferred to B.1d.
 
-- **natural_key:** `clinical_patterns.race_multiselect_exclusivity`
-- **kind:** structured
-- **target:** field
-- **description:** RACE field is select_multiple with exclusive sentinels: when "Other" or "Unknown" or "Not reported" is selected, no other choice may be selected. Constraint expression: `not(selected(., 'OTHER') and count-selected(.) > 1)` and same for UNKNOWN, NOTREPORTED.
-- **applies_when:** `field.name == 'RACE'` AND `field.type == 'select_multiple race'`
-- **effect:** `ensure: field.constraint = "..."`
-- **decomposition_risk:** Overlaps with §27 (`sentinel_exclusivity_constraint`) from B.0. Resolution at decomposition: §27 is the general pattern, 7I is the RACE-specific application. May merge or keep §27 as the cascade-resolved general rule and have 7I be a "use this for RACE" reference.
+## DSL operators used by B.1c-final conventions
 
-### 7J. Optional dose/duration calculations
-
-- **natural_key:** `clinical_patterns.dose_duration_calculations`
-- **kind:** hybrid
-- **target:** form
-- **description:** When a form has DOSE and ROUTE fields, optionally emit derived TOTAL_DOSE or PER_DAY_DOSE calculations based on frequency. Specifically optional — many protocols don't use these.
-- **applies_when (soft):** "Form has dosing fields and protocol specifies cumulative or per-period dose tracking"
-- **effect (soft):** "emit derived dose calculations per protocol spec"
-- **decomposition_risk:** Inherently hybrid. May stay hybrid even after full decomposition.
-
-### 7K. Cross-form value fetch via CF helpers
-
-- **natural_key:** `clinical_patterns.cross_form_value_fetch_cf`
-- **kind:** structured
-- **target:** field
-- **description:** Fields ending in `_CF` (e.g. ICFDAT_CF, SEX_CF, BRTHDAT_CF, AGE_CF, ARMCD_CF, ENRLDAT_CF) are pre-blessed cross-form helpers using external XPath. Each has a canonical calculation shape pulling from the source form (DM, IE, EN).
-- **applies_when:** `field.name matches "^.*_CF$"`
-- **effect:** `ensure: field.calculation` matches one of the pre-blessed helper patterns; `require: field.bind__oc_external = 'clinicaldata'`
-- **decomposition_risk:** Per-CF-helper calculation template needs to live somewhere addressable. May warrant a sibling document `conventions/_audit/CF_helper_catalog.md` listing the seven blessed helpers and their canonical calculations.
-
-### 7L. SEX_CF sex-dependent fields
-
-- **natural_key:** `clinical_patterns.sex_dependent_fields_via_sex_cf`
-- **kind:** structured
-- **target:** field
-- **description:** Fields that only apply to one sex (pregnancy test, menstrual cycle, prostate exam) gate themselves with `relevant: ${SEX_CF}='F'` (or 'M'). SEX_CF is the cross-form helper from 7K.
-- **applies_when:** Domain-specific field-name list (PREG*, MENS*, PROS*, etc.)
-- **effect:** `ensure: field.relevant references ${SEX_CF}`
-- **decomposition_risk:** Field-name allowlist needs to live somewhere addressable. Similar to 7K's CF helper catalog — may share a registry doc.
-
-### 7M. Repeat-key calculate + display pair
-
-- **natural_key:** `clinical_patterns.repeat_key_calculate_display_pair`
-- **kind:** structured
-- **target:** form
-- **description:** Repeating forms emit a two-row pair at the top of the repeat block: (1) a `calculate` row anchoring the repeat key with `once(...@ItemGroupRepeatKey)`, (2) a display-only `text` row showing `if(${ID}!='', ${ID}, 'Scheduled')`.
-- **applies_when:** `form.has_repeating_group == true`
-- **effect:** `ensure: form.survey first-rows-in-repeat-block match the canonical two-row pattern`
-- **decomposition_risk:** Overlaps with OC-5 (`repeating_group_repeat_key_anchor`). Resolution at decomposition: 7M and OC-5 are the same rule. The B.0 audit captured this overlap. May merge during decomposition rather than emit two conventions.
-
-### 7N. (Placeholder — see prompts.py lines 266–474 for actual text)
-
-To be filled in during decomposition. The catalog is intentionally incomplete; B.1c will read the OC-7 prose carefully and produce the complete 16-entry list.
-
-### 7O. (Placeholder — see prompts.py lines 266–474 for actual text)
-
-Same. See 7N.
-
-### 7P. (Placeholder — see prompts.py lines 266–474 for actual text)
-
-Same. See 7N.
-
-## Decomposition risks & DSL gaps
-
-The catalog above surfaced four DSL gaps that B.1c will need to either extend or work around:
-
-1. **Sibling-field lookup operator** — 7A, 7C need to find a paired field in the same form/itemgroup. Workaround: orchestrator-level pre-pass; long-term: `has_sibling` or `field_pair` operator.
-2. **Form-level "contains field X" predicate** — 7E, 7J need to gate convention firing on whether the form contains specific named fields. Workaround: orchestrator-level pre-pass; long-term: extend `applies_when` operators to include `form.survey[?(@.name=='X')]`-style queries.
-3. **Per-name lookup table operator** — 7H needs HEIGHT→[50,250], WEIGHT→[2,300], etc. Same DSL gap as §28's `PRECISION_TABLE` per B.0 F5. Long-term: `match` operator that picks a value from a table.
-4. **`default_value` directive distinct from `set`** — 7F needs "default to Y but allow override," which is semantically different from "force to Y."
-
-Phase B.1c kickoff should start with these four DSL extensions, then decompose the 16 sub-rules with the extended DSL available.
-
-## Sub-rule overlaps to resolve at decomposition
-
-- **7B ↔ §2** (general future-date constraint): merge or refine.
-- **7I ↔ §27** (sentinel exclusivity): keep general rule, 7I becomes specific application.
-- **7M ↔ OC-5** (repeat-key anchor): merge.
-- **§25 / §26 / §27 / §28 ↔ OC-7** (per B.0 finding F4, several §-rules look like specific OC-7 sub-rules expressed standalone): resolution at decomposition.
-
-## Stale duplicates to delete
-
-Per B.0 inventory, OC-7's sub-rules 7A–7P are also written out in:
-
-- `skills/edc-builder/references/xlsform-build-rules.md`
-- `skills/protocol-analysis/references/xlsform-patterns.md`
-
-These get deleted in Phase C (per the architecture doc §11 Phase B plan, with deletion of duplicate markdown deferred until the JSON-based conventions are proven in production). B.1c should not touch these files; deletion is a separate Phase C commit.
-
-## Out of scope for B.1c
-
-- Translating §20–§28 conventions from System 2. Those are their own decomposition discussion (B.0 finding F4 candidates), tracked separately.
-- Translating customer-specific overrides. Customer scope is empty today.
-- Translating vendor-specific rules. Vendor scope work is Phase B.1b per F2_resolution.md.
+- `has_field` (B.1c-1, commit `c9ef634`): used by 7E, 7M.
+- `has_sibling` (B.1c-1): used by 7A, 7C, 7F.
+- `match` (B.1c-2, commit `46ad938`): used by 7H.
+- `default_value` (B.1c-3, commit `a161961`): **not used in B.1c-final.** 7F was originally planned to compose `match` + `default_value`, but the actual `prompts.py` rule uses a hard constraint (Grade-5 must equal Y), not a runtime default. `default_value` remains the operator-of-record for runtime-default rules; no current sub-rule needs it. Worth noting that all four B.1c DSL extensions were correctly motivated by OC-7's needs, even though `default_value` ended up being used by zero OC-7 sub-rules — its existence enables future runtime-default rules that didn't make it into this phase.
 
 ---
 
-*End of plan. Awaiting Phase B.1c kickoff.*
+*End of plan. B.1c-final closes Phase B.1c. Phase B.1d (System 2 translation) is the next-but-not-imminent sub-phase.*

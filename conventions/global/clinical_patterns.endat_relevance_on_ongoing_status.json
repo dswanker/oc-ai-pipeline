@@ -1,0 +1,38 @@
+{
+  "id": "clinical_patterns.endat_relevance_on_ongoing_status",
+  "title": "End-date field is only relevant when the matching ongoing flag is 'N'",
+  "kind": "hybrid",
+  "scope": "global",
+  "status": "active",
+  "natural_key": "endat_relevance_on_ongoing_status",
+  "description": "When a form has both an *ENDAT field and a matching *ONGO field (e.g. AEENDAT+AEONGO, CMENDAT+CMONGO, MHENDAT+MHONGO), the end-date field gets `relevant: ${<base>ONGO}='N'` — the end-date is shown only when the corresponding condition/event is reported as not-ongoing.",
+  "rationale": "While a condition is ongoing there is no end date to record. Coordinators forced to enter a placeholder value (today's date, 1900-01-01, etc.) generate dirty data that complicates downstream analysis. Conditional relevance on the ongoing flag makes the form behave intuitively and keeps the dataset clean.",
+  "target": "field",
+  "applies_when": {
+    "field.name": { "matches": "^.*ENDAT$" },
+    "field.has_sibling": {
+      "where": { "field.name": { "matches": "^.*ONGO$" } },
+      "scope": "same_itemgroup"
+    }
+  },
+  "effect": {
+    "flag": {
+      "category": "review_flags.endat_relevance",
+      "message": "Field ${field.name} is an end-date paired with an ongoing-flag sibling. Verify relevant attribute is `${<sibling>ONGO}='N'`."
+    },
+    "soft": "Emit relevant: `${<base>ONGO}='N'` where <base> is the field-name prefix shared by the ONGO sibling (e.g. for AEENDAT, the sibling is AEONGO and relevant references ${AEONGO}). Like 7A, sibling-name interpolation is not yet expressible in the DSL — handled here in soft. The relevance gate pairs with the 7A constraint cleanly: end-date appears only when ongoing='N', and the value must be after the start date."
+  },
+  "created_at": "2026-05-14T22:00:00Z",
+  "created_by": "system:phase_b1c_final_translation",
+  "source": "consolidation:prompts.py:RULE_OC-7C",
+  "tags": ["clinical_patterns", "relevance", "dates", "paired_fields"],
+  "history": [
+    {
+      "at": "2026-05-14T22:00:00Z",
+      "by": "system:phase_b1c_final_translation",
+      "action": "created",
+      "status": "active",
+      "note": "Imported from prompts.py RULE OC-7C during Phase B.1c-final. Same sibling-interpolation DSL gap as 7A. Pairs with 7A (paired_start_end_date_constraint) — when both fire together on an ENDAT field, the result is a field that's only visible when ongoing='N' AND has a constraint linking it to the matching STDAT."
+    }
+  ]
+}
