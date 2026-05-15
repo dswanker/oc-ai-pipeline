@@ -237,3 +237,383 @@ def test_unknown_directive_raises(make_form):
         effects.apply_effect(
             {"set_magic": {"form.x": 1}}, ctx, spec, "test.id",
         )
+
+
+# ─────────────────────────── match (B.1c-2) ───────────────────────────
+
+def test_match_dispatches_to_matched_case(make_form, make_field):
+    f = make_form(survey=[make_field(name="HEIGHT")])
+    spec, ctx = _field_ctx(f["survey"][0], f)
+    eff = {"match": {
+        "on": "field.name",
+        "cases": {
+            "HEIGHT": {"set": {"field.constraint": ". >= 50 and . <= 250"}},
+            "WEIGHT": {"set": {"field.constraint": ". >= 2 and . <= 300"}},
+        },
+    }}
+    result = effects.apply_effect(eff, ctx, spec, "test.match.basic")
+    assert f["survey"][0]["constraint"] == ". >= 50 and . <= 250"
+    assert len(result.mutations_made) == 1
+    assert result.mutations_made[0].directive == "set"
+
+
+def test_match_falls_through_to_default_when_no_case_matches(make_form, make_field):
+    f = make_form(survey=[make_field(name="UNKNOWN_FIELD")])
+    spec, ctx = _field_ctx(f["survey"][0], f)
+    eff = {"match": {
+        "on": "field.name",
+        "cases": {
+            "HEIGHT": {"set": {"field.constraint": "x"}},
+        },
+        "default": {"flag": {
+            "category": "review_flags.no_range_defined",
+            "message": "no range for ${field.name}",
+        }},
+    }}
+    effects.apply_effect(eff, ctx, spec, "test.match.default")
+    # Default block emitted a flag, not a mutation.
+    assert "no range for UNKNOWN_FIELD" in spec["review_flags"]["no_range_defined"]
+    assert "constraint" not in f["survey"][0]
+
+
+def test_match_silent_noop_when_no_case_and_no_default(make_form, make_field):
+    f = make_form(survey=[make_field(name="UNKNOWN")])
+    spec, ctx = _field_ctx(f["survey"][0], f)
+    eff = {"match": {
+        "on": "field.name",
+        "cases": {"HEIGHT": {"set": {"field.constraint": "x"}}},
+    }}
+    result = effects.apply_effect(eff, ctx, spec, "test.match.noop")
+    assert result.mutations_made == []
+    assert result.flags_raised == []
+    assert "constraint" not in f["survey"][0]
+
+
+def test_match_silent_noop_when_on_missing_and_no_default(make_form, make_field):
+    """Missing `on` path with no default block: silent no-op."""
+    f = make_form(survey=[{"type": "text"}])  # no name field
+    spec, ctx = _field_ctx(f["survey"][0], f)
+    eff = {"match": {
+        "on": "field.name",
+        "cases": {"HEIGHT": {"set": {"field.constraint": "x"}}},
+    }}
+    result = effects.apply_effect(eff, ctx, spec, "test.match.missing_no_default")
+    assert result.mutations_made == []
+    assert result.flags_raised == []
+    assert "constraint" not in f["survey"][0]
+
+
+def test_match_default_fires_when_on_resolves_to_missing(make_form, make_field):
+    """Missing `on` path with default block: default dispatches (same posture as a miss)."""
+    f = make_form(survey=[{"type": "text"}])  # no name field
+    spec, ctx = _field_ctx(f["survey"][0], f)
+    eff = {"match": {
+        "on": "field.name",
+        "cases": {"HEIGHT": {"set": {"field.constraint": "x"}}},
+        "default": {"set": {"field.constraint": "default-value"}},
+    }}
+    effects.apply_effect(eff, ctx, spec, "test.match.missing_default")
+    assert f["survey"][0]["constraint"] == "default-value"
+
+
+def test_match_case_keys_are_case_sensitive(make_form, make_field):
+    f = make_form(survey=[make_field(name="height")])
+    spec, ctx = _field_ctx(f["survey"][0], f)
+    eff = {"match": {
+        "on": "field.name",
+        "cases": {"HEIGHT": {"set": {"field.constraint": "uppercase-match"}}},
+        "default": {"set": {"field.constraint": "default-match"}},
+    }}
+    effects.apply_effect(eff, ctx, spec, "test.match.case_sensitive")
+    # field.name="height" should NOT match cases["HEIGHT"]; falls to default.
+    assert f["survey"][0]["constraint"] == "default-match"
+
+
+def test_match_case_block_can_use_any_directive(make_form, make_field):
+    f = make_form(survey=[make_field(name="HEIGHT")])
+    spec, ctx = _field_ctx(f["survey"][0], f)
+    eff = {"match": {
+        "on": "field.name",
+        "cases": {
+            "HEIGHT": {
+                "set": {"field.constraint": ". >= 50"},
+                "flag": {"category": "review_flags.measurement", "message": "height ok"},
+            },
+        },
+    }}
+    effects.apply_effect(eff, ctx, spec, "test.match.multi_directive_case")
+    assert f["survey"][0]["constraint"] == ". >= 50"
+    assert "height ok" in spec["review_flags"]["measurement"]
+
+
+def test_match_nested_match_dispatches(make_form, make_field):
+    f = make_form(survey=[make_field(name="HEIGHT", type="integer")])
+    spec, ctx = _field_ctx(f["survey"][0], f)
+    eff = {"match": {
+        "on": "field.name",
+        "cases": {
+            "HEIGHT": {"match": {
+                "on": "field.type",
+                "cases": {
+                    "integer": {"set": {"field.constraint": "integer-height"}},
+                    "decimal": {"set": {"field.constraint": "decimal-height"}},
+                },
+            }},
+        },
+    }}
+    effects.apply_effect(eff, ctx, spec, "test.match.nested")
+    assert f["survey"][0]["constraint"] == "integer-height"
+
+
+def test_match_requires_on_and_cases(make_form, make_field):
+    f = make_form(survey=[make_field()])
+    spec, ctx = _field_ctx(f["survey"][0], f)
+    with pytest.raises(DSLEvaluationError, match="on.*cases"):
+        effects.apply_effect({"match": {"on": "field.name"}}, ctx, spec, "test.match.missing_cases")
+    with pytest.raises(DSLEvaluationError, match="on.*cases"):
+        effects.apply_effect({"match": {"cases": {}}}, ctx, spec, "test.match.missing_on")
+
+
+def test_match_rejects_non_dict_payload(make_form, make_field):
+    f = make_form(survey=[make_field()])
+    spec, ctx = _field_ctx(f["survey"][0], f)
+    with pytest.raises(DSLEvaluationError, match="match payload"):
+        effects.apply_effect({"match": "not-a-dict"}, ctx, spec, "test.match.bad_payload")
+
+
+def test_match_rejects_non_dict_cases(make_form, make_field):
+    f = make_form(survey=[make_field()])
+    spec, ctx = _field_ctx(f["survey"][0], f)
+    with pytest.raises(DSLEvaluationError, match="cases.*dict"):
+        effects.apply_effect(
+            {"match": {"on": "field.name", "cases": ["not-a-dict"]}},
+            ctx, spec, "test.match.bad_cases",
+        )
+
+
+def test_match_rejects_non_dict_case_value(make_form, make_field):
+    f = make_form(survey=[make_field(name="HEIGHT")])
+    spec, ctx = _field_ctx(f["survey"][0], f)
+    eff = {"match": {
+        "on": "field.name",
+        "cases": {"HEIGHT": "not-a-sub-effect-block"},
+    }}
+    with pytest.raises(DSLEvaluationError, match="sub-effect-block"):
+        effects.apply_effect(eff, ctx, spec, "test.match.bad_case_value")
+
+
+def test_match_rejects_soft_inside_case(make_form, make_field):
+    f = make_form(survey=[make_field(name="HEIGHT")])
+    spec, ctx = _field_ctx(f["survey"][0], f)
+    eff = {"match": {
+        "on": "field.name",
+        "cases": {
+            "HEIGHT": {"soft": "guidance text"},
+        },
+    }}
+    with pytest.raises(DSLEvaluationError, match="soft"):
+        effects.apply_effect(eff, ctx, spec, "test.match.soft_in_case")
+
+
+def test_match_rejects_unknown_directive_inside_case(make_form, make_field):
+    f = make_form(survey=[make_field(name="HEIGHT")])
+    spec, ctx = _field_ctx(f["survey"][0], f)
+    eff = {"match": {
+        "on": "field.name",
+        "cases": {
+            "HEIGHT": {"frobnicate": {"field.constraint": "x"}},
+        },
+    }}
+    with pytest.raises(DSLEvaluationError, match="Unknown effect directive"):
+        effects.apply_effect(eff, ctx, spec, "test.match.unknown_directive")
+
+
+
+
+# ─────────────────────────── match (B.1c-2) ───────────────────────────
+
+def test_match_dispatches_to_matched_case(make_form, make_field):
+    f = make_form(survey=[make_field(name="HEIGHT")])
+    spec, ctx = _field_ctx(f["survey"][0], f)
+    eff = {"match": {
+        "on": "field.name",
+        "cases": {
+            "HEIGHT": {"set": {"field.constraint": ". >= 50 and . <= 250"}},
+            "WEIGHT": {"set": {"field.constraint": ". >= 2 and . <= 300"}},
+        },
+    }}
+    result = effects.apply_effect(eff, ctx, spec, "test.match.basic")
+    assert f["survey"][0]["constraint"] == ". >= 50 and . <= 250"
+    assert len(result.mutations_made) == 1
+    assert result.mutations_made[0].directive == "set"
+
+
+def test_match_falls_through_to_default_when_no_case_matches(make_form, make_field):
+    f = make_form(survey=[make_field(name="UNKNOWN_FIELD")])
+    spec, ctx = _field_ctx(f["survey"][0], f)
+    eff = {"match": {
+        "on": "field.name",
+        "cases": {
+            "HEIGHT": {"set": {"field.constraint": "x"}},
+        },
+        "default": {"flag": {
+            "category": "review_flags.no_range_defined",
+            "message": "no range for ${field.name}",
+        }},
+    }}
+    effects.apply_effect(eff, ctx, spec, "test.match.default")
+    # Default block emitted a flag, not a mutation.
+    assert "no range for UNKNOWN_FIELD" in spec["review_flags"]["no_range_defined"]
+    assert "constraint" not in f["survey"][0]
+
+
+def test_match_silent_noop_when_no_case_and_no_default(make_form, make_field):
+    f = make_form(survey=[make_field(name="UNKNOWN")])
+    spec, ctx = _field_ctx(f["survey"][0], f)
+    eff = {"match": {
+        "on": "field.name",
+        "cases": {"HEIGHT": {"set": {"field.constraint": "x"}}},
+    }}
+    result = effects.apply_effect(eff, ctx, spec, "test.match.noop")
+    assert result.mutations_made == []
+    assert result.flags_raised == []
+    assert "constraint" not in f["survey"][0]
+
+
+def test_match_silent_noop_when_on_missing_and_no_default(make_form, make_field):
+    """Missing `on` path with no default block: silent no-op."""
+    f = make_form(survey=[{"type": "text"}])  # no name field
+    spec, ctx = _field_ctx(f["survey"][0], f)
+    eff = {"match": {
+        "on": "field.name",
+        "cases": {"HEIGHT": {"set": {"field.constraint": "x"}}},
+    }}
+    result = effects.apply_effect(eff, ctx, spec, "test.match.missing_no_default")
+    assert result.mutations_made == []
+    assert result.flags_raised == []
+    assert "constraint" not in f["survey"][0]
+
+
+def test_match_default_fires_when_on_resolves_to_missing(make_form, make_field):
+    """Missing `on` path with default block: default dispatches (same posture as a miss)."""
+    f = make_form(survey=[{"type": "text"}])  # no name field
+    spec, ctx = _field_ctx(f["survey"][0], f)
+    eff = {"match": {
+        "on": "field.name",
+        "cases": {"HEIGHT": {"set": {"field.constraint": "x"}}},
+        "default": {"set": {"field.constraint": "default-value"}},
+    }}
+    effects.apply_effect(eff, ctx, spec, "test.match.missing_default")
+    assert f["survey"][0]["constraint"] == "default-value"
+
+
+def test_match_case_keys_are_case_sensitive(make_form, make_field):
+    f = make_form(survey=[make_field(name="height")])
+    spec, ctx = _field_ctx(f["survey"][0], f)
+    eff = {"match": {
+        "on": "field.name",
+        "cases": {"HEIGHT": {"set": {"field.constraint": "uppercase-match"}}},
+        "default": {"set": {"field.constraint": "default-match"}},
+    }}
+    effects.apply_effect(eff, ctx, spec, "test.match.case_sensitive")
+    # field.name="height" should NOT match cases["HEIGHT"]; falls to default.
+    assert f["survey"][0]["constraint"] == "default-match"
+
+
+def test_match_case_block_can_use_any_directive(make_form, make_field):
+    f = make_form(survey=[make_field(name="HEIGHT")])
+    spec, ctx = _field_ctx(f["survey"][0], f)
+    eff = {"match": {
+        "on": "field.name",
+        "cases": {
+            "HEIGHT": {
+                "set": {"field.constraint": ". >= 50"},
+                "flag": {"category": "review_flags.measurement", "message": "height ok"},
+            },
+        },
+    }}
+    effects.apply_effect(eff, ctx, spec, "test.match.multi_directive_case")
+    assert f["survey"][0]["constraint"] == ". >= 50"
+    assert "height ok" in spec["review_flags"]["measurement"]
+
+
+def test_match_nested_match_dispatches(make_form, make_field):
+    f = make_form(survey=[make_field(name="HEIGHT", type="integer")])
+    spec, ctx = _field_ctx(f["survey"][0], f)
+    eff = {"match": {
+        "on": "field.name",
+        "cases": {
+            "HEIGHT": {"match": {
+                "on": "field.type",
+                "cases": {
+                    "integer": {"set": {"field.constraint": "integer-height"}},
+                    "decimal": {"set": {"field.constraint": "decimal-height"}},
+                },
+            }},
+        },
+    }}
+    effects.apply_effect(eff, ctx, spec, "test.match.nested")
+    assert f["survey"][0]["constraint"] == "integer-height"
+
+
+def test_match_requires_on_and_cases(make_form, make_field):
+    f = make_form(survey=[make_field()])
+    spec, ctx = _field_ctx(f["survey"][0], f)
+    with pytest.raises(DSLEvaluationError, match="on.*cases"):
+        effects.apply_effect({"match": {"on": "field.name"}}, ctx, spec, "test.match.missing_cases")
+    with pytest.raises(DSLEvaluationError, match="on.*cases"):
+        effects.apply_effect({"match": {"cases": {}}}, ctx, spec, "test.match.missing_on")
+
+
+def test_match_rejects_non_dict_payload(make_form, make_field):
+    f = make_form(survey=[make_field()])
+    spec, ctx = _field_ctx(f["survey"][0], f)
+    with pytest.raises(DSLEvaluationError, match="match payload"):
+        effects.apply_effect({"match": "not-a-dict"}, ctx, spec, "test.match.bad_payload")
+
+
+def test_match_rejects_non_dict_cases(make_form, make_field):
+    f = make_form(survey=[make_field()])
+    spec, ctx = _field_ctx(f["survey"][0], f)
+    with pytest.raises(DSLEvaluationError, match="cases.*dict"):
+        effects.apply_effect(
+            {"match": {"on": "field.name", "cases": ["not-a-dict"]}},
+            ctx, spec, "test.match.bad_cases",
+        )
+
+
+def test_match_rejects_non_dict_case_value(make_form, make_field):
+    f = make_form(survey=[make_field(name="HEIGHT")])
+    spec, ctx = _field_ctx(f["survey"][0], f)
+    eff = {"match": {
+        "on": "field.name",
+        "cases": {"HEIGHT": "not-a-sub-effect-block"},
+    }}
+    with pytest.raises(DSLEvaluationError, match="sub-effect-block"):
+        effects.apply_effect(eff, ctx, spec, "test.match.bad_case_value")
+
+
+def test_match_rejects_soft_inside_case(make_form, make_field):
+    f = make_form(survey=[make_field(name="HEIGHT")])
+    spec, ctx = _field_ctx(f["survey"][0], f)
+    eff = {"match": {
+        "on": "field.name",
+        "cases": {
+            "HEIGHT": {"soft": "guidance text"},
+        },
+    }}
+    with pytest.raises(DSLEvaluationError, match="soft"):
+        effects.apply_effect(eff, ctx, spec, "test.match.soft_in_case")
+
+
+def test_match_rejects_unknown_directive_inside_case(make_form, make_field):
+    f = make_form(survey=[make_field(name="HEIGHT")])
+    spec, ctx = _field_ctx(f["survey"][0], f)
+    eff = {"match": {
+        "on": "field.name",
+        "cases": {
+            "HEIGHT": {"frobnicate": {"field.constraint": "x"}},
+        },
+    }}
+    with pytest.raises(DSLEvaluationError, match="Unknown effect directive"):
+        effects.apply_effect(eff, ctx, spec, "test.match.unknown_directive")

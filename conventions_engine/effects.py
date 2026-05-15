@@ -174,6 +174,58 @@ def _do_remove_from(payload: Dict[str, Any], ctx: EntityContext, result: ApplyRe
         ))
 
 
+def _do_match(payload: Dict[str, Any], ctx: EntityContext, result: ApplyResult) -> None:
+    """
+    Conditional dispatch on a resolved path value.
+
+    Shape:
+      {
+        "on": "<dotted-path>",
+        "cases": { "<case-value>": { <sub-effect-block> }, ... },
+        "default": { <sub-effect-block> }   # optional
+      }
+
+    Resolves `on` against the current context. If the resolved value
+    is a key in `cases`, dispatches that case's sub-effect-block via
+    the existing DIRECTIVES table. If no case matches and `default`
+    is provided, dispatches `default`. Otherwise silent no-op
+    (including when `on` resolves to _SENTINEL_MISSING).
+
+    Case keys are exact-match, case-sensitive (Python dict semantics).
+    Sub-effect-blocks may contain any directive including nested match;
+    they may NOT contain `soft` (parent excludes soft for non-advisory
+    conventions). Flag-flushing into spec.review_flags happens once in
+    the outer apply_effect call, so this helper does not flush.
+    """
+    if not isinstance(payload, dict):
+        raise DSLEvaluationError(f"match payload must be a dict, got {type(payload).__name__}")
+    if "on" not in payload or "cases" not in payload:
+        raise DSLEvaluationError("match requires both 'on' and 'cases' keys")
+    on_path = payload["on"]
+    cases = payload["cases"]
+    if not isinstance(cases, dict):
+        raise DSLEvaluationError("match 'cases' must be a dict of case-value -> sub-effect-block")
+
+    actual = _resolve_path(on_path, ctx)
+    selected: Any = _SENTINEL_MISSING
+    if actual is not _SENTINEL_MISSING and actual in cases:
+        selected = cases[actual]
+    elif "default" in payload:
+        selected = payload["default"]
+
+    if selected is _SENTINEL_MISSING:
+        return  # no case matched, no default; silent no-op
+    if not isinstance(selected, dict):
+        raise DSLEvaluationError("match case / default must be a sub-effect-block (dict)")
+
+    for sub_key, sub_payload in selected.items():
+        if sub_key == "soft":
+            raise DSLEvaluationError("match sub-effect-blocks may not contain 'soft'")
+        if sub_key not in DIRECTIVES:
+            raise DSLEvaluationError(f"Unknown effect directive {sub_key!r} inside match case")
+        DIRECTIVES[sub_key](sub_payload, ctx, result)
+
+
 DIRECTIVES = {
     "set":         _do_set,
     "ensure":      _do_ensure,
@@ -181,6 +233,7 @@ DIRECTIVES = {
     "flag":        _do_flag,
     "append_to":   _do_append_to,
     "remove_from": _do_remove_from,
+    "match":       _do_match,
 }
 
 

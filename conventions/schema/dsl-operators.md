@@ -205,6 +205,50 @@ Remove a value from a list at the path. No-op if not present.
 "effect": { "remove_from": { "form.visits_assigned": "SE_COMMON" } }
 ```
 
+### `match`
+
+Conditional dispatch on a resolved path value. Selects one of several sub-effect-blocks based on what `on` resolves to.
+
+```json
+"effect": {
+  "match": {
+    "on": "field.name",
+    "cases": {
+      "HEIGHT": { "set": { "field.constraint": ". >= 50 and . <= 250" } },
+      "WEIGHT": { "set": { "field.constraint": ". >= 2 and . <= 300" } },
+      "TEMP":   { "set": { "field.constraint": ". >= 30 and . <= 45" } }
+    },
+    "default": {
+      "flag": {
+        "category": "review_flags.no_range_defined",
+        "message": "No physiological range defined for ${field.name}"
+      }
+    }
+  }
+}
+```
+
+Semantics:
+
+- `on` is a dotted path resolved against the current entity context.
+- `cases` is a dict mapping case-value → sub-effect-block. The resolved value of `on` is looked up; if it's a key, that case's sub-effect-block dispatches via the existing directive table.
+- `default` is optional. If no case matches and `default` is present, it dispatches. Otherwise silent no-op.
+- If `on` resolves to a missing path, `match` is a silent no-op (the missing value can never match any case; `default` does NOT fire on this branch — by design, since "missing path" usually indicates the convention shouldn't have applied to this entity).
+
+Case keys are exact-match, case-sensitive. `HEIGHT` ≠ `height` ≠ `Height`.
+
+Sub-effect-blocks can use any directive — `set`, `ensure`, `require`, `flag`, `append_to`, `remove_from`, or nested `match`. They cannot use `soft` (the parent effect already excludes `soft` for non-advisory conventions). Multiple directives per case are allowed and execute in source order.
+
+Error cases:
+- `payload` is not a dict → `DSLEvaluationError`
+- Missing `on` or `cases` → `DSLEvaluationError`
+- `cases` is not a dict → `DSLEvaluationError`
+- A case value or `default` value is not a dict → `DSLEvaluationError`
+- A sub-effect-block contains `soft` → `DSLEvaluationError`
+- A sub-effect-block contains an unknown directive → `DSLEvaluationError`
+
+Conflict-detection note: two `match` directives on the same target with different `cases` dicts are flagged as semantically disagreeing during promotion-time conflict detection. This is the conservative behavior — even if one table's keys are a strict subset of the other producing identical results on overlap, the shallow dict-inequality check produces a false-positive conflict report. Phase B.1c does not extend `_effects_disagree` with subset-equivalence logic; if `match` proves noisy at promotion time a future patch can add it.
+
 ### Soft effect
 
 ```json
