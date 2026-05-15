@@ -249,6 +249,40 @@ Error cases:
 
 Conflict-detection note: two `match` directives on the same target with different `cases` dicts are flagged as semantically disagreeing during promotion-time conflict detection. This is the conservative behavior — even if one table's keys are a strict subset of the other producing identical results on overlap, the shallow dict-inequality check produces a false-positive conflict report. Phase B.1c does not extend `_effects_disagree` with subset-equivalence logic; if `match` proves noisy at promotion time a future patch can add it.
 
+### `default_value`
+
+Write a default value to the XLSForm `default` column on a field. Only-if-empty semantics.
+
+```json
+"effect": {
+  "default_value": "Y"
+}
+```
+
+Semantics:
+
+- Bare-value payload — the value to write to `field.default`.
+- Idempotent: if `field.default` is already populated (non-empty, non-null), this directive is a no-op. A higher-precedence convention or upstream process already set it; we don't overwrite.
+- Field-scoped only. Non-field contexts (form, event, choice, study) raise `DSLEvaluationError`.
+- Empty / `None` payload raises `DSLEvaluationError`. Clearing a default is almost certainly a bug; if intended, use `set` with an explicit null.
+
+Use this directive when the rule is "pre-populate the cell with X, but let the data-entry user change it" — different from `set` (overwrites unconditionally, even if populated) and from `ensure` (writes to any field column, not specifically the XLSForm `default` column).
+
+Composes naturally with `match`:
+
+```json
+"effect": {
+  "match": {
+    "on": "field.name",
+    "cases": {
+      "AESER": { "default_value": "Y" }
+    }
+  }
+}
+```
+
+The pattern above implements OC-7 7F's AESEV→AESER cascade: when severity is selected as `Severe`, the serious-event field pre-populates with `Y`, but the data-entry user can change it.
+
 ### Soft effect
 
 ```json

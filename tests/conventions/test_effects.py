@@ -617,3 +617,106 @@ def test_match_rejects_unknown_directive_inside_case(make_form, make_field):
     }}
     with pytest.raises(DSLEvaluationError, match="Unknown effect directive"):
         effects.apply_effect(eff, ctx, spec, "test.match.unknown_directive")
+
+
+# ─────────────────────────── default_value (B.1c-3) ───────────────────────────
+
+def test_default_value_writes_to_field_default_when_empty(make_form, make_field):
+    f = make_form(survey=[make_field(name="AESER")])
+    spec, ctx = _field_ctx(f["survey"][0], f)
+    result = effects.apply_effect(
+        {"default_value": "Y"}, ctx, spec, "test.default_value.basic",
+    )
+    assert f["survey"][0]["default"] == "Y"
+    assert len(result.mutations_made) == 1
+    assert result.mutations_made[0].directive == "default_value"
+    assert result.mutations_made[0].path == "field.default"
+    assert result.mutations_made[0].new_value == "Y"
+
+
+def test_default_value_is_noop_when_field_default_already_set(make_form, make_field):
+    fld = make_field(name="AESER")
+    fld["default"] = "N"  # already populated
+    f = make_form(survey=[fld])
+    spec, ctx = _field_ctx(f["survey"][0], f)
+    result = effects.apply_effect(
+        {"default_value": "Y"}, ctx, spec, "test.default_value.idempotent",
+    )
+    assert f["survey"][0]["default"] == "N"  # unchanged
+    assert result.mutations_made == []
+
+
+def test_default_value_overwrites_explicit_empty_string(make_form, make_field):
+    fld = make_field(name="AESER")
+    fld["default"] = ""  # empty string, treated as missing
+    f = make_form(survey=[fld])
+    spec, ctx = _field_ctx(f["survey"][0], f)
+    effects.apply_effect(
+        {"default_value": "Y"}, ctx, spec, "test.default_value.empty_string",
+    )
+    assert f["survey"][0]["default"] == "Y"
+
+
+def test_default_value_overwrites_explicit_none(make_form, make_field):
+    fld = make_field(name="AESER")
+    fld["default"] = None  # explicit None, treated as missing
+    f = make_form(survey=[fld])
+    spec, ctx = _field_ctx(f["survey"][0], f)
+    effects.apply_effect(
+        {"default_value": "Y"}, ctx, spec, "test.default_value.none",
+    )
+    assert f["survey"][0]["default"] == "Y"
+
+
+def test_default_value_rejects_form_context(make_form):
+    f = make_form()
+    spec, ctx = _form_ctx(f)
+    with pytest.raises(DSLEvaluationError, match="field-scoped"):
+        effects.apply_effect(
+            {"default_value": "Y"}, ctx, spec, "test.default_value.non_field",
+        )
+
+
+def test_default_value_rejects_empty_payload(make_form, make_field):
+    f = make_form(survey=[make_field()])
+    spec, ctx = _field_ctx(f["survey"][0], f)
+    with pytest.raises(DSLEvaluationError, match="non-empty"):
+        effects.apply_effect(
+            {"default_value": ""}, ctx, spec, "test.default_value.empty",
+        )
+
+
+def test_default_value_rejects_none_payload(make_form, make_field):
+    f = make_form(survey=[make_field()])
+    spec, ctx = _field_ctx(f["survey"][0], f)
+    with pytest.raises(DSLEvaluationError, match="non-empty"):
+        effects.apply_effect(
+            {"default_value": None}, ctx, spec, "test.default_value.none_payload",
+        )
+
+
+def test_default_value_composes_with_match_for_oc7_7f(make_form, make_field):
+    # OC-7 7F's AESEV → AESER cascade: match on field name, default_value in the case.
+    aesev = make_field(name="AESEV")
+    aeser = make_field(name="AESER")
+    f = make_form(survey=[aesev, aeser])
+    spec, ctx = _field_ctx(aeser, f)
+    eff = {"match": {
+        "on": "field.name",
+        "cases": {
+            "AESER": {"default_value": "Y"},
+        },
+    }}
+    effects.apply_effect(eff, ctx, spec, "test.default_value.match_compose")
+    assert aeser["default"] == "Y"
+    assert "default" not in aesev  # only the matched field gets the default
+
+
+def test_default_value_can_write_non_string_values(make_form, make_field):
+    f = make_form(survey=[make_field(name="X")])
+    spec, ctx = _field_ctx(f["survey"][0], f)
+    # Integer payload for a numeric default.
+    effects.apply_effect(
+        {"default_value": 42}, ctx, spec, "test.default_value.integer",
+    )
+    assert f["survey"][0]["default"] == 42

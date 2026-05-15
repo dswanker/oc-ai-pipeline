@@ -226,6 +226,51 @@ def _do_match(payload: Dict[str, Any], ctx: EntityContext, result: ApplyResult) 
         DIRECTIVES[sub_key](sub_payload, ctx, result)
 
 
+def _do_default_value(payload, ctx: "EntityContext", result: "ApplyResult") -> None:
+    """
+    Write a default value to the XLSForm `default` column on a field.
+
+    Shape:
+      "default_value": "Y"           # bare value, the value to write
+
+    Field-scoped directive ONLY. Writes to `field.default`. Only-if-empty
+    semantics, matching `ensure`: if `field.default` is already populated,
+    this directive is a no-op (a higher-precedence convention or upstream
+    process already set it; we don't overwrite).
+
+    Use this directive when the rule is "pre-populate the cell with X but
+    let the user change it" — different from `set` (overwrite, even if
+    populated) and from `ensure` (write to any field column, not just
+    the XLSForm default column).
+
+    OC-7 7F's AESEV → AESER cascade lands as a `match` with `default_value`
+    inside the AESER case.
+
+    Errors:
+      - non-field context → DSLEvaluationError
+      - empty / None payload → DSLEvaluationError (clearing a default is
+        almost certainly a bug; use `set` with explicit null if intended)
+    """
+    if ctx.kind != "field":
+        raise DSLEvaluationError(
+            f"default_value requires field-scoped context, got {ctx.kind!r}"
+        )
+    if payload is None or payload == "":
+        raise DSLEvaluationError(
+            "default_value payload must be a non-empty value"
+        )
+
+    current = _resolve_path("field.default", ctx)
+    if current is _SENTINEL_MISSING or current is None or current == "":
+        _set_path("field.default", payload, ctx)
+        result.mutations_made.append(Mutation(
+            directive="default_value",
+            path="field.default",
+            old_value=None,
+            new_value=payload,
+        ))
+
+
 DIRECTIVES = {
     "set":         _do_set,
     "ensure":      _do_ensure,
@@ -234,6 +279,7 @@ DIRECTIVES = {
     "append_to":   _do_append_to,
     "remove_from": _do_remove_from,
     "match":       _do_match,
+    "default_value": _do_default_value,
 }
 
 
