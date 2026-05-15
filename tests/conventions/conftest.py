@@ -39,7 +39,7 @@ def make_convention():
             conv.pop("applies_when", None)
             conv.pop("effect", None)
         # Special handling: scope == "global" cannot have scope_id
-        if overrides.get("scope") in ("customer", "study") and "scope_id" not in overrides:
+        if overrides.get("scope") in ("customer", "vendor", "study") and "scope_id" not in overrides:
             overrides["scope_id"] = "test_scope_id"
         conv.update(overrides)
         return conv

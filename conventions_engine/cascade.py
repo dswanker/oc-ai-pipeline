@@ -1,4 +1,15 @@
-"""Cascade resolver: study > customer > global, by natural_key."""
+"""Cascade resolver: study > {customer, vendor} > global, by natural_key.
+
+Customer and vendor are peer axes at scope_order=1 per F2 sub-decision A.
+When both scopes resolve the same natural_key, customer wins — OC house
+conventions take precedence over vendor defaults. This is achieved by
+iteration ORDER (vendor before customer in the build loop below), not
+by an explicit dominance check, mirroring how customer-overrides-global
+is achieved today. The losing vendor convention surfaces in the
+winner's `overrode[]` list, the same way a customer convention would
+surface in a study-scope winner's overrode. Non-migration builds
+(loaded["vendor"] == []) are unaffected.
+"""
 from __future__ import annotations
 from typing import Any, Dict, List
 
@@ -36,7 +47,10 @@ def resolve(loaded: Dict[str, Any]) -> List[ResolvedConvention]:
     actually be applied, each with metadata about any masked-out
     conventions at lower-precedence scopes.
 
-    Precedence: study (highest) > customer > global (lowest).
+    Precedence: study (highest) > customer > vendor > global (lowest).
+    Customer and vendor are peers (both scope_order=1 in output sort).
+    Iteration order below puts vendor before customer so customer
+    overrides vendor on natural_key collision — per F2 sub-decision A.
     Same scope + same natural_key: undefined — emit both with no
     masking, since promotion-time conflict detection should have
     prevented this from happening.
@@ -44,9 +58,9 @@ def resolve(loaded: Dict[str, Any]) -> List[ResolvedConvention]:
     by_key: Dict[str, Dict[str, Any]] = {}  # natural_key → {"winner": conv, "overrode": [Overridden]}
 
     # Build in reverse precedence so later inserts overwrite earlier.
-    # global first → customer can override → study can override.
+    # global → vendor → customer (peers; customer wins per F2-A) → study.
 
-    for scope_name in ("global", "customer", "study"):
+    for scope_name in ("global", "vendor", "customer", "study"):
         for conv in loaded.get(scope_name) or []:
             nk = conv.get("natural_key")
             if not nk:
@@ -66,7 +80,7 @@ def resolve(loaded: Dict[str, Any]) -> List[ResolvedConvention]:
     # Conventions that lack a natural_key (shouldn't happen post-validation,
     # but be defensive) are passed through with no cascade interaction.
     pass_through: List[Dict[str, Any]] = []
-    for scope_name in ("global", "customer", "study"):
+    for scope_name in ("global", "vendor", "customer", "study"):
         for conv in loaded.get(scope_name) or []:
             if not conv.get("natural_key"):
                 pass_through.append(conv)
@@ -83,7 +97,8 @@ def resolve(loaded: Dict[str, Any]) -> List[ResolvedConvention]:
     # Sort for deterministic application order: by scope (global first
     # so study overrides are obvious in conventions_engine_applied output),
     # then by id alphabetically.
-    scope_order = {"global": 0, "customer": 1, "study": 2}
+    # Peer axis per F2 sub-decision A; id-alphabetical tiebreak for ties at scope_order=1.
+    scope_order = {"global": 0, "vendor": 1, "customer": 1, "study": 2}
     out.sort(key=lambda r: (
         scope_order.get(r.convention.get("scope", ""), 99),
         r.convention.get("id", ""),
