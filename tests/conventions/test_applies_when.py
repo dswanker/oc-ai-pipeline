@@ -211,3 +211,190 @@ def test_soft_marker_does_not_affect_match(make_form):
         _ctx(f),
     )
     assert not result.matched
+
+
+# ───────────────────────── form.has_field (B.1c-1) ─────────────────────────
+
+def test_has_field_matches_when_form_contains_named_field(make_form, make_field):
+    f = make_form(survey=[
+        make_field(name="HEIGHT", type="integer"),
+        make_field(name="WEIGHT", type="integer"),
+    ])
+    aw = {"form.has_field": {"where": {"field.name": "HEIGHT"}}}
+    assert applies_when.evaluate(aw, _ctx(f)).matched
+
+
+def test_has_field_misses_when_no_field_matches(make_form, make_field):
+    f = make_form(survey=[make_field(name="AGE", type="integer")])
+    aw = {"form.has_field": {"where": {"field.name": "HEIGHT"}}}
+    assert not applies_when.evaluate(aw, _ctx(f)).matched
+
+
+def test_has_field_with_compound_where(make_form, make_field):
+    f = make_form(survey=[
+        make_field(name="HEIGHT", type="integer"),
+        make_field(name="WEIGHT", type="text"),  # wrong type
+    ])
+    # Where clause requires both name match AND integer type.
+    aw = {"form.has_field": {"where": {
+        "all_of": [
+            {"field.name": "WEIGHT"},
+            {"field.type": "integer"},
+        ]
+    }}}
+    assert not applies_when.evaluate(aw, _ctx(f)).matched
+
+
+def test_has_field_with_regex_where(make_form, make_field):
+    f = make_form(survey=[
+        make_field(name="AESTDAT", type="date"),
+        make_field(name="AEENDAT", type="date"),
+    ])
+    aw = {"form.has_field": {"where": {"field.name": {"matches": "^.*STDAT$"}}}}
+    assert applies_when.evaluate(aw, _ctx(f)).matched
+
+
+def test_has_field_works_from_field_context(make_form, make_field):
+    f = make_form(survey=[
+        make_field(name="HEIGHT", type="integer"),
+        make_field(name="WEIGHT", type="integer"),
+    ])
+    # The convention's target=field; the current field is HEIGHT; the form
+    # still gets walked for the has_field probe.
+    aw = {"form.has_field": {"where": {"field.name": "WEIGHT"}}}
+    assert applies_when.evaluate(aw, _field_ctx(f["survey"][0], f)).matched
+
+
+def test_has_field_empty_survey_returns_false(make_form):
+    f = make_form(survey=[])
+    aw = {"form.has_field": {"where": {"field.name": "ANY"}}}
+    assert not applies_when.evaluate(aw, _ctx(f)).matched
+
+
+def test_has_field_requires_where(make_form):
+    f = make_form()
+    with pytest.raises(DSLEvaluationError, match="where"):
+        applies_when.evaluate({"form.has_field": {}}, _ctx(f))
+
+
+def test_has_field_rejects_non_form_context(make_form):
+    spec = {"events": [{"event_oid": "SE_X"}]}
+    ctx = EntityContext(kind="event", entity=spec["events"][0], parent=spec,
+                        spec=spec, path="events[0]")
+    aw = {"form.has_field": {"where": {"field.name": "X"}}}
+    with pytest.raises(DSLEvaluationError, match="form.has_field"):
+        applies_when.evaluate(aw, ctx)
+
+
+def test_has_field_inner_soft_hints_do_not_leak(make_form, make_field):
+    f = make_form(survey=[make_field(name="X")])
+    aw = {"form.has_field": {"where": {
+        "field.name": "X",
+        "soft": "this hint must NOT leak to the outer evaluator",
+    }}}
+    result = applies_when.evaluate(aw, _ctx(f))
+    assert result.matched
+    assert "this hint must NOT leak to the outer evaluator" not in result.soft_hints
+
+
+def test_has_field_outer_soft_hints_preserved(make_form, make_field):
+    f = make_form(survey=[make_field(name="HEIGHT")])
+    aw = {
+        "form.has_field": {"where": {"field.name": "HEIGHT"}},
+        "soft": "outer hint should be kept",
+    }
+    result = applies_when.evaluate(aw, _ctx(f))
+    assert result.matched
+    assert "outer hint should be kept" in result.soft_hints
+
+
+# ───────────────────── field.has_sibling (B.1c-1) ────────────────────────
+
+def test_has_sibling_finds_other_field_in_same_form(make_form, make_field):
+    stdat = make_field(name="AESTDAT", type="date", bind__oc_itemgroup="AE")
+    endat = make_field(name="AEENDAT", type="date", bind__oc_itemgroup="AE")
+    f = make_form(survey=[stdat, endat])
+    aw = {"field.has_sibling": {"where": {"field.name": {"matches": "^.*ENDAT$"}}}}
+    assert applies_when.evaluate(aw, _field_ctx(stdat, f)).matched
+
+
+def test_has_sibling_does_not_match_self(make_form, make_field):
+    only_stdat = make_field(name="AESTDAT", type="date")
+    f = make_form(survey=[only_stdat])
+    aw = {"field.has_sibling": {"where": {"field.name": "AESTDAT"}}}
+    # Only AESTDAT exists; if self-exclusion is correct, no sibling matches.
+    assert not applies_when.evaluate(aw, _field_ctx(only_stdat, f)).matched
+
+
+def test_has_sibling_default_scope_is_same_form(make_form, make_field):
+    stdat = make_field(name="AESTDAT", bind__oc_itemgroup="AE")
+    endat = make_field(name="AEENDAT", bind__oc_itemgroup="DM")  # different ig
+    f = make_form(survey=[stdat, endat])
+    # No scope given — defaults to same_form, which includes different itemgroups.
+    aw = {"field.has_sibling": {"where": {"field.name": "AEENDAT"}}}
+    assert applies_when.evaluate(aw, _field_ctx(stdat, f)).matched
+
+
+def test_has_sibling_same_itemgroup_excludes_other_itemgroups(make_form, make_field):
+    stdat = make_field(name="AESTDAT", bind__oc_itemgroup="AE")
+    endat_wrong = make_field(name="AEENDAT", bind__oc_itemgroup="DM")  # different ig
+    f = make_form(survey=[stdat, endat_wrong])
+    aw = {"field.has_sibling": {
+        "where": {"field.name": "AEENDAT"},
+        "scope": "same_itemgroup",
+    }}
+    assert not applies_when.evaluate(aw, _field_ctx(stdat, f)).matched
+
+
+def test_has_sibling_same_itemgroup_includes_matching_itemgroup(make_form, make_field):
+    stdat = make_field(name="AESTDAT", bind__oc_itemgroup="AE")
+    endat = make_field(name="AEENDAT", bind__oc_itemgroup="AE")
+    f = make_form(survey=[stdat, endat])
+    aw = {"field.has_sibling": {
+        "where": {"field.name": "AEENDAT"},
+        "scope": "same_itemgroup",
+    }}
+    assert applies_when.evaluate(aw, _field_ctx(stdat, f)).matched
+
+
+def test_has_sibling_same_itemgroup_skips_when_self_has_no_itemgroup(make_form, make_field):
+    # If the current field has no itemgroup, same_itemgroup cannot match anything.
+    self_field = make_field(name="HEADER", bind__oc_itemgroup="")
+    other = make_field(name="AEENDAT", bind__oc_itemgroup="AE")
+    f = make_form(survey=[self_field, other])
+    aw = {"field.has_sibling": {
+        "where": {"field.name": "AEENDAT"},
+        "scope": "same_itemgroup",
+    }}
+    assert not applies_when.evaluate(aw, _field_ctx(self_field, f)).matched
+
+
+def test_has_sibling_unknown_scope_raises(make_form, make_field):
+    fld = make_field()
+    f = make_form(survey=[fld])
+    aw = {"field.has_sibling": {
+        "where": {"field.name": "X"},
+        "scope": "same_universe",
+    }}
+    with pytest.raises(DSLEvaluationError, match="scope"):
+        applies_when.evaluate(aw, _field_ctx(fld, f))
+
+
+def test_has_sibling_rejects_non_field_context(make_form):
+    f = make_form()
+    aw = {"field.has_sibling": {"where": {"field.name": "X"}}}
+    with pytest.raises(DSLEvaluationError, match="field.has_sibling"):
+        applies_when.evaluate(aw, _ctx(f))
+
+
+def test_has_sibling_inner_soft_hints_do_not_leak(make_form, make_field):
+    stdat = make_field(name="AESTDAT")
+    endat = make_field(name="AEENDAT")
+    f = make_form(survey=[stdat, endat])
+    aw = {"field.has_sibling": {"where": {
+        "field.name": "AEENDAT",
+        "soft": "should not leak",
+    }}}
+    result = applies_when.evaluate(aw, _field_ctx(stdat, f))
+    assert result.matched
+    assert "should not leak" not in result.soft_hints

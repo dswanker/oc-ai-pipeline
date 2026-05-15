@@ -131,7 +131,7 @@ def _flatten_conditions(block: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
                 for p, ops in _flatten_conditions(sub).items():
                     flat.setdefault(p, {}).update(_to_operator_dict(ops))
             continue
-        if key in ("any_of", "none_of"):
+        if key in ("any_of", "none_of", "form.has_field", "field.has_sibling"):
             continue  # conservative: skip; intersection may still happen
         flat.setdefault(key, {}).update(_to_operator_dict(val))
     return flat

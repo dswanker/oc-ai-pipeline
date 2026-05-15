@@ -51,6 +51,68 @@ shorthand for `equals`.
 | `empty` | `"field.notes": { "empty": true }` | path resolves to empty/null |
 | `present` | `"field.cross_form_dependencies": { "present": true }` | path exists at all |
 
+### Structural quantifiers
+
+Two existential operators that ask whether some entity in the spec matches a nested condition. Both take a `where` sub-expression — a full `applies_when` block evaluated against candidates. Soft hints emitted inside the `where` probe are discarded; they describe hypothetical entities, not the entity the convention is being applied to.
+
+#### `form.has_field`
+
+Does the current form contain any field matching `where`? Usable from form-, field-, or choice-scoped conventions (when scoped to a field or choice, the form is resolved from `ctx.parent`).
+
+```json
+"applies_when": {
+  "form.has_field": {
+    "where": { "field.name": "HEIGHT" }
+  }
+}
+```
+
+The `where` block can be any valid sub-expression, including compound conditions:
+
+```json
+"applies_when": {
+  "form.has_field": {
+    "where": {
+      "all_of": [
+        { "field.name": { "matches": "^.*STDAT$" } },
+        { "field.type": "date" }
+      ]
+    }
+  }
+}
+```
+
+Empty surveys return false. Missing `where` raises `DSLEvaluationError`.
+
+#### `field.has_sibling`
+
+Does the current field's neighbourhood contain any *other* field matching `where`? Field-scoped only. Self-exclusion uses object identity — the current field is never its own sibling.
+
+```json
+"applies_when": {
+  "field.name": { "matches": "^.*STDAT$" },
+  "field.has_sibling": {
+    "where": { "field.name": { "matches": "^.*ENDAT$" } },
+    "scope": "same_itemgroup"
+  }
+}
+```
+
+`scope` values:
+
+| Value | Meaning |
+|---|---|
+| `same_form` (default) | Any other field in the form qualifies. |
+| `same_itemgroup` | Other fields with the same `bind__oc_itemgroup` value. Fields with empty itemgroups can never match under this scope. |
+
+Unknown scope values raise `DSLEvaluationError`. Missing `where` raises `DSLEvaluationError`. Non-field-scoped contexts raise `DSLEvaluationError` (use `form.has_field` instead).
+
+#### Conflict-detection note
+
+Both operators are skipped during semantic-conflict detection at promotion time (same treatment as `any_of` / `none_of`). The conservative fallback means two structured conventions both using `form.has_field` or `field.has_sibling` may produce a false-positive conflict report — annoying but safe.
+
+---
+
 ### Logical operators
 
 Combine conditions:

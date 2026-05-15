@@ -223,6 +223,83 @@ def _eval_condition(path: str, expr: Any, ctx: EntityContext) -> bool:
     return True
 
 
+# ──────────────────────────────────────────────────────────────────────
+# Structural quantifiers (B.1c-1)
+# ──────────────────────────────────────────────────────────────────────
+#
+# form.has_field — does the form contain any field matching `where`?
+# field.has_sibling — does the current field's neighbourhood (configurable
+#   scope) contain any OTHER field matching `where`?
+#
+# Both take a nested condition sub-expression. Soft hints from the inner
+# probe are discarded — a quantifier describes a hypothetical entity, not
+# the entity the outer convention is being applied to.
+
+def _get_form_for_quantifier(ctx: EntityContext) -> Dict[str, Any]:
+    """Resolve which form to iterate for a structural quantifier."""
+    if ctx.kind == "form":
+        return ctx.entity
+    if ctx.kind == "field" or ctx.kind == "choice":
+        return ctx.parent
+    raise DSLEvaluationError(
+        f"form.has_field / field.has_sibling requires form-, field-, or "
+        f"choice-scoped context, got {ctx.kind!r}"
+    )
+
+
+def _eval_has_field(payload: Dict[str, Any], ctx: EntityContext) -> bool:
+    """form.has_field — existential quantifier over form.survey."""
+    if not isinstance(payload, dict) or "where" not in payload:
+        raise DSLEvaluationError("form.has_field requires a 'where' sub-expression")
+    where = payload["where"]
+    form = _get_form_for_quantifier(ctx)
+    survey = form.get("survey", []) or []
+    for i, candidate in enumerate(survey):
+        temp_ctx = EntityContext(
+            kind="field", entity=candidate, parent=form,
+            spec=ctx.spec, path=f"<has_field-probe[{i}]>",
+        )
+        # Fresh discarded soft_hints — probe results don't leak guidance.
+        if _eval_block(where, temp_ctx, []).matched:
+            return True
+    return False
+
+
+def _eval_has_sibling(payload: Dict[str, Any], ctx: EntityContext) -> bool:
+    """field.has_sibling — existential quantifier over the current field's neighbourhood."""
+    if ctx.kind != "field":
+        raise DSLEvaluationError(
+            f"field.has_sibling requires field-scoped context, got {ctx.kind!r}"
+        )
+    if not isinstance(payload, dict) or "where" not in payload:
+        raise DSLEvaluationError("field.has_sibling requires a 'where' sub-expression")
+    where = payload["where"]
+    scope = payload.get("scope", "same_form")
+    if scope not in ("same_form", "same_itemgroup"):
+        raise DSLEvaluationError(
+            f"field.has_sibling scope must be 'same_form' or 'same_itemgroup', got {scope!r}"
+        )
+    form = ctx.parent
+    survey = form.get("survey", []) or []
+    self_id = id(ctx.entity)
+    self_ig = ctx.entity.get("bind__oc_itemgroup", "") if isinstance(ctx.entity, dict) else ""
+    for i, candidate in enumerate(survey):
+        if id(candidate) == self_id:
+            continue  # exclude self
+        if scope == "same_itemgroup":
+            cand_ig = candidate.get("bind__oc_itemgroup", "") if isinstance(candidate, dict) else ""
+            if cand_ig != self_ig or self_ig == "":
+                continue
+        # scope == "same_form": any other field qualifies; no additional filter.
+        temp_ctx = EntityContext(
+            kind="field", entity=candidate, parent=form,
+            spec=ctx.spec, path=f"<has_sibling-probe[{i}]>",
+        )
+        if _eval_block(where, temp_ctx, []).matched:
+            return True
+    return False
+
+
 def evaluate(applies_when: Dict[str, Any], ctx: EntityContext) -> EvaluateResult:
     """Evaluate an applies_when block against an entity context."""
     soft_hints: List[str] = []
@@ -258,6 +335,16 @@ def _eval_block(block: Dict[str, Any], ctx: EntityContext,
                     matched_any = True
                     # don't break — keep collecting soft hints from all branches
             if not matched_any:
+                return EvaluateResult(matched=False, soft_hints=soft_hints)
+            continue
+
+        if key == "form.has_field":
+            if not _eval_has_field(val, ctx):
+                return EvaluateResult(matched=False, soft_hints=soft_hints)
+            continue
+
+        if key == "field.has_sibling":
+            if not _eval_has_sibling(val, ctx):
                 return EvaluateResult(matched=False, soft_hints=soft_hints)
             continue
 
