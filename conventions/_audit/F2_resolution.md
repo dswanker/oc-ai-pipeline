@@ -172,6 +172,31 @@ right point in the build pipeline to elevate that into a top-level
 report bucket. intersection.py remains for promotion-time
 peer-convention conflict detection — a different concern.
 
+**Patch 5 implementation note (2026-05-15):** The B.0 audit's "~36
+vendor-specific rules" framing was a row-count from markdown analysis,
+not an engine-actionability assessment. Rule-by-rule reading during
+Patch 5 discovery revealed that all 39 OC4 Transform Rules across the
+10 vendor markdowns operate at transform time (inside
+`odm_to_spec.transform_with_ai`), before the conventions engine sees
+the post-transform spec. By the time `apply_conventions` fires, the
+relevant data (vendor namespaces, original OIDs, vendor-specific
+field types like `mdsol:IsLog` or `redcap:FieldType`) has been
+consumed and discarded. There are no genuinely engine-actionable
+post-transform rules in the current vendor markdowns. Two marginal
+cases (Castor missing-measurement-units → flag-review, REDCap
+file-upload references) are advisories about AI enrichment prompt
+content — already handled by the existing
+`odm_to_spec.load_vendor_conventions()` prompt assembly. Writing 39
+advisory JSON placeholders would have produced ~1500 LOC of duplicate
+content (markdown + JSON saying the same things) with zero behavior
+change. B.1b therefore lands at Patch 5a: vendor cascade
+infrastructure complete and tested (Patches 1-4), one presence marker
+per vendor (5a) reserving the namespace for future organic additions.
+Engine-actionable vendor rules will be authored individually when
+real migration builds surface specific post-transform mutation needs.
+Phase C's `load_vendor_conventions()` rewrite handles the
+markdown→engine migration programmatically.
+
 Tests follow the same coverage pattern as the existing 110 unit tests
 in `tests/conventions/`.
 
