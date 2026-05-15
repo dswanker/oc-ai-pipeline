@@ -535,22 +535,31 @@ def run_pricing_model(pricing_summary_dict,
 # These mirror test_skills_locally.py — imported directly from the skills
 # folder's scripts/ directory and run in a thread pool executor.
 
-def run_study_spec_files(struct_json):
+def run_study_spec_files(struct_json, customer_subdomain="", migration_source=None):
     """Generate Study Spec PDF + XLSX locally. Returns {'pdf': bytes, 'xlsx': bytes}."""
     _add_scripts("protocol-analysis")
     from generate_study_spec_pdf  import build_edc_pdf
     from generate_study_spec_xlsx import build_edc_xlsx
 
     # Compute conventions_applied metrics from the forms data per
-    # references/conventions.md. Best-effort — failures don't block the build.
     try:
-        from compute_conventions import compute_and_apply
-        ca, _ = compute_and_apply(struct_json.get("forms", []))
-        struct_json.setdefault("study_meta", {})["conventions_applied"] = ca
-        print(f"compute_conventions: applied (version={ca.get('version','?')})", flush=True)
+        from conventions_engine import apply_conventions
+        study_meta = struct_json.get("study_meta", {})
+        study_id = study_meta.get("protocol_number", "UNKNOWN")
+        
+        apply_conventions(
+            spec=struct_json,
+            study_id=study_id,
+            customer_subdomain=customer_subdomain,
+            migration_source=migration_source,
+        )
+        
+        applied_list = struct_json.get("study_meta", {}).get("conventions_engine_applied", [])
+        print(f"conventions_engine: applied {len(applied_list)} conventions", flush=True)
     except Exception as ex:
-        print(f"compute_conventions FAILED — continuing without conventions block: {ex}", flush=True)
-
+        print(f"conventions_engine FAILED — continuing without conventions: {ex}", flush=True)
+        import traceback
+        traceback.print_exc()
     protocol = (struct_json.get("study_meta", {}).get("protocol_number")
                 or "STUDY")
     with tempfile.TemporaryDirectory() as tmp:
@@ -1842,7 +1851,7 @@ async def run_pipeline(item_id):
                 try:
                     loop = asyncio.get_event_loop()
                     spec_files = await loop.run_in_executor(
-                        None, lambda: run_study_spec_files(struct_json)
+                        None, lambda: run_study_spec_files(struct_json, oc_subdomain, None)
                     )
                     await asyncio.gather(
                         upload_file(item_id, COL["spec_pdf"],
