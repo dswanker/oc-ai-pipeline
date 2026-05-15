@@ -74,6 +74,7 @@ def resolve(loaded: Dict[str, Any]) -> List[ResolvedConvention]:
                     scope=prev.get("scope", "?"),
                     kind=prev.get("kind", "?"),
                     would_have_done=_summarize_effect(prev),
+                    scope_id=prev.get("scope_id", ""),
                 ))
                 by_key[nk]["winner"] = conv
 

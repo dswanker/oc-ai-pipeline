@@ -162,6 +162,16 @@ entity, JSON file per convention, README.md per folder.
    `source_edc_system` is present on the monday item; reuse the
    `VENDOR_CONVENTION_FILES` dict for the slug lookup.
 
+**Patch 3 implementation note (2026-05-15):** The
+`customer_vendor_conflicts` bucket landed in
+`conventions_engine/record.py`, not `intersection.py` as originally
+stipulated in item 3 above. The cascade resolver (Patch 2) already
+detects the customer-over-vendor collision and surfaces the losing
+convention in the winner's `overrode[]` list; record.py runs at the
+right point in the build pipeline to elevate that into a top-level
+report bucket. intersection.py remains for promotion-time
+peer-convention conflict detection — a different concern.
+
 Tests follow the same coverage pattern as the existing 110 unit tests
 in `tests/conventions/`.
 

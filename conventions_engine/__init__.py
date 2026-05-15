@@ -67,9 +67,10 @@ class ApplyResult:
 @dataclass
 class Overridden:
     convention_id: str
-    scope: str                # "global" | "customer"
+    scope: str                # "global" | "customer" | "vendor" | "study"
     kind: str
     would_have_done: str      # human-readable summary
+    scope_id: str = ""        # customer subdomain / vendor slug / study_id; "" for global
 
 @dataclass
 class ResolvedConvention:
