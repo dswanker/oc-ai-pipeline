@@ -71,16 +71,119 @@ VENDOR_CONVENTION_FILES: dict[str, str] = {
 _CONVENTIONS_DIR = Path(__file__).resolve().parent / "vendor_conventions"
 
 
+def _summarize_engine_effect(effect: dict) -> str:
+    """One-line summary of an effect block for AI-prompt prose.
+
+    Phase C.3 bridge helper. Mirrors cascade._summarize_effect's
+    rendering vocabulary but operates on the raw effect dict (no
+    ApplyResult — effects haven't been applied at prompt-assembly time)
+    and isn't private cross-module. Soft directives are surfaced
+    verbatim because they ARE the Claude-facing guidance.
+    """
+    if not effect:
+        return ""
+    parts = []
+    if "set"           in effect: parts.append(f"set {list(effect['set'].keys())}")
+    if "ensure"        in effect: parts.append(f"ensure {list(effect['ensure'].keys())}")
+    if "require"       in effect: parts.append(f"require {effect['require']}")
+    if "flag"          in effect: parts.append("raise a review flag")
+    if "append_to"     in effect: parts.append(f"append to {list(effect['append_to'].keys())}")
+    if "remove_from"   in effect: parts.append(f"remove from {list(effect['remove_from'].keys())}")
+    if "match"         in effect: parts.append("conditional match-dispatch")
+    if "default_value" in effect: parts.append(f"default_value: {effect['default_value']!r}")
+    if "soft"          in effect: parts.append(f"Claude guidance: {effect['soft']}")
+    return "; ".join(parts)
+
+
+def _render_engine_prose(display_name: str, conventions: list) -> str:
+    """Render a list of vendor convention records as a markdown prose block
+    for the AI enrichment prompt.
+
+    Mirrors the structure of the original migration/vendor_conventions/*.md
+    files at a high level — header with vendor display name, then one
+    section per active convention — so the AI prompt sees a familiar
+    shape regardless of source (engine vs. markdown).
+
+    Phase C.3 bridge — only invoked when the engine has substantive
+    (non-presence-marker) vendor records to render.
+    """
+    lines = [f"# {display_name}", ""]
+    lines.append("_Vendor conventions loaded from conventions/vendors/ "
+                 "(Phase C.3 engine path)._")
+    lines.append("")
+    for c in conventions:
+        title = c.get("title") or c.get("id", "(untitled)")
+        lines.append(f"## {title}")
+        lines.append("")
+        desc = (c.get("description") or "").strip()
+        if desc:
+            lines.append(desc)
+            lines.append("")
+        rationale = (c.get("rationale") or "").strip()
+        if rationale:
+            lines.append(f"**Rationale:** {rationale}")
+            lines.append("")
+        effect_summary = _summarize_engine_effect(c.get("effect") or {})
+        if effect_summary:
+            lines.append(f"**Effect:** {effect_summary}")
+            lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def load_vendor_conventions(source_system: str) -> str:
     """
-    Return the markdown content of the convention file matching
-    `source_system`, falling back to generic_odm.md when unknown, and to
-    an empty string when even the fallback file is missing.
+    Return AI-prompt prose describing vendor-specific conventions for the
+    given source EDC system.
 
-    The text is consumed verbatim by the AI enrichment prompt — keep
-    convention files concise and well-structured.
+    Phase C.3 bridge — engine-first with markdown fallback:
+
+      1. Translate source_system display name (e.g. "Medidata Rave") to
+         slug (e.g. "medidata_rave") via the existing
+         VENDOR_CONVENTION_FILES dict.
+      2. Consult the conventions engine first: load_scope(repo_root,
+         "vendor", slug) returns the active records under
+         conventions/vendors/<slug>/.
+      3. Filter out presence-marker stubs (the placeholder advisories
+         from B.1b Patch 5a, tagged "presence_marker"). What remains is
+         substantive content authored by B.1b Patch 5b.
+      4. If substantive records exist, render them as markdown prose
+         and return — engine is the source of truth for this vendor.
+      5. Otherwise, fall back to reading migration/vendor_conventions/
+         <slug>.md verbatim (legacy / pre-cutover behavior).
+      6. Any engine import or load error → silent markdown fallback.
+         Migration must not break on engine instability.
+      7. Final fallback for missing files: empty string (AI prompt
+         loses the vendor section but the build continues).
+
+    The cutover to engine-only — and deletion of the markdown files
+    per F2 sub-decision C — waits until every active vendor in
+    VENDOR_CONVENTION_FILES has substantive engine coverage. Until
+    then this bridge keeps AI quality intact while letting incrementally-
+    authored engine content take effect immediately as it lands.
     """
+    # Slug translation — mirrors pipeline._vendor_slug_from_display_name.
     filename = VENDOR_CONVENTION_FILES.get(source_system or "", "generic_odm.md")
+    slug = filename[:-3] if filename.endswith(".md") else filename
+
+    # Engine-first path. Any failure → silent markdown fallback below.
+    try:
+        from conventions_engine import loader
+        # _CONVENTIONS_DIR is migration/vendor_conventions/ — parent.parent
+        # gets the repo root containing conventions/.
+        repo_root = _CONVENTIONS_DIR.parent.parent
+        records, _errors = loader.load_scope(repo_root, "vendor", slug)
+        substantive = [
+            c for c in records
+            if "presence_marker" not in (c.get("tags") or [])
+        ]
+        if substantive:
+            return _render_engine_prose(source_system or slug, substantive)
+    except Exception:
+        # Engine import / schema / load failure → fall through to markdown.
+        # Don't let conventions-engine fragility break migration builds.
+        pass
+
+    # Markdown fallback — unchanged from pre-Phase-C.3 behavior.
     candidates = [_CONVENTIONS_DIR / filename, _CONVENTIONS_DIR / "generic_odm.md"]
     for path in candidates:
         try:
