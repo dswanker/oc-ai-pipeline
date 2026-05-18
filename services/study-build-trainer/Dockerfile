@@ -64,6 +64,7 @@ COPY --from=builder /opt/venv /opt/venv
 
 WORKDIR /app
 COPY ../../skills /skills
+COPY ../../conventions_engine /app/conventions_engine
 COPY . /app
 
 # Create the HuggingFace cache directory on the volume mount path so
