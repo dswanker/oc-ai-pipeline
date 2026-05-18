@@ -79,12 +79,47 @@ def run_qa_checks(form, build_log):
                     "PASS" if data_rows else "FAIL",
                     f"{len(data_rows)} data rows" if data_rows else "No data rows found"))
 
-    # groups_balanced
-    opens  = sum(1 for r in survey if r.get('type','').lower() in ('begin group', 'begin repeat'))
-    closes = sum(1 for r in survey if r.get('type','').lower() in ('end group', 'end repeat'))
-    results.append(("groups_balanced",
-                    "PASS" if opens == closes else "FAIL",
-                    f"{opens} opens, {closes} closes" if opens != closes else f"{opens} groups"))
+    # groups_balanced — stack-based scan that recognizes the OC-8 phantom
+    # end_group pattern (begin repeat / end group / end repeat). A phantom
+    # end_group (encountered when innermost open is a repeat) is OC-8
+    # expected and does NOT count as imbalance. See
+    # validate_form.py:_strip_oc8_phantom_end_groups and
+    # conventions/global/repeating_groups.form_structural_pattern.json.
+    stack = []
+    opens = 0
+    extra_closes = 0
+    phantom_count = 0
+    for r in survey:
+        t = (r.get('type','') or '').strip().lower()
+        if t == 'begin group':
+            stack.append('group'); opens += 1
+        elif t == 'begin repeat':
+            stack.append('repeat'); opens += 1
+        elif t == 'end group':
+            if stack and stack[-1] == 'repeat':
+                phantom_count += 1
+            elif stack and stack[-1] == 'group':
+                stack.pop()
+            else:
+                extra_closes += 1
+        elif t == 'end repeat':
+            if stack and stack[-1] == 'repeat':
+                stack.pop()
+            else:
+                extra_closes += 1
+    balanced = not stack and extra_closes == 0
+    if balanced:
+        note = (f"{opens} group(s)" if opens else "no groups")
+        if phantom_count:
+            note += f", {phantom_count} OC-8 phantom"
+    else:
+        bits = []
+        if stack:
+            bits.append(f"unclosed: {','.join(stack)}")
+        if extra_closes:
+            bits.append(f"{extra_closes} extra close(s)")
+        note = "; ".join(bits)
+    results.append(("groups_balanced", "PASS" if balanced else "FAIL", note))
 
     # repeats_balanced (subset of above, check separately)
     r_opens  = sum(1 for r in survey if r.get('type','').lower() == 'begin repeat')
