@@ -1053,10 +1053,16 @@ def _render_conflict_value_xlsx(v) -> str:
 
 
 def build_convention_conflicts_sheet(wb, data):
-    """Build the CONVENTION_CONFLICTS worksheet (Phase C.2).
+    """Build the CONVENTION_CONFLICTS worksheet (Phase C.2 + C.4).
 
     Reads data.study_meta.convention_conflicts (populated by
     pipeline.py's Path X.1 — edited-XLSX update path).
+
+    SCHEMA — handles both Phase C.2 (4-key) and Phase C.4 (5-key) rows:
+      Phase C.2 (no baseline available): {field_path, before_value,
+        after_value, convention_id} → Baseline column shows "—".
+      Phase C.4 (three-way diff): {field_path, baseline_value, user_value,
+        engine_value, convention_id} → All columns populated.
 
     Created ONLY when conflicts exist — no empty sheet on builds where
     the conventions engine didn't mutate anything. Rows where
@@ -1064,9 +1070,6 @@ def build_convention_conflicts_sheet(wb, data):
     are highlighted with the RED_LIGHT_HEX fill to draw the reviewer's
     eye; those are the rows that came from somewhere other than a
     cascaded convention.
-
-    "Conflicts" naming is loose — see conventions_engine/diff.py for
-    full caveat. Reviewers see every engine mutation on their upload.
     """
     conflicts = (data.get("study_meta") or {}).get("convention_conflicts") or []
     if not conflicts:
@@ -1075,18 +1078,18 @@ def build_convention_conflicts_sheet(wb, data):
     ws = wb.create_sheet(title="CONVENTION_CONFLICTS")
     ws.sheet_properties.tabColor = "C0392B"
 
-    # Title band
-    ws.merge_cells("A1:D1")
+    # Title band — A1:E1 (5 columns).
+    ws.merge_cells("A1:E1")
     c = ws["A1"]
     c.value = (f"CONVENTION CONFLICTS — {len(conflicts)} field(s) modified by "
-               f"the conventions engine vs. your uploaded spec")
+               f"the conventions engine on your uploaded spec")
     c.font = hdr_font(size=9, color=WHITE_HEX)
     c.fill = fill(DARK_BLUE_HEX)
     c.alignment = Alignment(horizontal="left", vertical="center")
     ws.row_dimensions[1].height = 18
 
-    # Header row
-    headers = ["Field Path", "Your Value", "Engine Value", "Convention"]
+    # Header row — 5 columns including new Baseline.
+    headers = ["Field Path", "Baseline", "Your Value", "Engine Value", "Convention"]
     for col_i, h in enumerate(headers, start=1):
         c = ws.cell(row=2, column=col_i, value=h)
         c.font = hdr_font(size=9, color=WHITE_HEX)
@@ -1095,11 +1098,12 @@ def build_convention_conflicts_sheet(wb, data):
         c.alignment = wrap_align("center")
     ws.row_dimensions[2].height = 16
 
-    # Column widths
-    set_col_width(ws, "A", 38)
-    set_col_width(ws, "B", 28)
-    set_col_width(ws, "C", 28)
-    set_col_width(ws, "D", 36)
+    # Column widths.
+    set_col_width(ws, "A", 36)  # Field Path
+    set_col_width(ws, "B", 22)  # Baseline (new, Phase C.4)
+    set_col_width(ws, "C", 22)  # Your Value
+    set_col_width(ws, "D", 22)  # Engine Value
+    set_col_width(ws, "E", 34)  # Convention
 
     # Data rows
     for i, conflict in enumerate(conflicts):
@@ -1110,10 +1114,16 @@ def build_convention_conflicts_sheet(wb, data):
             GREY_LIGHT_HEX if row % 2 == 0 else WHITE_HEX
         )
 
+        # Phase C.4 keys preferred; fall back to Phase C.2 keys.
+        user_v     = conflict.get("user_value",   conflict.get("before_value"))
+        engine_v   = conflict.get("engine_value", conflict.get("after_value"))
+        baseline_v = conflict.get("baseline_value")  # None for C.2 rows
+
         vals = [
             conflict.get("field_path", ""),
-            _render_conflict_value_xlsx(conflict.get("before_value")),
-            _render_conflict_value_xlsx(conflict.get("after_value")),
+            _render_conflict_value_xlsx(baseline_v),
+            _render_conflict_value_xlsx(user_v),
+            _render_conflict_value_xlsx(engine_v),
             conv_id if conv_id else "Unknown (manual edit?)",
         ]
         for col_i, val in enumerate(vals, start=1):

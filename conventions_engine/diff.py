@@ -61,6 +61,7 @@ structural diffing here keeps this module engine-independent and
 unit-testable in isolation.
 """
 from __future__ import annotations
+import re
 from typing import Any, Dict, List
 
 
@@ -161,3 +162,117 @@ def _walk(before: Any, after: Any, path: str, changes: List[Dict[str, Any]]) -> 
         "before_value": before,
         "after_value": after,
     })
+
+
+# ─────────────── Phase C.4: three-way conflict filter helpers ───────────────
+
+_PATH_TOKEN = re.compile(r"([^.\[\]]+)|\[(\d+)\]")
+_SENTINEL_MISSING = object()
+
+
+def _resolve_path(spec: Any, field_path: str) -> Any:
+    """Walk `spec` by a spec-absolute path like 'forms[3].survey[2].required'
+    and return the value at that location.
+
+    Returns _SENTINEL_MISSING if any step doesn't exist (key absent in a
+    dict, index out of range in a list, attempted traversal through a
+    scalar, or spec itself is None). Caller converts to a render-friendly
+    value (typically None) when surfacing to users.
+
+    >>> _resolve_path({"a": 1}, "a")
+    1
+    >>> _resolve_path({"forms": [{"x": "v"}]}, "forms[0].x")
+    'v'
+    >>> _resolve_path({"forms": [{"x": "v"}]}, "forms[0].y") is _SENTINEL_MISSING
+    True
+    >>> _resolve_path({"a": 1}, "a.b") is _SENTINEL_MISSING
+    True
+    >>> _resolve_path({"forms": []}, "forms[0]") is _SENTINEL_MISSING
+    True
+    """
+    if spec is None:
+        return _SENTINEL_MISSING
+    current: Any = spec
+    for match in _PATH_TOKEN.finditer(field_path):
+        key, idx = match.group(1), match.group(2)
+        if key is not None:
+            if not isinstance(current, dict) or key not in current:
+                return _SENTINEL_MISSING
+            current = current[key]
+        else:
+            i = int(idx)
+            if not isinstance(current, list) or i >= len(current):
+                return _SENTINEL_MISSING
+            current = current[i]
+    return current
+
+
+def filter_to_user_intersected(engine_changes: List[Dict[str, Any]],
+                                user_change_paths,
+                                baseline_spec: Any) -> List[Dict[str, Any]]:
+    """Filter engine_changes to rows the user also touched, enriching each
+    with the baseline value looked up from baseline_spec.
+
+    Phase C.4 — true conflict detection. A conflict requires both:
+      - the engine modified the field (it's in engine_changes), AND
+      - the user modified the field (its path is in user_change_paths).
+
+    Args:
+      engine_changes:     output of deep_diff(user_edit, post_convention),
+                          already enriched with convention_id by
+                          attribute_changes (Phase C.2). Each row has:
+                            field_path, before_value (=user_value),
+                            after_value (=engine_value), convention_id
+      user_change_paths:  set-like collection of paths the user touched
+                          (typically computed via
+                          {r['field_path'] for r in
+                           deep_diff(baseline, user_edit)})
+      baseline_spec:      the pre-user-edit spec, used to look up
+                          baseline_value for each retained row. MUST be
+                          non-None; caller decides whether to use the
+                          two-way Phase C.2 fallback when no baseline
+                          is available.
+
+    Returns:
+      List of conflict rows with the Phase C.4 5-key schema:
+        field_path, baseline_value, user_value, engine_value, convention_id
+      baseline_value is None when the baseline spec doesn't have the
+      path (defensive — happens when the user added a brand-new field
+      that didn't exist in the baseline).
+
+    >>> filter_to_user_intersected(
+    ...     engine_changes=[{"field_path": "a", "before_value": "u",
+    ...                      "after_value": "e", "convention_id": "c1"}],
+    ...     user_change_paths={"a"},
+    ...     baseline_spec={"a": "b"})
+    [{'field_path': 'a', 'baseline_value': 'b', 'user_value': 'u', 'engine_value': 'e', 'convention_id': 'c1'}]
+    >>> filter_to_user_intersected(
+    ...     engine_changes=[{"field_path": "a", "before_value": "u",
+    ...                      "after_value": "e", "convention_id": "c1"}],
+    ...     user_change_paths=set(),
+    ...     baseline_spec={"a": "b"})
+    []
+    >>> filter_to_user_intersected(
+    ...     engine_changes=[{"field_path": "new", "before_value": "u",
+    ...                      "after_value": "e", "convention_id": None}],
+    ...     user_change_paths={"new"},
+    ...     baseline_spec={})
+    [{'field_path': 'new', 'baseline_value': None, 'user_value': 'u', 'engine_value': 'e', 'convention_id': None}]
+    """
+    paths = set(user_change_paths)
+    out: List[Dict[str, Any]] = []
+    for row in engine_changes:
+        path = row.get("field_path")
+        if path not in paths:
+            continue
+        baseline_val = _resolve_path(baseline_spec, path)
+        if baseline_val is _SENTINEL_MISSING:
+            baseline_val = None
+        out.append({
+            "field_path":     path,
+            "baseline_value": baseline_val,
+            "user_value":     row.get("before_value"),
+            "engine_value":   row.get("after_value"),
+            "convention_id":  row.get("convention_id"),
+        })
+    return out

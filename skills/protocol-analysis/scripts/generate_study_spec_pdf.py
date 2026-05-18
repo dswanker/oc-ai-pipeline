@@ -436,17 +436,15 @@ def build_conflicts_page(meta, styles):
     Build the "Convention Conflicts Detected" appendix page.
 
     Reads study_meta.convention_conflicts (populated by pipeline.py's
-    Path X.1 — the edited-XLSX update path — via diff.deep_diff +
-    attribution.attribute_changes). Each row reports a field the
-    conventions engine modified relative to what the user uploaded.
+    Path X.1 — the edited-XLSX update path).
+
+    SCHEMA — handles both Phase C.2 (4-key) and Phase C.4 (5-key) rows:
+      Phase C.2 (no baseline available): {field_path, before_value,
+        after_value, convention_id} → Baseline column renders "—".
+      Phase C.4 (three-way diff): {field_path, baseline_value, user_value,
+        engine_value, convention_id} → All columns populated.
 
     Returns [] when there are no conflicts (page is omitted entirely).
-
-    "Conflicts" is a loose term here — see conventions_engine/diff.py's
-    docstring. Without a third snapshot (the original system-generated
-    baseline), we can't distinguish "user deliberately set this field"
-    from "user left it as-emitted"; every engine mutation on the
-    user-submitted spec shows up here. Reviewers judge each row.
     """
     conflicts = meta.get("convention_conflicts", []) or []
     if not conflicts:
@@ -459,26 +457,35 @@ def build_conflicts_page(meta, styles):
     ))
     flowables.append(Spacer(1, 4))
     flowables.append(Paragraph(
-        "Fields where the conventions engine modified the spec you uploaded. "
-        "Review each row — the engine's value is what was used in the build. "
+        "Fields where the conventions engine modified a value you also "
+        "edited (Phase C.4 three-way diff) — or all engine mutations on "
+        "your uploaded spec (Phase C.2 fallback when no baseline is "
+        "available). The engine's value is what was used in the build. "
         "Edit a study-scope convention if you want to override.",
         styles["body_small"],
     ))
     flowables.append(Spacer(1, 8))
 
-    headers = ["Field Path", "Your Value", "Engine Value", "Convention"]
+    headers = ["Field Path", "Baseline", "Your Value", "Engine Value", "Convention"]
     rows = []
     for c in conflicts:
         conv_id = c.get("convention_id")
+        # Phase C.4 keys preferred; fall back to Phase C.2 keys.
+        user_v     = c.get("user_value",   c.get("before_value"))
+        engine_v   = c.get("engine_value", c.get("after_value"))
+        baseline_v = c.get("baseline_value")  # None when absent (C.2 fallback)
         rows.append([
             c.get("field_path", ""),
-            _render_conflict_value(c.get("before_value")),
-            _render_conflict_value(c.get("after_value")),
+            _render_conflict_value(baseline_v),
+            _render_conflict_value(user_v),
+            _render_conflict_value(engine_v),
             conv_id if conv_id else "Unknown (manual edit?)",
         ])
 
-    col_widths = [CONTENT_W * 0.30, CONTENT_W * 0.22,
-                  CONTENT_W * 0.22, CONTENT_W * 0.26]
+    # 5 columns — tighter widths than C.2's 4-column layout.
+    col_widths = [CONTENT_W * 0.24, CONTENT_W * 0.17,
+                  CONTENT_W * 0.17, CONTENT_W * 0.17,
+                  CONTENT_W * 0.25]
     flowables.append(grid_table(headers, rows, styles, col_widths, zebra=True))
     flowables.append(Spacer(1, 6))
     flowables.append(PageBreak())

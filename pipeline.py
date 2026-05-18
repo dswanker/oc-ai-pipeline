@@ -1477,14 +1477,17 @@ async def run_pipeline(item_id):
                         # OC-9 backstop: apply to edited-XLSX path as well
                         struct_json = _enforce_common_visit(struct_json)
                         struct_json = _backfill_migration_fields(struct_json)
-                        # ── Conventions engine pass + conflict detection (Phase C.2) ──
-                        # Path X.1 is the edited-XLSX path — the spec we're holding
-                        # represents user intent. After apply_conventions mutates it,
-                        # diff pre/post to surface what the engine changed on the
-                        # user's spec, then attribute each change to the convention
-                        # that caused it. Stored at study_meta.convention_conflicts
-                        # for the spec PDF/XLSX renderer to surface to reviewers.
-                        # Naming caveat: "conflicts" is loose — see diff.py docstring.
+                        # ── Conventions engine pass + three-way conflict detection (Phase C.4) ──
+                        # Path X.1 is the edited-XLSX path. Three snapshots make TRUE
+                        # conflict detection possible:
+                        #   baseline        = previous spec_json from monday (what user downloaded)
+                        #   user_edit       = struct_json after XLSX parse (what user uploaded)
+                        #   post_convention = struct_json after apply_conventions (what engine did)
+                        # True conflict: engine touched a path the user ALSO touched.
+                        # First run (no baseline) or download failure → falls back to
+                        # Phase C.2 two-way behavior (all engine mutations reported).
+                        # No false-negative suppression at any stage; degraded modes
+                        # only inflate the conflict list, never silence it.
                         try:
                             import copy as _copy
                             from conventions_engine import apply_conventions, diff as _conv_diff, attribution as _conv_attr
@@ -1495,22 +1498,57 @@ async def run_pipeline(item_id):
                             # vendor conventions in future, extract the column at build entry and
                             # thread it through as migration_source here.
 
-                            # Snapshot BEFORE the engine mutates anything.
-                            _pre_convention_spec = _copy.deepcopy(struct_json)
+                            # Phase C.4: try to fetch the prior spec_json from monday as baseline.
+                            # Failures (first run for this study, monday hiccup, malformed JSON)
+                            # → None, which silently degrades to Phase C.2 two-way diff.
+                            _baseline_spec = None
+                            try:
+                                _baseline_bytes = await download_column_file(item_id, COL["spec_json"])
+                                _baseline_spec = json.loads(_baseline_bytes.decode("utf-8"))
+                            except Exception as _be:
+                                print(f"conventions_engine: no baseline spec_json available "
+                                      f"(first run or download failed: {_be}); falling back to "
+                                      f"Phase C.2 two-way diff", flush=True)
+
+                            # Snapshot user's edit BEFORE the engine mutates anything.
+                            _user_edit_spec = _copy.deepcopy(struct_json)
+
+                            # User changes = diff(baseline, user_edit). Empty list when no baseline.
+                            _user_changes = (
+                                _conv_diff.deep_diff(_baseline_spec, _user_edit_spec)
+                                if _baseline_spec is not None else []
+                            )
+                            _user_change_paths = {r["field_path"] for r in _user_changes}
 
                             apply_conventions(struct_json, study_id=_study_id,
                                               customer_subdomain=oc_subdomain)
 
-                            # Diff + attribute. Reads conventions_engine_applied
-                            # populated above; safe even if engine returned empty.
-                            _diff_rows = _conv_diff.deep_diff(_pre_convention_spec, struct_json)
+                            # Engine changes = diff(user_edit, post_convention). Attribute to conventions.
+                            _engine_changes = _conv_diff.deep_diff(_user_edit_spec, struct_json)
                             _applied_log = (struct_json.get("study_meta") or {}).get(
                                 "conventions_engine_applied", [])
-                            _enriched_diff = _conv_attr.attribute_changes(_diff_rows, _applied_log)
+                            _engine_changes_attributed = _conv_attr.attribute_changes(
+                                _engine_changes, _applied_log)
 
-                            struct_json.setdefault("study_meta", {})["convention_conflicts"] = _enriched_diff
-                            print(f"conventions_engine: {len(_enriched_diff)} conflict(s) "
-                                  f"detected on user-edited spec (Path X.1)", flush=True)
+                            # True conflicts: filter engine changes to paths the user also touched.
+                            # When no baseline → fallback to all engine mutations (Phase C.2 schema:
+                            # 4-key rows lacking baseline_value, renderers handle the missing key).
+                            if _baseline_spec is not None:
+                                _conflicts = _conv_diff.filter_to_user_intersected(
+                                    _engine_changes_attributed, _user_change_paths, _baseline_spec,
+                                )
+                            else:
+                                _conflicts = _engine_changes_attributed
+
+                            _sm = struct_json.setdefault("study_meta", {})
+                            _sm["user_changes"] = _user_changes
+                            _sm["convention_conflicts"] = _conflicts
+
+                            print(f"conventions_engine: {len(_user_changes)} user change(s), "
+                                  f"{len(_engine_changes_attributed)} engine mutation(s), "
+                                  f"{len(_conflicts)} true conflict(s) on user-edited spec "
+                                  f"(Path X.1, {'three-way' if _baseline_spec is not None else 'two-way fallback'})",
+                                  flush=True)
                         except Exception as _ce:
                             print(f"conventions_engine FAILED — continuing without conventions: {_ce}",
                                   flush=True)
