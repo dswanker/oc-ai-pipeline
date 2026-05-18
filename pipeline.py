@@ -16,7 +16,7 @@ Flow (fresh run):
   2. run_study_spec_files  : JSON          → Study Spec PDF + XLSX
   3. call_claude           : JSON          → Protocol Summary JSON
   4. run_protocol_summary_pdf : JSON       → Protocol Summary PDF
-  5. run_pricing_model     : JSON          → Quote PDFs + XLSXs
+  5. run_pricing_quote     : JSON          → Quote PDFs + XLSXs
   6. run_edc_build         : JSON          → EDC Build ZIP
   7. run_dvs_xlsx          : JSON + ZIP    → DVS XLSX
   8. create_oc_study       : JSON          → OC study + design board
@@ -493,7 +493,7 @@ def _add_scripts(skill_name):
         sys.path.insert(0, path)
 
 
-def run_pricing_model(pricing_summary_dict,
+def run_pricing_quote(pricing_summary_dict,
                       additional_sub_disc=0.0, additional_svc_disc=0.0,
                       edc_structure=None):
     """Run pricing-quote scripts locally. Returns dict of file bytes.
@@ -2035,7 +2035,7 @@ async def run_pipeline(item_id):
                         loop = asyncio.get_event_loop()
                         qf = await loop.run_in_executor(
                             None,
-                            lambda: run_pricing_model(
+                            lambda: run_pricing_quote(
                                 pricing_json,
                                 additional_sub_disc=additional_sub_disc,
                                 additional_svc_disc=additional_svc_disc,
