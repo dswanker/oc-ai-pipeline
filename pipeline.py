@@ -1943,8 +1943,21 @@ async def run_pipeline(item_id):
                 # the actual Study Spec field names (form_id, form_title,
                 # cdash_domain). Previously slimming to "name"/"domain" lost
                 # all form identity → empty Protocol Summary → empty Quote.
+                # Strip convention-engine debug payloads out of study_meta —
+                # these are sized for engine audit (≈3 MB / 750K tokens for
+                # CRS-136) and would blow the Claude 1M context cap on the
+                # Chain B Protocol Summary call. Chain B only needs the
+                # protocol-metadata fields. See pipeline failure 2026-05-18
+                # at 19:19:25 UTC (1.22M-token prompt rejected).
+                _META_BLOAT_KEYS = {
+                    "conventions_prompt_block",
+                    "conventions_engine_applied",
+                    "customer_vendor_conflicts",
+                }
+                _study_meta_full = struct_json.get("study_meta", {})
                 struct_slim = {
-                    "study_meta":    struct_json.get("study_meta", {}),
+                    "study_meta":    {k: v for k, v in _study_meta_full.items()
+                                      if k not in _META_BLOAT_KEYS},
                     "timepoint_csv": struct_json.get("timepoint_csv", {}),
                     "review_flags":  struct_json.get("review_flags", {}),
                     "forms": [
