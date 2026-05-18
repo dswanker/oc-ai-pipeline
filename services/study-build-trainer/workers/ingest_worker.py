@@ -565,31 +565,6 @@ class IngestWorker:
             logger.warning("ingest.analysis_upload_failed",
                            error=str(e), **log_ctx)
 
-    def _apply_conventions_safely(
-        self,
-        merged: dict[str, Any],
-        log_ctx: dict[str, Any],
-    ) -> dict[str, Any]:
-        """
-        Apply conventions to align trainer output with live pipeline.
-        On failure, log and return the input unchanged (degrade gracefully).
-        """
-        try:
-            from conventions_engine import apply_conventions
-            sm = merged.get("study_meta", {}) or {}
-            study_id = sm.get("study_id") or sm.get("protocol_number") or "unknown"
-            apply_conventions(
-                merged,
-                study_id=study_id,
-                customer_subdomain="trainer",
-            )
-            logger.info("ingest.conventions_applied",
-                        study_id=study_id, **log_ctx)
-        except Exception as e:
-            logger.warning("ingest.conventions_failed",
-                           error=str(e), **log_ctx)
-        return merged
-
     async def _get_form_specs_and_merge(
         self,
         analysis_dict: dict[str, Any],
@@ -618,10 +593,7 @@ class IngestWorker:
                 if specs:
                     logger.info("ingest.form_specs_loaded_from_disk",
                                 forms=len(specs), **log_ctx)
-                    return self._apply_conventions_safely(
-                        merge_form_specs_into_analysis(analysis_dict, specs),
-                        log_ctx,
-                    )
+                    return merge_form_specs_into_analysis(analysis_dict, specs)
             except (json.JSONDecodeError, OSError):
                 pass
 
@@ -634,10 +606,7 @@ class IngestWorker:
                 cache_path.write_text(json.dumps(specs, indent=2))
                 logger.info("ingest.form_specs_cached",
                             path=str(cache_path), forms=len(specs), **log_ctx)
-            return self._apply_conventions_safely(
-                merge_form_specs_into_analysis(analysis_dict, specs),
-                log_ctx,
-            )
+            return merge_form_specs_into_analysis(analysis_dict, specs)
         except Exception as e:
             logger.warning("ingest.form_specs_failed", error=str(e), **log_ctx)
             return analysis_dict  # proceed without specs — XLSForms will be empty
