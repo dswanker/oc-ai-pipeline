@@ -5,11 +5,8 @@ JSON extraction prompts (used with call_claude — no skills, no code execution)
   EDC_STRUCTURE_PROMPT     — protocol PDF → Study Spec JSON
   PRICING_SUMMARY_PROMPT   — Study Spec JSON → Protocol Summary JSON
   DVS_TRANSLATE_PROMPT     — DVS changes + XLSForms → updated XLSForms JSON
-  SPEC_FROM_BUILD_PROMPT   — built XLSForms → Study Spec JSON
 
 File generation prompts (used with run_skill — Skills API + code execution):
-  GENERATE_STUDY_SPEC_PROMPT       — Study Spec JSON → PDF + XLSX
-  GENERATE_PROTOCOL_SUMMARY_PROMPT — Protocol Summary JSON → PDF
   PRICING_QUOTE_PROMPT             — Protocol Summary JSON → Quote PDFs + XLSXs
   EDC_BUILD_PROMPT                 — Study Spec JSON → EDC Build ZIP
   DVS_PROMPT                       — build info → DVS XLSX
@@ -1150,63 +1147,8 @@ Rules:
 - Structure: {"forms": {"<filename>.xlsx": {"survey": [...], "choices": [...], "settings": {...}}}}
 """
 
-SPEC_FROM_BUILD_PROMPT = """\
-You are reverse-engineering a Study Specification from built XLSForm files.
-
-The XLSForm JSON is provided below.
-
-Produce an updated Study Specification JSON reflecting the actual built forms.
-Return a single, complete, valid JSON object — no text before or after it.
-
-Include: study_meta (preserve exactly), forms (from survey sheets),
-codelists (from choices sheets), constraints (from constraint/relevant columns).
-Do NOT include review_flags — those will be injected separately.
-
-Preserve all field names and OIDs exactly. Do not invent or rename anything.
-"""
-
 
 # ── File generation prompts (used with run_skill) ─────────────────────────────
-
-GENERATE_STUDY_SPEC_PROMPT = """\
-You are running the protocol-analysis skill in file generation mode.
-
-IMPORTANT: The Study Specification data is provided as JSON at the end of
-this message. DO NOT attempt to read it from any file. Parse the JSON
-directly from the message content.
-
-Task: Generate TWO output files and save both to /mnt/user-data/outputs/:
-  1. {protocol}_Study_Specification.pdf
-  2. {protocol}_Study_Specification.xlsx
-  (where {protocol} is the study_meta.protocol_number from the JSON)
-
-Use these scripts from your scripts/ folder:
-  from generate_study_spec_pdf  import build_study_spec_pdf
-  from generate_study_spec_xlsx import build_study_spec_xlsx
-
-Call each with (data_dict, output_path).
-
-Study Specification JSON follows this line:
-"""
-
-GENERATE_PROTOCOL_SUMMARY_PROMPT = """\
-You are running the protocol-analysis skill in Protocol Summary PDF mode.
-
-IMPORTANT: The Protocol Summary data is provided as JSON at the end of
-this message. DO NOT attempt to read it from any file. Parse the JSON
-directly from the message content.
-
-Task: Generate ONE output file and save to /mnt/user-data/outputs/:
-  1. {protocol}_Protocol_Summary.pdf
-  (where {protocol} is the study_meta.protocol_number from the JSON)
-
-Use this script from your scripts/ folder:
-  from generate_protocol_summary_pdf import build_protocol_summary_pdf
-
-Call with (data_dict, output_path).
-
-Protocol Summary JSON follows this line:
-"""
 
 PRICING_QUOTE_PROMPT = """\
 You are running the pricing-quote skill.
@@ -1324,13 +1266,3 @@ Then call:
 Input JSON follows this line:
 """
 
-QUOTE_PDF_FROM_XLSX_PROMPT = """\
-You are running the pricing-quote skill in PDF regeneration mode.
-
-An edited Quote XLSX is attached as base64 data above.
-
-Follow the pricing-quote SKILL.md instructions to read the XLSX and
-regenerate the PDFs. Save both files to /mnt/user-data/outputs/:
-  {protocol}_Quote_Internal.pdf
-  {protocol}_Quote_Client.pdf
-"""
