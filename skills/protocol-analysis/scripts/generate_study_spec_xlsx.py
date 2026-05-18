@@ -1042,6 +1042,91 @@ def build_labranges_sheet(wb, labranges):
     ws.freeze_panes = "A3"
 
 
+def _render_conflict_value_xlsx(v) -> str:
+    """Stringify a before/after value for a CONVENTION_CONFLICTS cell.
+    Lists/dicts → compact repr; scalars → str. Truncated to keep rows
+    visually scannable (full value lives in the underlying spec JSON)."""
+    if v is None:
+        return "—"
+    s = repr(v) if isinstance(v, (list, dict, tuple)) else str(v)
+    return s if len(s) <= 80 else s[:77] + "..."
+
+
+def build_convention_conflicts_sheet(wb, data):
+    """Build the CONVENTION_CONFLICTS worksheet (Phase C.2).
+
+    Reads data.study_meta.convention_conflicts (populated by
+    pipeline.py's Path X.1 — edited-XLSX update path).
+
+    Created ONLY when conflicts exist — no empty sheet on builds where
+    the conventions engine didn't mutate anything. Rows where
+    convention_id is None (attribution failure / non-engine mutation)
+    are highlighted with the RED_LIGHT_HEX fill to draw the reviewer's
+    eye; those are the rows that came from somewhere other than a
+    cascaded convention.
+
+    "Conflicts" naming is loose — see conventions_engine/diff.py for
+    full caveat. Reviewers see every engine mutation on their upload.
+    """
+    conflicts = (data.get("study_meta") or {}).get("convention_conflicts") or []
+    if not conflicts:
+        return  # silent — no sheet at all when nothing to report
+
+    ws = wb.create_sheet(title="CONVENTION_CONFLICTS")
+    ws.sheet_properties.tabColor = "C0392B"
+
+    # Title band
+    ws.merge_cells("A1:D1")
+    c = ws["A1"]
+    c.value = (f"CONVENTION CONFLICTS — {len(conflicts)} field(s) modified by "
+               f"the conventions engine vs. your uploaded spec")
+    c.font = hdr_font(size=9, color=WHITE_HEX)
+    c.fill = fill(DARK_BLUE_HEX)
+    c.alignment = Alignment(horizontal="left", vertical="center")
+    ws.row_dimensions[1].height = 18
+
+    # Header row
+    headers = ["Field Path", "Your Value", "Engine Value", "Convention"]
+    for col_i, h in enumerate(headers, start=1):
+        c = ws.cell(row=2, column=col_i, value=h)
+        c.font = hdr_font(size=9, color=WHITE_HEX)
+        c.fill = fill(MID_BLUE_HEX)
+        c.border = thin_border()
+        c.alignment = wrap_align("center")
+    ws.row_dimensions[2].height = 16
+
+    # Column widths
+    set_col_width(ws, "A", 38)
+    set_col_width(ws, "B", 28)
+    set_col_width(ws, "C", 28)
+    set_col_width(ws, "D", 36)
+
+    # Data rows
+    for i, conflict in enumerate(conflicts):
+        row = 3 + i
+        conv_id = conflict.get("convention_id")
+        attribution_failed = conv_id is None
+        row_bg = RED_LIGHT_HEX if attribution_failed else (
+            GREY_LIGHT_HEX if row % 2 == 0 else WHITE_HEX
+        )
+
+        vals = [
+            conflict.get("field_path", ""),
+            _render_conflict_value_xlsx(conflict.get("before_value")),
+            _render_conflict_value_xlsx(conflict.get("after_value")),
+            conv_id if conv_id else "Unknown (manual edit?)",
+        ]
+        for col_i, val in enumerate(vals, start=1):
+            c = ws.cell(row=row, column=col_i, value=safe(val))
+            c.font = body_font(size=8)
+            c.fill = fill(row_bg)
+            c.border = thin_border()
+            c.alignment = wrap_align()
+        ws.row_dimensions[row].height = 14
+
+    ws.freeze_panes = "A3"
+
+
 def build_review_flags_sheet(wb, flags):
     ws = wb.create_sheet(title="REVIEW_FLAGS")
     ws.sheet_properties.tabColor = "C0392B"
@@ -1323,6 +1408,11 @@ def build_edc_xlsx(data: dict, output_path: str):
         build_survey_sheet(wb, form)
         build_choices_sheet(wb, form)
         build_settings_sheet(wb, form)
+
+    # APPENDIX — CONVENTION_CONFLICTS sheet (Phase C.2, conditional).
+    # Created only when pipeline.py's Path X.1 captured engine mutations
+    # on a user-edited spec. No-op on builds without conflicts to report.
+    build_convention_conflicts_sheet(wb, data)
 
     # APPENDIX — CONVENTIONS sheet (last sheet in workbook,
     # per references/conventions.md §"Surfacing" → D)

@@ -420,6 +420,71 @@ def build_conventions_page(meta, styles):
     return flowables
 
 
+# ── Convention Conflicts page (Phase C.2) ─────────────────────────────────────
+def _render_conflict_value(v) -> str:
+    """Render a before/after value as a short display string for the PDF cell.
+    Lists and dicts get a compact JSON-ish representation; everything else
+    is str()'d. Truncated to keep rows from blowing up the table layout."""
+    if v is None:
+        return "—"
+    s = repr(v) if isinstance(v, (list, dict, tuple)) else str(v)
+    return s if len(s) <= 60 else s[:57] + "..."
+
+
+def build_conflicts_page(meta, styles):
+    """
+    Build the "Convention Conflicts Detected" appendix page.
+
+    Reads study_meta.convention_conflicts (populated by pipeline.py's
+    Path X.1 — the edited-XLSX update path — via diff.deep_diff +
+    attribution.attribute_changes). Each row reports a field the
+    conventions engine modified relative to what the user uploaded.
+
+    Returns [] when there are no conflicts (page is omitted entirely).
+
+    "Conflicts" is a loose term here — see conventions_engine/diff.py's
+    docstring. Without a third snapshot (the original system-generated
+    baseline), we can't distinguish "user deliberately set this field"
+    from "user left it as-emitted"; every engine mutation on the
+    user-submitted spec shows up here. Reviewers judge each row.
+    """
+    conflicts = meta.get("convention_conflicts", []) or []
+    if not conflicts:
+        return []
+
+    flowables = []
+    flowables.append(header_band(
+        f"APPENDIX — CONVENTION CONFLICTS DETECTED ({len(conflicts)})",
+        styles,
+    ))
+    flowables.append(Spacer(1, 4))
+    flowables.append(Paragraph(
+        "Fields where the conventions engine modified the spec you uploaded. "
+        "Review each row — the engine's value is what was used in the build. "
+        "Edit a study-scope convention if you want to override.",
+        styles["body_small"],
+    ))
+    flowables.append(Spacer(1, 8))
+
+    headers = ["Field Path", "Your Value", "Engine Value", "Convention"]
+    rows = []
+    for c in conflicts:
+        conv_id = c.get("convention_id")
+        rows.append([
+            c.get("field_path", ""),
+            _render_conflict_value(c.get("before_value")),
+            _render_conflict_value(c.get("after_value")),
+            conv_id if conv_id else "Unknown (manual edit?)",
+        ])
+
+    col_widths = [CONTENT_W * 0.30, CONTENT_W * 0.22,
+                  CONTENT_W * 0.22, CONTENT_W * 0.26]
+    flowables.append(grid_table(headers, rows, styles, col_widths, zebra=True))
+    flowables.append(Spacer(1, 6))
+    flowables.append(PageBreak())
+    return flowables
+
+
 # ── Main builder ──────────────────────────────────────────────────────────────
 def build_edc_pdf(data: dict, output_path: str):
     styles = make_styles()
@@ -1059,6 +1124,14 @@ def build_edc_pdf(data: dict, output_path: str):
     if appendix_flowables:
         story.append(PageBreak())
         story.extend(appendix_flowables)
+
+    # ── APPENDIX — Convention Conflicts Detected (Phase C.2) ─
+    # Only present when pipeline.py's Path X.1 captured engine mutations
+    # on a user-edited spec. Empty list / absent → page omitted entirely.
+    conflict_flowables = build_conflicts_page(meta, styles)
+    if conflict_flowables:
+        story.append(PageBreak())
+        story.extend(conflict_flowables)
 
     doc.build(story)
     print(f"EDC Structure PDF written to: {output_path}")

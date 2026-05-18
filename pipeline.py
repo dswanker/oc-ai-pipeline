@@ -1477,17 +1477,40 @@ async def run_pipeline(item_id):
                         # OC-9 backstop: apply to edited-XLSX path as well
                         struct_json = _enforce_common_visit(struct_json)
                         struct_json = _backfill_migration_fields(struct_json)
-                        # ── Conventions engine pass (no-op until conventions/ store is populated) ─
+                        # ── Conventions engine pass + conflict detection (Phase C.2) ──
+                        # Path X.1 is the edited-XLSX path — the spec we're holding
+                        # represents user intent. After apply_conventions mutates it,
+                        # diff pre/post to surface what the engine changed on the
+                        # user's spec, then attribute each change to the convention
+                        # that caused it. Stored at study_meta.convention_conflicts
+                        # for the spec PDF/XLSX renderer to surface to reviewers.
+                        # Naming caveat: "conflicts" is loose — see diff.py docstring.
                         try:
-                            from conventions_engine import apply_conventions
+                            import copy as _copy
+                            from conventions_engine import apply_conventions, diff as _conv_diff, attribution as _conv_attr
                             _study_id = (struct_json.get("study_meta") or {}).get("protocol_number") or protocol_num
                             # TODO(B.1b follow-up): This path does not currently extract monday's
                             # source_edc_system column (dropdown_mm382w7d). Vendor conventions
                             # apply only on migration path (Path M). If non-migration builds need
                             # vendor conventions in future, extract the column at build entry and
                             # thread it through as migration_source here.
+
+                            # Snapshot BEFORE the engine mutates anything.
+                            _pre_convention_spec = _copy.deepcopy(struct_json)
+
                             apply_conventions(struct_json, study_id=_study_id,
                                               customer_subdomain=oc_subdomain)
+
+                            # Diff + attribute. Reads conventions_engine_applied
+                            # populated above; safe even if engine returned empty.
+                            _diff_rows = _conv_diff.deep_diff(_pre_convention_spec, struct_json)
+                            _applied_log = (struct_json.get("study_meta") or {}).get(
+                                "conventions_engine_applied", [])
+                            _enriched_diff = _conv_attr.attribute_changes(_diff_rows, _applied_log)
+
+                            struct_json.setdefault("study_meta", {})["convention_conflicts"] = _enriched_diff
+                            print(f"conventions_engine: {len(_enriched_diff)} conflict(s) "
+                                  f"detected on user-edited spec (Path X.1)", flush=True)
                         except Exception as _ce:
                             print(f"conventions_engine FAILED — continuing without conventions: {_ce}",
                                   flush=True)
