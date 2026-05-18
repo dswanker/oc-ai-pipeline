@@ -32,3 +32,4 @@ SESSION_NOTES_*.md
 .claude/
 tmp/
 *.orig
+*.egg-info/

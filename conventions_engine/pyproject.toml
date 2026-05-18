@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "conventions-engine"
+version = "0.1.0"
+description = "OpenClinica EDC conventions engine for form standardization"
+requires-python = ">=3.10"
+
+[tool.setuptools]
+packages = ["conventions_engine"]
+package-dir = {"conventions_engine" = "."}
