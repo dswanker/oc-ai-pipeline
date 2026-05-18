@@ -75,4 +75,4 @@ rapidfuzz==3.10.1
 xlrd==2.0.1
 
 # Conventions engine (installed from repo)
-conventions-engine @ git+https://github.com/dswanker/oc-ai-pipeline.git@main#subdirectory=conventions_engine
+conventions-engine @ git+https://github.com/dswanker/oc-ai-pipeline.git@2a8a273#subdirectory=conventions_engine

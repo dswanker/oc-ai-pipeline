@@ -33,3 +33,4 @@ SESSION_NOTES_*.md
 tmp/
 *.orig
 *.egg-info/
+conventions_engine/build/
