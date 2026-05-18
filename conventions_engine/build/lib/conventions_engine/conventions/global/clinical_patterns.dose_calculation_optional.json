@@ -1,0 +1,30 @@
+{
+  "id": "clinical_patterns.dose_calculation_optional",
+  "title": "Optional calculated total-dose row when dose-per-weight and weight are captured",
+  "kind": "hybrid",
+  "scope": "global",
+  "status": "active",
+  "natural_key": "dose_calculation_optional",
+  "description": "When a form captures both DOSE_MG_KG (dose per kilogram) and WEIGHT (kilograms), optionally emit a calculate row with calculation `${DOSE_MG_KG} * ${WEIGHT}` and a label like 'Calculated dose (mg)'. The rule is explicitly OPTIONAL — many protocols capture both inputs but do not require the derived total-dose, and adding it on every form creates noise. Apply only when the protocol or data-management plan calls for the derived value.",
+  "rationale": "Calculated total-dose values are useful when downstream analysis needs them (PK studies, exposure-response modeling) but redundant otherwise. Pre-computing them in the form removes a derivation step but also adds a visible field whose value depends on two upstream values — any audit of those upstream values must propagate.",
+  "target": "form",
+  "applies_when": {
+    "soft": "Form captures both DOSE_MG_KG (dose-per-weight) and WEIGHT, AND the protocol or data-management plan calls for a derived total-dose value (PK study, exposure-response analysis, or other downstream consumer). The 'protocol or DMP calls for it' part requires reading the protocol context."
+  },
+  "effect": {
+    "soft": "When applicable, emit a calculate row immediately after the dose-and-weight fields: type=calculate, name=CALC_DOSE_MG (or similar), label='Calculated dose (mg)', calculation=`${DOSE_MG_KG} * ${WEIGHT}`, readonly=yes. Pair with OC-5b — if the calculated value should be visible to data entry, use type=text + readonly=yes instead. Row insertion is not yet a DSL primitive; the explicit-opt-in nature of this rule also makes structured emission inappropriate."
+  },
+  "created_at": "2026-05-14T22:00:00Z",
+  "created_by": "system:phase_b1c_final_translation",
+  "source": "consolidation:prompts.py:RULE_OC-7J",
+  "tags": ["clinical_patterns", "calculate", "dosing", "derived_values", "optional"],
+  "history": [
+    {
+      "at": "2026-05-14T22:00:00Z",
+      "by": "system:phase_b1c_final_translation",
+      "action": "created",
+      "status": "active",
+      "note": "Imported from prompts.py RULE OC-7J during Phase B.1c-final. The 'OPTIONAL' framing in the source rule is preserved here as a fully-soft convention — both applies_when and effect are soft prose. This is rare; most hybrid conventions have a structured applies_when even if effect is soft. The fully-soft form is appropriate when the rule's trigger condition itself requires judgment beyond what the DSL can express (here: 'protocol calls for the derived value'). Pairs with 7K (duration in days) which has the same opt-in shape."
+    }
+  ]
+}

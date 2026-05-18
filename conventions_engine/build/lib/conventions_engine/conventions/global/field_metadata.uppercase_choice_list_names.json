@@ -1,0 +1,34 @@
+{
+  "id": "field_metadata.uppercase_choice_list_names",
+  "title": "All list_name values in choices sheet use uppercase short codes",
+  "kind": "hybrid",
+  "scope": "global",
+  "status": "active",
+  "natural_key": "uppercase_choice_list_names",
+  "description": "All list_name values in the choices sheet must be uppercase short codes for choice lists generated at the CDASH-default layer. Standard lists: NY, YN, NYU, YNA, SEX, RACE, ETHNIC, AESEV, AEACN, AEOUT, AEREL, DSDECOD, DAY, MONTH, UNK, ND. Study-specific lists follow the same uppercase convention (LIK7_AGREE, MAPSYS, LAAO_DEV, NYHA, SHD, etc.). Lowercase variants like 'yn', 'sex', 'aesev' are not used. Forms sourced from customer_oc4_standard or customer_crf_library are used as-authored.",
+  "rationale": "Uppercase short codes for choice list_name values match the CDASH convention and make the codes visually distinct from question labels and choice display names (which are mixed-case). The visual distinction reduces a common form-authoring error: confusing a list_name reference with a free-text label. The 'yn' lowercase variant in particular has been the source of recurring data-entry bugs because pyxform treats list_name as case-sensitive — a survey reference to `select_one yn` against a choices sheet with `YN` fails silently with an undefined-list error.",
+  "target": "choice",
+  "applies_when": {
+    "form.definition_source": "cdash_default"
+  },
+  "effect": {
+    "flag": {
+      "category": "review_flags.list_name_casing",
+      "message": "Choice list ${choice.list_name} on form ${form.form_id} (definition_source=cdash_default) — verify list_name is UPPERCASE. Standard codes: NY, YN, NYU, YNA, SEX, RACE, ETHNIC, AESEV, AEACN, AEOUT, AEREL, DSDECOD, DAY, MONTH, UNK, ND. Study-specific lists also UPPERCASE (LIK7_AGREE, MAPSYS, NYHA, etc.). Lowercase variants ('yn', 'sex') are NOT used and break pyxform list resolution."
+    },
+    "soft": "When generating choice lists at the CDASH-default layer, enforce uppercase list_name values. Convert mixed-case authored values to uppercase. Verify survey rows referencing these lists (select_one <name>, select_multiple <name>) also use the uppercase form. Pyxform is case-sensitive on list_name matching."
+  },
+  "created_at": "2026-05-15T00:00:00Z",
+  "created_by": "system:phase_b1d_translation",
+  "source": "consolidation:skills/protocol-analysis/references/conventions.md:§5",
+  "tags": ["field_metadata", "choices", "naming", "casing", "cdash_scope"],
+  "history": [
+    {
+      "at": "2026-05-15T00:00:00Z",
+      "by": "system:phase_b1d_translation",
+      "action": "created",
+      "status": "active",
+      "note": "Imported from conventions.md §5 during Phase B.1d. target=choice (choice-scoped rule, evaluated per choice list in the choices sheet). Hybrid because the structural enforcement (case-converting list_name values, also case-converting downstream survey references) requires write capability the engine doesn't yet have at choice scope. The flag surfaces the verification; the soft carries the enforcement guidance."
+    }
+  ]
+}

@@ -1,0 +1,32 @@
+{
+  "id": "form_metadata.header_group_pattern",
+  "title": "Forms open with an unlabeled wrapper group (group0) containing date and ID fields",
+  "kind": "hybrid",
+  "scope": "global",
+  "status": "active",
+  "natural_key": "header_group_pattern",
+  "description": "Forms typically open with an unlabeled wrapper group (group0 per IE-1a) that contains date and identification fields (Date of Assessment / Date of Procedure / Date of Informed Consent, Physician Name, etc.) before section-numbered content begins. DEFAULT BEHAVIOR: the first begin group row is named group0 and has empty label. Header group contains ONLY date and identification fields, not clinical content. Subsequent groups (group1, group2, ...) hold section-numbered Case Book content. UNIVERSAL SCOPE per §0.",
+  "rationale": "The header group pattern matches the convention observed across customer authoring and produces forms with a consistent shape: identification fields visible immediately at form open, before clinical content. The unlabeled group0 prevents an empty 'group0' heading from rendering in the form UI while still scoping the identification fields together for itemgroup purposes. Section-numbered group names (group1, group2) provide consistent anchors for cross-form references and downstream Insight visualizations.",
+  "target": "form",
+  "applies_when": {},
+  "effect": {
+    "flag": {
+      "category": "review_flags.header_group_pattern",
+      "message": "Form ${form.form_id} — verify the first begin group is named 'group0' with empty label, and contains ONLY date / ID fields (Date of Assessment, Date of Procedure, Physician Name, etc.). Subsequent groups should be group1, group2, ... for section-numbered Case Book content. Surface in conventions_applied.header_group_pattern.{forms_with_header, forms_without_header}."
+    },
+    "soft": "When generating form structure: name the first begin group 'group0' with empty label. Place date and identification fields inside it before any clinical content. Subsequent groups use group1, group2, ... naming. Customer-sourced forms exempt."
+  },
+  "created_at": "2026-05-15T00:00:00Z",
+  "created_by": "system:phase_b1d_translation",
+  "source": "consolidation:skills/protocol-analysis/references/conventions.md:§21",
+  "tags": ["form_metadata", "groups", "header_pattern", "universal_scope"],
+  "history": [
+    {
+      "at": "2026-05-15T00:00:00Z",
+      "by": "system:phase_b1d_translation",
+      "action": "created",
+      "status": "active",
+      "note": "Imported from conventions.md §21 during Phase B.1d. Hybrid because group ordering and group naming aren't current DSL effect primitives — the convention emits a verification flag and a soft directive describing the pattern. A future 'form.first_group_name' computed attribute plus a 'first_group_must_be' effect would promote this to structured. The 'date and ID fields only' constraint on group0 contents requires per-field judgment that's clearly soft territory."
+    }
+  ]
+}

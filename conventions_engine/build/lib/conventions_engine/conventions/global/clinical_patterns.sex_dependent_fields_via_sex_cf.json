@@ -1,0 +1,37 @@
+{
+  "id": "clinical_patterns.sex_dependent_fields_via_sex_cf",
+  "title": "Sex-dependent fields require SEX_CF cross-fetch and a relevance gate on it",
+  "kind": "hybrid",
+  "scope": "global",
+  "status": "active",
+  "natural_key": "sex_dependent_fields_via_sex_cf",
+  "description": "Whenever a form has fields that only apply to one sex (pregnancy tests, menstrual history, prostate exams, breast exams, PSA, hCG, etc.): (1) emit a SEX_CF fetch row at the top of the form per the 7L pattern, fetching DM.SEX; (2) each sex-specific field gets relevant=`${SEX_CF}='F'` (female-only fields) or `${SEX_CF}='M'` (male-only fields). The female-applicable field name list includes but is not limited to: PREG, PREGTEST, PREGRESULT, MENSTRUATION, MENSES, LMP, GRAVIDA, PARA, BREAST*, MAMMOGRAM*. The male-applicable list includes PROS*, TESTIS*, PSA, ERECTILE*.",
+  "rationale": "Sex-specific clinical fields create form-noise for the inapplicable sex (a male subject sees a pregnancy-test field; the coordinator either enters 'Not Applicable' or leaves it blank, both of which complicate downstream analysis). Gating the field on SEX_CF makes the form show only the applicable items for each subject. The pattern combines the cross-form helper (7L) with a relevance expression — neither is novel, but the combination is universal enough to deserve its own convention.",
+  "target": "form",
+  "applies_when": {
+    "any_of": [
+      { "form.has_field": { "where": { "field.name": { "matches": "^(PREG|PREGTEST|PREGRESULT|MENSTRUATION|MENSES|LMP|GRAVIDA|PARA|BREAST|MAMMOGRAM)" } } } },
+      { "form.has_field": { "where": { "field.name": { "matches": "^(PROS|TESTIS|PSA|ERECTILE)" } } } }
+    ]
+  },
+  "effect": {
+    "flag": {
+      "category": "review_flags.sex_dependent_gate",
+      "message": "Form ${form.form_id} contains sex-specific fields — verify: (1) a SEX_CF calculate row exists at the top of the survey (per 7L convention); (2) each sex-specific field has relevant=`${SEX_CF}='F'` for female-only fields or `${SEX_CF}='M'` for male-only fields."
+    },
+    "soft": "Identify each sex-specific field on the form (the applies_when regex covers common names but is not exhaustive — domain knowledge may surface additional fields). For each, set the field's `relevant` attribute to either `${SEX_CF}='F'` or `${SEX_CF}='M'` depending on which sex the field applies to. Ensure the SEX_CF helper row exists at the top of the survey; if not, emit it per the 7L convention's canonical XPath shape against DM.SEX. Field-list extension, helper-row creation, and per-field relevance assignment are all not yet expressible in the engine — handled here in soft."
+  },
+  "created_at": "2026-05-14T22:00:00Z",
+  "created_by": "system:phase_b1c_final_translation",
+  "source": "consolidation:prompts.py:RULE_OC-7M",
+  "tags": ["clinical_patterns", "cross_form", "relevance", "sex_dependent"],
+  "history": [
+    {
+      "at": "2026-05-14T22:00:00Z",
+      "by": "system:phase_b1c_final_translation",
+      "action": "created",
+      "status": "active",
+      "note": "Imported from prompts.py RULE OC-7M during Phase B.1c-final. Plan doc originally numbered this 7L — corrected in updated plan doc. Uses form.has_field from B.1c-1 to detect the trigger; emission is soft because helper-row creation, field-list extension, and per-field relevance assignment require capabilities the engine doesn't yet have. The field-name regex catches common sex-specific names but is not exhaustive; protocol-specific custom names need study-scope overrides."
+    }
+  ]
+}

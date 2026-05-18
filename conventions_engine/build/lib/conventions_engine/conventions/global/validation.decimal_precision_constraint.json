@@ -1,0 +1,106 @@
+{
+  "id": "validation.decimal_precision_constraint",
+  "title": "Decimal measurement fields get precision constraints by measurement type (uses match directive)",
+  "kind": "hybrid",
+  "scope": "global",
+  "status": "active",
+  "natural_key": "decimal_precision_constraint",
+  "description": "Decimal fields capturing physical measurements (height, weight, temperature, blood pressure, etc.) get an auto-generated precision constraint based on the measurement's typical clinical precision. DEFAULT PRECISION TABLE: Height fields (name contains HEIGHT or HT) \u2192 2 decimals; Weight fields (name contains WEIGHT or WT) \u2192 2 decimals; Temperature fields (name contains TEMP) \u2192 1 decimal; Blood pressure fields (name contains BP, SBP, DBP) \u2192 0 decimals (integer); Heart rate / pulse fields (name contains HR or PULSE) \u2192 0 decimals (integer); Other decimal fields \u2192 2 decimals default. AUTO-APPLIED CONSTRAINT: `. >0 and . =round(${field_name}, <decimals>)`. The >0 clause provides positive-value sanity; the round() clause enforces precision. AUTO-APPLIED MESSAGE: 'Value must be positive, with no more than <N> decimal place(s).' UNIVERSAL SCOPE per \u00a70. Override: customer library specifies different precision (or none); carry forward as-authored.",
+  "rationale": "Clinical measurements have well-established precision conventions: height-in-cm to 2 decimals, weight-in-kg to 2 decimals, body temperature to 1 decimal, blood pressure and pulse as integers. Allowing data-entry users to record height=170.123456 cm produces false-precision artifacts in the data that mislead downstream analyses. The round-and-equate constraint forces user input to match the expected precision, surfacing precision-mismatched entries at entry time rather than in monitoring. The >0 clause prevents the common typo of negative values for physical measurements which can't be negative.",
+  "target": "field",
+  "applies_when": {
+    "field.type": "decimal"
+  },
+  "effect": {
+    "match": {
+      "on": "field.name",
+      "cases": {
+        "HEIGHT": {
+          "ensure": {
+            "field.constraint_decimals": 2
+          }
+        },
+        "HT": {
+          "ensure": {
+            "field.constraint_decimals": 2
+          }
+        },
+        "WEIGHT": {
+          "ensure": {
+            "field.constraint_decimals": 2
+          }
+        },
+        "WT": {
+          "ensure": {
+            "field.constraint_decimals": 2
+          }
+        },
+        "TEMP": {
+          "ensure": {
+            "field.constraint_decimals": 1
+          }
+        },
+        "BP": {
+          "ensure": {
+            "field.constraint_decimals": 0
+          }
+        },
+        "SBP": {
+          "ensure": {
+            "field.constraint_decimals": 0
+          }
+        },
+        "DBP": {
+          "ensure": {
+            "field.constraint_decimals": 0
+          }
+        },
+        "HR": {
+          "ensure": {
+            "field.constraint_decimals": 0
+          }
+        },
+        "PULSE": {
+          "ensure": {
+            "field.constraint_decimals": 0
+          }
+        }
+      },
+      "default": {
+        "ensure": {
+          "field.constraint_decimals": 2
+        }
+      }
+    },
+    "flag": {
+      "category": "review_flags.decimal_precision",
+      "message": "Decimal field ${field.name} on ${form.form_id} \u2014 apply precision constraint per measurement type. The skill's match dispatch sets field.constraint_decimals; emit `field.constraint = '. >0 and . =round(${${field.name}}, ${field.constraint_decimals})'` and `field.constraint_message = 'Value must be positive, with no more than ${field.constraint_decimals} decimal place(s).'` Customer-library overrides preserved."
+    }
+  },
+  "created_at": "2026-05-15T00:00:00Z",
+  "created_by": "system:phase_b1d_translation",
+  "source": "consolidation:skills/protocol-analysis/references/conventions.md:\u00a728",
+  "tags": [
+    "validation",
+    "decimal_precision",
+    "measurements",
+    "match_directive",
+    "universal_scope"
+  ],
+  "history": [
+    {
+      "at": "2026-05-15T00:00:00Z",
+      "by": "system:phase_b1d_translation",
+      "action": "created",
+      "status": "active",
+      "note": "Imported from conventions.md \u00a728 during Phase B.1d. This is the rule that ORIGINALLY MOTIVATED the match directive (B.1c-2) \u2014 flagged in B.0 audit inventory as F5 PRECISION_TABLE. Uses match on field.name with a 10-case dispatch (HEIGHT/HT, WEIGHT/WT, TEMP, BP/SBP/DBP, HR/PULSE) and a default case for other decimals. Structured detection (filter on field.type=decimal) and structured dispatch (match writes field.constraint_decimals per case). The actual constraint-expression construction (with field-name interpolation) is the remaining soft piece \u2014 same DSL gap noted for \u00a722 (sibling-name interpolation in effect expressions). When string-interpolation lands as an effect feature, the constraint and constraint_message ensures promote to fully-structured."
+    },
+    {
+      "at": "2026-05-15T00:00:00Z",
+      "by": "system:phase_b1d_translation",
+      "action": "edited",
+      "status": "active",
+      "note": "Corrected kind from 'structured' to 'hybrid' during B.1d validation pass. The match directive (10-case dispatch on field.name \u2192 field.constraint_decimals) IS valid structured work. The soft directive described constructing the field.constraint string with field-name interpolation, which requires expression-string templating \u2014 a known DSL gap. Schema forbids match + soft coexisting. Resolution: keep match (the per-case decimal assignment lands properly), drop soft, document the templating gap in the flag's message. When string-interpolation lands as an effect feature, the constraint-expression construction can promote back to structured."
+    }
+  ]
+}

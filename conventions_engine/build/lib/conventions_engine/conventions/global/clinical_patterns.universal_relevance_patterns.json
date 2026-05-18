@@ -1,0 +1,24 @@
+{
+  "id": "clinical_patterns.universal_relevance_patterns",
+  "title": "Universal relevance patterns — apply whenever the structural condition is present",
+  "kind": "advisory",
+  "scope": "global",
+  "status": "active",
+  "natural_key": "universal_relevance_patterns",
+  "description": "Library of seven canonical relevance patterns that recur across clinical-trial form design. Each pattern is a structural idiom: a small XPath expression to put in field.relevant when a specific form/field structure exists.",
+  "rationale": "These idioms are the building blocks of nearly every clinical-trial form's relevance logic. Documenting them as an addressable convention rather than recomputing them per build keeps relevance expressions consistent across forms within a study and across studies within a customer.",
+  "target": "field",
+  "created_at": "2026-05-14T22:00:00Z",
+  "created_by": "system:phase_b1c_final_translation",
+  "source": "consolidation:prompts.py:RULE_OC-7O",
+  "tags": ["clinical_patterns", "relevance", "idioms", "umbrella"],
+  "history": [
+    {
+      "at": "2026-05-14T22:00:00Z",
+      "by": "system:phase_b1c_final_translation",
+      "action": "created",
+      "status": "active",
+      "note": "Imported from prompts.py RULE OC-7O during Phase B.1c-final. Plan doc had 7O as placeholder; the rule has seven sub-cases (7O.a through 7O.g). Advisory because the rule documents an XPath idiom library, not a fire-on-entity convention — there is no applies_when or effect, just reference material rendered into Claude's prompt context during builds. Sub-cases catalogued in the description below for prompt-render consumption. If a future B.1d-style decomposition wants individual sub-conventions per sub-case, this umbrella retires; for now the seven idioms live together. Sub-cases (a) YES-BRANCH: gate field is Y, show follow-up detail — relevant=`${GATE}='Y'`; common with AE detail, SAE detail (paired with 7F), CM detail. (b) NO-BRANCH: ongoing flag is N, show end-date — relevant=`${XXONGO}='N'` (paired with 7C). (c) OTHER FOLLOW-UP: select_one has 'OTHER' option, free-text after — relevant=`${FIELD}='OTHER'`; for select_multiple, relevant=`selected(${FIELD},'OTHER')`. (d) MULTI-SELECT CONDITIONAL: show field when specific value chosen — relevant=`selected(${FIELD},'VALUE')`; or NOT-chosen: `not(selected(${FIELD},'NONE'))`. (e) TIMEPOINT-SPECIFIC: fields only at certain visits, requires TPTCALC pulldata row (see OC-4) — relevant=`${TPTCALC}='Screening'` or `${TPTCALC}!='Screening'`. (f) FIRST-ENTRY-ONLY in repeating forms: in AE/CM/MH/DV-style repeating forms, the 'any X observed?' YN gate only applies to first repeat instance — relevant=`${REPKEY_ID}=1` where REPKEY_ID is the calculated display form of the repeat key (paired with OC-5 repeat-key anchor). (g) OUT-OF-RANGE WARNING NOTES: note row visible when value out of range — relevant=`${FIELD} < LOW or ${FIELD} > HIGH`; e.g. BMI out-of-range note relevant=`${BMI} < 18 or ${BMI} > 40`. None of these sub-cases need mechanical firing; they are idioms Claude reaches for when building relevance expressions."
+    }
+  ]
+}

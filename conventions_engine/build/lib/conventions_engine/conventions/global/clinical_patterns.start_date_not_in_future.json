@@ -1,0 +1,40 @@
+{
+  "id": "clinical_patterns.start_date_not_in_future",
+  "title": "Start dates and clinical event dates cannot be in the future",
+  "kind": "hybrid",
+  "scope": "global",
+  "status": "active",
+  "natural_key": "start_date_not_in_future",
+  "description": "Every *STDAT field and every clinical-event date (visit dates, treatment dates, sample-collection dates) gets constraint `. <= today()` and constraint_message 'Date cannot be in the future.' Exceptions: scheduled or planned dates (e.g. next-visit-planned-date) which deliberately reference a future moment.",
+  "rationale": "Clinical-event dates by definition record something that has happened. A future date in such a field is either a data-entry typo or a misunderstanding of what the field captures. Scheduled/planned dates are explicitly distinct fields where future values are legitimate and the constraint should NOT fire.",
+  "target": "field",
+  "applies_when": {
+    "any_of": [
+      { "field.name": { "matches": "^.*STDAT$" } },
+      { "field.name": { "matches": "^(VISITDAT|VSDAT|LBDAT|TRTDAT|SAMPDAT|ECGDAT|VITALDAT|AEDAT|CMDAT)$" } }
+    ]
+  },
+  "effect": {
+    "ensure": {
+      "field.constraint": ". <= today()",
+      "field.constraint_message": "Date cannot be in the future."
+    },
+    "flag": {
+      "category": "review_flags.future_date_constraint",
+      "message": "Field ${field.name} pinned with `. <= today()` constraint and standard message. Verify this is NOT a scheduled/planned-date field (e.g. NEXT_VISIT_DAT, PLANNED_*) where future values are legitimate; if so, this convention should be overridden at study scope."
+    }
+  },
+  "created_at": "2026-05-14T22:00:00Z",
+  "created_by": "system:phase_b1c_final_translation",
+  "source": "consolidation:prompts.py:RULE_OC-7B",
+  "tags": ["clinical_patterns", "dates", "constraints", "future_date_block"],
+  "history": [
+    {
+      "at": "2026-05-14T22:00:00Z",
+      "by": "system:phase_b1c_final_translation",
+      "action": "created",
+      "status": "active",
+      "note": "Imported from prompts.py RULE OC-7B during Phase B.1c-final. Overlap candidate with B.0 inventory row §2 (general future-date constraint) — to be resolved when System 2 lands in Phase B.1d. Hybrid because the scheduled/planned-date exception requires judgment per field; the structural ensure handles the common case, the flag surfaces the field for human review. Field-name allowlist for clinical event dates is illustrative and incomplete; study-scope overrides should add domain-specific names."
+    }
+  ]
+}

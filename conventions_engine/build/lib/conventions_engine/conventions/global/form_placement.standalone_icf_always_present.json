@@ -1,0 +1,32 @@
+{
+  "id": "form_placement.standalone_icf_always_present",
+  "title": "Every study build includes a standalone ICF form",
+  "kind": "hybrid",
+  "scope": "global",
+  "status": "active",
+  "natural_key": "standalone_icf_always_present",
+  "description": "Every study build includes a standalone ICF (Informed Consent) form, even when the customer library does not contain one and the protocol does not list ICF as a CRF. The ICF form's content is determined by the §0 lookup hierarchy. The CDASH fallback (level 3) provides a single field `RFICDAT` (date of consent, with future-date constraint per §2). Settings: form_id=ICF, form_title=Informed Consent, wrapped in begin group / end group per §3. Form classification: form_category=INFRASTRUCTURE, cdash_domain=RF, visits_assigned=Baseline/Screening only. When the customer library provides an ICF form, use that source's fields/choices/groups/naming as-is. When the protocol requires an ICF field the customer source doesn't provide, append it per §0 with library_source=PROTOCOL_EXTENSION and completion_status=FLAGGED. Skip the form ENTIRELY only if the protocol or customer library explicitly states consent is captured outside the EDC (e.g. on a paper enrollment log).",
+  "rationale": "Informed consent is the regulatory floor for any clinical trial. Capturing the consent event in the EDC creates the auditable record monitors and inspectors require. Even when the customer library doesn't include ICF, the absence of an EDC consent record is itself a finding — the skill's default is to include the form so the gap is impossible to miss. Default omission would require an active decision (presence of an external paper log); default inclusion is the safer posture.",
+  "target": "study",
+  "applies_when": {},
+  "effect": {
+    "flag": {
+      "category": "review_flags.icf_form_presence",
+      "message": "Verify the build includes a form with form_id=ICF (or cdash_domain=ICF or form_category=INFRASTRUCTURE with a consent-related title). If absent, this is a RED violation — §1 mandates inclusion. Only skip if the protocol or customer library explicitly states consent is captured outside the EDC."
+    },
+    "soft": "Add a form with form_id=ICF if not already present in study.forms. Content per §0 hierarchy: customer_oc4_standard or customer_crf_library if matched; otherwise CDASH default RFICDAT date field with future-date constraint per §2. Settings: form_title=Informed Consent, visits_assigned=Baseline/Screening, form_category=INFRASTRUCTURE, cdash_domain=RF. Append any protocol-implied ICF fields per §0.C placeholder workflow. Form creation at study-scope is not yet a structured DSL operator; the flag surfaces the verification step and the soft directive carries the construction guidance."
+  },
+  "created_at": "2026-05-15T00:00:00Z",
+  "created_by": "system:phase_b1d_translation",
+  "source": "consolidation:skills/protocol-analysis/references/conventions.md:§1",
+  "tags": ["form_placement", "icf", "consent", "infrastructure"],
+  "history": [
+    {
+      "at": "2026-05-15T00:00:00Z",
+      "by": "system:phase_b1d_translation",
+      "action": "created",
+      "status": "active",
+      "note": "Imported from conventions.md §1 during Phase B.1d. First study-target convention. Uses target='study' which is already supported by iterate_targets in conventions_engine/__init__.py (line 106). Hybrid because the engine doesn't currently have a form-creation effect directive — a future 'ensure_form_exists' or 'append_form' directive at study scope would promote this to structured. The flag is what surfaces the verification; the soft carries the construction guidance for Claude during build."
+    }
+  ]
+}

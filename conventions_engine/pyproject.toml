@@ -11,3 +11,13 @@ requires-python = ">=3.10"
 [tool.setuptools]
 packages = ["conventions_engine"]
 package-dir = {"conventions_engine" = "."}
+
+[tool.setuptools.package-data]
+conventions_engine = [
+    "conventions/schema/*.json",
+    "conventions/schema/version.txt",
+    "conventions/global/*.json",
+    "conventions/vendors/**/*.json",
+    "conventions/README.md",
+    "conventions/_audit/*.md",
+]

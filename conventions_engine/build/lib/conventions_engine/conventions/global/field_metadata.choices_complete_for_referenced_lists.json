@@ -1,0 +1,42 @@
+{
+  "id": "field_metadata.choices_complete_for_referenced_lists",
+  "title": "Choices sheet must define every list_name referenced by survey rows",
+  "kind": "hybrid",
+  "scope": "global",
+  "status": "active",
+  "natural_key": "choices_complete_for_referenced_lists",
+  "description": "Every list_name referenced by a survey row's type column \u2014 whether select_one X or select_multiple X \u2014 must appear in the form's choices sheet with at least one list_name/name/label triple. Pyxform validates each form's choices independently; a reference to an undefined list halts the build with '[row:N] List name not in choices sheet: X'. Choice lists are NOT shared across forms \u2014 each .xlsx is compiled standalone.",
+  "rationale": "XLSForm has no concept of cross-form choice lists. Each form's choices sheet is the complete universe of selectable values for that form's select_one/select_multiple rows. The 'yn' list (Y/Yes, N/No) is the most common drop, because Claude treats it as boilerplate and saturates on study-specific lists. CRS-136 root cause: DV.xlsx and PE.xlsx shipped without yn defined. Patches 1+2 in CRS-136 fix (commit 0c31236) added deterministic enforcement; this convention is the third layer \u2014 prompt-level explanation.",
+  "target": "form",
+  "applies_when": {
+    "form.survey": {
+      "non_empty": true
+    }
+  },
+  "effect": {
+    "require": "form.choices",
+    "flag": {
+      "category": "review_flags.choices_incomplete",
+      "message": "Form ${form.form_id} \u2014 every list_name referenced by a survey row's type (select_one X or select_multiple X) MUST appear in this form's choices sheet. Pyxform halts on any undefined list. The yn list is auto-templated by build_xlsforms; every other missing list raises ValueError at build time."
+    },
+    "soft": "For every select_one X / select_multiple X reference in the survey, ensure list_name X has at least one row in choices. Common boilerplate lists (yn \u2192 Y/Yes, N/No) must be present whenever referenced. Study-specific lists (dvcat, peres, sev, rel) must be defined alongside the survey rows that reference them in the same form. Always emit every referenced list explicitly \u2014 the pipeline auto-templates yn but hard-fails on all others."
+  },
+  "created_at": "2026-05-14T22:00:00Z",
+  "created_by": "system:phase_b1a_translation",
+  "source": "consolidation:prompts.py:RULE_OC-10",
+  "tags": [
+    "field_metadata",
+    "choices",
+    "structural",
+    "pyxform"
+  ],
+  "history": [
+    {
+      "at": "2026-05-14T22:00:00Z",
+      "by": "system:phase_b1a_translation",
+      "action": "created",
+      "status": "active",
+      "note": "Imported from prompts.py RULE OC-10 during Phase B.1a. OC-10 was added in commit 0c31236 (CRS-136 fix) as the third layer of a three-layer fix \u2014 deterministic back-fill in build_xlsforms (Patch 1), block-on-FAIL gate in build_package (Patch 2), prompt rule in prompts.py (Patch 3 = OC-10). This convention captures the prompt-level rule. The deterministic enforcement remains in the skills. Kind revised from `structured` to `hybrid` during B.1a translation because cross-row referential integrity (survey list_name references checked against choices.list_name values) isn't expressible in the current DSL; the rule IS mechanically enforced by build_xlsforms.py Patch 1 from commit 0c31236, but at the engine level it's hybrid until DSL grows a cross-row predicate operator."
+    }
+  ]
+}

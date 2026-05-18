@@ -1,0 +1,42 @@
+{
+  "id": "clinical_patterns.ae_severity_serious_logic",
+  "title": "Grade-5 AE must be classified as serious; SAE detail block gated on AESER",
+  "kind": "hybrid",
+  "scope": "global",
+  "status": "active",
+  "natural_key": "ae_severity_serious_logic",
+  "description": "On the AE form, when fields AESEV (severity/grade) and AESER (serious flag) both exist: AESER gets constraint `(${AESEV}!='5') or (.='Y')` and constraint_message 'Grade 5 AE must be classified as serious.' Any SAE detail block on the form gets relevant `${AESER}='Y'` so SAE-only fields show only for serious AEs.",
+  "rationale": "Grade-5 AEs are fatal by CTCAE definition. Marking a Grade-5 AE as non-serious is always an error. The constraint catches this at entry. The SAE detail block (date of death, hospitalization details, narrative) is irrelevant when AESER='N' and showing it noisily implies it must be filled in even when blank — gating it on AESER='Y' keeps the form focused.",
+  "target": "field",
+  "applies_when": {
+    "field.name": "AESER",
+    "field.has_sibling": {
+      "where": { "field.name": "AESEV" },
+      "scope": "same_form"
+    }
+  },
+  "effect": {
+    "ensure": {
+      "field.constraint": "(${AESEV}!='5') or (.='Y')",
+      "field.constraint_message": "Grade 5 AE must be classified as serious."
+    },
+    "flag": {
+      "category": "review_flags.ae_severity_serious",
+      "message": "AESER constraint pinned to Grade-5-must-be-serious rule. Verify any SAE detail block on form ${form.form_id} has relevant `${AESER}='Y'` so SAE-specific fields only appear when serious='Y'."
+    },
+    "soft": "After applying the AESER constraint, locate any SAE-detail group/block on the form (typically labelled 'SAE Details', 'Serious Adverse Event Information', or similar) and set its top-level relevant attribute to `${AESER}='Y'`. The SAE-block detection is form-specific and not yet expressible in the DSL."
+  },
+  "created_at": "2026-05-14T22:00:00Z",
+  "created_by": "system:phase_b1c_final_translation",
+  "source": "consolidation:prompts.py:RULE_OC-7F",
+  "tags": ["clinical_patterns", "adverse_events", "severity", "constraints"],
+  "history": [
+    {
+      "at": "2026-05-14T22:00:00Z",
+      "by": "system:phase_b1c_final_translation",
+      "action": "created",
+      "status": "active",
+      "note": "Imported from prompts.py RULE OC-7F during Phase B.1c-final. Uses field.has_sibling from B.1c-1 to verify AESEV-AESER pairing. The constraint expression on AESER is fixed (references the known sibling name AESEV, not a derived prefix), so ensure can emit it directly — partially structured. The SAE-block relevance assignment remains soft because the SAE block has no canonical identifier; identifying it requires form-walking the engine can't do today. Note: the plan doc originally suggested default_value composition (AESEV='Severe' → AESER defaults to 'Y'); on closer reading prompts.py uses a constraint (the value must reconcile), not a runtime default. The actual rule is a hard constraint, not a soft default. default_value is not used in this convention; it remains documented as the operator-of-record for future runtime-default rules."
+    }
+  ]
+}

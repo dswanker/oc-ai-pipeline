@@ -1,0 +1,37 @@
+{
+  "id": "clinical_patterns.bmi_calculation",
+  "title": "Emit a BMI calculate row when WEIGHT and HEIGHT both exist on the form",
+  "kind": "hybrid",
+  "scope": "global",
+  "status": "active",
+  "natural_key": "bmi_calculation",
+  "description": "When a form captures both WEIGHT (kg) and HEIGHT (cm) fields, emit a calculate row immediately after, with calculation `${WEIGHT} div (${HEIGHT} * ${HEIGHT} div 10000)` and readonly=yes. Unit assumption: weight in kg, height in cm. BMI = kg / m², so the calculation converts cm to m via `div 10000`.",
+  "rationale": "BMI is the most common derived value in clinical trials and is computed from inputs the form already collects. Pre-computing it removes a manual step (and the typos that come with manual computation) and gives investigators an instant data-quality signal — wildly out-of-range BMI usually points to a typo in height or weight rather than a real outlier.",
+  "target": "form",
+  "applies_when": {
+    "all_of": [
+      { "form.has_field": { "where": { "field.name": "WEIGHT" } } },
+      { "form.has_field": { "where": { "field.name": "HEIGHT" } } }
+    ]
+  },
+  "effect": {
+    "flag": {
+      "category": "review_flags.bmi_calculate_pending",
+      "message": "Form ${form.form_id} contains WEIGHT and HEIGHT — verify a BMI calculate row exists with type=calculate (visible if displayed; see OC-5b), name=BMI, label='BMI (kg/m²)', calculation=`${WEIGHT} div (${HEIGHT} * ${HEIGHT} div 10000)`, readonly=yes."
+    },
+    "soft": "Emit a calculate row immediately after the HEIGHT/WEIGHT row pair: type=calculate, name=BMI, label='BMI (kg/m²)', calculation=`${WEIGHT} div (${HEIGHT} * ${HEIGHT} div 10000)`, readonly=yes. If BMI should be visible in the data-entry view, convert type=calculate to type=text per OC-5b. Row insertion is not a current DSL primitive — handled here in soft."
+  },
+  "created_at": "2026-05-14T22:00:00Z",
+  "created_by": "system:phase_b1c_final_translation",
+  "source": "consolidation:prompts.py:RULE_OC-7E",
+  "tags": ["clinical_patterns", "calculate", "bmi", "derived_values"],
+  "history": [
+    {
+      "at": "2026-05-14T22:00:00Z",
+      "by": "system:phase_b1c_final_translation",
+      "action": "created",
+      "status": "active",
+      "note": "Imported from prompts.py RULE OC-7E during Phase B.1c-final. Uses form.has_field DSL operator from B.1c-1 (commit c9ef634). Two form.has_field conditions are wrapped in all_of to avoid JSON key-collision (both have the same top-level key name). Hybrid because the engine cannot currently insert new rows into form.survey — applies_when correctly detects the trigger but the calculate-row emission is delegated to Claude via soft."
+    }
+  ]
+}

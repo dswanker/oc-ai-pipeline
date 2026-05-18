@@ -1,0 +1,38 @@
+{
+  "id": "clinical_patterns.paired_start_end_date_constraint",
+  "title": "End date must be on or after start date and not in the future",
+  "kind": "hybrid",
+  "scope": "global",
+  "status": "active",
+  "natural_key": "paired_start_end_date_constraint",
+  "description": "When a form has a paired *STDAT / *ENDAT field set (e.g. MHSTDAT+MHENDAT, AESTDAT+AEENDAT, CMSTDAT+CMENDAT), the end-date field gets a constraint `. >= ${<base>STDAT} and . <= today()` and a constraint_message explaining the rule. Sibling lookup via field.has_sibling in same_itemgroup scope.",
+  "rationale": "Free-text end dates that are before the matched start date, or in the future, are almost always typos or data-entry slips. The paired-date constraint is one of the most common clinical-trial data-quality rules — present on essentially every form that captures temporal intervals (AEs, concomitant medications, medical history, deviations, etc.).",
+  "target": "field",
+  "applies_when": {
+    "field.name": { "matches": "^.*ENDAT$" },
+    "field.has_sibling": {
+      "where": { "field.name": { "matches": "^.*STDAT$" } },
+      "scope": "same_itemgroup"
+    }
+  },
+  "effect": {
+    "flag": {
+      "category": "review_flags.paired_date_constraint",
+      "message": "Field ${field.name} is an end-date paired with a sibling start-date in the same itemgroup. Verify constraint is `. >= ${<sibling>STDAT} and . <= today()` and constraint_message reads 'End date must be on or after start date and cannot be in the future.'"
+    },
+    "soft": "Emit constraint `. >= ${<base>STDAT} and . <= today()` where <base> is the field-name prefix shared by the STDAT sibling (e.g. for AEENDAT, the sibling is AESTDAT and the constraint references ${AESTDAT}). Emit constraint_message: 'End date must be on or after start date and cannot be in the future.' Constraint expression composition from sibling name requires string interpolation the DSL does not yet support — handled here in soft."
+  },
+  "created_at": "2026-05-14T22:00:00Z",
+  "created_by": "system:phase_b1c_final_translation",
+  "source": "consolidation:prompts.py:RULE_OC-7A",
+  "tags": ["clinical_patterns", "dates", "constraints", "paired_fields"],
+  "history": [
+    {
+      "at": "2026-05-14T22:00:00Z",
+      "by": "system:phase_b1c_final_translation",
+      "action": "created",
+      "status": "active",
+      "note": "Imported from prompts.py RULE OC-7A during Phase B.1c-final. Uses field.has_sibling DSL operator from B.1c-1 (commit c9ef634). Hybrid because constraint expression must reference the sibling's actual field name (interpolation of <base>STDAT from <base>ENDAT requires string manipulation not yet in the DSL). When DSL grows a sibling-value interpolation operator, this becomes structured."
+    }
+  ]
+}

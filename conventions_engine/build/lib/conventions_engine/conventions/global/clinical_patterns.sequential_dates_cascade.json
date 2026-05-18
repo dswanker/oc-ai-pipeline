@@ -1,0 +1,30 @@
+{
+  "id": "clinical_patterns.sequential_dates_cascade",
+  "title": "Sequential dates each constrain to be on-or-after the previous date",
+  "kind": "hybrid",
+  "scope": "global",
+  "status": "active",
+  "natural_key": "sequential_dates_cascade",
+  "description": "When a form has three or more dates that must occur in a fixed temporal order (e.g. event date → awareness date → report date → IRB notification date, or screening → consent → enrollment → randomization), each date's constraint references the previous date in the sequence: `. >= ${<previous_date_field>}`. Chained constraints enforce the full ordering.",
+  "rationale": "Process-flow dates have an intrinsic ordering: the report cannot precede the awareness, the consent cannot precede the event being consented to. Without constraints, coordinators sometimes enter dates out of order — either typos or genuine confusion about which date goes where. Cascade constraints catch these at entry rather than at downstream analysis.",
+  "target": "form",
+  "applies_when": {
+    "soft": "Form contains three or more date fields representing a fixed clinical or administrative sequence (event → awareness → report → IRB; screening → consent → enrollment → randomization; etc.). Determining whether a set of dates IS a sequence requires reading the protocol context and the form's purpose."
+  },
+  "effect": {
+    "soft": "For each pair of consecutive dates in the identified sequence, emit on the LATER date a constraint `. >= ${<earlier_date_field>}` chained with any existing date constraints via `and`. Constraint_message should name both fields ('Report date must be on or after awareness date.'). Sequence identification and order specification are protocol-dependent — handled here in soft until a form-level sequence-declaration DSL primitive lands."
+  },
+  "created_at": "2026-05-14T22:00:00Z",
+  "created_by": "system:phase_b1c_final_translation",
+  "source": "consolidation:prompts.py:RULE_OC-7D",
+  "tags": ["clinical_patterns", "dates", "constraints", "sequence"],
+  "history": [
+    {
+      "at": "2026-05-14T22:00:00Z",
+      "by": "system:phase_b1c_final_translation",
+      "action": "created",
+      "status": "active",
+      "note": "Imported from prompts.py RULE OC-7D during Phase B.1c-final. Hybrid because 'sequential' requires AI judgment from protocol context, and the chained-constraint emission references arbitrary date-field names (not a pattern like the STDAT/ENDAT pair). If a future DSL extension lands a sequence-declaration primitive (e.g. structured 'cascade_dates' directive accepting an ordered list of field names), this becomes structured."
+    }
+  ]
+}
