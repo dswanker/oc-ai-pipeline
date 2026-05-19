@@ -661,3 +661,57 @@ Results posted back to monday.com DVS UAT Hub
 **Last Updated:** May 18, 2026
 **Implementation Status:** Phase 0 - Engineering Q&A
 **Next Milestone:** Phase 0 complete (after OpenClinica response + internal decisions)
+
+---
+
+## 18. Live Board IDs (created 2026-05-18)
+
+The §12 board was provisioned on 2026-05-18 with all 17 columns. These are
+the live Monday IDs — use them when wiring the UAT Runner service.
+
+### DVS UAT Validation Hub (board `18413775641`)
+
+URL: https://openclinica-customerfirst.monday.com/boards/18413775641
+Workspace: 8504504 (Professional Services Team)
+
+| Column title         | Type            | Column ID                  |
+|---------------------|-----------------|----------------------------|
+| (Name — built-in)   | name            | `name`                     |
+| Study Identifier    | text            | `text_mm3fkbqy`            |
+| Customer            | people          | `multiple_person_mm3fwxtb` |
+| DVS Input           | file            | `file_mm3fctbq`            |
+| EDC Build ZIP       | file            | `file_mm3f8bef`            |
+| Study Spec JSON     | file            | `file_mm3fvdgq`            |
+| Test Environment    | dropdown        | `dropdown_mm3fpd9h`        |
+| Study OID           | text            | `text_mm3f9w1n`            |
+| Site OID            | text            | `text_mm3fhzgs`            |
+| Participant Count   | numbers         | `numeric_mm3fkh0q`         |
+| UAT Status          | status          | `color_mm3fg98y`           |
+| DVS Output          | file            | `file_mm3fcyv5`            |
+| Validation Report   | file            | `file_mm3f92r5`            |
+| Traceability Matrix | file            | `file_mm3ffdtt`            |
+| Test Data ODM       | file            | `file_mm3f760q`            |
+| Error Log           | long_text       | `long_text_mm3fxj4h`       |
+| Run Duration        | numbers         | `numeric_mm3f3b3n`         |
+| Pass Rate           | numbers         | `numeric_mm3fcg8e`         |
+
+**Status column labels (`color_mm3fg98y`):**
+0=Not Started · 1=Publishing · 2=Site Created · 3=Participants Created ·
+4=Data Imported · 5=Validation Running · 6=Complete · 7=Failed
+
+**Test Environment dropdown options (`dropdown_mm3fpd9h`):**
+1=acmebio.build · 2=testcustomer.build · 3=Other (specify in notes)
+
+### AI Hub additions (board `18409146946`)
+
+| Column title  | Type | Column ID         | Notes                                                |
+|---------------|------|-------------------|------------------------------------------------------|
+| DVS for UAT   | file | `file_mm3fc5dc`   | Auto-populate after DVS generation. See §13.        |
+| UAT Runs      | board_relation | **— pending UI create —** | API rejects board_relation creation; must be created in Monday UI. Link target: board `18413775641`. |
+
+**UI step still needed (one-time):**
+On AI Hub board `18409146946`, add a `board_relation` column titled
+"UAT Runs" pointing to board `18413775641`. Monday's GraphQL API
+currently returns "This column type is not supported yet in the API"
+for board_relation creation — manual UI step is the workaround.
+
