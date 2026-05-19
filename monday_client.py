@@ -36,6 +36,10 @@ COL = {
     "create_study":      "boolean_mm2nbn5c",
     "oc_production":     "boolean_mm2ptpzd",
     "oc_study_url":      "text_mm2nbce5",
+    # Publish-to-Test workflow (added 2026-05-19)
+    "study_oid":         "text_mm3gxekw",   # study env OID (auto-populated from /study-environments[].oid)
+    "published_status":  "color_mm3gjwvt",  # status: Not Published / Publishing / Published / Failed
+    "publish_to_test":   "button_mm3gwq70", # button — webhook trigger handled in main.py
     # Discounts
     "subscription_discount": "numeric_mm2nkqbq",
     "services_discount":     "numeric_mm2n41x7",

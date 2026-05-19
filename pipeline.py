@@ -1027,6 +1027,219 @@ async def create_oc_study(subdomain, struct_json, is_production=False):
     }
 
 
+# ── Publish-to-Test workflow (button webhook → main.py → publish_to_test) ────
+#
+# Triggered when the user clicks the "Publish to Test" button on a row in
+# Monday. main.py's /webhook/monday dispatches button-click events here.
+#
+# Flow:
+#   1. read oc_subdomain + oc_study_url from monday
+#   2. parse study_uuid from the /b/<uuid> path of oc_study_url
+#   3. GET /api/studies/{uuid}/study-environments → (env_uuid, oid)
+#   4. POST /api/studies/{uuid}/study-versions with studyEnvironmentUuid
+#   5. update Study OID + Published Status columns
+#
+# Status transitions on the Published Status column:
+#   Publishing → Published   (happy path)
+#   Publishing → Failed      (any exception)
+#
+# publish_to_test() catches all exceptions and writes them to ai_run_log +
+# Published Status. It never raises — the webhook should always return.
+
+
+def _extract_study_uuid_from_url(study_url: str) -> str:
+    """Parse the path component `/b/<uuid>` out of an OC designer URL.
+
+    Pure function — no API call. Easy to unit-test offline.
+
+        >>> _extract_study_uuid_from_url(
+        ...     "https://acme.design.openclinica.io/b/abcd1234-5678")
+        'abcd1234-5678'
+
+    Raises ValueError with the bad URL if no /b/<...> path is present.
+    """
+    import re
+    m = re.search(r"/b/([^/?#]+)", study_url or "")
+    if not m:
+        raise ValueError(
+            f"Could not extract study UUID from URL: {study_url!r}. "
+            f"Expected a '/b/<UUID>' path component."
+        )
+    return m.group(1)
+
+
+async def _get_study_environment_uuid(
+    subdomain,
+    study_uuid,
+    env_name="Test",
+    is_production=False,
+    token=None,
+):
+    """GET /api/studies/{study_uuid}/study-environments and return
+    (env_uuid, oid) for the entry whose environmentName matches env_name
+    (case-insensitive).
+
+    Returns a 2-tuple so the caller can populate both the studyEnvironmentUuid
+    input to /study-versions AND the Study OID monday column from one call.
+
+    Raises RuntimeError if env_name isn't found, with the list of envs
+    that WERE returned — actionable for the operator.
+    """
+    import httpx
+    if token is None:
+        token = await _get_oc_token(subdomain, is_production=is_production)
+    url = (f"https://{subdomain}.build.openclinica.io"
+           f"/study-service/api/studies/{study_uuid}/study-environments")
+    async with httpx.AsyncClient(timeout=30) as c:
+        r = await c.get(url, headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type":  "application/json",
+        })
+    if r.status_code != 200:
+        raise RuntimeError(
+            f"GET /study-environments failed: {r.status_code} {r.text[:300]}"
+        )
+    envs = r.json()
+    if not isinstance(envs, list):
+        raise RuntimeError(
+            f"GET /study-environments returned non-list: "
+            f"{type(envs).__name__} — {str(envs)[:200]}"
+        )
+
+    target = env_name.strip().lower()
+    for env in envs:
+        if (env.get("environmentName") or "").strip().lower() == target:
+            env_uuid = env.get("uuid")
+            oid      = env.get("oid") or ""
+            if not env_uuid:
+                raise RuntimeError(
+                    f"Environment {env_name!r} found but has no uuid field. "
+                    f"Full entry: {env}"
+                )
+            return env_uuid, oid
+
+    available = [e.get("environmentName", "?") for e in envs]
+    raise RuntimeError(
+        f"No environment named {env_name!r} found for study {study_uuid}. "
+        f"Available: {available}"
+    )
+
+
+async def _publish_study_version(
+    subdomain,
+    study_uuid,
+    study_environment_uuid,
+    version_name=None,
+    description=None,
+    is_production=False,
+    token=None,
+):
+    """POST /api/studies/{study_uuid}/study-versions.
+
+    Body:  {"studyEnvironmentUuid": ..., "versionName": ..., "description": ...}
+    Returns: the parsed StudyVersion response dict.
+
+    Raises RuntimeError on non-2xx with the response body in the message
+    so the caller can write a meaningful Published Status note.
+    """
+    import httpx
+    if token is None:
+        token = await _get_oc_token(subdomain, is_production=is_production)
+    url = (f"https://{subdomain}.build.openclinica.io"
+           f"/study-service/api/studies/{study_uuid}/study-versions")
+    body = {"studyEnvironmentUuid": study_environment_uuid}
+    if version_name:
+        body["versionName"] = version_name
+    if description:
+        body["description"] = description
+
+    async with httpx.AsyncClient(timeout=60) as c:
+        r = await c.post(url, headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type":  "application/json",
+        }, json=body)
+    print(f"OC Publish API: {r.status_code} {r.text[:300]}", flush=True)
+    if r.status_code not in (200, 201):
+        raise RuntimeError(
+            f"Publish failed: {r.status_code} {r.text[:300]}"
+        )
+    return r.json()
+
+
+async def publish_to_test(item_id):
+    """Entry point invoked by main.py's safe_run_publish background task.
+
+    See the section comment above for the full flow. This function never
+    raises — every failure path is captured into Published Status="Failed"
+    and append_log() so the operator sees what went wrong on the monday row.
+    """
+    item_id = str(item_id)
+
+    try:
+        # 1. Show we're working on it
+        await set_status(item_id, COL["published_status"], "Publishing")
+        await append_log(item_id, "Publish to Test: starting")
+
+        # 2. Read inputs from monday
+        item = await get_item(item_id)
+        cols = {cv["id"]: cv for cv in (item.get("column_values") or [])}
+        oc_subdomain = (cols.get(COL["oc_subdomain"], {}).get("text") or "").strip()
+        oc_study_url = (cols.get(COL["oc_study_url"], {}).get("text") or "").strip()
+
+        if not oc_subdomain:
+            raise RuntimeError(
+                "OC Subdomain is empty. Set it on this row before clicking "
+                "Publish to Test.")
+        if not oc_study_url:
+            raise RuntimeError(
+                "OC Study URL is empty. The study must be created via the "
+                "main pipeline (Send to AI) before it can be published.")
+
+        # 3. Parse study_uuid from the stored designer URL
+        study_uuid = _extract_study_uuid_from_url(oc_study_url)
+        await append_log(item_id,
+                         f"Publish to Test: study_uuid={study_uuid}")
+
+        # 4. Resolve env uuid + oid via /study-environments
+        env_uuid, oid = await _get_study_environment_uuid(
+            oc_subdomain, study_uuid,
+            env_name="Test", is_production=False,
+        )
+        await append_log(item_id,
+            f"Publish to Test: env_uuid={env_uuid}  oid={oid!r}")
+
+        # 5. Persist the Study OID column (cheap bonus from the same call)
+        if oid:
+            await set_text(item_id, COL["study_oid"], oid)
+
+        # 6. Publish
+        ts = _dt.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        version_name = f"UAT-{ts}"
+        response = await _publish_study_version(
+            oc_subdomain, study_uuid, env_uuid,
+            version_name=version_name,
+            is_production=False,
+        )
+        await append_log(item_id,
+            f"Publish to Test: success — version={version_name}  "
+            f"response_keys={list(response.keys())[:6]}")
+
+        # 7. Mark as published
+        await set_status(item_id, COL["published_status"], "Published")
+
+    except Exception as e:
+        err = f"{type(e).__name__}: {e}"
+        print(f"PUBLISH_TO_TEST FAILED for item {item_id}: {err}", flush=True)
+        print(traceback.format_exc(), flush=True)
+        # Best-effort error reporting; do NOT raise — webhook must return.
+        try:
+            await set_status(item_id, COL["published_status"], "Failed")
+            await append_log(item_id, f"Publish to Test FAILED: {err}")
+        except Exception as inner:
+            print(f"PUBLISH_TO_TEST status-update fallback also failed: "
+                  f"{inner}", flush=True)
+
+
 # ── OC-9 backstop: Common Visit for cross-visit forms ────────────────────────
 
 def _enforce_common_visit(struct_json):

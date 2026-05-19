@@ -8,6 +8,12 @@ TRIGGER_COLUMN_ID    = "single_select5ogcb0g"
 TRIGGER_LABEL_INDEX  = 0      # 0 = "Send to AI"
 TRIGGER_LABEL_TEXT   = "Send to AI"
 
+# Publish-to-Test button. Fires a column_value_changed event with
+# columnId=PUBLISH_BUTTON_COLUMN_ID. Value payload is assumed empty
+# ({} or null) — buttons don't carry values like status columns do.
+# Verify payload shape on first real click and adjust if needed.
+PUBLISH_BUTTON_COLUMN_ID = "button_mm3gwq70"
+
 # ── Concurrency guards ────────────────────────────────────────────────────────
 # Limit to 1 simultaneous full pipeline run.  A second trigger while one is
 # already running is queued and starts immediately after the first completes.
@@ -20,6 +26,13 @@ _pipeline_semaphore = asyncio.Semaphore(1)
 # against the same row, which would upload duplicate files and set
 # conflicting status values.
 _active_items: set = set()
+
+# Separate dedupe set for the Publish-to-Test button. Independent of
+# _active_items because (a) publish is much shorter than the main
+# pipeline (just 2 OC API calls) and doesn't share _pipeline_semaphore,
+# and (b) a row should be allowed to publish while its main pipeline
+# is queued/running.
+_active_publishes: set = set()
 
 @app.get("/health")
 async def health():
@@ -45,6 +58,50 @@ async def monday_webhook(request: Request, background_tasks: BackgroundTasks):
     col_id  = event.get("columnId", "")
     new_val = event.get("value", {})
 
+    # ── Publish-to-Test button handler ──────────────────────────────────
+    # The Publish to Test button fires a column_value_changed event with
+    # columnId=PUBLISH_BUTTON_COLUMN_ID. Per design, no value payload is
+    # required — the click itself IS the action. We don't read new_val
+    # here because button events likely send {} or null (unverified —
+    # actual payload shape needs confirmation on first real click).
+    if col_id == PUBLISH_BUTTON_COLUMN_ID:
+        print(f"PUBLISH BUTTON CLICKED: item={item_id}", flush=True)
+
+        if item_id in _active_publishes:
+            print(f"DUPLICATE PUBLISH SUPPRESSED: item {item_id} "
+                  f"is already publishing — ignoring webhook", flush=True)
+            return {"status": "duplicate_publish_suppressed", "item_id": item_id}
+
+        async def safe_run_publish(iid):
+            """Run pipeline.publish_to_test() with dedupe + error trap.
+
+            Doesn't share _pipeline_semaphore because publish is a
+            short, OC-API-only flow (2 calls) — gating it on the main
+            pipeline's heavy-work semaphore would unnecessarily queue
+            it behind builds. Dedupe via _active_publishes only.
+            """
+            if iid in _active_publishes:
+                print(f"DUPLICATE PUBLISH SUPPRESSED (task level): "
+                      f"item {iid} already publishing", flush=True)
+                return
+            _active_publishes.add(iid)
+            try:
+                # Lazy import — pipeline.publish_to_test may not exist
+                # yet at deploy time. If missing, ImportError lands in
+                # the except below with a clear traceback.
+                from pipeline import publish_to_test
+                await publish_to_test(iid)
+            except Exception as e:
+                print(f"PUBLISH CRASHED: {e}", flush=True)
+                print(traceback.format_exc(), flush=True)
+            finally:
+                _active_publishes.discard(iid)
+                print(f"RELEASED: item {iid} publish slot freed", flush=True)
+
+        background_tasks.add_task(safe_run_publish, item_id)
+        return {"status": "publish_started", "item_id": item_id}
+
+    # ── Send-to-AI trigger handler (existing) ───────────────────────────
     # Only care about our specific trigger column
     if col_id != TRIGGER_COLUMN_ID:
         print(f"COLUMN CHANGE: item={item_id} label_index=? label_text=?", flush=True)
