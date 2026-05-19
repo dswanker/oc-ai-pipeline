@@ -908,7 +908,8 @@ async def _import_board(subdomain, board_id, board_json, is_production, token=No
     return True
 
 
-async def create_oc_study(subdomain, struct_json, is_production=False):
+async def create_oc_study(subdomain, struct_json, is_production=False,
+                          edc_zip_url=None):
     """
     Create a study in OpenClinica and import the Study Design Board (SOE).
 
@@ -1019,12 +1020,48 @@ async def create_oc_study(subdomain, struct_json, is_production=False):
             print(f"  Unexpected error — check Railway logs for full traceback.",
                   flush=True)
 
+    # ── Step 5: Upload XLSForm files to create form versions ─────────────────
+    # Required before publish_to_test() will succeed; OC errors with
+    # "No form version defined" if forms have no published version.
+    # Uses Playwright headless Chrome via oc_form_publisher (no REST API
+    # exists for form-version upload). Skipped if (a) board import failed
+    # — no point publishing forms with no design board — or (b) no EDC
+    # ZIP URL was provided (caller didn't fetch it from Monday).
+    forms_publish = None
+    if board_imported and edc_zip_url:
+        try:
+            from oc_form_publisher import publish_forms_to_openclinica
+            print(f"Uploading XLSForm files to {study_url} via Playwright...",
+                  flush=True)
+            forms_publish = await publish_forms_to_openclinica(
+                study_url=study_url,
+                edc_zip_url=edc_zip_url,
+                auth_token=token,
+            )
+            print(f"Form publish: {forms_publish.forms_uploaded}/"
+                  f"{forms_publish.forms_total} uploaded; "
+                  f"errors={len(forms_publish.errors)}", flush=True)
+            for err in forms_publish.errors[:5]:
+                print(f"  form-upload error: {err}", flush=True)
+        except Exception as e:
+            # Don't fail study creation if form publish errors; caller
+            # surfaces the partial state via the return dict.
+            print(f"Form publish raised: {type(e).__name__}: {e}", flush=True)
+            print(traceback.format_exc(), flush=True)
+            forms_publish = None
+    elif not edc_zip_url:
+        print(f"Form publish skipped — no edc_zip_url passed to "
+              f"create_oc_study.", flush=True)
+
     # Return a dict so callers can surface both the URL and the import state
     return {
         "study_url":      study_url,
         "study_uuid":     study_uuid,    # written to COL["study_uuid"] by caller; used by publish_to_test
         "board_imported": board_imported,
         "board_error":    board_error,
+        # FormPublishResult dict or None if skipped/raised. Caller can
+        # log via append_log(item_id, ...) — we don't have item_id here.
+        "forms_publish":  forms_publish.to_dict() if forms_publish else None,
     }
 
 
@@ -2429,11 +2466,37 @@ async def run_pipeline(item_id):
                 env_label = "production" if oc_production else "test"
                 await append_log(item_id, f"Creating study in OpenClinica {env_label} ({oc_subdomain})...")
                 try:
+                    # Fetch the EDC build ZIP URL from monday so
+                    # create_oc_study can upload XLSForm files after the
+                    # board import (required to clear "No form version
+                    # defined" before publish_to_test). Best-effort: if
+                    # we can't find the asset, just skip form upload and
+                    # log — study creation still proceeds.
+                    edc_zip_url = None
+                    try:
+                        from monday_client import get_asset_url
+                        assets = await get_asset_url(item_id)
+                        for asset in assets or []:
+                            name = (asset.get("name") or "")
+                            if "EDC_Build" in name and name.endswith(".zip"):
+                                edc_zip_url = (asset.get("public_url")
+                                               or asset.get("url"))
+                                break
+                        if not edc_zip_url:
+                            print("Chain D: no EDC build ZIP asset found on "
+                                  "item — form publish will be skipped",
+                                  flush=True)
+                    except Exception as _e:
+                        print(f"Chain D: edc_zip_url lookup failed ({_e}); "
+                              f"form publish will be skipped", flush=True)
+
                     result = await create_oc_study(oc_subdomain, struct_json,
-                                                    is_production=oc_production)
+                                                    is_production=oc_production,
+                                                    edc_zip_url=edc_zip_url)
                     study_url      = result["study_url"]
                     board_imported = result["board_imported"]
                     board_error    = result.get("board_error", "")
+                    forms_publish  = result.get("forms_publish")
                     await set_text(item_id, COL["oc_study_url"], study_url)
                     # Persist the raw UUID separately so publish_to_test can
                     # read it without parsing the URL (which historically
@@ -2446,6 +2509,13 @@ async def run_pipeline(item_id):
                         await append_log(item_id,
                             f"Study shell created: {study_url}  |  "
                             f"Design board import skipped — {board_error}")
+                    if forms_publish:
+                        fp = forms_publish
+                        await append_log(item_id,
+                            f"Form-version upload: {fp['forms_uploaded']}/"
+                            f"{fp['forms_total']} succeeded"
+                            + (f" — errors: {fp['errors'][:2]}"
+                               if fp['errors'] else ""))
                     print(f"Chain D complete: {study_url} "
                           f"(board_imported={board_imported})", flush=True)
                 except Exception as e:
