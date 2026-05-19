@@ -37,6 +37,7 @@ COL = {
     "oc_production":     "boolean_mm2ptpzd",
     "oc_study_url":      "text_mm2nbce5",
     # Publish-to-Test workflow (added 2026-05-19)
+    "study_uuid":        "text_mm3ggzga",   # OC study UUID — written by create_oc_study, read by publish_to_test
     "study_oid":         "text_mm3gxekw",   # study env OID (auto-populated from /study-environments[].oid)
     "published_status":  "color_mm3gjwvt",  # status: Not Published / Publishing / Published / Failed
     "publish_to_test":   "button_mm3gwq70", # button — webhook trigger handled in main.py

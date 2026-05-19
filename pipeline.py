@@ -1022,6 +1022,7 @@ async def create_oc_study(subdomain, struct_json, is_production=False):
     # Return a dict so callers can surface both the URL and the import state
     return {
         "study_url":      study_url,
+        "study_uuid":     study_uuid,    # written to COL["study_uuid"] by caller; used by publish_to_test
         "board_imported": board_imported,
         "board_error":    board_error,
     }
@@ -1033,11 +1034,11 @@ async def create_oc_study(subdomain, struct_json, is_production=False):
 # Monday. main.py's /webhook/monday dispatches button-click events here.
 #
 # Flow:
-#   1. read oc_subdomain + oc_study_url from monday
-#   2. parse study_uuid from the /b/<uuid> path of oc_study_url
-#   3. GET /api/studies/{uuid}/study-environments → (env_uuid, oid)
-#   4. POST /api/studies/{uuid}/study-versions with studyEnvironmentUuid
-#   5. update Study OID + Published Status columns
+#   1. read oc_subdomain + study_uuid from monday   (study_uuid is written
+#      to COL["study_uuid"] by create_oc_study during the main pipeline)
+#   2. GET /api/studies/{uuid}/study-environments → (env_uuid, oid)
+#   3. POST /api/studies/{uuid}/study-versions with studyEnvironmentUuid
+#   4. update Study OID + Published Status columns
 #
 # Status transitions on the Published Status column:
 #   Publishing → Published   (happy path)
@@ -1045,27 +1046,6 @@ async def create_oc_study(subdomain, struct_json, is_production=False):
 #
 # publish_to_test() catches all exceptions and writes them to ai_run_log +
 # Published Status. It never raises — the webhook should always return.
-
-
-def _extract_study_uuid_from_url(study_url: str) -> str:
-    """Parse the path component `/b/<uuid>` out of an OC designer URL.
-
-    Pure function — no API call. Easy to unit-test offline.
-
-        >>> _extract_study_uuid_from_url(
-        ...     "https://acme.design.openclinica.io/b/abcd1234-5678")
-        'abcd1234-5678'
-
-    Raises ValueError with the bad URL if no /b/<...> path is present.
-    """
-    import re
-    m = re.search(r"/b/([^/?#]+)", study_url or "")
-    if not m:
-        raise ValueError(
-            f"Could not extract study UUID from URL: {study_url!r}. "
-            f"Expected a '/b/<UUID>' path component."
-        )
-    return m.group(1)
 
 
 async def _get_study_environment_uuid(
@@ -1184,21 +1164,19 @@ async def publish_to_test(item_id):
         item = await get_item(item_id)
         cols = {cv["id"]: cv for cv in (item.get("column_values") or [])}
         oc_subdomain = (cols.get(COL["oc_subdomain"], {}).get("text") or "").strip()
-        oc_study_url = (cols.get(COL["oc_study_url"], {}).get("text") or "").strip()
+        study_uuid   = (cols.get(COL["study_uuid"],   {}).get("text") or "").strip()
 
         if not oc_subdomain:
             raise RuntimeError(
                 "OC Subdomain is empty. Set it on this row before clicking "
                 "Publish to Test.")
-        if not oc_study_url:
+        if not study_uuid:
             raise RuntimeError(
-                "OC Study URL is empty. The study must be created via the "
-                "main pipeline (Send to AI) before it can be published.")
+                "Study UUID is empty. Run the main pipeline (Send to AI) "
+                "first to create the study in OpenClinica — that step "
+                "writes the UUID to this column.")
 
-        # 3. Parse study_uuid from the stored designer URL
-        study_uuid = _extract_study_uuid_from_url(oc_study_url)
-        await append_log(item_id,
-                         f"Publish to Test: study_uuid={study_uuid}")
+        await append_log(item_id, f"Publish to Test: study_uuid={study_uuid}")
 
         # 4. Resolve env uuid + oid via /study-environments
         env_uuid, oid = await _get_study_environment_uuid(
@@ -2457,6 +2435,10 @@ async def run_pipeline(item_id):
                     board_imported = result["board_imported"]
                     board_error    = result.get("board_error", "")
                     await set_text(item_id, COL["oc_study_url"], study_url)
+                    # Persist the raw UUID separately so publish_to_test can
+                    # read it without parsing the URL (which historically
+                    # carried board_id, not study_uuid).
+                    await set_text(item_id, COL["study_uuid"], result["study_uuid"])
                     if board_imported:
                         await append_log(item_id,
                             f"Study + design board created: {study_url}")
