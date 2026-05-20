@@ -1272,10 +1272,21 @@ async def publish_to_test(item_id):
 async def load_dvs_uat_data(item_id):
     """Entry point invoked by main.py's safe_run_load_dvs_uat_data task.
 
-    Validates inputs (study published + DVS available), fetches the DVS
-    XLSX from monday, parses it via uat_runner, generates ODM XML, and
-    POSTs it to OpenClinica. Never raises — all failures are captured
-    into append_log() so the operator sees them on the monday row.
+    FULL UAT WORKFLOW:
+    1. Validate inputs (study published + DVS available)
+    2. Create UAT site (or reuse existing if site_oid already set)
+    3. Create test participants (UAT-001, UAT-002, etc.)
+    4. Parse DVS and generate ODM XML
+    5. Import ODM data into OpenClinica
+    6. Retrieve clinical data for validation
+    7. Generate reports:
+       - Validation Traceability Matrix (XLSX)
+       - Validation Summary Report (PDF)
+       - Updated DVS with results (XLSX)
+    8. Upload reports to Monday.com
+
+    Never raises — all failures are captured into append_log() so the
+    operator sees them on the monday row.
     """
     item_id = str(item_id)
 
@@ -2228,6 +2239,7 @@ async def run_pipeline(item_id):
                         protocol_filename=f"{protocol_num}.pdf",
                         sponsor_client=sponsor_hint,
                         source_pipeline_item=str(item_id),
+                        protocol_number=protocol_num,  # Required for deduplication
                     )
                     if new_trainer_item_id:
                         await append_log(
