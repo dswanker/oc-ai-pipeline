@@ -1255,6 +1255,112 @@ async def publish_to_test(item_id):
                   f"{inner}", flush=True)
 
 
+# ── Load-DVS-UAT-Data workflow (checkbox webhook → main.py → load_dvs_uat_data)
+#
+# Phase 1 STUB. The dispatcher branch + this entry point + DVS fetch are
+# fully wired; the actual CDISC-ODM generation and POST to OpenClinica are
+# stubbed at a `TODO(uat-runner-integration)` marker below. The substantive
+# logic already exists in the separate `oc-uat-runner` repo (parsers,
+# generators, OC client) and just needs to be packaged for import from
+# this service in a follow-up pass.
+#
+# Fail-fast: if the study isn't published (study_oid empty), surface a
+# friendly "click Publish to Test first" error instead of polling. The
+# user can re-check the box after publish completes.
+
+async def load_dvs_uat_data(item_id):
+    """Entry point invoked by main.py's safe_run_load_dvs_uat_data task.
+
+    Validates inputs (study published + DVS available), fetches the DVS
+    XLSX bytes from monday, and logs what would be imported. Never raises
+    — all failures are captured into append_log() so the operator sees
+    them on the monday row.
+    """
+    item_id = str(item_id)
+
+    try:
+        await append_log(item_id, "Load DVS UAT Data: starting")
+
+        # 1. Read inputs from monday
+        item = await get_item(item_id)
+        cols = {cv["id"]: cv for cv in (item.get("column_values") or [])}
+        oc_subdomain = (cols.get(COL["oc_subdomain"], {}).get("text") or "").strip()
+        study_uuid   = (cols.get(COL["study_uuid"],   {}).get("text") or "").strip()
+        study_oid    = (cols.get(COL["study_oid"],    {}).get("text") or "").strip()
+
+        if not oc_subdomain:
+            raise RuntimeError(
+                "OC Subdomain is empty. Set it on this row before loading DVS UAT data.")
+        if not study_uuid:
+            raise RuntimeError(
+                "Study UUID is empty. Run the main pipeline (Send to AI) first "
+                "to create the study in OpenClinica — that step writes the UUID "
+                "to this column.")
+        if not study_oid:
+            raise RuntimeError(
+                "Study OID is empty — study is not published yet. Click "
+                "'Publish to Test' first and wait for it to complete, then "
+                "re-check the 'Load DVS UAT Data' box.")
+
+        await append_log(item_id,
+            f"Load DVS UAT Data: study_uuid={study_uuid}  study_oid={study_oid}")
+
+        # 2. Fetch the DVS XLSX — prefer the pipeline-generated dvs_output,
+        # fall back to a human-uploaded dvs_input. download_column_file
+        # returns None for an empty column.
+        dvs_source = None
+        dvs_bytes  = await download_column_file(item_id, COL["dvs_output"])
+        if dvs_bytes:
+            dvs_source = "dvs_output"
+        else:
+            dvs_bytes = await download_column_file(item_id, COL["dvs_input"])
+            if dvs_bytes:
+                dvs_source = "dvs_input"
+
+        if not dvs_bytes:
+            raise RuntimeError(
+                "No DVS XLSX found on this row. Either run the main pipeline "
+                "to generate one (dvs_output column) or upload one manually to "
+                "the DVS Input column, then re-check this box.")
+
+        await append_log(item_id,
+            f"Load DVS UAT Data: fetched DVS from {dvs_source}  "
+            f"size={len(dvs_bytes)} bytes")
+
+        # 3. STUB — actual ODM-XML generation + POST to OC goes here.
+        # TODO(uat-runner-integration): replace this stub with the real
+        # ODM import flow. The plumbing already exists in the oc-uat-runner
+        # repo (~/oc-uat-runner) but is not yet packaged for import from
+        # this service. Next-pass work:
+        #   1. Vendor or pip-install oc-uat-runner so we can do:
+        #        from uat_runner.parsers.dvs_parser      import parse_dvs
+        #        from uat_runner.generators.odm_generator import generate_odm
+        #        from uat_runner.api.oc_client           import OpenClinicaClient
+        #   2. test_cases = parse_dvs(dvs_bytes)
+        #   3. odm_xml    = generate_odm(test_cases, study_oid=study_oid)
+        #   4. POST odm_xml to
+        #        https://{oc_subdomain}.build.openclinica.io
+        #          /api/clinicaldata/studies/{study_uuid}/import
+        #      using _get_oc_token(oc_subdomain) for auth.
+        #   5. Optionally retrieve queries + generate a VTM XLSX report via
+        #      uat_runner.reports.xlsx_report.TraceabilityMatrixGenerator
+        #      and upload it back to a monday file column.
+        await append_log(item_id,
+            "Load DVS UAT Data: STUB — ODM generation + OC import not yet "
+            "implemented. See TODO(uat-runner-integration) in pipeline.py.")
+
+        await append_log(item_id, "Load DVS UAT Data: complete (stub)")
+
+    except Exception as e:
+        err = f"{type(e).__name__}: {e}"
+        print(f"LOAD_DVS_UAT_DATA FAILED for item {item_id}: {err}", flush=True)
+        print(traceback.format_exc(), flush=True)
+        try:
+            await append_log(item_id, f"Load DVS UAT Data FAILED: {err}")
+        except Exception as inner:
+            print(f"LOAD_DVS_UAT_DATA log fallback failed: {inner}", flush=True)
+
+
 # ── OC-9 backstop: Common Visit for cross-visit forms ────────────────────────
 
 def _enforce_common_visit(struct_json):

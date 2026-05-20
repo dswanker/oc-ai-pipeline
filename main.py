@@ -14,6 +14,12 @@ TRIGGER_LABEL_TEXT   = "Send to AI"
 # Verify payload shape on first real click and adjust if needed.
 PUBLISH_BUTTON_COLUMN_ID = "button_mm3gwq70"
 
+# Load-DVS-UAT-Data checkbox. Unlike a button, a checkbox event carries
+# a value payload like {"checked": true} — we only fire the workflow on
+# the transition TO checked (ignore unchecks). User can re-check after
+# fixing whatever caused a previous failure.
+LOAD_DVS_UAT_DATA_COLUMN_ID = "boolean_mm3gxe49"
+
 # ── Concurrency guards ────────────────────────────────────────────────────────
 # Limit to 1 simultaneous full pipeline run.  A second trigger while one is
 # already running is queued and starts immediately after the first completes.
@@ -33,6 +39,10 @@ _active_items: set = set()
 # and (b) a row should be allowed to publish while its main pipeline
 # is queued/running.
 _active_publishes: set = set()
+
+# Dedupe set for the Load-DVS-UAT-Data checkbox. Same rationale as
+# _active_publishes — short workflow, independent of the main pipeline.
+_active_dvs_uat_loads: set = set()
 
 @app.get("/health")
 async def health():
@@ -100,6 +110,58 @@ async def monday_webhook(request: Request, background_tasks: BackgroundTasks):
 
         background_tasks.add_task(safe_run_publish, item_id)
         return {"status": "publish_started", "item_id": item_id}
+
+    # ── Load-DVS-UAT-Data checkbox handler ──────────────────────────────
+    # Checkbox events carry a value payload like {"checked": true|false}.
+    # We only fire when transitioning TO checked — uncheck events are
+    # silently ignored so the user can clear the checkbox without
+    # re-running the workflow.
+    if col_id == LOAD_DVS_UAT_DATA_COLUMN_ID:
+        # Parse the checkbox value defensively (Monday sometimes sends
+        # the value as a JSON string)
+        if isinstance(new_val, str):
+            try:
+                new_val = json.loads(new_val)
+            except Exception:
+                pass
+        checked = bool(new_val.get("checked")) if isinstance(new_val, dict) else False
+
+        print(f"LOAD DVS UAT DATA CHECKBOX: item={item_id} checked={checked}",
+              flush=True)
+
+        if not checked:
+            return {"status": "ignored", "reason": "checkbox unchecked"}
+
+        if item_id in _active_dvs_uat_loads:
+            print(f"DUPLICATE LOAD SUPPRESSED: item {item_id} is already "
+                  f"loading DVS UAT data — ignoring webhook", flush=True)
+            return {"status": "duplicate_load_suppressed", "item_id": item_id}
+
+        async def safe_run_load_dvs_uat_data(iid):
+            """Run pipeline.load_dvs_uat_data() with dedupe + error trap.
+
+            Same pattern as safe_run_publish — short workflow, no semaphore
+            gating, lazy import so pipeline.load_dvs_uat_data may not exist
+            yet without breaking this module's import.
+            """
+            if iid in _active_dvs_uat_loads:
+                print(f"DUPLICATE LOAD SUPPRESSED (task level): "
+                      f"item {iid} already loading", flush=True)
+                return
+            _active_dvs_uat_loads.add(iid)
+            try:
+                from pipeline import load_dvs_uat_data
+                await load_dvs_uat_data(iid)
+            except Exception as e:
+                print(f"LOAD_DVS_UAT_DATA CRASHED: {e}", flush=True)
+                print(traceback.format_exc(), flush=True)
+            finally:
+                _active_dvs_uat_loads.discard(iid)
+                print(f"RELEASED: item {iid} dvs-uat-load slot freed",
+                      flush=True)
+
+        background_tasks.add_task(safe_run_load_dvs_uat_data, item_id)
+        return {"status": "load_dvs_uat_data_started", "item_id": item_id}
 
     # ── Send-to-AI trigger handler (existing) ───────────────────────────
     # Only care about our specific trigger column
