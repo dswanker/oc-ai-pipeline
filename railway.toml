@@ -2,7 +2,7 @@
 builder = "dockerfile"
 
 [build.buildArgs]
-GITHUB_TOKEN = "\${{ GITHUB_TOKEN }}"
+GITHUB_TOKEN = '\${{ GITHUB_TOKEN }}'
 
 [deploy]
 restartPolicyType = "on_failure"
