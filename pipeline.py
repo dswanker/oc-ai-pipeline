@@ -2599,6 +2599,12 @@ async def run_pipeline(item_id):
                 env_label = "production" if oc_production else "test"
                 await append_log(item_id, f"Creating study in OpenClinica {env_label} ({oc_subdomain})...")
                 try:
+                    # Wait for Chain C (EDC Build) to complete before fetching
+                    # the EDC Build ZIP URL — prevents race condition where we
+                    # look for the asset before Chain C uploads it to Monday.
+                    print("Chain D: waiting for Chain C EDC build…", flush=True)
+                    await edc_build_event.wait()
+                    
                     # Fetch the EDC build ZIP URL from monday so
                     # create_oc_study can upload XLSForm files after the
                     # board import (required to clear "No form version
