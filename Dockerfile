@@ -1,28 +1,34 @@
-# Microsoft's official Playwright Python image. Comes with Chromium pre-installed
-# along with every system library Chromium needs (libnss3, libasound2, etc.).
-# The "jammy" suffix = Ubuntu 22.04 base.
-#
-# We pin a specific version because the playwright-python wheel must match
-# the Chromium revision baked into the image. Bumping this image version
-# requires bumping the playwright pin in requirements.txt to match.
-FROM mcr.microsoft.com/playwright/python:v1.49.0-jammy
+FROM python:3.11-slim
+
+# Install system dependencies and Playwright browsers
+RUN apt-get update && apt-get install -y \
+    git \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
 # Accept GITHUB_TOKEN as a build argument from Railway
 ARG GITHUB_TOKEN
 
-# Configure git to use the token for GitHub URLs (needed for private repos in requirements.txt)
-RUN if [ -n "\$GITHUB_TOKEN" ]; then \
-      git config --global url."https://\$GITHUB_TOKEN@github.com/".insteadOf "https://github.com/"; \
+# Configure git to use GITHUB_TOKEN for private repos
+RUN if [ -n "$GITHUB_TOKEN" ]; then \
+      git config --global url."https://$GITHUB_TOKEN@github.com/".insteadOf "https://github.com/"; \
     fi
 
-# Install Python dependencies first so Docker can cache this layer.
+# Copy requirements and install Python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the rest of the app
+# Install Playwright browsers
+RUN playwright install chromium
+RUN playwright install-deps chromium
+
+# Copy application code
 COPY . .
 
-# Railway sets PORT at runtime; uvicorn reads it via the shell.
-CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port \${PORT:-8000}"]
+# Expose port
+EXPOSE 8000
+
+# Run the application
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
