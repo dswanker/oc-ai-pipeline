@@ -17,3 +17,9 @@ python-docx>=1.1.0
 # version in the Dockerfile, bump this pin to the matching version.
 playwright==1.49.0
 pypdf>=4.0
+
+# --- UAT runner integration (DVS XLSX → ODM XML → OC import) ---
+# Pinned to a specific commit so Docker's `pip install` layer-cache
+# invalidates whenever the upstream code moves. To upgrade: update the
+# @<sha> below; pip will re-resolve and rebuild this layer.
+oc-uat-runner @ git+https://github.com/dswanker/oc-uat-runner.git@d898079

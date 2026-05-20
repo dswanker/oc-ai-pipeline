@@ -1257,12 +1257,13 @@ async def publish_to_test(item_id):
 
 # ── Load-DVS-UAT-Data workflow (checkbox webhook → main.py → load_dvs_uat_data)
 #
-# Phase 1 STUB. The dispatcher branch + this entry point + DVS fetch are
-# fully wired; the actual CDISC-ODM generation and POST to OpenClinica are
-# stubbed at a `TODO(uat-runner-integration)` marker below. The substantive
-# logic already exists in the separate `oc-uat-runner` repo (parsers,
-# generators, OC client) and just needs to be packaged for import from
-# this service in a follow-up pass.
+# Reads the DVS XLSX off the monday row, parses it via the oc-uat-runner
+# package (uat_runner.parsers.dvs_parser), generates CDISC ODM 1.3.2 XML
+# (uat_runner.generators.odm_generator), and POSTs it to OpenClinica via
+# uat_runner.api.oc_client.OpenClinicaClient.import_odm_data.
+#
+# The OpenClinicaClient is synchronous (built on `requests`); we wrap its
+# network call in asyncio.to_thread so we don't block the event loop.
 #
 # Fail-fast: if the study isn't published (study_oid empty), surface a
 # friendly "click Publish to Test first" error instead of polling. The
@@ -1272,9 +1273,9 @@ async def load_dvs_uat_data(item_id):
     """Entry point invoked by main.py's safe_run_load_dvs_uat_data task.
 
     Validates inputs (study published + DVS available), fetches the DVS
-    XLSX bytes from monday, and logs what would be imported. Never raises
-    — all failures are captured into append_log() so the operator sees
-    them on the monday row.
+    XLSX from monday, parses it via uat_runner, generates ODM XML, and
+    POSTs it to OpenClinica. Never raises — all failures are captured
+    into append_log() so the operator sees them on the monday row.
     """
     item_id = str(item_id)
 
@@ -1327,29 +1328,55 @@ async def load_dvs_uat_data(item_id):
             f"Load DVS UAT Data: fetched DVS from {dvs_source}  "
             f"size={len(dvs_bytes)} bytes")
 
-        # 3. STUB — actual ODM-XML generation + POST to OC goes here.
-        # TODO(uat-runner-integration): replace this stub with the real
-        # ODM import flow. The plumbing already exists in the oc-uat-runner
-        # repo (~/oc-uat-runner) but is not yet packaged for import from
-        # this service. Next-pass work:
-        #   1. Vendor or pip-install oc-uat-runner so we can do:
-        #        from uat_runner.parsers.dvs_parser      import parse_dvs
-        #        from uat_runner.generators.odm_generator import generate_odm
-        #        from uat_runner.api.oc_client           import OpenClinicaClient
-        #   2. test_cases = parse_dvs(dvs_bytes)
-        #   3. odm_xml    = generate_odm(test_cases, study_oid=study_oid)
-        #   4. POST odm_xml to
-        #        https://{oc_subdomain}.build.openclinica.io
-        #          /api/clinicaldata/studies/{study_uuid}/import
-        #      using _get_oc_token(oc_subdomain) for auth.
-        #   5. Optionally retrieve queries + generate a VTM XLSX report via
-        #      uat_runner.reports.xlsx_report.TraceabilityMatrixGenerator
-        #      and upload it back to a monday file column.
-        await append_log(item_id,
-            "Load DVS UAT Data: STUB — ODM generation + OC import not yet "
-            "implemented. See TODO(uat-runner-integration) in pipeline.py.")
+        # 3. Parse DVS → generate ODM XML → POST to OC
+        # Lazy-import uat_runner so a missing/broken install surfaces as
+        # a clean monday-log error rather than a module-load crash.
+        from uat_runner.parsers.dvs_parser       import parse_dvs
+        from uat_runner.generators.odm_generator import generate_odm
+        from uat_runner.api.oc_client            import OpenClinicaClient
 
-        await append_log(item_id, "Load DVS UAT Data: complete (stub)")
+        # parse_dvs takes a file path (not bytes), so round-trip dvs_bytes
+        # through a tempfile. delete=False because we need to read it after
+        # closing the writer; explicit os.unlink in the finally below.
+        tmp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                suffix=".xlsx", delete=False) as tmp:
+                tmp.write(dvs_bytes)
+                tmp_path = tmp.name
+
+            test_cases = parse_dvs(tmp_path)
+            await append_log(item_id,
+                f"Load DVS UAT Data: parsed {len(test_cases)} test cases from DVS")
+
+            odm_xml = generate_odm(test_cases, study_oid=study_oid)
+            await append_log(item_id,
+                f"Load DVS UAT Data: generated ODM XML ({len(odm_xml)} bytes)")
+
+            # Reuse the existing helper for OC auth — same token issuer
+            # publish_to_test uses, so the Test environment is consistent.
+            token = await _get_oc_token(oc_subdomain, is_production=False)
+            client = OpenClinicaClient(
+                base_url=f"https://{oc_subdomain}.build.openclinica.io",
+                auth_token=token,
+            )
+            # OpenClinicaClient uses synchronous `requests` — wrap the
+            # network call so the event loop stays responsive. The import
+            # endpoint is keyed by study_oid (NOT study_uuid).
+            await asyncio.to_thread(
+                client.import_odm_data, study_oid, odm_xml)
+
+            await append_log(item_id,
+                f"Load DVS UAT Data: imported {len(test_cases)} test cases "
+                f"successfully")
+        finally:
+            if tmp_path and os.path.exists(tmp_path):
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+
+        await append_log(item_id, "Load DVS UAT Data: complete")
 
     except Exception as e:
         err = f"{type(e).__name__}: {e}"
