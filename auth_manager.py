@@ -146,8 +146,12 @@ async def initiate_oauth(request):
     state = secrets.token_urlsafe(32)
     request.session["oauth_state"] = state
     
-    # Redirect to Google OAuth
-    redirect_uri = request.url_for("oauth_callback")
+    # Redirect to Google OAuth.
+    # url_for() inherits the request's scheme — behind Railway's TLS-
+    # terminating proxy that's HTTP (TLS is terminated at the edge),
+    # even though the public URL is HTTPS. Force https so the
+    # redirect_uri matches what's registered in Google Cloud Console.
+    redirect_uri = request.url_for("oauth_callback").replace(scheme="https")
     return await oauth.google.authorize_redirect(request, redirect_uri, state=state)
 
 
