@@ -23,3 +23,7 @@ pypdf>=4.0
 # invalidates whenever the upstream code moves. To upgrade: update the
 # @<sha> below; pip will re-resolve and rebuild this layer.
 oc-uat-runner @ git+https://github.com/dswanker/oc-uat-runner.git@d898079
+
+# --- OAuth authentication for per-user form uploads ---
+authlib>=1.3.0
+itsdangerous>=2.1.0

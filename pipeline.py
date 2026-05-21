@@ -37,6 +37,7 @@ from openpyxl.utils import get_column_letter
 from monday_client import (get_item, download_file, upload_file, set_status,
                             append_log, set_text, set_link, download_column_file,
                             list_column_filenames, COL, BOARD_ID)
+from auth_manager import AuthManager
 from claude_client  import call_claude, extract_json
 from migration_pipeline import run_migration as run_edc_migration
 from trainer_integration import (
@@ -909,7 +910,7 @@ async def _import_board(subdomain, board_id, board_json, is_production, token=No
 
 
 async def create_oc_study(subdomain, struct_json, is_production=False,
-                          edc_zip_url=None, oc_email=None):
+                          edc_zip_url=None, oc_email=None, item_id=None):
     """
     Create a study in OpenClinica and import the Study Design Board (SOE).
 
@@ -1029,6 +1030,32 @@ async def create_oc_study(subdomain, struct_json, is_production=False,
     # ZIP URL was provided (caller didn't fetch it from Monday).
     forms_publish = None
     if board_imported and edc_zip_url and oc_email:
+        # Check if user has authenticated session
+        if not AuthManager.session_exists(oc_email):
+            # Generate auth link
+            auth_link = AuthManager.generate_auth_link(oc_email)
+            
+            # Post update to monday.com
+            if item_id:
+                await append_log(
+                    item_id,
+                    f"⚠️ **Authentication Required**\n\n"
+                    f"Click here to authenticate your OpenClinica account:\n"
+                    f"{auth_link}\n\n"
+                    f"After authentication, trigger 'Send to AI' again to continue."
+                )
+                await set_status(item_id, COL["pipeline_status"], "⚠️ Auth Required")
+            
+            print(f"Auth required for {oc_email}. Posted auth link to monday.com.", flush=True)
+            return {
+                "study_url":      study_url,
+                "study_uuid":     study_uuid,
+                "board_imported": board_imported,
+                "board_error":    board_error,
+                "forms_publish":  None,
+            }
+        
+
         try:
             from oc_form_publisher import publish_forms_to_openclinica
             print(f"Uploading XLSForm files to {study_url} via Playwright "
@@ -2655,7 +2682,8 @@ async def run_pipeline(item_id):
                     result = await create_oc_study(oc_subdomain, struct_json,
                                                     is_production=oc_production,
                                                     edc_zip_url=edc_zip_url,
-                                                    oc_email=oc_email)
+                                                    oc_email=oc_email,
+                                                    item_id=item_id)
                     study_url      = result["study_url"]
                     board_imported = result["board_imported"]
                     board_error    = result.get("board_error", "")
