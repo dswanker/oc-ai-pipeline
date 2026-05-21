@@ -56,6 +56,7 @@ SKILLS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'skills')
 
 STATUS = {
     "not_started":            "Not Started",
+    "paused_for_auth":        "Paused for Authentication",
     "analysis_running":       "Analysis Running",
     "analysis_complete":      "Analysis Complete",
     "build_pricing_running":  "Build + Pricing Running",
@@ -1030,36 +1031,10 @@ async def create_oc_study(subdomain, struct_json, is_production=False,
     # ZIP URL was provided (caller didn't fetch it from Monday).
     forms_publish = None
     if board_imported and edc_zip_url and oc_email:
-        auth_manager = AuthManager()
-        # Check if user has authenticated session
-        if not auth_manager.session_exists(oc_email):
-            # Generate auth link
-            auth_link = auth_manager.generate_auth_link(
-                oc_email,
-                "https://oc-ai-pipeline-production.up.railway.app",
-            )
-            
-            # Post update to monday.com
-            if item_id:
-                await append_log(
-                    item_id,
-                    f"⚠️ **Authentication Required**\n\n"
-                    f"Click here to authenticate your OpenClinica account:\n"
-                    f"{auth_link}\n\n"
-                    f"After authentication, trigger 'Send to AI' again to continue."
-                )
-                await set_status(item_id, COL["pipeline_status"], "⚠️ Auth Required")
-            
-            print(f"Auth required for {oc_email}. Posted auth link to monday.com.", flush=True)
-            return {
-                "study_url":      study_url,
-                "study_uuid":     study_uuid,
-                "board_imported": board_imported,
-                "board_error":    board_error,
-                "forms_publish":  None,
-            }
-        
-
+        # Auth-check was moved up to run_pipeline so we can bail before
+        # spending 2-3 min on Claude analysis. By the time we get here
+        # the session has been validated to exist (or oc_email is empty
+        # and we're skipping form upload entirely below).
         try:
             from oc_form_publisher import publish_forms_to_openclinica
             print(f"Uploading XLSForm files to {study_url} via Playwright "
@@ -1668,6 +1643,35 @@ async def run_pipeline(item_id):
         print(f"Create OC Study: {create_study} | Subdomain: {oc_subdomain} | "
               f"Production: {oc_production} | Trainer enabled: {trainer_on}",
               flush=True)
+
+        # ── Early OAuth check (saves chains A-E on first-time auth) ──────────
+        # create_oc_study's form-upload step requires a saved Playwright
+        # session at /data/browser_sessions/{oc_email}.json. If none
+        # exists for this user, post a one-time auth link to the row and
+        # bail BEFORE running ~2-3 min of Claude protocol analysis +
+        # chains A/B/C/D/E that would just be discarded on the next click.
+        # Gated on (create_study and oc_email): if either is missing,
+        # form upload would be skipped anyway and there's nothing to auth.
+        if create_study and oc_email:
+            auth_manager = AuthManager()
+            if not auth_manager.session_exists(oc_email):
+                auth_link = auth_manager.generate_auth_link(
+                    oc_email,
+                    "https://oc-ai-pipeline-production.up.railway.app",
+                )
+                await append_log(item_id,
+                    f"⚠️ Authentication Required\n\n"
+                    f"Click here to authenticate your OpenClinica account:\n"
+                    f"{auth_link}\n\n"
+                    f"After authentication, trigger 'Send to AI' again "
+                    f"to continue.")
+                await set_link(item_id, COL["oc_auth_link"], auth_link,
+                               text="Authenticate OpenClinica")
+                await set_status(item_id, COL["pipeline_status"],
+                                 "Paused for Authentication")
+                print(f"Auth required for {oc_email} — posted link to row "
+                      f"and bailed before chains started.", flush=True)
+                return
 
         # ── 1. Check for human-uploaded inputs (parallel downloads) ──────────
         (edited_spec_xlsx,
