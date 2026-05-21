@@ -45,6 +45,7 @@ COL = {
     "load_dvs_uat_data": "boolean_mm3gxe49", # checkbox — webhook trigger handled in main.py
     # Per-user OpenClinica auth for form uploads (added 2026-05-20)
     "oc_email":          "emailothn6i3m",    # email column — user's OC SSO login (auto-populated from monday user profile)
+    "oc_auth_link":      "link_mm3j7ahf",    # link column — one-time OAuth auth URL posted when user has no saved session
     # Discounts
     "subscription_discount": "numeric_mm2nkqbq",
     "services_discount":     "numeric_mm2n41x7",
