@@ -205,7 +205,27 @@ class FormPublisher:
         UPLOAD_BUTTON_SELECTOR = 'button[type="submit"]'
         SUCCESS_SELECTOR       = '.upload-success, .form-version-row, [data-test="upload-complete"]'
 
-        await page.set_input_files(FILE_INPUT_SELECTOR, str(xlsx_path))
+        try:
+            await page.set_input_files(FILE_INPUT_SELECTOR, str(xlsx_path))
+        except Exception as e:
+            # Dump page state on failure (typically TimeoutError when the
+            # file-input selector can't be found — most often because we
+            # landed on a login screen instead of the designer; cookie
+            # name is a placeholder, see _inject_auth TODO).
+            import time
+            ts   = int(time.time())
+            png  = f"/tmp/oc_upload_error_{xlsx_path.stem}_{ts}.png"
+            html = f"/tmp/oc_upload_error_{xlsx_path.stem}_{ts}.html"
+            try:
+                await page.screenshot(path=png, full_page=True)
+                Path(html).write_text(await page.content(), encoding="utf-8")
+            except Exception as dump_err:
+                print(f"oc_form_publisher: page-dump failed: {dump_err}",
+                      flush=True)
+            raise RuntimeError(
+                f"{type(e).__name__}: {e}  "
+                f"[page dumps saved: {png}, {html}]") from e
+
         await page.click(UPLOAD_BUTTON_SELECTOR)
         await page.wait_for_selector(
             SUCCESS_SELECTOR, timeout=self.PER_FORM_TIMEOUT_MS,
