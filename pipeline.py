@@ -909,7 +909,7 @@ async def _import_board(subdomain, board_id, board_json, is_production, token=No
 
 
 async def create_oc_study(subdomain, struct_json, is_production=False,
-                          edc_zip_url=None):
+                          edc_zip_url=None, oc_email=None):
     """
     Create a study in OpenClinica and import the Study Design Board (SOE).
 
@@ -1028,15 +1028,16 @@ async def create_oc_study(subdomain, struct_json, is_production=False,
     # — no point publishing forms with no design board — or (b) no EDC
     # ZIP URL was provided (caller didn't fetch it from Monday).
     forms_publish = None
-    if board_imported and edc_zip_url:
+    if board_imported and edc_zip_url and oc_email:
         try:
             from oc_form_publisher import publish_forms_to_openclinica
-            print(f"Uploading XLSForm files to {study_url} via Playwright...",
-                  flush=True)
+            print(f"Uploading XLSForm files to {study_url} via Playwright "
+                  f"(SSO as {oc_email})...", flush=True)
             forms_publish = await publish_forms_to_openclinica(
                 study_url=study_url,
                 edc_zip_url=edc_zip_url,
                 auth_token=token,
+                user_email=oc_email,
             )
             print(f"Form publish: {forms_publish.forms_uploaded}/"
                   f"{forms_publish.forms_total} uploaded; "
@@ -1052,6 +1053,12 @@ async def create_oc_study(subdomain, struct_json, is_production=False,
     elif not edc_zip_url:
         print(f"Form publish skipped — no edc_zip_url passed to "
               f"create_oc_study.", flush=True)
+    elif not oc_email:
+        print(f"Form publish skipped — no OpenClinica Email "
+              f"(COL[oc_email] / emailothn6i3m) set on this monday row. "
+              f"User must populate that column with their OC SSO email "
+              f"before form upload can run; study + design board still "
+              f"created successfully.", flush=True)
 
     # Return a dict so callers can surface both the URL and the import state
     return {
@@ -1567,6 +1574,10 @@ async def run_pipeline(item_id):
         cols         = {c["id"]: c for c in item["column_values"]}
         protocol_num = cols.get(COL["protocol_number"], {}).get("text", "STUDY")
         oc_subdomain = cols.get(COL["oc_subdomain"],    {}).get("text", "").strip()
+        # Per-user OC SSO login for form upload (Playwright/storage_state).
+        # Required for create_oc_study's Playwright form-publish step; if
+        # empty, that step is skipped with a clear log.
+        oc_email     = cols.get(COL["oc_email"],        {}).get("text", "").strip()
 
         # Fetch library filenames for both columns so we can inject them into
         # the Study Spec JSON's study_meta.library_files_provided (overrides
@@ -2643,7 +2654,8 @@ async def run_pipeline(item_id):
 
                     result = await create_oc_study(oc_subdomain, struct_json,
                                                     is_production=oc_production,
-                                                    edc_zip_url=edc_zip_url)
+                                                    edc_zip_url=edc_zip_url,
+                                                    oc_email=oc_email)
                     study_url      = result["study_url"]
                     board_imported = result["board_imported"]
                     board_error    = result.get("board_error", "")

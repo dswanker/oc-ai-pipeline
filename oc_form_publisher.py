@@ -21,10 +21,19 @@ Everything marked `# TODO(oc-ui):` is a best-guess that must be verified
 against a real OpenClinica Test environment before this code can succeed
 in production:
 
-  - Auth method (bearer-cookie? localStorage token? full login form?)
   - Form-upload page URL pattern (relative to study_url)
   - DOM selectors for file input, upload button, success indicator
   - Whether upload is per-form or batched
+  - FormPublisher.AUTH_SUCCESS_SELECTOR — used to distinguish
+    "landed on the OC designer" (auth ok) from "landed on Google's
+    login screen" (auth needed). Diagnostic dumps in _upload_one
+    capture real HTML on selector failures.
+
+Authentication
+--------------
+Per-user Google SSO via OpenClinica's `/#/ocstafflogin` endpoint, with
+Playwright's storage_state JSON persisted at
+/data/browser_sessions/{user_email}.json. See SESSION_DIR docstring.
 
 The function will FAIL FAST with a descriptive error if a selector
 doesn't match, so first-run failures are diagnostic rather than silent.
@@ -39,6 +48,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import os
 import shutil
 import tempfile
 import zipfile
@@ -48,6 +58,14 @@ from typing import List, Optional
 from urllib.parse import urlparse
 
 import httpx
+
+# Per-user Playwright storage_state JSONs live here. MUST be backed by a
+# Railway persistent volume — the container's ephemeral filesystem would
+# wipe these on every deploy, forcing constant re-auth.
+# First-time setup (no file yet for this user) requires a visible browser
+# for Google SSO interaction; that cannot succeed on a headless server.
+# Bootstrap each user's session locally and copy the JSON into the volume.
+SESSION_DIR = "/data/browser_sessions"
 
 
 # ── Result shape ───────────────────────────────────────────────────────────
@@ -74,22 +92,51 @@ class FormPublisher:
     # selector.
     PER_FORM_TIMEOUT_MS = 30_000
 
+    # How long to wait for a human to complete first-time Google SSO.
+    # On a headless server (e.g. Railway), this WILL hit timeout — see
+    # the SESSION_DIR docstring above.
+    MANUAL_LOGIN_TIMEOUT_MS = 300_000  # 5 min
+
+    # Selectors that, if present after the /#/ocstafflogin redirect
+    # chain settles, indicate we are authenticated and on the OC
+    # designer UI. Comma-separated for or-match. TODO(oc-ui): replace
+    # with confirmed selectors once we see real-OC HTML via the
+    # diagnostic dumps in _upload_one.
+    AUTH_SUCCESS_SELECTOR = (
+        '[data-test="study-board"], .main-nav, #app-content')
+
     def __init__(
         self,
         auth_token: Optional[str] = None,
         headless: bool = True,
+        user_email: Optional[str] = None,
     ):
         """
         Args:
-            auth_token: OC bearer token (from _get_oc_token in pipeline.py).
-                If provided, it's injected as a cookie on the browser context
-                before navigation. Cookie NAME is a best-guess — verify
-                against real OC.
-            headless: True for production, False for local debugging so you
-                can watch the browser.
+            auth_token: UNUSED — kept on the signature so the existing
+                caller in pipeline.py keeps working without simultaneous
+                edits. Browser auth is now via SSO + saved storage_state.
+            headless: True for production. Forced to False during first-
+                time setup (when no session file exists yet for this
+                user) so they can complete Google SSO interactively.
+            user_email: REQUIRED for SSO; identifies which saved session
+                to load. If unset, publish_all_forms returns an error in
+                FormPublishResult.errors without launching the browser.
         """
         self.auth_token = auth_token
         self.headless = headless
+        self.user_email = user_email
+
+    @property
+    def _session_path(self) -> Optional[str]:
+        """Filesystem path for this user's Playwright storage_state JSON."""
+        if not self.user_email:
+            return None
+        return os.path.join(SESSION_DIR, f"{self.user_email}.json")
+
+    def _session_exists(self) -> bool:
+        p = self._session_path
+        return bool(p and os.path.exists(p))
 
     async def publish_all_forms(
         self,
@@ -111,6 +158,26 @@ class FormPublisher:
         result = FormPublishResult(success=False, forms_uploaded=0, forms_total=0)
         tmpdir: Optional[Path] = None
 
+        # Guard: SSO can't work without knowing which session to load.
+        if not self.user_email:
+            result.errors.append(
+                "FormPublisher requires user_email — caller did not pass "
+                "one. Set the OpenClinica Email column on the monday row "
+                "(COL[oc_email] / emailothn6i3m).")
+            return result
+
+        # Make sure the session directory exists. If /data is not a
+        # mounted volume on Railway, this still succeeds (writes to the
+        # container's ephemeral fs) but sessions won't persist across
+        # deploys — see SESSION_DIR module docstring.
+        try:
+            os.makedirs(SESSION_DIR, exist_ok=True)
+        except OSError as e:
+            result.errors.append(
+                f"Cannot create session dir {SESSION_DIR}: {e}. Is /data "
+                f"mounted as a Railway persistent volume?")
+            return result
+
         try:
             # 1. Download + extract
             tmpdir, xlsx_paths = await self._fetch_and_extract(edc_zip_url)
@@ -130,12 +197,80 @@ class FormPublisher:
                     f"build command runs `playwright install chromium`.")
                 return result
 
+            # 3. First-time setup needs a visible window so the human can
+            # complete Google SSO. Detected by absence of session file
+            # for this user — that's our "never seen this user before"
+            # signal. Override self.headless to False just for this run.
+            session_existed = self._session_exists()
+            effective_headless = self.headless if session_existed else False
+            if not session_existed:
+                print(f"oc_form_publisher: first-time SSO setup required "
+                      f"for {self.user_email} — opening visible browser. "
+                      f"⚠️ On a headless Railway container this WILL hang "
+                      f"for {self.MANUAL_LOGIN_TIMEOUT_MS // 1000}s and "
+                      f"fail; bootstrap the session locally first and "
+                      f"copy {self._session_path} into the volume.",
+                      flush=True)
+
             async with async_playwright() as p:
-                browser = await p.chromium.launch(headless=self.headless)
+                browser = await p.chromium.launch(headless=effective_headless)
                 try:
-                    context = await browser.new_context()
-                    await self._inject_auth(context, study_url)
+                    # 4. SPEC FIX: Playwright loads storage_state at context
+                    # CREATION via the storage_state= kwarg — not by calling
+                    # context.storage_state(path=...) afterwards (that one
+                    # SAVES, not loads). The user-supplied spec had this
+                    # backwards; structured here as conditional construction.
+                    if session_existed:
+                        context = await browser.new_context(
+                            storage_state=self._session_path)
+                        print(f"oc_form_publisher: loaded session for "
+                              f"{self.user_email}", flush=True)
+                    else:
+                        context = await browser.new_context()
+
                     page = await context.new_page()
+                    auth_ok = await self._authenticate_via_sso(
+                        page, study_url)
+
+                    # 5. Branch on (auth_ok, session_existed)
+                    if not auth_ok and session_existed:
+                        # Stale session — delete + clear error so the next
+                        # run starts the bootstrap flow fresh.
+                        try:
+                            os.remove(self._session_path)
+                        except OSError:
+                            pass
+                        raise RuntimeError(
+                            f"Saved SSO session for {self.user_email} "
+                            f"appears expired (auth-success selector not "
+                            f"found after /#/ocstafflogin redirect chain). "
+                            f"Deleted the stale session file — bootstrap "
+                            f"a new one for this user and re-run.")
+
+                    if not auth_ok and not session_existed:
+                        # First-time: wait for the human, then save state.
+                        print(f"oc_form_publisher: waiting up to "
+                              f"{self.MANUAL_LOGIN_TIMEOUT_MS // 1000}s "
+                              f"for {self.user_email} to complete Google "
+                              f"SSO in the visible browser...", flush=True)
+                        try:
+                            await page.wait_for_selector(
+                                self.AUTH_SUCCESS_SELECTOR,
+                                timeout=self.MANUAL_LOGIN_TIMEOUT_MS)
+                        except Exception as e:
+                            raise RuntimeError(
+                                f"First-time SSO setup for "
+                                f"{self.user_email} timed out: {e}. If "
+                                f"running on a headless server, bootstrap "
+                                f"locally and copy the resulting "
+                                f"{self._session_path} to the volume."
+                            ) from e
+                        await context.storage_state(path=self._session_path)
+                        print(f"oc_form_publisher: session saved to "
+                              f"{self._session_path} — future runs auto-"
+                              f"authenticate", flush=True)
+
+                    # 6. Auth confirmed — navigate to the study and upload.
                     await page.goto(study_url, wait_until="networkidle",
                                     timeout=self.PER_FORM_TIMEOUT_MS)
 
@@ -177,23 +312,32 @@ class FormPublisher:
         xlsx_paths = sorted(tmpdir.rglob("*.xlsx"))
         return tmpdir, xlsx_paths
 
-    async def _inject_auth(self, context, study_url: str) -> None:
-        """Best-guess auth injection. Real OC may need a different mechanism."""
-        if not self.auth_token:
-            return
-        # TODO(oc-ui): verify the actual cookie name OC's web UI reads.
-        # Common alternatives if "auth_token" doesn't work:
-        #   - "JSESSIONID"  (Java/Spring servlet session)
-        #   - "access_token" / "id_token"  (OIDC)
-        #   - localStorage instead of cookie (would need page.add_init_script)
+    async def _authenticate_via_sso(self, page, study_url: str) -> bool:
+        """Navigate to /#/ocstafflogin and report whether auth succeeded.
+
+        If the browser context was created with a valid saved
+        storage_state, the SSO redirect chain completes silently and we
+        land on the OC designer UI. If the session is stale (or absent),
+        we end up on Google's login screen instead — caller handles both
+        branches.
+
+        Returns True if AUTH_SUCCESS_SELECTOR appears within 5s of the
+        redirect chain settling; False otherwise.
+        """
         domain = urlparse(study_url).hostname or ""
-        await context.add_cookies([{
-            "name":   "auth_token",
-            "value":  self.auth_token,
-            "domain": domain,
-            "path":   "/",
-            "secure": True,
-        }])
+        sso_url = f"https://{domain}/#/ocstafflogin"
+        await page.goto(sso_url, wait_until="networkidle")
+        # Give multi-step SSO redirects (IdP → callback → OC) a moment
+        # to settle past the initial networkidle.
+        await page.wait_for_timeout(3000)
+        try:
+            await page.wait_for_selector(
+                self.AUTH_SUCCESS_SELECTOR, timeout=5000)
+            print(f"oc_form_publisher: authenticated as {self.user_email}",
+                  flush=True)
+            return True
+        except Exception:
+            return False
 
     async def _upload_one(self, page, xlsx_path: Path) -> None:
         """Upload a single .xlsx file via the form-version UI.
@@ -239,6 +383,7 @@ async def publish_forms_to_openclinica(
     edc_zip_url: str,
     auth_token: Optional[str] = None,
     headless: bool = True,
+    user_email: Optional[str] = None,
 ) -> FormPublishResult:
     """Thin wrapper around FormPublisher.publish_all_forms.
 
@@ -249,7 +394,12 @@ async def publish_forms_to_openclinica(
             study_url=study_url,
             edc_zip_url=edc_zip_url,
             auth_token=token,
+            user_email=oc_email,
         )
     """
-    publisher = FormPublisher(auth_token=auth_token, headless=headless)
+    publisher = FormPublisher(
+        auth_token=auth_token,
+        headless=headless,
+        user_email=user_email,
+    )
     return await publisher.publish_all_forms(study_url, edc_zip_url)
