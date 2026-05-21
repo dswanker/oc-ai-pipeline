@@ -1030,10 +1030,14 @@ async def create_oc_study(subdomain, struct_json, is_production=False,
     # ZIP URL was provided (caller didn't fetch it from Monday).
     forms_publish = None
     if board_imported and edc_zip_url and oc_email:
+        auth_manager = AuthManager()
         # Check if user has authenticated session
-        if not AuthManager.session_exists(oc_email):
+        if not auth_manager.session_exists(oc_email):
             # Generate auth link
-            auth_link = AuthManager.generate_auth_link(oc_email)
+            auth_link = auth_manager.generate_auth_link(
+                oc_email,
+                "https://oc-ai-pipeline-production.up.railway.app",
+            )
             
             # Post update to monday.com
             if item_id:
