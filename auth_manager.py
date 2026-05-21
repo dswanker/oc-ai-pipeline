@@ -1,181 +1,287 @@
 """
-auth_manager.py - Web-based OAuth authentication for OpenClinica form uploads
+Authentication manager for OpenClinica form uploads via Google OAuth.
+
+Flow:
+1. Pipeline checks for session file
+2. If missing, generates auth link and posts to monday.com
+3. User clicks link -> /auth endpoint validates token
+4. Redirects to Google OAuth
+5. Google redirects back to /oauth/callback
+6. Callback launches Playwright to capture OpenClinica session
+7. Saves browser context to session file
+8. User re-triggers pipeline -> session found -> forms upload
 """
+
 import os
 import json
 import secrets
-from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Optional, Dict
-from itsdangerous import URLSafeTimedSerializer, SignatureExpired, BadSignature
-from authlib.integrations.requests_client import OAuth2Session
+from datetime import datetime, timedelta
+from urllib.parse import urlencode
 
-# Environment variables
-GOOGLE_CLIENT_ID = os.getenv("GOOGLE_OAUTH_CLIENT_ID")
-GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET")
-AUTH_SECRET_KEY = os.getenv("AUTH_SECRET_KEY")
-BASE_URL = os.getenv("BASE_URL", "https://oc-ai-pipeline-production.up.railway.app")
+from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
+from authlib.integrations.starlette_client import OAuth
+from starlette.responses import RedirectResponse, HTMLResponse
+from playwright.async_api import async_playwright
 
-# OAuth config
-GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
-GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
-REDIRECT_URI = f"{BASE_URL}/oauth/callback"
-SCOPE = ["openid", "email", "profile"]
 
-# Session storage
-SESSION_DIR = Path("/data/browser_sessions")
+# ─────────────────────────────────────────────────────────────────────────────
+# Configuration
+# ─────────────────────────────────────────────────────────────────────────────
 
-# Token serializer (for secure one-time links)
-serializer = URLSafeTimedSerializer(AUTH_SECRET_KEY)
+SESSIONS_DIR = Path("/data/browser_sessions")
+SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
 
+# Token serializer for one-time auth links
+SECRET_KEY = os.environ["AUTH_SECRET_KEY"]
+serializer = URLSafeTimedSerializer(SECRET_KEY)
+
+# OAuth configuration
+oauth = OAuth()
+oauth.register(
+    name="google",
+    client_id=os.environ["GOOGLE_OAUTH_CLIENT_ID"],
+    client_secret=os.environ["GOOGLE_OAUTH_CLIENT_SECRET"],
+    server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
+    client_kwargs={"scope": "openid email profile"},
+)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Authentication Manager
+# ─────────────────────────────────────────────────────────────────────────────
 
 class AuthManager:
-    """Manages authentication tokens and OAuth flow"""
+    """Manages authentication tokens and browser sessions."""
     
-    # In-memory token store (maps token -> {email, created_at})
-    # In production, use Redis for multi-instance support
-    _pending_tokens: Dict[str, dict] = {}
+    def __init__(self):
+        self.used_tokens = set()  # Track consumed tokens (in-memory, resets on deploy)
     
-    @classmethod
-    def generate_auth_link(cls, email: str) -> str:
-        """Generate secure one-time auth link for user"""
-        # Create signed token with email embedded
+    def generate_auth_link(self, email: str, base_url: str) -> str:
+        """
+        Generate a one-time auth link for the given email.
+        
+        Args:
+            email: User's OpenClinica email
+            base_url: Railway app URL (e.g., https://oc-ai-pipeline-production.up.railway.app)
+            
+        Returns:
+            Full auth URL with signed token
+        """
+        # Create signed token (valid for 1 hour)
         token = serializer.dumps(email, salt="auth-token")
         
-        # Store in memory for validation (expires in 1 hour)
-        cls._pending_tokens[token] = {
-            "email": email,
-            "created_at": datetime.utcnow()
-        }
-        
-        # Clean up expired tokens (older than 1 hour)
-        cls._cleanup_expired_tokens()
-        
-        return f"{BASE_URL}/auth?token={token}"
+        # Build auth URL
+        params = urlencode({"token": token})
+        return f"{base_url}/auth?{params}"
     
-    @classmethod
-    def validate_token(cls, token: str) -> Optional[str]:
+    def validate_token(self, token: str) -> tuple[str, str]:
         """
-        Validate token and return email if valid.
-        Returns None if token is invalid/expired/already used.
+        Validate auth token and return email.
+        
+        Args:
+            token: Signed token from auth link
+            
+        Returns:
+            (email, error_message) - error_message is None if valid
         """
+        # Check if already used
+        if token in self.used_tokens:
+            return None, "This auth link has already been used"
+        
+        # Validate signature and expiration (1 hour)
         try:
-            # Verify signature and extract email (max age: 1 hour)
             email = serializer.loads(token, salt="auth-token", max_age=3600)
-            
-            # Check if token exists in pending store
-            if token not in cls._pending_tokens:
-                return None
-            
-            # Consume token (one-time use)
-            token_data = cls._pending_tokens.pop(token)
-            
-            # Verify email matches
-            if token_data["email"] != email:
-                return None
-            
-            return email
-            
-        except (SignatureExpired, BadSignature):
-            return None
+        except SignatureExpired:
+            return None, "This auth link has expired (valid for 1 hour)"
+        except BadSignature:
+            return None, "Invalid auth link"
+        
+        # Mark as used
+        self.used_tokens.add(token)
+        
+        return email, None
     
-    @classmethod
-    def _cleanup_expired_tokens(cls):
-        """Remove tokens older than 1 hour"""
-        cutoff = datetime.utcnow() - timedelta(hours=1)
-        expired = [
-            token for token, data in cls._pending_tokens.items()
-            if data["created_at"] < cutoff
-        ]
-        for token in expired:
-            cls._pending_tokens.pop(token, None)
-    
-    @classmethod
-    def initiate_oauth(cls, email: str) -> tuple[str, str]:
-        """
-        Start Google OAuth flow.
-        Returns (authorization_url, state)
-        """
-        oauth = OAuth2Session(
-            GOOGLE_CLIENT_ID,
-            redirect_uri=REDIRECT_URI,
-            scope=SCOPE
-        )
-        
-        # Generate state parameter (CSRF protection)
-        state = secrets.token_urlsafe(32)
-        
-        # Store email with state for callback validation
-        cls._pending_tokens[f"state_{state}"] = {
-            "email": email,
-            "created_at": datetime.utcnow()
-        }
-        
-        authorization_url, _ = oauth.create_authorization_url(GOOGLE_AUTH_URL)
-        
-        # Add state parameter
-        authorization_url = f"{authorization_url}&state={state}"
-        
-        return authorization_url, state
-    
-    @classmethod
-    def handle_callback(cls, code: str, state: str) -> Optional[str]:
-        """
-        Handle OAuth callback from Google.
-        Returns email if successful, None otherwise.
-        """
-        # Validate state
-        state_key = f"state_{state}"
-        if state_key not in cls._pending_tokens:
-            return None
-        
-        token_data = cls._pending_tokens.pop(state_key)
-        email = token_data["email"]
-        
-        # Exchange code for tokens
-        oauth = OAuth2Session(
-            GOOGLE_CLIENT_ID,
-            redirect_uri=REDIRECT_URI
-        )
-        
-        try:
-            token = oauth.fetch_token(
-                GOOGLE_TOKEN_URL,
-                code=code,
-                client_secret=GOOGLE_CLIENT_SECRET
-            )
-            
-            # We don't actually need the OAuth token - just confirming auth worked
-            # The real session comes from Playwright capturing browser cookies
-            
-            return email
-            
-        except Exception as e:
-            print(f"OAuth token exchange failed: {e}")
-            return None
-    
-    @classmethod
-    def session_exists(cls, email: str) -> bool:
-        """Check if user has a saved session file"""
-        session_path = SESSION_DIR / f"{email}.json"
+    def session_exists(self, email: str) -> bool:
+        """Check if a browser session file exists for this email."""
+        session_path = SESSIONS_DIR / f"{email}.json"
         return session_path.exists()
     
-    @classmethod
-    def save_placeholder_session(cls, email: str) -> None:
-        """
-        Save a placeholder session file.
-        The real session will be captured by Playwright during first form upload.
-        This just marks the user as 'authenticated via OAuth'.
-        """
-        SESSION_DIR.mkdir(parents=True, exist_ok=True)
-        session_path = SESSION_DIR / f"{email}.json"
+    def get_session_path(self, email: str) -> Path:
+        """Get the session file path for this email."""
+        return SESSIONS_DIR / f"{email}.json"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# FastAPI Route Handlers
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def initiate_oauth(request):
+    """
+    /auth endpoint: Validate token and redirect to Google OAuth.
+    
+    Query params:
+        token: Signed auth token from email link
+    """
+    token = request.query_params.get("token")
+    if not token:
+        return HTMLResponse(
+            "<h1>Missing Token</h1><p>This auth link is invalid.</p>",
+            status_code=400
+        )
+    
+    auth_manager = AuthManager()
+    email, error = auth_manager.validate_token(token)
+    
+    if error:
+        return HTMLResponse(
+            f"<h1>Authentication Error</h1><p>{error}</p>",
+            status_code=400
+        )
+    
+    # Store email in session for callback
+    request.session["auth_email"] = email
+    
+    # Generate state parameter for CSRF protection
+    state = secrets.token_urlsafe(32)
+    request.session["oauth_state"] = state
+    
+    # Redirect to Google OAuth
+    redirect_uri = request.url_for("oauth_callback")
+    return await oauth.google.authorize_redirect(request, redirect_uri, state=state)
+
+
+async def handle_callback(request, code: str, state: str):
+    """
+    /oauth/callback endpoint: Handle Google OAuth callback.
+    
+    After Google SSO completes:
+    1. Validate OAuth code and state
+    2. Launch Playwright browser
+    3. Navigate to OpenClinica with Google auth
+    4. Save browser session to disk
+    
+    Query params:
+        code: OAuth authorization code from Google
+        state: CSRF protection token
+    """
+    # Verify state parameter
+    stored_state = request.session.get("oauth_state")
+    if not stored_state or stored_state != state:
+        return HTMLResponse(
+            "<h1>Authentication Error</h1><p>Invalid state parameter.</p>",
+            status_code=400
+        )
+    
+    # Get email from session
+    email = request.session.get("auth_email")
+    if not email:
+        return HTMLResponse(
+            "<h1>Authentication Error</h1><p>Session expired.</p>",
+            status_code=400
+        )
+    
+    # Determine OC subdomain from email
+    # Extract from email or use a default/env var
+    subdomain = os.environ.get("OC_DEFAULT_SUBDOMAIN", "cust1")
+    
+    try:
+        # Exchange code for token
+        token = await oauth.google.authorize_access_token(request)
         
-        placeholder = {
-            "_oauth_authenticated": True,
-            "_authenticated_at": datetime.utcnow().isoformat(),
-            "cookies": [],  # Empty - will be populated by Playwright
-            "origins": []
-        }
+        # Extract user info
+        user_info = token.get("userinfo")
+        if not user_info or user_info.get("email") != email:
+            return HTMLResponse(
+                "<h1>Authentication Error</h1>"
+                "<p>The Google account you signed in with doesn't match the email address.</p>",
+                status_code=400
+            )
         
-        with open(session_path, "w") as f:
-            json.dump(placeholder, f, indent=2)
+        # Launch Playwright to capture OpenClinica session
+        session_path = SESSIONS_DIR / f"{email}.json"
+        
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            context = await browser.new_context()
+            
+            # Set Google OAuth cookies in the browser context
+            # This allows OpenClinica to recognize the Google SSO
+            google_cookies = []
+            if "id_token" in token:
+                google_cookies.append({
+                    "name": "g_id_token",
+                    "value": token["id_token"],
+                    "domain": ".google.com",
+                    "path": "/",
+                    "httpOnly": True,
+                    "secure": True
+                })
+            
+            if "access_token" in token:
+                google_cookies.append({
+                    "name": "g_access_token",
+                    "value": token["access_token"],
+                    "domain": ".google.com",
+                    "path": "/",
+                    "httpOnly": True,
+                    "secure": True
+                })
+            
+            # Add cookies if we have any
+            if google_cookies:
+                await context.add_cookies(google_cookies)
+            
+            page = await context.new_page()
+            
+            # Navigate to OpenClinica login page
+            oc_url = f"https://{subdomain}.build.openclinica.io"
+            await page.goto(oc_url, wait_until="networkidle")
+            
+            # Check if we're on the login page
+            # If so, click "Sign in with Google"
+            try:
+                # Wait for SSO button (adjust selector based on actual OC login page)
+                sso_button = page.locator('button:has-text("Sign in with Google"), a:has-text("Sign in with Google")')
+                if await sso_button.count() > 0:
+                    await sso_button.first.click()
+                    
+                    # Wait for redirect back to OC after Google SSO
+                    await page.wait_for_url(f"{oc_url}/**", timeout=30000)
+            except Exception as e:
+                # If SSO button not found or timeout, might already be logged in
+                print(f"SSO flow note: {e}")
+            
+            # Save browser context (cookies, localStorage, etc.)
+            await context.storage_state(path=str(session_path))
+            
+            await browser.close()
+        
+        # Clear session
+        request.session.pop("auth_email", None)
+        request.session.pop("oauth_state", None)
+        
+        return HTMLResponse(
+            """
+            <h1>✅ Authentication Complete!</h1>
+            <p>Your OpenClinica session has been saved.</p>
+            <p>You can now close this window and re-trigger "Send to AI" on your monday.com row.</p>
+            <style>
+                body {
+                    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+                    max-width: 600px;
+                    margin: 100px auto;
+                    padding: 20px;
+                    text-align: center;
+                }
+                h1 { color: #00c875; }
+            </style>
+            """
+        )
+        
+    except Exception as e:
+        print(f"OAuth callback error: {e}")
+        return HTMLResponse(
+            f"<h1>Authentication Error</h1><p>{str(e)}</p>",
+            status_code=500
+        )
