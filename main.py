@@ -164,6 +164,7 @@ async def debug_dom(
     wait: int = 4000,
     click: str = "",
     screenshot: bool = False,
+    frame: int = -1,
 ):
     """Load a saved OC Playwright session, navigate, and return live DOM.
 
@@ -212,7 +213,23 @@ async def debug_dom(
                     except Exception as e:
                         click_error = f"{type(e).__name__}: {e}"
 
-                dom = await page.evaluate(_DEBUG_DOM_JS)
+                # Enumerate all frames (top page + every iframe) so callers
+                # can discover which index hosts the form they need.
+                frames_info = [
+                    {"index": i, "url": fr.url, "name": fr.name}
+                    for i, fr in enumerate(page.frames)
+                ]
+
+                # Pick the eval target. frame=-1 (default) → top-level
+                # page. 0..len-1 → that index in page.frames. Anything
+                # out of range silently falls back to the top page —
+                # consult the returned "frames" list to find a valid
+                # index, then re-call.
+                target = page
+                if 0 <= frame < len(page.frames):
+                    target = page.frames[frame]
+
+                dom = await target.evaluate(_DEBUG_DOM_JS)
 
                 shot_path = None
                 if screenshot:
@@ -232,6 +249,7 @@ async def debug_dom(
             "title":       title,
             "click":       click or None,
             "click_error": click_error,
+            "frames":      frames_info,
             "dom":         dom,
             "screenshot":  shot_path,
         })
