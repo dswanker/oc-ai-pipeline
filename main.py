@@ -165,6 +165,7 @@ async def debug_dom(
     click: str = "",
     screenshot: bool = False,
     frame: int = -1,
+    ready_sel: str = "",
 ):
     """Load a saved OC Playwright session, navigate, and return live DOM.
 
@@ -203,6 +204,30 @@ async def debug_dom(
                 page = await context.new_page()
                 await page.goto(url, wait_until="networkidle",
                                 timeout=30000)
+
+                # Optional readiness gate. wait_for_selector returns as
+                # soon as the selector first appears in the DOM — much
+                # tighter than a fixed sleep, which sometimes snapshots
+                # mid-render (e.g. OC's "Processing user info..."
+                # transient between SSO callback and board paint).
+                # Best-effort: a timeout doesn't abort, it just gets
+                # recorded so the partial DOM is still returned.
+                # If `frame` is also set, wait inside that frame
+                # instead of the top page (page.wait_for_selector only
+                # searches the top-level frame's DOM).
+                ready_error = None
+                if ready_sel:
+                    ctx = page
+                    if 0 <= frame < len(page.frames):
+                        ctx = page.frames[frame]
+                    try:
+                        await ctx.wait_for_selector(
+                            ready_sel, timeout=20000)
+                    except Exception as e:
+                        ready_error = f"{type(e).__name__}: {e}"
+
+                # Keep the fixed settle buffer after readiness — handy
+                # for catching post-render reflow + late iframe load.
                 await page.wait_for_timeout(wait)
 
                 click_error = None
@@ -249,6 +274,7 @@ async def debug_dom(
             "title":       title,
             "click":       click or None,
             "click_error": click_error,
+            "ready_error": ready_error,
             "frames":      frames_info,
             "dom":         dom,
             "screenshot":  shot_path,
