@@ -1609,6 +1609,44 @@ def _backfill_migration_fields(spec):
     return spec
 
 
+# ── Session pre-flight (validates a saved Playwright session in ~15s) ──────────
+
+async def _validate_oc_session(subdomain: str, session_path: str) -> bool:
+    """Quick Playwright check: is the saved OC session still valid?
+
+    Navigates to the build-app root with the saved storage_state. If
+    SSO is still valid, the URL stays on {subdomain}.build.openclinica.io;
+    if stale, OC redirects to auth.openclinica.io (Keycloak). Total
+    runtime is ~10–15s, vs. ~8 min for chains-then-fail-at-publish.
+
+    Failure-open: if Playwright itself errors (install issue, network
+    glitch), return True so the pipeline proceeds and falls back to its
+    pre-existing "fail at publish time" behavior.
+    """
+    try:
+        from playwright.async_api import async_playwright
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            try:
+                context = await browser.new_context(
+                    storage_state=session_path)
+                page = await context.new_page()
+                url = f"https://{subdomain}.build.openclinica.io"
+                await page.goto(url, wait_until="networkidle",
+                                timeout=20000)
+                await page.wait_for_timeout(3000)
+                is_valid = "auth.openclinica.io" not in page.url
+                print(f"[session-preflight] final_url={page.url} "
+                      f"→ valid={is_valid}", flush=True)
+                return is_valid
+            finally:
+                await browser.close()
+    except Exception as e:
+        print(f"[session-preflight] check failed ({e}); "
+              f"assuming session is valid", flush=True)
+        return True
+
+
 # ── Main pipeline ──────────────────────────────────────────────────────────────
 
 async def run_pipeline(item_id):
@@ -1692,6 +1730,22 @@ async def run_pipeline(item_id):
         # form upload would be skipped anyway and there's nothing to auth.
         if create_study and oc_email:
             auth_manager = AuthManager()
+            # Pre-flight: if a session file exists, validate it actually
+            # works before spending ~8 min on chains. A stale session
+            # gets deleted here so the existing "no session" branch
+            # below re-prompts the user via the same code path.
+            if auth_manager.session_exists(oc_email):
+                session_path = str(auth_manager.get_session_path(oc_email))
+                if not await _validate_oc_session(
+                        oc_subdomain, session_path):
+                    print(f"[session-preflight] session for {oc_email} "
+                          f"is stale — deleting and re-requesting auth",
+                          flush=True)
+                    try:
+                        os.remove(session_path)
+                    except OSError:
+                        pass
+
             if not auth_manager.session_exists(oc_email):
                 auth_link = auth_manager.generate_auth_link(
                     oc_email,
