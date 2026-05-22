@@ -122,6 +122,125 @@ async def extension_zip():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# TEMPORARY debug endpoint — DOM dumper for OC designer selector discovery.
+# Gated by DEBUG_KEY env var. Remove or gate harder (or behind staff-only
+# auth) once we've mapped the real upload-flow selectors.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# JS executed via page.evaluate to extract interactive elements. Defined at
+# module scope so the multi-line string isn't reconstructed on every call.
+_DEBUG_DOM_JS = """
+() => {
+  const info = (el) => ({
+    tag: el.tagName.toLowerCase(),
+    id: el.id || null,
+    cls: (typeof el.className === 'string' && el.className) ? el.className : null,
+    text: (el.innerText || el.value || '').trim().slice(0, 80),
+    type: el.getAttribute('type'),
+    name: el.getAttribute('name'),
+    placeholder: el.getAttribute('placeholder'),
+    href: el.getAttribute('href'),
+    data: Object.fromEntries([...el.attributes]
+      .filter(a => a.name.startsWith('data-'))
+      .map(a => [a.name, a.value])),
+  });
+  const grab = (q) => [...document.querySelectorAll(q)].map(info);
+  return {
+    buttons: grab('button, [role=button], input[type=button], input[type=submit]'),
+    links: grab('a[href]').slice(0, 120),
+    inputs: grab('input, select, textarea'),
+    iframes: document.querySelectorAll('iframe').length,
+    bodyText: (document.body ? document.body.innerText : '').slice(0, 2000),
+  };
+}
+"""
+
+
+@app.get("/debug/dom")
+async def debug_dom(
+    url: str,
+    key: str = "",
+    email: str = "dswanker@openclinica.com",
+    wait: int = 4000,
+    click: str = "",
+    screenshot: bool = False,
+):
+    """Load a saved OC Playwright session, navigate, and return live DOM.
+
+    Auth-gated and host-scoped so a captured signed-in session can't be
+    used as a generic web navigator. See section header for removal plan.
+    """
+    # 1. Auth gate — empty DEBUG_KEY env disables the endpoint entirely.
+    debug_key = os.environ.get("DEBUG_KEY", "")
+    if not debug_key or key != debug_key:
+        return JSONResponse(
+            {"error": "debug disabled or bad key"}, status_code=403)
+
+    # 2. Host safety — only allow OC hosts to limit blast radius.
+    from urllib.parse import urlparse
+    host = (urlparse(url).hostname or "")
+    if not host.endswith("openclinica.io"):
+        return JSONResponse(
+            {"error": "url must be *.openclinica.io"}, status_code=400)
+
+    # 3. Session check — reuse oc_form_publisher's path convention.
+    from oc_form_publisher import SESSION_DIR
+    session_path = os.path.join(SESSION_DIR, f"{email}.json")
+    if not os.path.exists(session_path):
+        return JSONResponse(
+            {"error": f"no session file for {email}"}, status_code=404)
+
+    # 4-10. Lazy-load playwright; capture URL/title BEFORE the browser is
+    # torn down (page object is dead after browser.close()).
+    try:
+        from playwright.async_api import async_playwright
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            try:
+                context = await browser.new_context(
+                    storage_state=session_path)
+                page = await context.new_page()
+                await page.goto(url, wait_until="networkidle",
+                                timeout=30000)
+                await page.wait_for_timeout(wait)
+
+                click_error = None
+                if click:
+                    try:
+                        await page.click(click, timeout=5000)
+                        await page.wait_for_timeout(wait)
+                    except Exception as e:
+                        click_error = f"{type(e).__name__}: {e}"
+
+                dom = await page.evaluate(_DEBUG_DOM_JS)
+
+                shot_path = None
+                if screenshot:
+                    try:
+                        shot_path = "/data/browser_sessions/debug_dom.png"
+                        await page.screenshot(path=shot_path, full_page=True)
+                    except Exception:
+                        shot_path = None
+
+                final_url = page.url
+                title = await page.title()
+            finally:
+                await browser.close()
+
+        return JSONResponse({
+            "final_url":   final_url,
+            "title":       title,
+            "click":       click or None,
+            "click_error": click_error,
+            "dom":         dom,
+            "screenshot":  shot_path,
+        })
+    except Exception as e:
+        return JSONResponse(
+            {"error": f"{type(e).__name__}: {e}"}, status_code=500)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Monday.com Webhooks
 # ─────────────────────────────────────────────────────────────────────────────
 
