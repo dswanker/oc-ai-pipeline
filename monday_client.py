@@ -58,7 +58,14 @@ COL = {
     # EDC migration input (created by scripts/create_migration_columns.py)
     "source_edc_export": "file_mm386dte",   # file: ODM XML or ZIP containing ODM XML
     "source_edc_system": "dropdown_mm382w7d",  # dropdown: vendor (auto-detected, overridable)
+    # Pipeline configuration assets (Configuration group row on AI Hub board)
+    "pipeline_extension": "file_mm3jp6bm",   # file: zipped Chrome extension (OC Session Capture)
 }
+
+# Item ID of the Pipeline Configuration row in the Configuration group.
+# Single source-of-truth row for board-level config assets like the
+# Chrome extension zip. Update only if the row is recreated.
+PIPELINE_CONFIG_ITEM_ID = "12079849208"
 
 def get_token():
     return os.environ.get("MONDAY_API_TOKEN", "").strip()

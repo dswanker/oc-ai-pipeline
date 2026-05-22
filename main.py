@@ -1,9 +1,15 @@
 from fastapi import FastAPI, Request, BackgroundTasks, HTTPException
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from starlette.middleware.sessions import SessionMiddleware
-import hmac, hashlib, json, os, traceback, asyncio
+import hmac, hashlib, json, os, time, traceback, asyncio
 
-# Import auth manager
-from auth_manager import AuthManager, initiate_oauth, handle_callback
+# Auth manager — Chrome-extension session-capture flow
+from auth_manager import (
+    AuthManager,
+    handle_session_upload,
+    render_instructions_page,
+)
+from monday_client import COL, PIPELINE_CONFIG_ITEM_ID, download_column_file
 
 app = FastAPI()
 
@@ -29,25 +35,90 @@ async def health():
     return {"status": "ok"}
 
 # ─────────────────────────────────────────────────────────────────────────────
-# OAuth Routes
+# Auth bootstrap (Chrome extension session-capture flow)
 # ─────────────────────────────────────────────────────────────────────────────
 
 @app.get("/auth")
-async def auth_endpoint(request: Request):
+async def auth_page(token: str = ""):
+    """Render the bootstrap instructions page for a one-time auth link.
+
+    Validates the token (signature + 1-hour max-age) but does NOT
+    consume it — the same token is reused by /api/session/upload below.
     """
-    OAuth initiation endpoint.
-    Validates auth token and redirects to Google OAuth.
-    """
-    return await initiate_oauth(request)
+    if not token:
+        return HTMLResponse("<h1>Missing token</h1>", status_code=400)
+    am = AuthManager()
+    email, error = am.validate_token(token)
+    if error:
+        return HTMLResponse(
+            f"<h1>Auth link problem</h1><p>{error}</p>",
+            status_code=400,
+        )
+    return HTMLResponse(render_instructions_page(token, email))
 
 
-@app.get("/oauth/callback", name="oauth_callback")
-async def oauth_callback_endpoint(request: Request, code: str, state: str):
+@app.post("/api/session/upload")
+async def session_upload(request: Request):
+    """Endpoint the OC Session Capture Chrome extension POSTs to.
+
+    Body: {"token": "<signed token>", "storage_state": <playwright dict>}
+    Response: {"ok": true, "email": ..., "cookies": N} on success;
+              {"ok": false, "error": ...} on failure (HTTP 400).
     """
-    OAuth callback endpoint.
-    Handles Google OAuth redirect and saves browser session.
+    data = await request.json()
+    result = await handle_session_upload(
+        data.get("token", ""),
+        data.get("storage_state"),
+    )
+    status = result.pop("status", 200 if result.get("ok") else 400)
+    return JSONResponse(result, status_code=status)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Extension proxy (serves the zipped Chrome extension stored in monday)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Module-level 5-min TTL cache so repeat downloads don't re-hit monday
+# on every install. Resets on each Railway deploy.
+_extension_zip_cache: tuple[bytes, float] | None = None
+EXTENSION_CACHE_TTL_S = 300
+
+
+async def _get_extension_zip_bytes() -> bytes:
+    """Fetch the latest extension-zip bytes from monday (with TTL cache)."""
+    global _extension_zip_cache
+    now = time.time()
+    if _extension_zip_cache is not None and now < _extension_zip_cache[1]:
+        return _extension_zip_cache[0]
+    blob = await download_column_file(
+        PIPELINE_CONFIG_ITEM_ID, COL["pipeline_extension"],
+    )
+    if not blob:
+        raise HTTPException(
+            status_code=503,
+            detail="Extension not uploaded to monday yet",
+        )
+    _extension_zip_cache = (blob, now + EXTENSION_CACHE_TTL_S)
+    return blob
+
+
+@app.get("/extension.zip")
+async def extension_zip():
+    """Serve the OC Session Capture Chrome extension (zip) to users.
+
+    Authoritative source is the file column on monday's Pipeline
+    Configuration row — drop a new zip there and it propagates within
+    5 minutes (or immediately on the next Railway deploy).
     """
-    return await handle_callback(request, code, state)
+    blob = await _get_extension_zip_bytes()
+    return Response(
+        content=blob,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition":
+                'attachment; filename="oc-session-capture.zip"',
+        },
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────

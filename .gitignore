@@ -38,3 +38,4 @@ conventions_engine/build/
 # OC SSO session JSONs captured by scripts/oc_session_bootstrap.py.
 # These contain live auth cookies — MUST NOT be committed.
 sessions/
+extension.zip

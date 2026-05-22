@@ -1,28 +1,27 @@
 """
-Authentication manager for OpenClinica form uploads via Google OAuth.
+Authentication manager for OpenClinica form uploads via Chrome extension.
 
 Flow:
-1. Pipeline checks for session file
-2. If missing, generates auth link and posts to monday.com
-3. User clicks link -> /auth endpoint validates token
-4. Redirects to Google OAuth
-5. Google redirects back to /oauth/callback
-6. Callback launches Playwright to capture OpenClinica session
-7. Saves browser context to session file
-8. User re-triggers pipeline -> session found -> forms upload
+1. Pipeline checks for a saved Playwright session for the user
+2. If missing, generates a one-time auth link and posts it to monday
+3. User clicks link -> /auth endpoint validates the token (peek-only) and
+   renders an instructions page showing the token + extension download
+4. User installs the OC Session Capture Chrome extension (sideload), signs
+   into OpenClinica normally, clicks the extension icon, pastes the token,
+   clicks "Capture & Send"
+5. Extension POSTs cookies + localStorage to /api/session/upload
+6. /api/session/upload validates the token (consuming it this time), then
+   writes the Playwright storage_state JSON to /data/browser_sessions/{email}.json
+7. User re-triggers the pipeline -> session is found -> forms upload succeeds
 """
+from __future__ import annotations
 
-import os
 import json
-import secrets
+import os
 from pathlib import Path
-from datetime import datetime, timedelta
 from urllib.parse import urlencode
 
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
-from authlib.integrations.starlette_client import OAuth
-from starlette.responses import RedirectResponse, HTMLResponse
-from playwright.async_api import async_playwright
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -32,19 +31,16 @@ from playwright.async_api import async_playwright
 SESSIONS_DIR = Path("/data/browser_sessions")
 SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
 
-# Token serializer for one-time auth links
+# Token serializer for one-time auth links. AUTH_SECRET_KEY is also used
+# by the SessionMiddleware in main.py, but no longer for OAuth state (that
+# flow was removed in favour of the Chrome extension approach).
 SECRET_KEY = os.environ["AUTH_SECRET_KEY"]
 serializer = URLSafeTimedSerializer(SECRET_KEY)
 
-# OAuth configuration
-oauth = OAuth()
-oauth.register(
-    name="google",
-    client_id=os.environ["GOOGLE_OAUTH_CLIENT_ID"],
-    client_secret=os.environ["GOOGLE_OAUTH_CLIENT_SECRET"],
-    server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
-    client_kwargs={"scope": "openid email profile"},
-)
+# Token lifetime in seconds. The user must click the auth link, sideload
+# the extension, sign into OC, and POST cookies within this window. One
+# hour is generous for the bootstrap flow.
+TOKEN_MAX_AGE_SECONDS = 3600
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -52,240 +48,179 @@ oauth.register(
 # ─────────────────────────────────────────────────────────────────────────────
 
 class AuthManager:
-    """Manages authentication tokens and browser sessions."""
-    
-    def __init__(self):
-        self.used_tokens = set()  # Track consumed tokens (in-memory, resets on deploy)
-    
+    """Manages one-time tokens and per-user browser session files."""
+
     def generate_auth_link(self, email: str, base_url: str) -> str:
         """
         Generate a one-time auth link for the given email.
-        
+
         Args:
-            email: User's OpenClinica email
-            base_url: Railway app URL (e.g., https://oc-ai-pipeline-production.up.railway.app)
-            
+            email:    User's OC SSO email (e.g. user@openclinica.com)
+            base_url: Railway public URL with no trailing slash
+                      (e.g. https://oc-ai-pipeline-production.up.railway.app)
+
         Returns:
-            Full auth URL with signed token
+            Full /auth URL with a signed token query parameter.
         """
-        # Create signed token (valid for 1 hour)
         token = serializer.dumps(email, salt="auth-token")
-        
-        # Build auth URL
         params = urlencode({"token": token})
         return f"{base_url}/auth?{params}"
-    
-    def validate_token(self, token: str) -> tuple[str, str]:
+
+    def validate_token(self, token: str) -> tuple[str | None, str | None]:
         """
-        Validate auth token and return email.
-        
-        Args:
-            token: Signed token from auth link
-            
+        Validate a signed auth token and return (email, error_message).
+
+        Pure signature + max-age check — no "already used" bookkeeping.
+        The same token is intentionally validated twice in the bootstrap
+        flow: once when the user lands on the /auth instructions page,
+        and again when the extension POSTs to /api/session/upload. The
+        1-hour signature window is the only liveness bound.
+
         Returns:
-            (email, error_message) - error_message is None if valid
+            (email, None) on success; (None, error_message) on failure.
         """
-        # Check if already used
-        if token in self.used_tokens:
-            return None, "This auth link has already been used"
-        
-        # Validate signature and expiration (1 hour)
         try:
-            email = serializer.loads(token, salt="auth-token", max_age=3600)
+            email = serializer.loads(
+                token, salt="auth-token", max_age=TOKEN_MAX_AGE_SECONDS
+            )
         except SignatureExpired:
             return None, "This auth link has expired (valid for 1 hour)"
         except BadSignature:
             return None, "Invalid auth link"
-        
-        # Mark as used
-        self.used_tokens.add(token)
-        
         return email, None
-    
+
     def session_exists(self, email: str) -> bool:
-        """Check if a browser session file exists for this email."""
-        session_path = SESSIONS_DIR / f"{email}.json"
-        return session_path.exists()
-    
+        """Check if a saved Playwright session file exists for this email."""
+        return (SESSIONS_DIR / f"{email}.json").exists()
+
     def get_session_path(self, email: str) -> Path:
         """Get the session file path for this email."""
         return SESSIONS_DIR / f"{email}.json"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# FastAPI Route Handlers
+# Session upload (called from main.py's /api/session/upload route)
 # ─────────────────────────────────────────────────────────────────────────────
 
-async def initiate_oauth(request):
+def write_session_state(email: str, storage_state: dict) -> Path:
+    """Write Playwright storage_state JSON for this user to disk."""
+    SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+    path = SESSIONS_DIR / f"{email}.json"
+    path.write_text(json.dumps(storage_state))
+    return path
+
+
+async def handle_session_upload(token: str, storage_state) -> dict:
+    """Validate a one-time token and persist storage_state to disk.
+
+    Returns a dict suitable for JSONResponse:
+      success: {"ok": True, "email": <email>, "cookies": <count>}
+      failure: {"ok": False, "error": <msg>, "status": <http_status>}
     """
-    /auth endpoint: Validate token and redirect to Google OAuth.
-    
-    Query params:
-        token: Signed auth token from email link
-    """
-    token = request.query_params.get("token")
-    if not token:
-        return HTMLResponse(
-            "<h1>Missing Token</h1><p>This auth link is invalid.</p>",
-            status_code=400
-        )
-    
-    auth_manager = AuthManager()
-    email, error = auth_manager.validate_token(token)
-    
+    am = AuthManager()
+    email, error = am.validate_token(token)
     if error:
-        return HTMLResponse(
-            f"<h1>Authentication Error</h1><p>{error}</p>",
-            status_code=400
-        )
-    
-    # Store email in session for callback
-    request.session["auth_email"] = email
-    
-    # Generate state parameter for CSRF protection
-    state = secrets.token_urlsafe(32)
-    request.session["oauth_state"] = state
-    
-    # Redirect to Google OAuth.
-    # url_for() inherits the request's scheme — behind Railway's TLS-
-    # terminating proxy that's HTTP (TLS is terminated at the edge),
-    # even though the public URL is HTTPS. Force https so the
-    # redirect_uri matches what's registered in Google Cloud Console.
-    redirect_uri = request.url_for("oauth_callback").replace(scheme="https")
-    return await oauth.google.authorize_redirect(request, redirect_uri, state=state)
+        return {"ok": False, "error": error, "status": 400}
+    if not isinstance(storage_state, dict) or "cookies" not in storage_state:
+        return {
+            "ok": False,
+            "error": "storage_state missing 'cookies'",
+            "status": 400,
+        }
+    path = write_session_state(email, storage_state)
+    n = len(storage_state.get("cookies", []))
+    print(f"[auth] wrote session for {email}: {n} cookies -> {path}",
+          flush=True)
+    return {"ok": True, "email": email, "cookies": n}
 
 
-async def handle_callback(request, code: str, state: str):
+# ─────────────────────────────────────────────────────────────────────────────
+# Instructions page (rendered by main.py's /auth route)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def render_instructions_page(token: str, email: str) -> str:
+    """Self-contained HTML page for the bootstrap instructions.
+
+    The page is shown when a user clicks the one-time auth link posted
+    to their monday.com row. It displays the token, an extension-zip
+    download button, and the install/use steps.
     """
-    /oauth/callback endpoint: Handle Google OAuth callback.
-    
-    After Google SSO completes:
-    1. Validate OAuth code and state
-    2. Launch Playwright browser
-    3. Navigate to OpenClinica with Google auth
-    4. Save browser session to disk
-    
-    Query params:
-        code: OAuth authorization code from Google
-        state: CSRF protection token
-    """
-    # Verify state parameter
-    stored_state = request.session.get("oauth_state")
-    if not stored_state or stored_state != state:
-        return HTMLResponse(
-            "<h1>Authentication Error</h1><p>Invalid state parameter.</p>",
-            status_code=400
-        )
-    
-    # Get email from session
-    email = request.session.get("auth_email")
-    if not email:
-        return HTMLResponse(
-            "<h1>Authentication Error</h1><p>Session expired.</p>",
-            status_code=400
-        )
-    
-    # Determine OC subdomain from email
-    # Extract from email or use a default/env var
+    from html import escape as _esc
     subdomain = os.environ.get("OC_DEFAULT_SUBDOMAIN", "cust1")
-    
-    try:
-        # Exchange code for token
-        token = await oauth.google.authorize_access_token(request)
-        
-        # Extract user info
-        user_info = token.get("userinfo")
-        if not user_info or user_info.get("email") != email:
-            return HTMLResponse(
-                "<h1>Authentication Error</h1>"
-                "<p>The Google account you signed in with doesn't match the email address.</p>",
-                status_code=400
-            )
-        
-        # Launch Playwright to capture OpenClinica session
-        session_path = SESSIONS_DIR / f"{email}.json"
-        
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
-            context = await browser.new_context()
-            
-            # Set Google OAuth cookies in the browser context
-            # This allows OpenClinica to recognize the Google SSO
-            google_cookies = []
-            if "id_token" in token:
-                google_cookies.append({
-                    "name": "g_id_token",
-                    "value": token["id_token"],
-                    "domain": ".google.com",
-                    "path": "/",
-                    "httpOnly": True,
-                    "secure": True
-                })
-            
-            if "access_token" in token:
-                google_cookies.append({
-                    "name": "g_access_token",
-                    "value": token["access_token"],
-                    "domain": ".google.com",
-                    "path": "/",
-                    "httpOnly": True,
-                    "secure": True
-                })
-            
-            # Add cookies if we have any
-            if google_cookies:
-                await context.add_cookies(google_cookies)
-            
-            page = await context.new_page()
-            
-            # Navigate to OpenClinica login page
-            oc_url = f"https://{subdomain}.build.openclinica.io"
-            await page.goto(oc_url, wait_until="networkidle")
-            
-            # Check if we're on the login page
-            # If so, click "Sign in with Google"
-            try:
-                # Wait for SSO button (adjust selector based on actual OC login page)
-                sso_button = page.locator('button:has-text("Sign in with Google"), a:has-text("Sign in with Google")')
-                if await sso_button.count() > 0:
-                    await sso_button.first.click()
-                    
-                    # Wait for redirect back to OC after Google SSO
-                    await page.wait_for_url(f"{oc_url}/**", timeout=30000)
-            except Exception as e:
-                # If SSO button not found or timeout, might already be logged in
-                print(f"SSO flow note: {e}")
-            
-            # Save browser context (cookies, localStorage, etc.)
-            await context.storage_state(path=str(session_path))
-            
-            await browser.close()
-        
-        # Clear session
-        request.session.pop("auth_email", None)
-        request.session.pop("oauth_state", None)
-        
-        return HTMLResponse(
-            """
-            <h1>✅ Authentication Complete!</h1>
-            <p>Your OpenClinica session has been saved.</p>
-            <p>You can now close this window and re-trigger "Send to AI" on your monday.com row.</p>
-            <style>
-                body {
-                    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-                    max-width: 600px;
-                    margin: 100px auto;
-                    padding: 20px;
-                    text-align: center;
-                }
-                h1 { color: #00c875; }
-            </style>
-            """
-        )
-        
-    except Exception as e:
-        print(f"OAuth callback error: {e}")
-        return HTMLResponse(
-            f"<h1>Authentication Error</h1><p>{str(e)}</p>",
-            status_code=500
-        )
+    designer_url = f"https://{subdomain}.design.openclinica.io"
+    email_esc = _esc(email)
+    token_esc = _esc(token)
+    designer_esc = _esc(designer_url)
+    return f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>OpenClinica Session Setup</title>
+<style>
+  body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+          max-width: 720px; margin: 40px auto; padding: 0 24px; color: #222;
+          line-height: 1.5; }}
+  h1 {{ color: #0085ff; font-size: 22px; margin-bottom: 4px; }}
+  .lead {{ color: #555; margin-top: 0; }}
+  .code-box {{ display: flex; align-items: center; gap: 8px; margin: 16px 0;
+               padding: 12px 14px; background: #f6f8fa; border: 1px solid #d1d9e0;
+               border-radius: 6px; }}
+  code {{ font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 13px;
+          word-break: break-all; flex: 1; }}
+  button {{ padding: 6px 12px; background: #0085ff; color: white; border: none;
+            border-radius: 4px; font-size: 12px; cursor: pointer; white-space: nowrap; }}
+  button:hover {{ background: #006fdb; }}
+  .btn-link {{ display: inline-block; padding: 10px 16px; margin: 8px 0;
+               background: #0085ff; color: white; text-decoration: none;
+               border-radius: 4px; font-weight: 500; }}
+  .btn-link:hover {{ background: #006fdb; }}
+  ol {{ padding-left: 22px; }}
+  ol li {{ margin: 6px 0; }}
+  .designer {{ font-family: ui-monospace, monospace; background: #f6f8fa;
+               padding: 1px 6px; border-radius: 3px; color: #0050a0;
+               text-decoration: none; }}
+  .toast {{ display: none; margin-left: 8px; color: #1c6e3d; font-size: 12px; }}
+  .toast.show {{ display: inline; }}
+</style>
+</head>
+<body>
+<h1>OpenClinica Session Setup</h1>
+<p class="lead">Hi <strong>{email_esc}</strong> — the pipeline needs your
+OpenClinica session before it can publish forms. Steps below take ~90 seconds.</p>
+
+<p><strong>1. Your one-time code:</strong></p>
+<div class="code-box">
+  <code id="token">{token_esc}</code>
+  <button onclick="copyToken()">Copy</button>
+  <span class="toast" id="toast">Copied!</span>
+</div>
+
+<p><strong>2. Download the Chrome extension:</strong></p>
+<p><a class="btn-link" href="/extension.zip">Download extension</a></p>
+
+<p><strong>3. Install &amp; use:</strong></p>
+<ol>
+  <li>Unzip the downloaded file.</li>
+  <li>Open <span class="designer">chrome://extensions</span>, toggle
+      <em>Developer mode</em>, click <em>Load unpacked</em>, and select
+      the unzipped folder.</li>
+  <li>In a new tab, sign in to OpenClinica at
+      <a class="designer" href="{designer_esc}">{designer_esc}</a>.</li>
+  <li>Click the extension icon, paste the code above, click
+      <em>Capture &amp; Send</em>.</li>
+  <li>Return to monday and re-trigger your pipeline (set the trigger
+      column back to "Send to AI").</li>
+</ol>
+
+<script>
+function copyToken() {{
+  const tok = document.getElementById('token').textContent;
+  navigator.clipboard.writeText(tok).then(() => {{
+    const t = document.getElementById('toast');
+    t.classList.add('show');
+    setTimeout(() => t.classList.remove('show'), 1500);
+  }});
+}}
+</script>
+</body>
+</html>"""

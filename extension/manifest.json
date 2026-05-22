@@ -1,0 +1,18 @@
+{
+  "manifest_version": 3,
+  "name": "OC Session Capture",
+  "version": "1.0.0",
+  "description": "Captures OpenClinica SSO cookies + storage for unattended Playwright form uploads via oc-ai-pipeline.",
+  "permissions": ["cookies", "scripting", "activeTab", "storage"],
+  "host_permissions": [
+    "https://*.openclinica.io/*",
+    "https://oc-ai-pipeline-production.up.railway.app/*"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "OC Session Capture"
+  },
+  "background": {
+    "service_worker": "background.js"
+  }
+}
