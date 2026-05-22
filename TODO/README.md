@@ -87,9 +87,35 @@ These are tracked here pending dedicated docs:
   item_id + version number.
 - **SOE CSV update path.** Currently blocked by Copy Study Design's clone-into-
   empty limitation. Need to revisit when OC team addresses OC-18941.
-- **XLSForm upload via Playwright.** Blocked pending confirmation that forms
-  load individually (rather than batch). Would automate the manual step
-  customers do today.
+- **XLSForm upload via Playwright.** IN FLIGHT (May 2026 session). Forms
+  upload individually. OID-driven panel walk implemented in oc_form_publisher.py
+  (commit ffd97b2). Auth + URL fixes also landed. Pending: confirm upload
+  succeeds end-to-end on a real pipeline run; set-default-version step is
+  best-effort in v1 (goes to warnings, not errors).
+- **Instructions page: show study-specific URL.** auth_manager.py
+  render_instructions_page currently tells the user to sign in at
+  `https://{subdomain}.design.openclinica.io` (generic root). Should show
+  the specific study board URL so the user lands in the right place. Problem:
+  board URL isn't known at auth-gate time (import runs later). Short-term fix:
+  change to `{subdomain}.build.openclinica.io/#/account-study` (My Studies
+  page — always loads, cookies captured there are identical). Longer-term:
+  store board URL after successful import, include in re-auth link.
+- **Trigger column reset on auth pause.** When the pipeline pauses for
+  authentication, single_select5ogcb0g should be reset to "Do not Send To AI
+  Yet" so the user can re-trigger with one click. A fix was attempted (May 2026)
+  but did not take effect — confirm the commit landed in pipeline.py and that
+  the label text matches exactly ("Do not Send To AI Yet", capital S/T/AI/Y).
+- **Session lifetime and single-session-slot.** OC/Keycloak issues one session
+  per user. The headless publisher session and the user's own Chrome session
+  compete — a new login invalidates the captured one. Pre-flight check (shipped
+  May 2026) detects stale sessions fast. Long-term: ask OC engineering to
+  enable service-account or multi-session support so sessions don't compete.
+- **Cleanup after Playwright debugging.** Three items once form upload is
+  confirmed working: (1) remove GET /debug/dom endpoint from main.py, (2)
+  re-enable session-file deletion in oc_form_publisher.py (os.remove block
+  currently commented out with "TEMP: disabled during auth diagnosis"), (3)
+  rotate DEBUG_KEY Railway env var (current value typed in plaintext in chat
+  on 2026-05-22).
 - **Pre-existing duplicate "REQUIRED TOP-LEVEL KEYS" sections in prompts.py.**
   Pre-dates current session. Cosmetic cleanup. Low priority.
 - **CRF library XLSX format support.** Pipeline expects PDF on `crf_library`
