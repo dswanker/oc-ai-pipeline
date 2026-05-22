@@ -234,18 +234,45 @@ class FormPublisher:
 
                     # 5. Branch on (auth_ok, session_existed)
                     if not auth_ok and session_existed:
-                        # Stale session — delete + clear error so the next
-                        # run starts the bootstrap flow fresh.
+                        # Diagnostics: capture what page we actually landed
+                        # on so we can tell "selector wrong" from "session
+                        # didn't carry". Best-effort — never let diag itself
+                        # break the flow.
                         try:
-                            os.remove(self._session_path)
-                        except OSError:
-                            pass
+                            _dbg_url = page.url
+                            _dbg_title = await page.title()
+                            _dbg_body = (await page.inner_text("body"))[:1500]
+                        except Exception as _e:
+                            _dbg_url = _dbg_title = _dbg_body = (
+                                f"<diag failed: {_e}>")
+                        print(f"[auth-debug] final_url={_dbg_url}", flush=True)
+                        print(f"[auth-debug] title={_dbg_title}", flush=True)
+                        print(f"[auth-debug] body_snippet={_dbg_body!r}",
+                              flush=True)
+                        try:
+                            await page.screenshot(
+                                path="/data/browser_sessions/debug_auth.png",
+                                full_page=True)
+                            print("[auth-debug] saved screenshot -> "
+                                  "/data/browser_sessions/debug_auth.png",
+                                  flush=True)
+                        except Exception as _e:
+                            print(f"[auth-debug] screenshot failed: {_e}",
+                                  flush=True)
+                        # TEMP: disabled during auth diagnosis — see chat.
+                        # Keeps the captured session intact so a false-
+                        # positive "expired" verdict doesn't force a needless
+                        # re-capture before we know if the selector is wrong.
+                        # try:
+                        #     os.remove(self._session_path)
+                        # except OSError:
+                        #     pass
                         raise RuntimeError(
                             f"Saved SSO session for {self.user_email} "
                             f"appears expired (auth-success selector not "
                             f"found after /#/ocstafflogin redirect chain). "
-                            f"Deleted the stale session file — bootstrap "
-                            f"a new one for this user and re-run.")
+                            f"Session file PRESERVED for diagnosis (delete "
+                            f"temporarily disabled — see [auth-debug] logs).")
 
                     if not auth_ok and not session_existed:
                         # First-time: wait for the human, then save state.
