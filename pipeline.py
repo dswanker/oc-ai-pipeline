@@ -907,7 +907,37 @@ async def _import_board(subdomain, board_id, board_json, is_production, token=No
     print(f"Board import: {r.status_code} {r.text[:200]}", flush=True)
     if r.status_code not in (200, 201):
         raise RuntimeError(f"Board import failed {r.status_code}: {r.text[:300]}")
-    return True
+    # Extract the board URL from the response. The design-service import
+    # endpoint returns the board-id+slug URL (e.g. /b/wQyCTnJFKjyGMQ9d9/
+    # a-biomarker-study-in-...) which is what the OC designer actually
+    # resolves to — the UUID-based URL the caller could derive on its
+    # own redirects to the studies list instead of loading the board.
+    # Field name unverified in the design-service docs; try the likely
+    # candidates and let the next run's logs tell us which one fires.
+    board_url = ""
+    try:
+        body = r.json()
+        if isinstance(body, dict):
+            board_url = (body.get("currentBoardUrl")
+                         or body.get("boardUrl")
+                         or body.get("url")
+                         or body.get("studyBoardUrl")
+                         or "")
+        elif isinstance(body, str) and body.strip():
+            # Design-service import returns a bare JSON string (the
+            # URL) — not an object. This is the actually-observed shape.
+            board_url = body.strip()
+        # The import response includes the hostname already
+        # (e.g. "cust1.design.openclinica.io/b/..."), so we only need
+        # to prepend the scheme. Building base + sep + path produces
+        # a double-hostname URL.
+        if board_url and not board_url.startswith("http"):
+            board_url = f"https://{board_url}"
+    except Exception as e:
+        print(f"Board import: response JSON parse failed ({e}); "
+              f"caller will fall back to UUID-based study_url.", flush=True)
+    print(f"Board import: extracted board_url={board_url!r}", flush=True)
+    return board_url
 
 
 async def create_oc_study(subdomain, struct_json, is_production=False,
@@ -996,9 +1026,17 @@ async def create_oc_study(subdomain, struct_json, is_production=False,
     board_error    = None
     try:
         board_id = await _get_board_id(subdomain, study_uuid, is_production, token=token)
-        await _import_board(subdomain, board_id, board_json, is_production, token=token)
+        imported_board_url = await _import_board(
+            subdomain, board_id, board_json, is_production, token=token)
         print("Study design board imported successfully.", flush=True)
         board_imported = True
+        # Prefer the import response's board-id+slug URL — the
+        # Playwright form-upload flow needs THAT to render the designer.
+        # The UUID-based study_url we built above just redirects to the
+        # studies list. Fall back to study_url unchanged if the response
+        # didn't include a usable URL.
+        if imported_board_url:
+            study_url = imported_board_url
     except Exception as e:
         board_error = str(e)
         # Classify the failure so the user gets an actionable message
