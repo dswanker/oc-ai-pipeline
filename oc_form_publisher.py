@@ -97,13 +97,11 @@ class FormPublisher:
     # the SESSION_DIR docstring above.
     MANUAL_LOGIN_TIMEOUT_MS = 300_000  # 5 min
 
-    # Selectors that, if present after the /#/ocstafflogin redirect
-    # chain settles, indicate we are authenticated and on the OC
-    # designer UI. Comma-separated for or-match. TODO(oc-ui): replace
-    # with confirmed selectors once we see real-OC HTML via the
-    # diagnostic dumps in _upload_one.
-    AUTH_SUCCESS_SELECTOR = (
-        '[data-test="study-board"], .main-nav, #app-content')
+    # "Return To My Studies" link in the OC designer header — a
+    # stable <a> element that appears on every loaded board page.
+    # Confirmed via live DOM inspection May 2026; replaces a previous
+    # best-guess multi-selector that never matched real designer markup.
+    AUTH_SUCCESS_SELECTOR = ".js-back-to-sm"
 
     def __init__(
         self,
@@ -340,26 +338,30 @@ class FormPublisher:
         return tmpdir, xlsx_paths
 
     async def _authenticate_via_sso(self, page, study_url: str) -> bool:
-        """Navigate to /#/ocstafflogin and report whether auth succeeded.
+        """Navigate to study_url and verify the OC board actually rendered.
 
-        If the browser context was created with a valid saved
-        storage_state, the SSO redirect chain completes silently and we
-        land on the OC designer UI. If the session is stale (or absent),
-        we end up on Google's login screen instead — caller handles both
-        branches.
+        Strategy: go directly to the board URL. If the saved
+        storage_state is valid, OC's SSO redirect chain settles silently
+        and the designer paints — exposing AUTH_SUCCESS_SELECTOR (the
+        "Return To My Studies" header link) in the DOM. Two failure
+        modes both cleanly return False:
 
-        Returns True if AUTH_SUCCESS_SELECTOR appears within 5s of the
-        redirect chain settling; False otherwise.
+          - Stale session: OC redirects to Keycloak login, the board
+            never paints, the selector never appears.
+          - Wrong study identifier (e.g. raw UUID instead of the
+            board-id+slug form OC expects): OC redirects to the studies
+            list, which also does NOT have AUTH_SUCCESS_SELECTOR.
+
+        Returns True if AUTH_SUCCESS_SELECTOR appears within 20s of
+        navigation; False otherwise.
         """
-        domain = urlparse(study_url).hostname or ""
-        sso_url = f"https://{domain}/#/ocstafflogin"
-        await page.goto(sso_url, wait_until="networkidle")
-        # Give multi-step SSO redirects (IdP → callback → OC) a moment
-        # to settle past the initial networkidle.
-        await page.wait_for_timeout(3000)
+        await page.goto(study_url, wait_until="networkidle", timeout=30000)
+        # Short settle buffer past networkidle; the 20s wait_for_selector
+        # below is the real readiness gate.
+        await page.wait_for_timeout(1500)
         try:
             await page.wait_for_selector(
-                self.AUTH_SUCCESS_SELECTOR, timeout=5000)
+                self.AUTH_SUCCESS_SELECTOR, timeout=20000)
             print(f"oc_form_publisher: authenticated as {self.user_email}",
                   flush=True)
             return True
