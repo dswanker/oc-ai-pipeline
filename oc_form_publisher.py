@@ -335,25 +335,19 @@ class FormPublisher:
 
                     for form_name in minicard_texts:
                         try:
-                            # Wait for any OC board overlay to clear before
-                            # clicking. The overlay appears while a panel
-                            # is transitioning — clicking through it fails
-                            # with "intercepts pointer events". Also try
-                            # Escape in case a dialog is still open.
+                            # Force-clear any stuck board overlay before
+                            # clicking. The overlay can become permanently
+                            # stuck (e.g. OC shows an error overlay for
+                            # re-uploading an existing form version). JS
+                            # removal is more reliable than waiting for it
+                            # to disappear naturally.
                             try:
-                                await page.wait_for_selector(
-                                    '.board-overlay',
-                                    state='hidden',
-                                    timeout=8000)
+                                await page.evaluate(
+                                    "document.querySelectorAll('.board-overlay')"
+                                    ".forEach(el => el.remove())")
+                                await page.wait_for_timeout(200)
                             except Exception:
-                                # Overlay didn't clear — press Escape to
-                                # dismiss any open dialog or panel, then
-                                # give it a moment.
-                                try:
-                                    await page.keyboard.press('Escape')
-                                    await page.wait_for_timeout(500)
-                                except Exception:
-                                    pass
+                                pass
 
                             # Click the first minicard with this name.
                             # 8s panel-render wait is empirical — the OC
@@ -386,6 +380,21 @@ class FormPublisher:
                                 print(f"[publisher] Skipping {form_name} "
                                       f"(OID={oid!r}): no xlsx in EDC zip "
                                       f"matches that OID", flush=True)
+                                continue
+
+                            # If the form already has a version (radio
+                            # button present in the panel), skip upload —
+                            # re-running over an existing version causes
+                            # OC to show a sticky error overlay that
+                            # blocks subsequent forms. Count it as
+                            # uploaded since OC already has a version.
+                            existing_versions = await page.query_selector(
+                                'input[type=radio]')
+                            if existing_versions:
+                                print(f"[publisher] {form_name} "
+                                      f"(OID={oid}) already has a version "
+                                      f"— counting as uploaded", flush=True)
+                                result.forms_uploaded += 1
                                 continue
 
                             # Upload + wait for success signal.
