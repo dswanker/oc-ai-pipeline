@@ -299,9 +299,10 @@ class FormPublisher:
                               f"{self._session_path} — future runs auto-"
                               f"authenticate", flush=True)
 
-                    # 6. Auth confirmed — navigate to the study and upload.
-                    await page.goto(study_url, wait_until="networkidle",
-                                    timeout=self.PER_FORM_TIMEOUT_MS)
+                    # 6. Auth confirmed. _authenticate_via_sso already
+                    # navigated to study_url and verified .js-back-to-sm,
+                    # so we proceed straight to the upload loop. A second
+                    # goto here would force a cold SPA reload.
 
                     # Per-form upload sequence. Match xlsx files to board
                     # forms by OID — the xlsx stem (e.g. "VS.xlsx" → "VS")
@@ -312,11 +313,11 @@ class FormPublisher:
                     xlsx_map = {p.stem.upper(): p for p in xlsx_paths}
 
                     # Board cards render asynchronously after networkidle.
-                    # Wait up to 15s for at least one minicard to appear
+                    # Wait up to 30s for at least one minicard to appear
                     # before evaluating the full set.
                     try:
                         await page.wait_for_selector(
-                            '.js-minicard', timeout=15000)
+                            '.js-minicard', timeout=30000)
                         await page.wait_for_timeout(1000)
                     except Exception:
                         pass  # evaluate will return empty; logged below
