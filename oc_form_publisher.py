@@ -311,6 +311,16 @@ class FormPublisher:
                     # without a matching board form gets logged + skipped.
                     xlsx_map = {p.stem.upper(): p for p in xlsx_paths}
 
+                    # Board cards render asynchronously after networkidle.
+                    # Wait up to 15s for at least one minicard to appear
+                    # before evaluating the full set.
+                    try:
+                        await page.wait_for_selector(
+                            '.js-minicard', timeout=15000)
+                        await page.wait_for_timeout(1000)
+                    except Exception:
+                        pass  # evaluate will return empty; logged below
+
                     minicard_texts = await page.evaluate("""
                         () => [...new Set(
                             [...document.querySelectorAll('.js-minicard')]
