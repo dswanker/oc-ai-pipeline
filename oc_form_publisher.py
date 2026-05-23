@@ -335,6 +335,26 @@ class FormPublisher:
 
                     for form_name in minicard_texts:
                         try:
+                            # Wait for any OC board overlay to clear before
+                            # clicking. The overlay appears while a panel
+                            # is transitioning — clicking through it fails
+                            # with "intercepts pointer events". Also try
+                            # Escape in case a dialog is still open.
+                            try:
+                                await page.wait_for_selector(
+                                    '.board-overlay',
+                                    state='hidden',
+                                    timeout=8000)
+                            except Exception:
+                                # Overlay didn't clear — press Escape to
+                                # dismiss any open dialog or panel, then
+                                # give it a moment.
+                                try:
+                                    await page.keyboard.press('Escape')
+                                    await page.wait_for_timeout(500)
+                                except Exception:
+                                    pass
+
                             # Click the first minicard with this name.
                             # 8s panel-render wait is empirical — the OC
                             # designer SPA is slow to paint the side panel.
