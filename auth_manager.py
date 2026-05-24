@@ -147,7 +147,9 @@ def render_instructions_page(token: str, email: str) -> str:
     """
     from html import escape as _esc
     subdomain = os.environ.get("OC_DEFAULT_SUBDOMAIN", "cust1")
-    designer_url = f"https://{subdomain}.design.openclinica.io"
+    # Build app's My Studies list — extension captures session here,
+    # not the designer host. Hash route is required by the SPA.
+    designer_url = f"https://{subdomain}.build.openclinica.io/#/account-study"
     email_esc = _esc(email)
     token_esc = _esc(token)
     designer_esc = _esc(designer_url)
@@ -204,8 +206,9 @@ OpenClinica session before it can publish forms. Steps below take ~90 seconds.</
   <li>Open <span class="designer">chrome://extensions</span>, toggle
       <em>Developer mode</em>, click <em>Load unpacked</em>, and select
       the unzipped folder.</li>
-  <li>In a new tab, sign in to OpenClinica at
-      <a class="designer" href="{designer_esc}">{designer_esc}</a>.</li>
+  <li>In a new tab,
+      <a class="designer" href="{designer_esc}">sign in to OpenClinica</a>
+      (you will see your My Studies list).</li>
   <li>Click the extension icon, paste the code above, click
       <em>Capture &amp; Send</em>.</li>
   <li>Return to monday and re-trigger your pipeline (set the trigger

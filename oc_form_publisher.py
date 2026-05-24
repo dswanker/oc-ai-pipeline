@@ -261,20 +261,21 @@ class FormPublisher:
                         except Exception as _e:
                             print(f"[auth-debug] screenshot failed: {_e}",
                                   flush=True)
-                        # TEMP: disabled during auth diagnosis — see chat.
-                        # Keeps the captured session intact so a false-
-                        # positive "expired" verdict doesn't force a needless
-                        # re-capture before we know if the selector is wrong.
-                        # try:
-                        #     os.remove(self._session_path)
-                        # except OSError:
-                        #     pass
+                        # Delete stale session so next run triggers fresh
+                        # capture. The pre-flight check in pipeline.py
+                        # handles stale sessions before chains start, so
+                        # by the time this branch fires the session is
+                        # genuinely broken and worth deleting.
+                        try:
+                            os.remove(self._session_path)
+                        except OSError:
+                            pass
                         raise RuntimeError(
                             f"Saved SSO session for {self.user_email} "
                             f"appears expired (auth-success selector not "
                             f"found after /#/ocstafflogin redirect chain). "
-                            f"Session file PRESERVED for diagnosis (delete "
-                            f"temporarily disabled — see [auth-debug] logs).")
+                            f"Deleted the stale session file — next run "
+                            f"will prompt the user to re-capture.")
 
                     if not auth_ok and not session_existed:
                         # First-time: wait for the human, then save state.

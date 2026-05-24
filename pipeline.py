@@ -1037,13 +1037,35 @@ async def create_oc_study(subdomain, struct_json, is_production=False,
             # full run. _import_board is a CLONE-INTO-EMPTY op; running
             # it again on a populated board accumulates duplicate form
             # cards (observed: 131 cards vs 69 expected after re-runs).
-            # Construct study_url from board_id (slug-less but still
-            # routes to the designer); preferable to the UUID form
-            # which redirects to the studies list.
             print("[board-import] fast-rerun — skipping board reimport, "
                   "using existing board", flush=True)
             board_imported = True
-            study_url = f"{designer_url}/b/{board_id}"
+            # Try to read the full board URL (with slug) from the monday
+            # row — it was written there by the prior full run. The
+            # board-id-only short URL routes to the designer but the
+            # Playwright publisher needs the slug form to actually load
+            # the form cards. Fall back to short URL if not available.
+            _short_url = f"{designer_url}/b/{board_id}"
+            try:
+                _item = await get_item(item_id) if item_id else None
+                _saved_url = ""
+                if _item:
+                    for _cv in (_item.get("column_values") or []):
+                        if _cv.get("id") == COL["oc_study_url"]:
+                            _saved_url = (_cv.get("text") or "").strip()
+                            break
+                if _saved_url and "/b/" in _saved_url:
+                    study_url = _saved_url
+                    print(f"[board-import] fast-rerun — using saved "
+                          f"board URL: {study_url}", flush=True)
+                else:
+                    study_url = _short_url
+                    print(f"[board-import] fast-rerun — no saved URL, "
+                          f"using short URL: {study_url}", flush=True)
+            except Exception as _ue:
+                study_url = _short_url
+                print(f"[board-import] fast-rerun — URL read failed "
+                      f"({_ue}), using short URL: {study_url}", flush=True)
         else:
             imported_board_url = await _import_board(
                 subdomain, board_id, board_json, is_production, token=token)
@@ -1796,6 +1818,15 @@ async def run_pipeline(item_id):
                                text="Authenticate OpenClinica")
                 await set_status(item_id, COL["pipeline_status"],
                                  "Paused for Authentication")
+                # Reset the trigger column so the user can re-trigger
+                # with one click after authenticating, without having
+                # to manually flip it off and on first.
+                try:
+                    await set_status(item_id, COL["ai_trigger"],
+                                     "Do not Send To AI Yet")
+                except Exception as _te:
+                    print(f"[auth-pause] trigger column reset failed: "
+                          f"{_te}", flush=True)
                 print(f"Auth required for {oc_email} — posted link to row "
                       f"and bailed before chains started.", flush=True)
                 return
