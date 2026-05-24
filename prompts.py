@@ -101,6 +101,21 @@ FORM NAMING RULES for form_id:
   Non-CDASH forms — use a descriptive uppercase short name: ICF, DIS,
   BIOSP, RT, PREG, ECOG, EN, PSA. No plain short name convention.
 
+  CRITICAL — form_id OID NAMING:
+  - NEVER use F_ as a form_id prefix under any circumstances.
+    F_ is reserved internally for build failures and will break
+    OC form upload silently.
+  - When a protocol requires multiple forms sharing the same CDASH
+    domain (e.g. two biospecimen forms, two lab forms), use a SHORT
+    descriptive suffix on the second form:
+    - Biospecimen variants: BIOSP (primary), BIOSPSH (shedding),
+      BIOSPCB (cord blood)
+    - Lab variants: LB (primary), LBSAF (safety), LBHC (hematology)
+    - SAE concurrent control: AESAE (primary), AESAECC (control)
+    - Diary/compliance: EXVAL (primary), EXVALD (diary)
+    - General pattern: [CDASH_DOMAIN][2-4 CHAR SUFFIX], max 8 chars
+    - FORBIDDEN: F_BIOSP, F_LB, F_AESAE, F_EXVAL, any F_ prefix
+
 ════════════════════════════════════════════════════════════════════════════
 OPENCLINICA 4 AUTHORITATIVE RULES  (must follow to pass XLSForm upload)
 ════════════════════════════════════════════════════════════════════════════
@@ -145,7 +160,9 @@ RULE OC-3 — SETTINGS FIELDS REQUIRED
   The settings sheet needs these six cells populated (per OC4 docs
   §2.4.4 Using the Form Template):
     form_title       — human-readable name
-    form_id          — form OID starting with F_
+    form_id          — form OID per FORM NAMING RULES above
+                       (CDASH domain or short descriptive name;
+                       NEVER F_ prefix — that breaks OC upload)
     version          — integer, start at 1
     style            — always "theme-grid"
     crossform_references — blank, comma-separated Event OIDs, or "current_event"

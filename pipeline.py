@@ -1067,6 +1067,20 @@ async def create_oc_study(subdomain, struct_json, is_production=False,
                 print(f"[board-import] fast-rerun — URL read failed "
                       f"({_ue}), using short URL: {study_url}", flush=True)
         else:
+            # Clear the board before importing to prevent card
+            # accumulation. _import_board is CLONE-INTO-EMPTY — calling
+            # it on a non-empty board appends cards. Posting an empty
+            # board first resets it.
+            try:
+                await _import_board(
+                    subdomain, board_id,
+                    {"labels": [], "lists": [], "cards": []},
+                    is_production, token=token)
+                print("[board-import] board cleared (empty import)",
+                      flush=True)
+            except Exception as _ce:
+                print(f"[board-import] board clear failed (non-fatal): "
+                      f"{_ce}", flush=True)
             imported_board_url = await _import_board(
                 subdomain, board_id, board_json, is_production, token=token)
             print("Study design board imported successfully.", flush=True)
