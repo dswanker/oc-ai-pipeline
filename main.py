@@ -29,6 +29,7 @@ TRIGGER_LABEL_TEXT   = "Send to AI"
 # New columns for OC study creation
 CREATE_STUDY_CHECKBOX = "boolean_mm2nbn5c"   # "Would you like AI to create Study, SOE, and Form cards in OC4?"
 PUBLISH_TEST_CHECKBOX = "boolean_mm3g2vzf"   # "Publish to Test" checkbox
+LOAD_UAT_CHECKBOX     = "boolean_mm3gxe49"   # "Load UAT Test Data"
 
 @app.get("/health")
 async def health():
@@ -438,3 +439,35 @@ async def publish_test_webhook(request: Request, background_tasks: BackgroundTas
     
     background_tasks.add_task(safe_publish_test, item_id)
     return {"status": "publish_test_started", "item_id": item_id}
+
+
+@app.post("/webhook/load_uat")
+async def load_uat_webhook(request: Request, background_tasks: BackgroundTasks):
+    """
+    Triggered when Load UAT Test Data checkbox is checked.
+    Loads DVS-derived UAT test data into the published Test environment.
+    NOTE: Not yet implemented — logs a clear message and returns.
+    """
+    body = await request.body()
+    payload = json.loads(body)
+    if "challenge" in payload:
+        return {"challenge": payload["challenge"]}
+    event = payload.get("event", {})
+    item_id = str(event.get("pulseId", ""))
+    col_id = event.get("columnId", "")
+    new_val = event.get("value", {})
+    if col_id != LOAD_UAT_CHECKBOX:
+        return {"status": "ignored"}
+    if isinstance(new_val, str):
+        try:
+            new_val = json.loads(new_val)
+        except:
+            pass
+    is_checked = new_val.get("checked") == "true" if isinstance(new_val, dict) else False
+    if not is_checked:
+        return {"status": "ignored - checkbox unchecked"}
+    print(f"LOAD UAT: Checkbox checked on item {item_id} — "
+          f"UAT data loading not yet implemented.", flush=True)
+    # TODO: implement UAT data loading via OC participant/data API
+    return {"status": "load_uat_acknowledged_not_implemented",
+            "item_id": item_id}

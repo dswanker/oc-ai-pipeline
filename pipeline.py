@@ -946,7 +946,8 @@ async def _import_board(subdomain, board_id, board_json, is_production, token=No
 
 
 async def create_oc_study(subdomain, struct_json, is_production=False,
-                          edc_zip_url=None, oc_email=None, item_id=None):
+                          edc_zip_url=None, oc_email=None, item_id=None,
+                          fast_rerun=False):
     """
     Create a study in OpenClinica and import the Study Design Board (SOE).
 
@@ -1031,17 +1032,30 @@ async def create_oc_study(subdomain, struct_json, is_production=False,
     board_error    = None
     try:
         board_id = await _get_board_id(subdomain, study_uuid, is_production, token=token)
-        imported_board_url = await _import_board(
-            subdomain, board_id, board_json, is_production, token=token)
-        print("Study design board imported successfully.", flush=True)
-        board_imported = True
-        # Prefer the import response's board-id+slug URL — the
-        # Playwright form-upload flow needs THAT to render the designer.
-        # The UUID-based study_url we built above just redirects to the
-        # studies list. Fall back to study_url unchanged if the response
-        # didn't include a usable URL.
-        if imported_board_url:
-            study_url = imported_board_url
+        if fast_rerun:
+            # Skip the import — board already exists from the prior
+            # full run. _import_board is a CLONE-INTO-EMPTY op; running
+            # it again on a populated board accumulates duplicate form
+            # cards (observed: 131 cards vs 69 expected after re-runs).
+            # Construct study_url from board_id (slug-less but still
+            # routes to the designer); preferable to the UUID form
+            # which redirects to the studies list.
+            print("[board-import] fast-rerun — skipping board reimport, "
+                  "using existing board", flush=True)
+            board_imported = True
+            study_url = f"{designer_url}/b/{board_id}"
+        else:
+            imported_board_url = await _import_board(
+                subdomain, board_id, board_json, is_production, token=token)
+            print("Study design board imported successfully.", flush=True)
+            board_imported = True
+            # Prefer the import response's board-id+slug URL — the
+            # Playwright form-upload flow needs THAT to render the designer.
+            # The UUID-based study_url we built above just redirects to the
+            # studies list. Fall back to study_url unchanged if the response
+            # didn't include a usable URL.
+            if imported_board_url:
+                study_url = imported_board_url
     except Exception as e:
         board_error = str(e)
         # Classify the failure so the user gets an actionable message
@@ -2845,7 +2859,8 @@ async def run_pipeline(item_id):
                                                     is_production=oc_production,
                                                     edc_zip_url=edc_zip_url,
                                                     oc_email=oc_email,
-                                                    item_id=item_id)
+                                                    item_id=item_id,
+                                                    fast_rerun=fast_rerun)
                     study_url      = result["study_url"]
                     board_imported = result["board_imported"]
                     board_error    = result.get("board_error", "")
