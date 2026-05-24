@@ -634,6 +634,16 @@ Read `references/cdash-domain-library.md` for the complete field list per domain
 - Add `calculate` row with `bind__oc_external: clinicaldata`
 - Always write full XPath with real OIDs — no abbreviations
 - OID convention: Event OID from timepoint CSV; Form OID = form_id;
+  - **CRITICAL — form_id MUST follow CDASH naming. NEVER use F_ as a prefix.**
+    F_ is reserved internally for build failures and will break OC form upload.
+    For multiple forms sharing a CDASH domain (e.g. two biospecimen forms,
+    two lab forms), use a SHORT descriptive suffix instead:
+    - Biospecimen variants: BIOSP, BIOSPSH (shedding), BIOSPCB (cord blood)
+    - Lab variants: LB, LBSAF (safety labs), LBHC (hematology/chemistry)
+    - SAE concurrent control: AESAE, AESAECC
+    - Diary/compliance variants: EXVAL, EXVALD (diary)
+    - General pattern: [CDASH_DOMAIN][2-4 CHAR SUFFIX], max 8 chars total
+    - NEVER: F_BIOSP, F_LB, F_AESAE, F_EXVAL or any F_ prefix
   ItemGroup OID = `{form_id}.{cdash_domain}`; Item OID = `{form_id}.{field_name}`
 - Full XPath pattern:
   `instance('clinicaldata')/ODM/ClinicalData/SubjectData/StudyEventData[@StudyEventOID='{EVENT_OID}']/FormData[@FormOID='{FORM_ID}']/ItemGroupData[@ItemGroupOID='{FORM_ID}.{CDASH_DOMAIN}']/ItemData[@ItemOID='{FORM_ID}.{FIELD_NAME}']/@Value`

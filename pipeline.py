@@ -817,6 +817,11 @@ def _build_board_json(struct_json):
 
     for form in forms:
         form_id      = form.get("form_id", "")
+        if form_id.upper().startswith("F_"):
+            print(f"[board-build] WARNING: form_id {form_id!r} has F_ "
+                  f"prefix — skipping this form card. Fix the form_id "
+                  f"in the study spec JSON.", flush=True)
+            continue
         form_title   = form.get("form_title", form_id)
         visits       = form.get("visits_assigned", [])
         first_card   = True

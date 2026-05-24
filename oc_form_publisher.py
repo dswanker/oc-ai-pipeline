@@ -322,25 +322,34 @@ class FormPublisher:
                     except Exception:
                         pass  # evaluate will return empty; logged below
 
-                    minicard_texts = await page.evaluate("""
-                        () => [...new Set(
-                            [...document.querySelectorAll('.js-minicard')]
-                            .map(el => (el.innerText || '').trim())
-                            .filter(t => t)
-                        )]
+                    # Enumerate ALL minicards in DOM order with their
+                    # hrefs — NOT deduplicated by name. OC stores form
+                    # versions at the form-definition level (shared) but
+                    # the "set default version for data entry" toggle is
+                    # per-card (per event occurrence), so we must visit
+                    # every placement of every form.
+                    minicard_cards = await page.evaluate("""
+                        () => [...document.querySelectorAll('.js-minicard')]
+                            .map(el => ({
+                                name: (el.innerText || '').trim(),
+                                href: el.getAttribute('href') || ''
+                            }))
+                            .filter(c => c.name)
                     """)
-                    result.forms_total = len(minicard_texts)
-                    print(f"[publisher] Board has {len(minicard_texts)} "
-                          f"unique form types", flush=True)
+                    result.forms_total = len(minicard_cards)
+                    print(f"[publisher] Board has {len(minicard_cards)} "
+                          f"form cards "
+                          f"({len(set(c['name'] for c in minicard_cards))} "
+                          f"unique forms)", flush=True)
 
-                    for form_name in minicard_texts:
+                    for card in minicard_cards:
+                        form_name = card['name']
+                        card_href = card['href']
                         try:
                             # Force-clear any stuck board overlay before
                             # clicking. The overlay can become permanently
-                            # stuck (e.g. OC shows an error overlay for
-                            # re-uploading an existing form version). JS
-                            # removal is more reliable than waiting for it
-                            # to disappear naturally.
+                            # stuck (e.g. error overlay from a prior op).
+                            # JS removal beats waiting for it to clear.
                             try:
                                 await page.evaluate(
                                     "document.querySelectorAll('.board-overlay')"
@@ -349,11 +358,18 @@ class FormPublisher:
                             except Exception:
                                 pass
 
-                            # Click the first minicard with this name.
-                            # 8s panel-render wait is empirical — the OC
-                            # designer SPA is slow to paint the side panel.
-                            await page.locator('.js-minicard').filter(
-                                has_text=form_name).first.click()
+                            # Click by href when available so we hit THIS
+                            # specific card (same form name appears in
+                            # multiple events — name-only would always
+                            # click the first match). Fall back to name
+                            # match if the card had no href for any reason.
+                            if card_href:
+                                await page.locator(
+                                    f'.js-minicard[href="{card_href}"]'
+                                ).click()
+                            else:
+                                await page.locator('.js-minicard').filter(
+                                    has_text=form_name).first.click()
                             await page.wait_for_timeout(8000)
 
                             # Confirm the panel opened by waiting for the
@@ -366,78 +382,80 @@ class FormPublisher:
                                 print(f"[publisher] Panel did not open "
                                       f"for {form_name}: {e}", flush=True)
                                 result.errors.append(
-                                    f"{form_name}: panel did not open "
-                                    f"({type(e).__name__})")
+                                    f"{form_name}: panel did not open")
                                 continue
 
-                            # Read OID from the panel; match to xlsx.
+                            # Read OID from the panel.
                             oid_el = await page.query_selector(
                                 'input#formOcOidValue')
                             oid = ((await oid_el.input_value()).upper()
                                    if oid_el else "")
-                            xlsx_path = xlsx_map.get(oid)
-                            if not xlsx_path:
-                                print(f"[publisher] Skipping {form_name} "
-                                      f"(OID={oid!r}): no xlsx in EDC zip "
-                                      f"matches that OID", flush=True)
-                                continue
 
-                            # If the form already has a version (radio
-                            # button present in the panel), skip upload —
-                            # re-running over an existing version causes
-                            # OC to show a sticky error overlay that
-                            # blocks subsequent forms. Count it as
-                            # uploaded since OC already has a version.
-                            existing_versions = await page.query_selector(
+                            # Branch on whether THIS form definition
+                            # already has a version (shared across all
+                            # cards of the same form). If yes, just set
+                            # this card's default; if no, upload first.
+                            existing_version = await page.query_selector(
                                 'input[type=radio]')
-                            if existing_versions:
-                                print(f"[publisher] {form_name} "
-                                      f"(OID={oid}) already has a version "
-                                      f"— counting as uploaded", flush=True)
+
+                            if existing_version:
+                                # Version exists — set default for this
+                                # card and move on. Don't re-upload (the
+                                # form definition is shared).
+                                try:
+                                    await page.locator(
+                                        'input[type=radio]'
+                                    ).first.click(timeout=5000)
+                                except Exception as e:
+                                    result.warnings.append(
+                                        f"set-default failed for "
+                                        f"{form_name} ({e})")
                                 result.forms_uploaded += 1
-                                continue
-
-                            # Upload + wait for success signal.
-                            await page.set_input_files(
-                                'input.js-design-form-input',
-                                str(xlsx_path))
-                            try:
-                                await page.wait_for_selector(
-                                    '#prevBtn:not(.disabled), '
-                                    'input[type=radio]',
-                                    timeout=30000)
-                            except Exception as e:
-                                print(f"[publisher] Upload success signal "
-                                      f"not seen for {form_name} "
-                                      f"({type(e).__name__}); counting as "
-                                      f"attempted", flush=True)
-
-                            # Best-effort set-default-version. The newly
-                            # uploaded version's radio appears first in
-                            # the panel; not fatal if it hasn't rendered
-                            # yet (goes to warnings, not errors).
-                            try:
-                                await page.locator(
-                                    'input[type=radio]').first.click(
-                                    timeout=5000)
-                            except Exception as e:
-                                msg = (f"set-default not available yet "
-                                       f"for {form_name} "
-                                       f"({type(e).__name__})")
-                                print(f"[publisher] {msg}", flush=True)
-                                result.warnings.append(msg)
-
-                            result.forms_uploaded += 1
-                            print(f"[publisher] Uploaded "
-                                  f"{xlsx_path.name} → {form_name} "
-                                  f"(OID={oid})", flush=True)
+                                print(f"[publisher] {form_name} "
+                                      f"(OID={oid}) already has a "
+                                      f"version — set default",
+                                      flush=True)
+                            else:
+                                # No version yet — upload the XLSForm.
+                                xlsx_path = xlsx_map.get(oid)
+                                if not xlsx_path:
+                                    print(f"[publisher] Skipping "
+                                          f"{form_name} (OID={oid!r}): "
+                                          f"no xlsx in EDC zip",
+                                          flush=True)
+                                else:
+                                    await page.set_input_files(
+                                        'input.js-design-form-input',
+                                        str(xlsx_path))
+                                    try:
+                                        await page.wait_for_selector(
+                                            '#prevBtn:not(.disabled), '
+                                            'input[type=radio]',
+                                            timeout=30000)
+                                    except Exception as e:
+                                        print(f"[publisher] Upload "
+                                              f"success signal not seen "
+                                              f"for {form_name}: {e}",
+                                              flush=True)
+                                    try:
+                                        await page.locator(
+                                            'input[type=radio]'
+                                        ).first.click(timeout=5000)
+                                    except Exception as e:
+                                        result.warnings.append(
+                                            f"set-default failed for "
+                                            f"{form_name} ({e})")
+                                    result.forms_uploaded += 1
+                                    print(f"[publisher] Uploaded "
+                                          f"{xlsx_path.name} → "
+                                          f"{form_name} (OID={oid})",
+                                          flush=True)
                         except Exception as e:
                             result.errors.append(
                                 f"{form_name}: {type(e).__name__}: {e}")
                         finally:
                             # Close the panel before the next iteration.
-                            # Panel may have already closed (e.g. clicked
-                            # outside) — swallow that quietly.
+                            # Panel may have already closed — swallow.
                             try:
                                 await page.click(
                                     'a.js-close-card-details')
