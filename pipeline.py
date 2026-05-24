@@ -890,6 +890,83 @@ async def _get_board_id(subdomain, study_uuid, is_production, token=None):
     raise RuntimeError(f"Could not extract board ID from URL: {board_url}")
 
 
+async def _clear_board(board_url: str, session_path: str) -> None:
+    """Archive all lists on the OC designer board via a Meteor method call.
+
+    Clears the board before reimporting so cards don't accumulate.
+    Discovered via DevTools: Meteor.call
+        'updateArchiveStatusOfMedicalCodingLayoutItems'
+            (boardId, listId, [], '0', true)
+    archives one list; iterate over Lists collection client-side to hit
+    each list on the board.
+
+    Args:
+        board_url:    Full slug URL (e.g. .../b/{boardId}/{slug}); the
+                      slug-less form just redirects to the studies list
+                      and won't load any minicards.
+        session_path: Path to a saved Playwright storage_state JSON for
+                      the OC SSO session.
+    """
+    from playwright.async_api import async_playwright
+    board_id = board_url.split("/b/")[1].split("/")[0]
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        try:
+            ctx  = await browser.new_context(storage_state=session_path)
+            page = await ctx.new_page()
+            await page.goto(board_url, wait_until="networkidle",
+                            timeout=60000)
+            # Wait for Meteor client to load + first minicard to render.
+            try:
+                await page.wait_for_selector('.js-minicard', timeout=20000)
+            except Exception:
+                print("[board-clear] no minicards found — board may "
+                      "already be empty", flush=True)
+                return
+
+            # Read list IDs from the Meteor client-side collection.
+            # If the collection is named differently or not yet loaded,
+            # the try/catch returns [] and we cleanly skip.
+            list_ids = await page.evaluate(f"""
+                () => {{
+                    try {{
+                        return Lists.find(
+                            {{boardId: '{board_id}', archived: false}}
+                        ).fetch().map(l => l._id);
+                    }} catch(e) {{
+                        return [];
+                    }}
+                }}
+            """)
+            print(f"[board-clear] {len(list_ids)} lists to archive",
+                  flush=True)
+
+            # Archive each list. Per-list round-trip is slower than a
+            # batched call but matches the discovered API surface.
+            for list_id in list_ids:
+                try:
+                    await page.evaluate(f"""
+                        () => new Promise((resolve) => {{
+                            Meteor.call(
+                                'updateArchiveStatusOfMedicalCodingLayoutItems',
+                                '{board_id}', '{list_id}', [], '0', true,
+                                (err) => resolve(err ? String(err) : 'ok')
+                            );
+                        }})
+                    """)
+                except Exception as _e:
+                    print(f"[board-clear] archive {list_id} failed: "
+                          f"{_e}", flush=True)
+
+            # Brief settle for server to sync before the import.
+            await page.wait_for_timeout(3000)
+            print(f"[board-clear] archived {len(list_ids)} lists — "
+                  f"board cleared", flush=True)
+        finally:
+            await browser.close()
+
+
 async def _import_board(subdomain, board_id, board_json, is_production, token=None):
     """
     Import the board.json into the study designer.
@@ -1067,20 +1144,39 @@ async def create_oc_study(subdomain, struct_json, is_production=False,
                 print(f"[board-import] fast-rerun — URL read failed "
                       f"({_ue}), using short URL: {study_url}", flush=True)
         else:
-            # Clear the board before importing to prevent card
-            # accumulation. _import_board is CLONE-INTO-EMPTY — calling
-            # it on a non-empty board appends cards. Posting an empty
-            # board first resets it.
-            try:
-                await _import_board(
-                    subdomain, board_id,
-                    {"labels": [], "lists": [], "cards": []},
-                    is_production, token=token)
-                print("[board-import] board cleared (empty import)",
+            # Clear the board via the Meteor archiveList method before
+            # reimporting. _import_board is CLONE-INTO-EMPTY — calling
+            # it on a non-empty board appends cards rather than
+            # replacing them. The clear requires the slug-form URL
+            # (slug-less URLs redirect to the studies list and load no
+            # minicards) — read it from monday where the prior run
+            # saved it. Skipped (no-op) on a fresh study or when no
+            # session is available.
+            _board_clear_url = ""
+            if item_id:
+                try:
+                    _ci = await get_item(item_id)
+                    for _cv in (_ci.get("column_values") or []):
+                        if _cv.get("id") == COL["oc_study_url"]:
+                            _board_clear_url = (_cv.get("text") or "").strip()
+                            break
+                except Exception as _re:
+                    print(f"[board-clear] could not read prior board URL: "
+                          f"{_re}", flush=True)
+            _session_path = (f"/data/browser_sessions/{oc_email}.json"
+                             if oc_email else "")
+            if (_session_path and os.path.exists(_session_path)
+                    and _board_clear_url and "/b/" in _board_clear_url):
+                try:
+                    await _clear_board(_board_clear_url, _session_path)
+                except Exception as _ce:
+                    print(f"[board-clear] clear failed (non-fatal): "
+                          f"{_ce}", flush=True)
+            else:
+                print(f"[board-clear] skipped — fresh study or no usable "
+                      f"session (url={_board_clear_url!r}, "
+                      f"session={bool(_session_path and os.path.exists(_session_path))})",
                       flush=True)
-            except Exception as _ce:
-                print(f"[board-import] board clear failed (non-fatal): "
-                      f"{_ce}", flush=True)
             imported_board_url = await _import_board(
                 subdomain, board_id, board_json, is_production, token=token)
             print("Study design board imported successfully.", flush=True)
