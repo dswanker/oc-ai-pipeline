@@ -1691,7 +1691,23 @@ async def run_pipeline(item_id):
         output_raw        = cols.get(COL["output_requested"], {}).get("text", "") or ""
         output_selections = {s.strip().lower() for s in output_raw.split(",") if s.strip()}
         run_all = len(output_selections) == 0
+        # Fast-rerun mode: a user opt-in (gated below on `not run_all`)
+        # signal that struct_json comes from a non-Claude source — either
+        # an edited human input file OR the prior run's spec_json on
+        # monday (Path R, defined further down). When True, chains A/B/E
+        # (spec PDF/XLSX, protocol summary, build preview) are skipped
+        # so a re-run focuses on the user's actual iteration target
+        # (typically Chain C build or Chain D form upload).
+        fast_rerun = False
+        _FAST_RERUN_SKIP = {
+            "protocol specification",  # Chain A
+            "protocol summary",        # Chain B (summary PDF)
+            "price quote",             # Chain B (quote)
+            "build preview",           # Chain E
+        }
         def _want(label):
+            if fast_rerun and label.lower() in _FAST_RERUN_SKIP:
+                return False
             return run_all or label.lower() in output_selections
         print(f"Output requested: {output_raw!r} | run_all={run_all}", flush=True)
 
@@ -1785,6 +1801,19 @@ async def run_pipeline(item_id):
               f"quote:{edited_quote_xlsx is not None} soe:{edited_soe_csv is not None} "
               f"edc_export:{source_edc_export_bytes is not None}",
               flush=True)
+
+        # Fast-rerun trigger #1 — human-uploaded spec or build files.
+        # When the user supplies an edited Study Spec XLSX or an edited
+        # EDC build ZIP, they're iterating on Chain C/D outputs; the
+        # Claude-driven chains A/B/E would just regenerate already-good
+        # documents. Gated on `not run_all` so a run with no output
+        # selections (the "full run" default) still produces everything.
+        # See _want() above for what gets skipped.
+        if (not run_all) and (edited_spec_xlsx or edited_build_zip):
+            fast_rerun = True
+            print(f"[fast-rerun] Human input detected — chains A/B/E "
+                  f"will be skipped (spec={bool(edited_spec_xlsx)}, "
+                  f"build={bool(edited_build_zip)})", flush=True)
 
         # ── Path D: Edited Quote XLSX → regenerate Quote PDFs ─────────────────
         # DEPRECATED: there's no local script to regenerate Quote PDFs from
@@ -2188,6 +2217,34 @@ async def run_pipeline(item_id):
                             f"{n_fi} form-specific.")
             except Exception as _ai_exc:
                 print(f"AI Instructions read error: {_ai_exc}", flush=True)
+
+        # ── Path R: re-use existing Study Spec JSON from monday ──────────────
+        # Fast-rerun trigger #2. If struct_json is still None at this point
+        # (no Path A edit, no Path M migration) AND the user did not request
+        # a full run, try to download the spec_json that's already on the
+        # row from a previous successful run. Saves ~7 min of Claude
+        # extraction when the user is only iterating on Chains C/D.
+        # Falls back to full Claude extraction silently on any error.
+        if struct_json is None and not run_all:
+            try:
+                _existing_spec = await download_column_file(
+                    item_id, COL["spec_json"])
+                if _existing_spec:
+                    struct_json = json.loads(_existing_spec.decode("utf-8"))
+                    struct_json = _enforce_common_visit(struct_json)
+                    struct_json = _backfill_migration_fields(struct_json)
+                    fast_rerun = True
+                    print(f"[fast-rerun] Using existing Study Spec JSON "
+                          f"from monday ({len(_existing_spec)} bytes) — "
+                          f"skipping Claude extraction", flush=True)
+                    await append_log(item_id,
+                        f"[fast-rerun] Re-using existing Study Spec "
+                        f"JSON from monday — chains A/B/E skipped.")
+            except Exception as _r_exc:
+                print(f"[fast-rerun] Could not load existing spec_json "
+                      f"({type(_r_exc).__name__}: {_r_exc}); falling "
+                      f"back to full Claude extraction", flush=True)
+                struct_json = None  # ensure fallback to Claude
 
         # Fresh analysis if needed and not already populated
         # B7: will hold the optional JSON-upload coroutine, to be awaited
