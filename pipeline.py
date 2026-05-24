@@ -1078,6 +1078,18 @@ async def create_oc_study(subdomain, struct_json, is_production=False,
             # didn't include a usable URL.
             if imported_board_url:
                 study_url = imported_board_url
+                # Persist the full slug URL to monday so fast-rerun can
+                # read it back without needing to re-import the board.
+                # Done here (not just at the run_pipeline call site) so
+                # the URL is saved ASAP after import, surviving any
+                # downstream crash before control returns to the caller.
+                if item_id:
+                    try:
+                        await set_text(item_id, COL["oc_study_url"],
+                                       study_url)
+                    except Exception as _wu:
+                        print(f"[board-import] failed to save board "
+                              f"URL: {_wu}", flush=True)
     except Exception as e:
         board_error = str(e)
         # Classify the failure so the user gets an actionable message
