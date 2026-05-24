@@ -311,6 +311,12 @@ class FormPublisher:
                     # files) because the board is authoritative; an xlsx
                     # without a matching board form gets logged + skipped.
                     xlsx_map = {p.stem.upper(): p for p in xlsx_paths}
+                    # Track OIDs uploaded this session so we don't re-upload
+                    # the same form definition when it appears in multiple
+                    # events. OC propagates version visibility slowly — the
+                    # radio button may not appear on the next card for the
+                    # same form within 60 seconds of the first upload.
+                    session_uploaded_oids: set = set()
 
                     # Board cards render asynchronously after networkidle.
                     # Wait up to 30s for at least one minicard to appear
@@ -424,6 +430,46 @@ class FormPublisher:
                                           f"no xlsx in EDC zip",
                                           flush=True)
                                 else:
+                                    # If we already uploaded this OID in
+                                    # this session, the OC backend may
+                                    # not have surfaced the version on
+                                    # the current panel yet. Wait briefly,
+                                    # re-check for the radio, and either
+                                    # set-default (if it appeared) or
+                                    # skip the re-upload entirely.
+                                    if oid in session_uploaded_oids:
+                                        await page.wait_for_timeout(5000)
+                                        recheck = await page.query_selector(
+                                            'input[type=radio]')
+                                        if recheck:
+                                            try:
+                                                await page.locator(
+                                                    'input[type=radio]'
+                                                ).first.click(timeout=5000)
+                                            except Exception as e:
+                                                result.warnings.append(
+                                                    f"set-default failed "
+                                                    f"for {form_name} "
+                                                    f"({e})")
+                                            result.forms_uploaded += 1
+                                            print(f"[publisher] "
+                                                  f"{form_name} "
+                                                  f"(OID={oid}) version "
+                                                  f"now visible after "
+                                                  f"wait — set default",
+                                                  flush=True)
+                                        else:
+                                            print(f"[publisher] Skipping "
+                                                  f"re-upload of "
+                                                  f"{form_name} "
+                                                  f"(OID={oid}) — "
+                                                  f"already uploaded this "
+                                                  f"session, version not "
+                                                  f"yet propagated",
+                                                  flush=True)
+                                            result.forms_uploaded += 1
+                                        continue
+
                                     await page.set_input_files(
                                         'input.js-design-form-input',
                                         str(xlsx_path))
@@ -446,6 +492,7 @@ class FormPublisher:
                                             f"set-default failed for "
                                             f"{form_name} ({e})")
                                     result.forms_uploaded += 1
+                                    session_uploaded_oids.add(oid)
                                     print(f"[publisher] Uploaded "
                                           f"{xlsx_path.name} → "
                                           f"{form_name} (OID={oid})",
