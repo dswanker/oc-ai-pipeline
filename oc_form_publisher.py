@@ -329,6 +329,31 @@ class FormPublisher:
                     except Exception:
                         pass  # evaluate will return empty; logged below
 
+                    # DIAGNOSTIC: log first 5 .js-list containers' classes
+                    # + attributes so we can identify how archived vs
+                    # active lists differ in the DOM (without needing the
+                    # Meteor Lists collection).
+                    try:
+                        _list_diag = await page.evaluate("""
+                            () => [...document.querySelectorAll('.js-list')]
+                                .slice(0, 5)
+                                .map(el => ({
+                                    classes: el.className,
+                                    dataAttrs: Object.fromEntries(
+                                        [...el.attributes]
+                                        .filter(a => a.name.startsWith('data-'))
+                                        .map(a => [a.name, a.value])
+                                    ),
+                                    childCount: el.querySelectorAll('.js-minicard').length,
+                                    display: getComputedStyle(el).display,
+                                    visibility: getComputedStyle(el).visibility
+                                }))
+                        """)
+                        print(f"[list-diag] first 5 .js-list containers: "
+                              f"{_list_diag}", flush=True)
+                    except Exception as _ld:
+                        print(f"[list-diag] failed: {_ld}", flush=True)
+
                     # Enumerate ALL minicards in DOM order with their
                     # hrefs — NOT deduplicated by name. OC stores form
                     # versions at the form-definition level (shared) but
