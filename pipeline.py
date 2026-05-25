@@ -2401,6 +2401,9 @@ async def run_pipeline(item_id):
             try:
                 _existing_spec = await download_column_file(
                     item_id, COL["spec_json"])
+                print(f"[fast-rerun-probe] spec_json column returned: "
+                      f"{len(_existing_spec) if _existing_spec else 'None'} bytes",
+                      flush=True)
                 if _existing_spec:
                     struct_json = json.loads(_existing_spec.decode("utf-8"))
                     struct_json = _enforce_common_visit(struct_json)
