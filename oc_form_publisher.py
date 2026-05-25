@@ -540,11 +540,24 @@ class FormPublisher:
                                         # the 8s the full path takes).
                                         await page.wait_for_timeout(500)
 
-                                        # Wait for the radio (cap 5s).
+                                        # Wait for the radio. Bump
+                                        # timeout to 15s if this OID
+                                        # was uploaded earlier this
+                                        # session — OC's backend has
+                                        # propagation lag for newly-
+                                        # uploaded versions, and 5s
+                                        # was consistently timing out
+                                        # on the second-through-Nth
+                                        # cards of just-uploaded forms.
+                                        _radio_timeout = (
+                                            15000
+                                            if pre_oid in session_uploaded_oids
+                                            else 5000
+                                        )
                                         try:
                                             await page.wait_for_selector(
                                                 'input[type=radio]',
-                                                timeout=5000)
+                                                timeout=_radio_timeout)
                                         except Exception as _re:
                                             _res = str(_re).lower()
                                             if ("target crashed" in _res
@@ -554,7 +567,9 @@ class FormPublisher:
                                             print(f"[publisher] FAST "
                                                   f"radio wait timeout "
                                                   f"for {form_name} "
-                                                  f"(OID={pre_oid}): "
+                                                  f"(OID={pre_oid}, "
+                                                  f"timeout="
+                                                  f"{_radio_timeout}ms): "
                                                   f"{_re}", flush=True)
 
                                         # Set default for this card.
@@ -759,6 +774,27 @@ class FormPublisher:
                                                     confirmed_versioned_oids.add(oid)
                                                 break
 
+                                            # Pre-upload intent log so
+                                            # operators can see in real
+                                            # time that the publisher is
+                                            # uploading (not just
+                                            # set-default-ing) — and
+                                            # whether we're replacing an
+                                            # existing version or doing
+                                            # the first-ever upload.
+                                            if existing_version:
+                                                print(f"[publisher] "
+                                                      f"Uploading new "
+                                                      f"version for "
+                                                      f"{form_name} "
+                                                      f"(OID={oid})",
+                                                      flush=True)
+                                            else:
+                                                print(f"[publisher] "
+                                                      f"Uploading "
+                                                      f"{form_name} "
+                                                      f"(OID={oid})",
+                                                      flush=True)
                                             await page.set_input_files(
                                                 'input.js-design-form-input',
                                                 str(xlsx_path))
