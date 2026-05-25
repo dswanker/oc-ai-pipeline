@@ -335,13 +335,43 @@ class FormPublisher:
                     # the "set default version for data entry" toggle is
                     # per-card (per event occurrence), so we must visit
                     # every placement of every form.
+                    # Skip cards in archived lists. The OC designer keeps
+                    # archived lists in the DOM as .js-minicard elements;
+                    # without this filter they get visited too and we end
+                    # up iterating hundreds of stale cards.
                     minicard_cards = await page.evaluate("""
-                        () => [...document.querySelectorAll('.js-minicard')]
-                            .map(el => ({
-                                name: (el.innerText || '').trim(),
-                                href: el.getAttribute('href') || ''
-                            }))
-                            .filter(c => c.name)
+                        () => {
+                            // Get archived list IDs from Meteor if available
+                            let archivedListIds = new Set();
+                            try {
+                                Lists.find({archived: true}).forEach(l => {
+                                    archivedListIds.add(l._id);
+                                });
+                            } catch(e) {}
+
+                            return [...document.querySelectorAll('.js-minicard')]
+                                .filter(el => {
+                                    // If we have archived list data, skip cards in
+                                    // archived lists by checking parent container
+                                    if (archivedListIds.size > 0) {
+                                        const list = el.closest('[data-list-id]') ||
+                                                     el.closest('.js-list');
+                                        if (list) {
+                                            const listId = list.getAttribute('data-list-id')
+                                                || list.dataset.listId;
+                                            if (listId && archivedListIds.has(listId)) {
+                                                return false;
+                                            }
+                                        }
+                                    }
+                                    return true;
+                                })
+                                .map(el => ({
+                                    name: (el.innerText || '').trim(),
+                                    href: el.getAttribute('href') || ''
+                                }))
+                                .filter(c => c.name)
+                        }
                     """)
                     result.forms_total = len(minicard_cards)
                     print(f"[publisher] Board has {len(minicard_cards)} "

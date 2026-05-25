@@ -959,8 +959,38 @@ async def _clear_board(board_url: str, session_path: str) -> None:
                     print(f"[board-clear] archive {list_id} failed: "
                           f"{_e}", flush=True)
 
-            # Brief settle for server to sync before the import.
-            await page.wait_for_timeout(3000)
+            # Wait for server to process all archives. Poll the Meteor
+            # Lists collection until non-archived count hits 0, or
+            # timeout after 30s. The fixed 3s wait we used before
+            # raced the server and let _import_board reimport while
+            # archives were still propagating (cards accumulated).
+            print(f"[board-clear] waiting for {len(list_ids)} archives "
+                  f"to propagate...", flush=True)
+            deadline = 30  # seconds
+            for _i in range(deadline):
+                await page.wait_for_timeout(1000)
+                remaining = await page.evaluate(f"""
+                    () => {{
+                        try {{
+                            return Lists.find(
+                                {{boardId: '{board_id}', archived: false}}
+                            ).count();
+                        }} catch(e) {{ return -1; }}
+                    }}
+                """)
+                if remaining == 0:
+                    print(f"[board-clear] all lists confirmed archived "
+                          f"after {_i+1}s", flush=True)
+                    break
+                if remaining == -1:
+                    print(f"[board-clear] Lists collection unavailable, "
+                          f"waiting full {deadline}s", flush=True)
+                    await page.wait_for_timeout((deadline - _i - 1) * 1000)
+                    break
+            else:
+                print(f"[board-clear] timeout waiting for archives — "
+                      f"{remaining} lists still active", flush=True)
+
             print(f"[board-clear] archived {len(list_ids)} lists — "
                   f"board cleared", flush=True)
         finally:
