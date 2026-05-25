@@ -3206,6 +3206,33 @@ async def run_pipeline(item_id):
                 append_log(item_id, final_log),
             )
 
+            # ── Auto-trigger post-completion actions if checkboxes checked ──
+            # The /webhook/publish_test handler only fires when the checkbox
+            # CHANGES — if it was already checked when the pipeline started,
+            # it never re-fires after run_pipeline ends. Read the column
+            # directly here so a pre-checked box still gets honored.
+            try:
+                item_data = await get_item(item_id)
+                cols_after = {c["id"]: c for c in
+                              item_data.get("column_values", [])}
+
+                publish_checked  = (cols_after.get("boolean_mm3g2vzf", {})
+                                    .get("text") == "v")
+                load_uat_checked = (cols_after.get("boolean_mm3gxe49", {})
+                                    .get("text") == "v")
+
+                if publish_checked:
+                    print(f"[auto-publish] Publish to Test checkbox is "
+                          f"checked — starting publish", flush=True)
+                    await publish_to_test(item_id)
+
+                if load_uat_checked:
+                    print(f"[auto-uat] Load UAT checkbox is checked — "
+                          f"(stub, not yet implemented)", flush=True)
+            except Exception as e:
+                print(f"[auto-publish] Error checking post-completion "
+                      f"flags: {e}", flush=True)
+
     except Exception as e:
         print(f"PIPELINE CRASHED: {e}", flush=True)
         print(traceback.format_exc(), flush=True)
