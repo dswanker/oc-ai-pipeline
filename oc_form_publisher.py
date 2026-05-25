@@ -112,6 +112,7 @@ class FormPublisher:
         auth_token: Optional[str] = None,
         headless: bool = True,
         user_email: Optional[str] = None,
+        allowed_card_ids: Optional[set] = None,
     ):
         """
         Args:
@@ -124,10 +125,17 @@ class FormPublisher:
             user_email: REQUIRED for SSO; identifies which saved session
                 to load. If unset, publish_all_forms returns an error in
                 FormPublishResult.errors without launching the browser.
+            allowed_card_ids: Optional set of Meteor card _ids (e.g.
+                {"7a3JP37ytrJ9RN4vF", ...}). When provided, the publisher
+                filters minicards in publish_all_forms to ONLY those
+                whose href contains one of these IDs — skipping stale
+                cards left in the DOM from prior runs. None (default) =
+                visit every .js-minicard (legacy behavior).
         """
         self.auth_token = auth_token
         self.headless = headless
         self.user_email = user_email
+        self.allowed_card_ids = allowed_card_ids
 
     @property
     def _session_path(self) -> Optional[str]:
@@ -398,6 +406,26 @@ class FormPublisher:
                                 .filter(c => c.name)
                         }
                     """)
+
+                    # Apply current-run filter if caller supplied a set of
+                    # allowed card _ids. Match by substring (the minicard
+                    # href contains the Meteor card _id somewhere — 17-char
+                    # alphanumeric IDs don't collide in practice). Without
+                    # this filter the publisher walks every card on the
+                    # board including stale ones from prior runs (observed:
+                    # 223 cards on a board where only ~70 are current).
+                    if self.allowed_card_ids:
+                        _before = len(minicard_cards)
+                        minicard_cards = [
+                            c for c in minicard_cards
+                            if any(cid in c["href"]
+                                   for cid in self.allowed_card_ids)
+                        ]
+                        print(f"[publisher] Filtered {_before} cards → "
+                              f"{len(minicard_cards)} "
+                              f"({len(self.allowed_card_ids)} allowed "
+                              f"card_ids)", flush=True)
+
                     result.forms_total = len(minicard_cards)
                     print(f"[publisher] Board has {len(minicard_cards)} "
                           f"form cards "
@@ -637,6 +665,7 @@ async def publish_forms_to_openclinica(
     auth_token: Optional[str] = None,
     headless: bool = True,
     user_email: Optional[str] = None,
+    allowed_card_ids: Optional[set] = None,
 ) -> FormPublishResult:
     """Thin wrapper around FormPublisher.publish_all_forms.
 
@@ -648,11 +677,13 @@ async def publish_forms_to_openclinica(
             edc_zip_url=edc_zip_url,
             auth_token=token,
             user_email=oc_email,
+            allowed_card_ids=current_run_card_ids,
         )
     """
     publisher = FormPublisher(
         auth_token=auth_token,
         headless=headless,
         user_email=user_email,
+        allowed_card_ids=allowed_card_ids,
     )
     return await publisher.publish_all_forms(study_url, edc_zip_url)

@@ -890,6 +890,51 @@ async def _get_board_id(subdomain, study_uuid, is_production, token=None):
     raise RuntimeError(f"Could not extract board ID from URL: {board_url}")
 
 
+async def _get_board_card_ids(
+    subdomain: str, board_id: str,
+    is_production: bool = False, token: str = None,
+) -> set | None:
+    """GET /api/boards/{board_id} and return set of non-archived card _ids.
+
+    Used by create_oc_study to give the publisher a precise filter of
+    "cards belonging to the current run" — avoids the publisher walking
+    every stale card left in the DOM by prior imports.
+
+    Returns:
+        Set of Meteor card _ids (strings like "7a3JP37ytrJ9RN4vF") for
+        cards where archived=False; None on API failure (caller should
+        fall back to no filter rather than blocking the publish).
+    """
+    import httpx
+    if token is None:
+        token = await _get_oc_token(subdomain, is_production=is_production)
+    url = f"https://{subdomain}.design.openclinica.io/api/boards/{board_id}"
+    try:
+        async with httpx.AsyncClient(timeout=30) as c:
+            r = await c.get(url, headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            })
+    except Exception as e:
+        print(f"[board-card-ids] GET request failed: {e}", flush=True)
+        return None
+    if r.status_code != 200:
+        print(f"[board-card-ids] GET /api/boards/{board_id} returned "
+              f"{r.status_code} — skipping filter", flush=True)
+        return None
+    try:
+        data = r.json()
+    except Exception as e:
+        print(f"[board-card-ids] response not JSON: {e}", flush=True)
+        return None
+    cards = data.get("cards") or []
+    card_ids = {c.get("_id") for c in cards
+                if c.get("_id") and not c.get("archived")}
+    print(f"[board-card-ids] {len(card_ids)} non-archived card _ids "
+          f"({len(cards)} total cards)", flush=True)
+    return card_ids if card_ids else None
+
+
 async def _clear_board(board_url: str, session_path: str) -> None:
     """Archive all lists on the OC designer board via a Meteor method call.
 
@@ -1268,6 +1313,14 @@ async def create_oc_study(subdomain, struct_json, is_production=False,
         # and we're skipping form upload entirely below).
         try:
             from oc_form_publisher import publish_forms_to_openclinica
+            # Fetch the set of card _ids for THIS run via REST. Lets the
+            # publisher filter out stale .js-minicard elements left over
+            # from prior imports — without this it walks every card on the
+            # board (~220 vs ~70 actually-current) and crashes the browser.
+            _allowed_card_ids = await _get_board_card_ids(
+                subdomain, board_id,
+                is_production=is_production, token=token,
+            )
             print(f"Uploading XLSForm files to {study_url} via Playwright "
                   f"(SSO as {oc_email})...", flush=True)
             forms_publish = await publish_forms_to_openclinica(
@@ -1275,6 +1328,7 @@ async def create_oc_study(subdomain, struct_json, is_production=False,
                 edc_zip_url=edc_zip_url,
                 auth_token=token,
                 user_email=oc_email,
+                allowed_card_ids=_allowed_card_ids,
             )
             print(f"Form publish: {forms_publish.forms_uploaded}/"
                   f"{forms_publish.forms_total} uploaded; "
