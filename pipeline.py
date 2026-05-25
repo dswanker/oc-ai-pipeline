@@ -935,6 +935,124 @@ async def _get_board_card_ids(
     return card_ids if card_ids else None
 
 
+async def _check_board_form_versions(
+    subdomain: str, board_id: str,
+    is_production: bool = False, token: str = None,
+) -> tuple[bool, list]:
+    """GET /api/boards/{board_id}, return (all_ok, missing_forms).
+
+    Used by publish_to_test as a pre-flight before calling the publish
+    API — that API returns 400 with a list of missing-version forms,
+    and catching it here gives the operator a cleaner per-form signal
+    on the monday row instead of a raw 400 trace.
+
+    Returns:
+        (True, []) if every non-archived form has at least one card with
+        a non-empty versions array (i.e. an uploaded XLSForm).
+        (False, [(form_name, formOcoid), ...]) listing forms whose cards
+        all have empty versions arrays.
+        Fail-open: if the API call itself errors, returns (True, []) so
+        the caller still attempts publish (and OC surfaces the real
+        error if any).
+    """
+    import httpx
+    if token is None:
+        token = await _get_oc_token(subdomain, is_production=is_production)
+    url = f"https://{subdomain}.design.openclinica.io/api/boards/{board_id}"
+    try:
+        async with httpx.AsyncClient(timeout=30) as c:
+            r = await c.get(url, headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            })
+    except Exception as e:
+        print(f"[publish-preflight] GET request failed: {e} — "
+              f"skipping pre-flight", flush=True)
+        return True, []
+    if r.status_code != 200:
+        print(f"[publish-preflight] GET /api/boards/{board_id} "
+              f"returned {r.status_code} — skipping pre-flight",
+              flush=True)
+        return True, []
+    try:
+        data = r.json()
+    except Exception as e:
+        print(f"[publish-preflight] response not JSON: {e}", flush=True)
+        return True, []
+
+    cards = data.get("cards") or []
+    # Group non-archived cards by formOcoid; mark form as having a
+    # version if ANY of its cards has a non-empty versions array (form
+    # definitions are shared across cards of the same form).
+    by_form: dict = {}
+    for card in cards:
+        if card.get("archived"):
+            continue
+        oid = card.get("formOcoid")
+        if not oid:
+            continue
+        info = by_form.setdefault(oid, {
+            "name": card.get("title") or oid,
+            "has_version": False,
+        })
+        if card.get("versions"):
+            info["has_version"] = True
+
+    missing = [(info["name"], oid)
+               for oid, info in by_form.items()
+               if not info["has_version"]]
+    return (not missing), missing
+
+
+async def _get_board_form_oids(
+    subdomain: str, board_id: str,
+    is_production: bool = False, token: str = None,
+) -> set | None:
+    """GET /api/boards/{board_id} and return set of non-archived form OIDs.
+
+    Companion to _check_board_form_versions: that helper asks "do forms
+    ON the board have versions?"; this one asks "WHICH forms are on the
+    board at all?" so the caller can compare against a spec to detect
+    forms that should be on the board but never made it (incomplete
+    import). Form OIDs are uppercased to match the spec convention.
+
+    Returns set of uppercased formOcoid strings, or None on API failure
+    (caller should skip the missing-from-board check rather than block).
+    """
+    import httpx
+    if token is None:
+        token = await _get_oc_token(subdomain, is_production=is_production)
+    url = f"https://{subdomain}.design.openclinica.io/api/boards/{board_id}"
+    try:
+        async with httpx.AsyncClient(timeout=30) as c:
+            r = await c.get(url, headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            })
+    except Exception as e:
+        print(f"[board-form-oids] GET failed: {e}", flush=True)
+        return None
+    if r.status_code != 200:
+        print(f"[board-form-oids] GET /api/boards/{board_id} returned "
+              f"{r.status_code}", flush=True)
+        return None
+    try:
+        data = r.json()
+    except Exception as e:
+        print(f"[board-form-oids] response not JSON: {e}", flush=True)
+        return None
+    oids = set()
+    for card in (data.get("cards") or []):
+        if card.get("archived"):
+            continue
+        oid = card.get("formOcoid")
+        if oid:
+            oids.add(oid.upper())
+    print(f"[board-form-oids] {len(oids)} unique non-archived form OIDs",
+          flush=True)
+    return oids
+
+
 async def _clear_board(board_url: str, session_path: str) -> None:
     """Archive all lists on the OC designer board via a Meteor method call.
 
@@ -1524,6 +1642,98 @@ async def publish_to_test(item_id):
         # 5. Persist the Study OID column (cheap bonus from the same call)
         if oid:
             await set_text(item_id, COL["study_oid"], oid)
+
+        # 5b. Pre-flight checks — verify board is ready for publish.
+        # Two distinct failure modes the OC publish API would otherwise
+        # report as a raw 400; catching them here gives the operator a
+        # cleaner per-form signal on the monday row:
+        #   (1) MISSING FROM BOARD — form is in the study spec but no
+        #       card exists for it on the board (incomplete import).
+        #       Detected by comparing spec form_ids against board.
+        #   (2) MISSING VERSION   — form has a card on the board but no
+        #       XLSForm was uploaded for it (form-publish never ran or
+        #       partially failed). Detected via the existing helper.
+        # Both block publish; both get reported in the AI Run Log.
+        try:
+            _board_id = await _get_board_id(
+                oc_subdomain, study_uuid, is_production=False)
+
+            # Expected OIDs (from spec) — best-effort. If the spec
+            # download or parse fails we just skip the missing-from-
+            # board check, falling back to the existing board-only
+            # version check.
+            _expected_oid_to_name: dict = {}
+            try:
+                _spec_bytes = await download_column_file(
+                    item_id, COL["spec_json"])
+                if _spec_bytes:
+                    _spec = json.loads(_spec_bytes.decode("utf-8"))
+                    for _f in (_spec.get("forms") or []):
+                        _foid = (_f.get("form_id") or "").strip()
+                        if not _foid:
+                            continue
+                        # Match _build_board_json's F_-prefix filter:
+                        # those forms are intentionally never imported,
+                        # so reporting them as missing would be noise.
+                        if _foid.upper().startswith("F_"):
+                            continue
+                        _expected_oid_to_name[_foid.upper()] = (
+                            _f.get("form_title") or _foid)
+            except Exception as _se:
+                print(f"[publish-preflight] could not read spec_json "
+                      f"({_se}) — falling back to board-only check",
+                      flush=True)
+                _expected_oid_to_name = {}
+
+            # Missing-from-board check (only if we have expected OIDs).
+            _missing_from_board: list = []
+            if _expected_oid_to_name:
+                _board_oids = await _get_board_form_oids(
+                    oc_subdomain, _board_id, is_production=False)
+                if _board_oids is not None:
+                    _missing_from_board = sorted(
+                        set(_expected_oid_to_name) - _board_oids)
+
+            # Missing-version check (existing helper, unchanged sig).
+            _all_versions_ok, _missing_versions = (
+                await _check_board_form_versions(
+                    oc_subdomain, _board_id, is_production=False))
+
+            # Emit per-form log lines for each category.
+            for _foid in _missing_from_board:
+                _fname = _expected_oid_to_name.get(_foid, _foid)
+                print(f"[publish-preflight] MISSING FROM BOARD: "
+                      f"{_fname} (OID={_foid})", flush=True)
+            for _fname, _foid in _missing_versions:
+                print(f"[publish-preflight] MISSING VERSION: "
+                      f"{_fname} (OID={_foid})", flush=True)
+
+            # If either category has findings, skip the publish.
+            if _missing_from_board or _missing_versions:
+                _parts: list = []
+                if _missing_from_board:
+                    _from_board = ", ".join(_missing_from_board[:10])
+                    if len(_missing_from_board) > 10:
+                        _from_board += (
+                            f" (+{len(_missing_from_board) - 10} more)")
+                    _parts.append(f"missing from board: {_from_board}")
+                if _missing_versions:
+                    _v_oids = [oid for _, oid in _missing_versions]
+                    _versions = ", ".join(_v_oids[:10])
+                    if len(_v_oids) > 10:
+                        _versions += f" (+{len(_v_oids) - 10} more)"
+                    _parts.append(f"missing versions: {_versions}")
+                _log_msg = "Publish skipped — " + " | ".join(_parts)
+                print(f"[publish-preflight] {_log_msg}", flush=True)
+                await set_status(item_id, COL["published_status"],
+                                 "Failed")
+                await append_log(item_id, _log_msg)
+                return
+        except Exception as _pe:
+            # Pre-flight itself failed — don't block publish; if the
+            # real issue surfaces in the API call we'll handle it there.
+            print(f"[publish-preflight] check failed ({_pe}); "
+                  f"proceeding with publish anyway", flush=True)
 
         # 6. Publish
         ts = _dt.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")

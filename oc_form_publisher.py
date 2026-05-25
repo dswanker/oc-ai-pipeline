@@ -435,97 +435,175 @@ class FormPublisher:
                     for card in minicard_cards:
                         form_name = card['name']
                         card_href = card['href']
+
+                        # Browser-crash recovery: wrap the per-card work
+                        # in a 2-attempt retry loop. If Playwright surfaces
+                        # "Target crashed" / "browser has been closed" /
+                        # "browser was disconnected" (Chromium died in a
+                        # long-running session), tear down + relaunch +
+                        # re-auth + retry the same card once.
+                        # session_uploaded_oids persists across restart so
+                        # already-uploaded forms aren't re-attempted.
                         try:
-                            # Force-clear any stuck board overlay before
-                            # clicking. The overlay can become permanently
-                            # stuck (e.g. error overlay from a prior op).
-                            # JS removal beats waiting for it to clear.
-                            try:
-                                await page.evaluate(
-                                    "document.querySelectorAll('.board-overlay')"
-                                    ".forEach(el => el.remove())")
-                                await page.wait_for_timeout(200)
-                            except Exception:
-                                pass
-
-                            # Click by href when available so we hit THIS
-                            # specific card (same form name appears in
-                            # multiple events — name-only would always
-                            # click the first match). Fall back to name
-                            # match if the card had no href for any reason.
-                            if card_href:
-                                await page.locator(
-                                    f'.js-minicard[href="{card_href}"]'
-                                ).click()
-                            else:
-                                await page.locator('.js-minicard').filter(
-                                    has_text=form_name).first.click()
-                            await page.wait_for_timeout(8000)
-
-                            # Confirm the panel opened by waiting for the
-                            # file input it contains.
-                            try:
-                                await page.wait_for_selector(
-                                    'input.js-design-form-input',
-                                    timeout=15000)
-                            except Exception as e:
-                                print(f"[publisher] Panel did not open "
-                                      f"for {form_name}: {e}", flush=True)
-                                result.errors.append(
-                                    f"{form_name}: panel did not open")
-                                continue
-
-                            # Read OID from the panel.
-                            oid_el = await page.query_selector(
-                                'input#formOcOidValue')
-                            oid = ((await oid_el.input_value()).upper()
-                                   if oid_el else "")
-
-                            # Branch on whether THIS form definition
-                            # already has a version (shared across all
-                            # cards of the same form). If yes, just set
-                            # this card's default; if no, upload first.
-                            existing_version = await page.query_selector(
-                                'input[type=radio]')
-
-                            if existing_version:
-                                # Version exists — set default for this
-                                # card and move on. Don't re-upload (the
-                                # form definition is shared).
+                            attempts = 0
+                            while True:
+                                attempts += 1
                                 try:
-                                    await page.locator(
-                                        'input[type=radio]'
-                                    ).first.click(timeout=5000)
-                                except Exception as e:
-                                    result.warnings.append(
-                                        f"set-default failed for "
-                                        f"{form_name} ({e})")
-                                result.forms_uploaded += 1
-                                print(f"[publisher] {form_name} "
-                                      f"(OID={oid}) already has a "
-                                      f"version — set default",
-                                      flush=True)
-                            else:
-                                # No version yet — upload the XLSForm.
-                                xlsx_path = xlsx_map.get(oid)
-                                if not xlsx_path:
-                                    print(f"[publisher] Skipping "
-                                          f"{form_name} (OID={oid!r}): "
-                                          f"no xlsx in EDC zip",
-                                          flush=True)
-                                else:
-                                    # If we already uploaded this OID in
-                                    # this session, the OC backend may
-                                    # not have surfaced the version on
-                                    # the current panel yet. Wait briefly,
-                                    # re-check for the radio, and either
-                                    # set-default (if it appeared) or
-                                    # skip the re-upload entirely.
-                                    if oid in session_uploaded_oids:
-                                        await page.wait_for_timeout(5000)
-                                        recheck = await page.query_selector(
-                                            'input[type=radio]')
-                                        if recheck:
+                                    # Force-clear any stuck board overlay
+                                    # before clicking. The overlay can
+                                    # become permanently stuck (e.g.
+                                    # error overlay from a prior op).
+                                    # JS removal beats waiting for it to
+                                    # clear.
+                                    try:
+                                        await page.evaluate(
+                                            "document.querySelectorAll('.board-overlay')"
+                                            ".forEach(el => el.remove())")
+                                        await page.wait_for_timeout(200)
+                                    except Exception:
+                                        pass
+
+                                    # Click by href when available so we
+                                    # hit THIS specific card (same form
+                                    # name appears in multiple events —
+                                    # name-only would always click the
+                                    # first match). Fall back to name
+                                    # match if the card had no href.
+                                    if card_href:
+                                        await page.locator(
+                                            f'.js-minicard[href="{card_href}"]'
+                                        ).click()
+                                    else:
+                                        await page.locator('.js-minicard').filter(
+                                            has_text=form_name).first.click()
+                                    await page.wait_for_timeout(8000)
+
+                                    # Confirm the panel opened by waiting
+                                    # for the file input it contains.
+                                    try:
+                                        await page.wait_for_selector(
+                                            'input.js-design-form-input',
+                                            timeout=15000)
+                                    except Exception as _pe:
+                                        # Let browser crashes propagate
+                                        # to the outer crash-detect so
+                                        # they don't get masked here as
+                                        # "panel did not open".
+                                        _pes = str(_pe).lower()
+                                        if ("target crashed" in _pes
+                                                or "browser has been closed" in _pes
+                                                or "browser was disconnected" in _pes):
+                                            raise
+                                        print(f"[publisher] Panel did "
+                                              f"not open for "
+                                              f"{form_name}: {_pe}",
+                                              flush=True)
+                                        result.errors.append(
+                                            f"{form_name}: panel did "
+                                            f"not open")
+                                        break
+
+                                    # Read OID from the panel.
+                                    oid_el = await page.query_selector(
+                                        'input#formOcOidValue')
+                                    oid = ((await oid_el.input_value()).upper()
+                                           if oid_el else "")
+
+                                    # Branch on whether THIS form
+                                    # definition already has a version
+                                    # (shared across all cards of the
+                                    # same form). If yes, just set this
+                                    # card's default; if no, upload first.
+                                    existing_version = await page.query_selector(
+                                        'input[type=radio]')
+
+                                    if existing_version:
+                                        # Version exists — set default
+                                        # for this card and move on.
+                                        # Don't re-upload (form
+                                        # definition is shared).
+                                        try:
+                                            await page.locator(
+                                                'input[type=radio]'
+                                            ).first.click(timeout=5000)
+                                        except Exception as e:
+                                            result.warnings.append(
+                                                f"set-default failed for "
+                                                f"{form_name} ({e})")
+                                        result.forms_uploaded += 1
+                                        print(f"[publisher] {form_name} "
+                                              f"(OID={oid}) already has "
+                                              f"a version — set default",
+                                              flush=True)
+                                    else:
+                                        # No version yet — upload.
+                                        xlsx_path = xlsx_map.get(oid)
+                                        if not xlsx_path:
+                                            print(f"[publisher] Skipping "
+                                                  f"{form_name} "
+                                                  f"(OID={oid!r}): no "
+                                                  f"xlsx in EDC zip",
+                                                  flush=True)
+                                        else:
+                                            # If we already uploaded
+                                            # this OID this session, OC
+                                            # backend may not have
+                                            # surfaced the version yet.
+                                            # Wait briefly, re-check.
+                                            if oid in session_uploaded_oids:
+                                                await page.wait_for_timeout(5000)
+                                                recheck = await page.query_selector(
+                                                    'input[type=radio]')
+                                                if recheck:
+                                                    try:
+                                                        await page.locator(
+                                                            'input[type=radio]'
+                                                        ).first.click(timeout=5000)
+                                                    except Exception as e:
+                                                        result.warnings.append(
+                                                            f"set-default "
+                                                            f"failed for "
+                                                            f"{form_name} "
+                                                            f"({e})")
+                                                    result.forms_uploaded += 1
+                                                    print(f"[publisher] "
+                                                          f"{form_name} "
+                                                          f"(OID={oid}) "
+                                                          f"version now "
+                                                          f"visible after "
+                                                          f"wait — set "
+                                                          f"default",
+                                                          flush=True)
+                                                else:
+                                                    print(f"[publisher] "
+                                                          f"Skipping "
+                                                          f"re-upload of "
+                                                          f"{form_name} "
+                                                          f"(OID={oid}) — "
+                                                          f"already "
+                                                          f"uploaded this "
+                                                          f"session, "
+                                                          f"version not "
+                                                          f"yet "
+                                                          f"propagated",
+                                                          flush=True)
+                                                    result.forms_uploaded += 1
+                                                break
+
+                                            await page.set_input_files(
+                                                'input.js-design-form-input',
+                                                str(xlsx_path))
+                                            try:
+                                                await page.wait_for_selector(
+                                                    '#prevBtn:not(.disabled), '
+                                                    'input[type=radio]',
+                                                    timeout=30000)
+                                            except Exception as e:
+                                                print(f"[publisher] "
+                                                      f"Upload success "
+                                                      f"signal not seen "
+                                                      f"for {form_name}: "
+                                                      f"{e}", flush=True)
                                             try:
                                                 await page.locator(
                                                     'input[type=radio]'
@@ -536,57 +614,71 @@ class FormPublisher:
                                                     f"for {form_name} "
                                                     f"({e})")
                                             result.forms_uploaded += 1
-                                            print(f"[publisher] "
+                                            session_uploaded_oids.add(oid)
+                                            print(f"[publisher] Uploaded "
+                                                  f"{xlsx_path.name} → "
                                                   f"{form_name} "
-                                                  f"(OID={oid}) version "
-                                                  f"now visible after "
-                                                  f"wait — set default",
+                                                  f"(OID={oid})",
                                                   flush=True)
-                                        else:
-                                            print(f"[publisher] Skipping "
-                                                  f"re-upload of "
-                                                  f"{form_name} "
-                                                  f"(OID={oid}) — "
-                                                  f"already uploaded this "
-                                                  f"session, version not "
-                                                  f"yet propagated",
-                                                  flush=True)
-                                            result.forms_uploaded += 1
-                                        continue
-
-                                    await page.set_input_files(
-                                        'input.js-design-form-input',
-                                        str(xlsx_path))
-                                    try:
-                                        await page.wait_for_selector(
-                                            '#prevBtn:not(.disabled), '
-                                            'input[type=radio]',
-                                            timeout=30000)
-                                    except Exception as e:
-                                        print(f"[publisher] Upload "
-                                              f"success signal not seen "
-                                              f"for {form_name}: {e}",
-                                              flush=True)
-                                    try:
-                                        await page.locator(
-                                            'input[type=radio]'
-                                        ).first.click(timeout=5000)
-                                    except Exception as e:
-                                        result.warnings.append(
-                                            f"set-default failed for "
-                                            f"{form_name} ({e})")
-                                    result.forms_uploaded += 1
-                                    session_uploaded_oids.add(oid)
-                                    print(f"[publisher] Uploaded "
-                                          f"{xlsx_path.name} → "
-                                          f"{form_name} (OID={oid})",
-                                          flush=True)
-                        except Exception as e:
-                            result.errors.append(
-                                f"{form_name}: {type(e).__name__}: {e}")
+                                    break  # success — exit retry loop
+                                except Exception as e:
+                                    _err = str(e).lower()
+                                    _is_crash = (
+                                        "target crashed" in _err
+                                        or "browser has been closed" in _err
+                                        or "browser was disconnected" in _err
+                                    )
+                                    if attempts < 2 and _is_crash:
+                                        print(f"[publisher] Browser "
+                                              f"crashed on {form_name} "
+                                              f"— relaunching browser "
+                                              f"context", flush=True)
+                                        # Tear down ignoring errors.
+                                        try:
+                                            await browser.close()
+                                        except Exception:
+                                            pass
+                                        # Relaunch + re-auth + re-navigate.
+                                        try:
+                                            browser = await p.chromium.launch(
+                                                headless=effective_headless)
+                                            if session_existed:
+                                                context = await browser.new_context(
+                                                    storage_state=self._session_path)
+                                            else:
+                                                context = await browser.new_context()
+                                            page = await context.new_page()
+                                            auth_ok_again = await self._authenticate_via_sso(
+                                                page, study_url)
+                                            if not auth_ok_again:
+                                                raise RuntimeError(
+                                                    "re-auth failed "
+                                                    "after browser "
+                                                    "restart")
+                                            try:
+                                                await page.wait_for_selector(
+                                                    '.js-minicard',
+                                                    timeout=30000)
+                                                await page.wait_for_timeout(1000)
+                                            except Exception:
+                                                pass
+                                        except Exception as restart_err:
+                                            result.errors.append(
+                                                f"{form_name}: browser "
+                                                f"restart failed: "
+                                                f"{type(restart_err).__name__}"
+                                                f": {restart_err}")
+                                            break
+                                        continue  # retry the same card
+                                    # Non-crash error OR already retried.
+                                    result.errors.append(
+                                        f"{form_name}: "
+                                        f"{type(e).__name__}: {e}")
+                                    break
                         finally:
                             # Close the panel before the next iteration.
-                            # Panel may have already closed — swallow.
+                            # Panel may have already closed (or the page
+                            # is dead from a crash) — swallow either.
                             try:
                                 await page.click(
                                     'a.js-close-card-details')
