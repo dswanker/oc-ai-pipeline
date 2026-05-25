@@ -1053,6 +1053,109 @@ async def _get_board_form_oids(
     return oids
 
 
+# ── Pipeline upload record (per-item storage for conflict detection) ──────────
+# Tracks which OC form-version IDs the pipeline created, so on the next run we
+# can detect any OC version that we didn't upload → indicates a human edit in
+# OC4 Designer (CONFLICT). Persisted to a Railway volume so it survives deploys.
+
+UPLOAD_RECORDS_DIR = "/data/pipeline_upload_records"
+
+
+def _read_upload_record(item_id: str) -> dict:
+    """Read the publisher's per-item upload record from disk.
+
+    Returns {} on missing file or parse error (fail-safe — treats the
+    item as first-ever run, prompting full uploads with no conflict
+    claims).
+    """
+    if not item_id:
+        return {}
+    path = os.path.join(UPLOAD_RECORDS_DIR, f"{item_id}.json")
+    try:
+        with open(path, "r") as f:
+            return json.load(f) or {}
+    except FileNotFoundError:
+        return {}
+    except Exception as e:
+        print(f"[upload-record] read failed for {item_id} ({e}); "
+              f"treating as empty", flush=True)
+        return {}
+
+
+def _write_upload_record(item_id: str, record: dict) -> None:
+    """Persist the publisher's per-item upload record to disk.
+
+    Creates parent directory if missing. Failures are logged but not
+    raised — record loss isn't fatal; next run just treats as empty
+    record and re-uploads (with possible false-positive conflicts if
+    OC has stale versions).
+    """
+    if not item_id:
+        return
+    try:
+        os.makedirs(UPLOAD_RECORDS_DIR, exist_ok=True)
+        path = os.path.join(UPLOAD_RECORDS_DIR, f"{item_id}.json")
+        with open(path, "w") as f:
+            json.dump(record, f, indent=2)
+        print(f"[upload-record] wrote {path}", flush=True)
+    except Exception as e:
+        print(f"[upload-record] write failed for {item_id} ({e}); "
+              f"next run will see stale state", flush=True)
+
+
+async def _fetch_oc_versions_by_oid(
+    subdomain: str, board_id: str,
+    is_production: bool = False, token: str = None,
+) -> dict:
+    """GET /api/boards/{board_id}, return {formOcoid: set[int]}.
+
+    For each non-archived form OID, returns the union of version IDs
+    across all of its cards. Cards of the same form share the version
+    definitions in practice but we union defensively.
+
+    Returns {} on API failure (caller decides whether to proceed —
+    typically by skipping conflict detection rather than blocking).
+    """
+    import httpx
+    if token is None:
+        token = await _get_oc_token(subdomain, is_production=is_production)
+    url = f"https://{subdomain}.design.openclinica.io/api/boards/{board_id}"
+    try:
+        async with httpx.AsyncClient(timeout=30) as c:
+            r = await c.get(url, headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            })
+    except Exception as e:
+        print(f"[oc-versions] GET failed: {e}", flush=True)
+        return {}
+    if r.status_code != 200:
+        print(f"[oc-versions] GET returned {r.status_code}", flush=True)
+        return {}
+    try:
+        data = r.json()
+    except Exception as e:
+        print(f"[oc-versions] response not JSON: {e}", flush=True)
+        return {}
+
+    by_oid: dict = {}
+    for card in (data.get("cards") or []):
+        if card.get("archived"):
+            continue
+        oid = (card.get("formOcoid") or "").upper()
+        if not oid:
+            continue
+        version_ids = by_oid.setdefault(oid, set())
+        for v in (card.get("versions") or []):
+            vid = v.get("id")
+            if isinstance(vid, int):
+                version_ids.add(vid)
+    print(f"[oc-versions] {len(by_oid)} non-archived form OIDs "
+          f"({sum(len(v) for v in by_oid.values())} total versions)",
+          flush=True)
+    return by_oid
+
+
 async def _clear_board(board_url: str, session_path: str) -> None:
     """Archive all lists on the OC designer board via a Meteor method call.
 
@@ -1439,6 +1542,41 @@ async def create_oc_study(subdomain, struct_json, is_production=False,
                 subdomain, board_id,
                 is_production=is_production, token=token,
             )
+
+            # ── Pre-flight conflict detection ────────────────────────────
+            # Compare OC's current version IDs against our stored record
+            # of "version IDs the pipeline created". Any OC version we
+            # didn't create = human edited in OC4 Designer → CONFLICT.
+            # The publisher skips upload for conflict OIDs to avoid
+            # overwriting the human's work.
+            _upload_record = _read_upload_record(item_id) if item_id else {}
+            _oc_versions_before = await _fetch_oc_versions_by_oid(
+                subdomain, board_id,
+                is_production=is_production, token=token,
+            )
+            _stored_forms = _upload_record.get("forms") or {}
+            _conflict_oids: set = set()
+            if not _stored_forms:
+                # First-ever run for this item — no baseline to compare
+                # against, so we can't distinguish "pipeline uploaded
+                # this" from "human uploaded this". Skip conflict
+                # detection; the post-publish record-write below
+                # establishes the baseline for future runs.
+                print(f"[conflict-detect] No stored upload record for "
+                      f"item {item_id} — skipping conflict detection "
+                      f"on first run, establishing baseline", flush=True)
+            else:
+                for _oid, _oc_vids in _oc_versions_before.items():
+                    _stored_vids = set(_stored_forms.get(_oid, {})
+                                       .get("pipeline_version_ids", []))
+                    if _oc_vids - _stored_vids:
+                        _conflict_oids.add(_oid)
+                if _conflict_oids:
+                    print(f"[conflict-detect] {len(_conflict_oids)} "
+                          f"form OID(s) flagged as conflicts (OC has "
+                          f"versions the pipeline didn't create): "
+                          f"{sorted(_conflict_oids)}", flush=True)
+
             print(f"Uploading XLSForm files to {study_url} via Playwright "
                   f"(SSO as {oc_email})...", flush=True)
             forms_publish = await publish_forms_to_openclinica(
@@ -1447,12 +1585,60 @@ async def create_oc_study(subdomain, struct_json, is_production=False,
                 auth_token=token,
                 user_email=oc_email,
                 allowed_card_ids=_allowed_card_ids,
+                conflict_oids=_conflict_oids if _conflict_oids else None,
             )
             print(f"Form publish: {forms_publish.forms_uploaded}/"
                   f"{forms_publish.forms_total} uploaded; "
-                  f"errors={len(forms_publish.errors)}", flush=True)
+                  f"errors={len(forms_publish.errors)}  "
+                  f"conflicts={len(forms_publish.conflicts)}", flush=True)
             for err in forms_publish.errors[:5]:
                 print(f"  form-upload error: {err}", flush=True)
+            for _conf in forms_publish.conflicts[:5]:
+                print(f"  conflict: {_conf}", flush=True)
+
+            # ── Post-publish: update stored upload record ────────────────
+            # For each OID the publisher uploaded, OVERWRITE the stored
+            # set with OC's current version IDs (pipeline now "owns" all
+            # current versions of that OID). For conflict OIDs we DO NOT
+            # update the stored set — the conflict persists on the next
+            # run until the human resolves it.
+            if item_id and forms_publish.uploaded_oids:
+                try:
+                    _oc_versions_after = await _fetch_oc_versions_by_oid(
+                        subdomain, board_id,
+                        is_production=is_production, token=token,
+                    )
+                    _stored_forms = _upload_record.setdefault("forms", {})
+                    _now = _dt.datetime.utcnow().strftime(
+                        "%Y-%m-%dT%H:%M:%SZ")
+                    for _oid in forms_publish.uploaded_oids:
+                        _current = sorted(
+                            _oc_versions_after.get(_oid.upper(), set()))
+                        _stored_forms[_oid.upper()] = {
+                            "pipeline_version_ids": _current,
+                            "last_uploaded_at": _now,
+                        }
+                    _upload_record["last_updated"] = _now
+                    _upload_record["item_id"] = str(item_id)
+                    _write_upload_record(item_id, _upload_record)
+                except Exception as _ue:
+                    print(f"[upload-record] post-publish update failed: "
+                          f"{_ue}", flush=True)
+
+            # ── Surface conflicts on the monday row ──────────────────────
+            if item_id and forms_publish.conflicts:
+                _confs = forms_publish.conflicts[:10]
+                _more = (f" (+{len(forms_publish.conflicts) - 10} more)"
+                         if len(forms_publish.conflicts) > 10 else "")
+                try:
+                    await append_log(item_id,
+                        f"⚠️ Manual edit conflicts detected — pipeline "
+                        f"did not overwrite: "
+                        f"{', '.join(_confs)}{_more}. Review in OC4 "
+                        f"Designer and re-run or manually resolve.")
+                except Exception as _le:
+                    print(f"[conflict-log] append_log failed: {_le}",
+                          flush=True)
         except Exception as e:
             # Don't fail study creation if form publish errors; caller
             # surfaces the partial state via the return dict.

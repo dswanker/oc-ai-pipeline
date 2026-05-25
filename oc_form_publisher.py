@@ -87,6 +87,12 @@ class FormPublishResult:
     # alerts from the OC REST API — that API has propagation delay and
     # may not yet reflect just-uploaded forms.
     uploaded_oids: List[str] = field(default_factory=list)
+    # Forms where the publisher detected a manual edit in OC4 Designer
+    # (the card had version IDs not in the pipeline's stored record)
+    # and skipped re-upload to avoid overwriting the human's work.
+    # The form's existing version is left intact; the caller should
+    # surface this list on the monday row for human review.
+    conflicts: List[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -119,6 +125,7 @@ class FormPublisher:
         headless: bool = True,
         user_email: Optional[str] = None,
         allowed_card_ids: Optional[set] = None,
+        conflict_oids: Optional[set] = None,
     ):
         """
         Args:
@@ -142,6 +149,15 @@ class FormPublisher:
         self.headless = headless
         self.user_email = user_email
         self.allowed_card_ids = allowed_card_ids
+        # Form OIDs that the caller's pre-flight identified as having
+        # manual edits in OC4 (version IDs not in pipeline's stored
+        # record). For each, the publisher SKIPS upload (don't
+        # overwrite) but still set-defaults the existing version and
+        # records the conflict in result.conflicts. Uppercased.
+        self.conflict_oids = (
+            {oid.upper() for oid in conflict_oids}
+            if conflict_oids else set()
+        )
 
     @property
     def _session_path(self) -> Optional[str]:
@@ -625,34 +641,69 @@ class FormPublisher:
                                     oid = ((await oid_el.input_value()).upper()
                                            if oid_el else "")
 
-                                    # Branch on whether THIS form
-                                    # definition already has a version
-                                    # (shared across all cards of the
-                                    # same form). If yes, just set this
-                                    # card's default; if no, upload first.
+                                    # Conflict-aware branching:
+                                    #   (1) If caller pre-flagged this OID as
+                                    #       a conflict (OC has version IDs
+                                    #       not in the pipeline's stored
+                                    #       record → human edited in OC4
+                                    #       Designer), skip upload entirely
+                                    #       and just set default for the
+                                    #       human's version. Record it in
+                                    #       result.conflicts for the
+                                    #       caller to surface on monday.
+                                    #   (2) Otherwise: ALWAYS upload the
+                                    #       current build (no hash-based
+                                    #       staleness check — pipeline runs
+                                    #       are the source of truth on
+                                    #       non-conflict OIDs). The
+                                    #       existing version, if any, gets
+                                    #       a new sibling version from OC.
                                     existing_version = await page.query_selector(
                                         'input[type=radio]')
 
-                                    if existing_version:
-                                        # Version exists — set default
-                                        # for this card and move on.
-                                        # Don't re-upload (form
-                                        # definition is shared).
-                                        try:
-                                            await page.locator(
-                                                'input[type=radio]'
-                                            ).first.click(timeout=5000)
-                                        except Exception as e:
-                                            result.warnings.append(
-                                                f"set-default failed for "
-                                                f"{form_name} ({e})")
+                                    if (oid and self.conflict_oids
+                                            and oid.upper() in self.conflict_oids):
+                                        # CONFLICT — don't overwrite.
+                                        if existing_version:
+                                            try:
+                                                await page.locator(
+                                                    'input[type=radio]'
+                                                ).first.click(timeout=5000)
+                                            except Exception as e:
+                                                _es = str(e).lower()
+                                                if ("target crashed" in _es
+                                                        or "browser has been closed" in _es
+                                                        or "browser was disconnected" in _es):
+                                                    raise
+                                                result.warnings.append(
+                                                    f"set-default (conflict) "
+                                                    f"failed for {form_name} "
+                                                    f"({e})")
+                                        else:
+                                            # Conflict declared but no
+                                            # radio visible on panel.
+                                            # Could be propagation lag.
+                                            print(f"[publisher] CONFLICT "
+                                                  f"{form_name} (OID={oid}) "
+                                                  f"declared but no "
+                                                  f"version visible on "
+                                                  f"panel — skipping "
+                                                  f"set-default",
+                                                  flush=True)
+                                        result.conflicts.append(
+                                            f"{form_name} (OID={oid})")
                                         result.forms_uploaded += 1
-                                        print(f"[publisher] {form_name} "
-                                              f"(OID={oid}) already has "
-                                              f"a version — set default",
+                                        print(f"[publisher] CONFLICT: "
+                                              f"{form_name} (OID={oid}) "
+                                              f"was manually edited in "
+                                              f"OC after last pipeline "
+                                              f"upload — skipping upload, "
+                                              f"human review required",
                                               flush=True)
                                     else:
-                                        # No version yet — upload.
+                                        # NO CONFLICT — always upload the
+                                        # current build (whether or not an
+                                        # existing version is present).
                                         xlsx_path = xlsx_map.get(oid)
                                         if not xlsx_path:
                                             print(f"[publisher] Skipping "
@@ -661,11 +712,11 @@ class FormPublisher:
                                                   f"xlsx in EDC zip",
                                                   flush=True)
                                         else:
-                                            # If we already uploaded
-                                            # this OID this session, OC
-                                            # backend may not have
-                                            # surfaced the version yet.
-                                            # Wait briefly, re-check.
+                                            # If we already uploaded this
+                                            # OID this session, OC backend
+                                            # may not have surfaced the
+                                            # version yet. Wait briefly,
+                                            # re-check.
                                             if oid in session_uploaded_oids:
                                                 await page.wait_for_timeout(5000)
                                                 recheck = await page.query_selector(
@@ -885,6 +936,7 @@ async def publish_forms_to_openclinica(
     headless: bool = True,
     user_email: Optional[str] = None,
     allowed_card_ids: Optional[set] = None,
+    conflict_oids: Optional[set] = None,
 ) -> FormPublishResult:
     """Thin wrapper around FormPublisher.publish_all_forms.
 
@@ -904,5 +956,6 @@ async def publish_forms_to_openclinica(
         headless=headless,
         user_email=user_email,
         allowed_card_ids=allowed_card_ids,
+        conflict_oids=conflict_oids,
     )
     return await publisher.publish_all_forms(study_url, edc_zip_url)
