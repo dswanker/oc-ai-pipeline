@@ -1599,12 +1599,22 @@ async def _publish_study_version(
     return r.json()
 
 
-async def publish_to_test(item_id):
+async def publish_to_test(item_id, uploaded_oids=None):
     """Entry point invoked by main.py's safe_run_publish background task.
 
     See the section comment above for the full flow. This function never
     raises — every failure path is captured into Published Status="Failed"
     and append_log() so the operator sees what went wrong on the monday row.
+
+    Args:
+        item_id: monday item id (string-coerced).
+        uploaded_oids: Optional iterable of form OIDs that were just
+            uploaded by the publisher in THIS session. Used to suppress
+            false "missing version" reports in the pre-flight when OC's
+            REST API hasn't yet propagated the newly-uploaded versions.
+            Pass None (default) when calling from a context where no
+            recent upload happened (e.g. webhook button click much
+            later) — propagation delay is irrelevant by then.
     """
     item_id = str(item_id)
 
@@ -1698,6 +1708,26 @@ async def publish_to_test(item_id):
             _all_versions_ok, _missing_versions = (
                 await _check_board_form_versions(
                     oc_subdomain, _board_id, is_production=False))
+
+            # Trust just-uploaded OIDs: if the caller told us which
+            # forms the publisher uploaded in this session, suppress
+            # any "missing version" reports for those — OC's REST API
+            # has propagation delay and may not yet show the new
+            # versions even though the publisher confirmed upload.
+            if uploaded_oids:
+                _trusted = {oid.upper() for oid in uploaded_oids}
+                _before = len(_missing_versions)
+                _missing_versions = [
+                    (fn, foid) for fn, foid in _missing_versions
+                    if (foid or "").upper() not in _trusted
+                ]
+                _suppressed = _before - len(_missing_versions)
+                if _suppressed:
+                    print(f"[publish-preflight] Suppressed "
+                          f"{_suppressed} missing-version report(s) "
+                          f"for OIDs uploaded this session "
+                          f"(REST API propagation delay)",
+                          flush=True)
 
             # Emit per-form log lines for each category.
             for _foid in _missing_from_board:
@@ -3486,9 +3516,21 @@ async def run_pipeline(item_id):
                                     .get("text") == "v")
 
                 if publish_checked:
+                    # Forward the just-uploaded OIDs to publish_to_test so
+                    # its pre-flight doesn't false-positive on the OC REST
+                    # API's propagation delay for newly-uploaded versions.
+                    # Defensive locals() lookup: forms_publish is only set
+                    # if Chain D ran, which depends on create_study+...
+                    _fp = locals().get("forms_publish")
+                    _uploaded_oids = None
+                    if isinstance(_fp, dict):
+                        _uploaded_oids = set(_fp.get("uploaded_oids") or [])
                     print(f"[auto-publish] Publish to Test checkbox is "
-                          f"checked — starting publish", flush=True)
-                    await publish_to_test(item_id)
+                          f"checked — starting publish "
+                          f"(trusting {len(_uploaded_oids or [])} "
+                          f"just-uploaded OIDs)", flush=True)
+                    await publish_to_test(
+                        item_id, uploaded_oids=_uploaded_oids)
 
                 if load_uat_checked:
                     print(f"[auto-uat] Load UAT checkbox is checked — "

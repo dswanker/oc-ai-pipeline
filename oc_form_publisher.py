@@ -81,6 +81,12 @@ class FormPublishResult:
     # affect `success`; the upload itself succeeded, only the post-upload
     # default-selection step (which is incomplete in v1) is reported here.
     warnings: List[str] = field(default_factory=list)
+    # Form OIDs the publisher successfully uploaded (or confirmed
+    # already-versioned) during THIS session. The pre-flight in
+    # publish_to_test reads this to suppress false "missing version"
+    # alerts from the OC REST API — that API has propagation delay and
+    # may not yet reflect just-uploaded forms.
+    uploaded_oids: List[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -326,6 +332,13 @@ class FormPublisher:
                     # radio button may not appear on the next card for the
                     # same form within 60 seconds of the first upload.
                     session_uploaded_oids: set = set()
+                    # Track OIDs confirmed to have a version this session
+                    # (either pre-existing OR just uploaded). When a card's
+                    # OID is in this set, the publisher takes a FAST PATH:
+                    # short panel-wait + set-default + close (~5s) instead
+                    # of the full open-check-upload cycle (~25s). Knowing
+                    # the OID upfront comes from cardOidMap built above.
+                    confirmed_versioned_oids: set = set()
 
                     # Board cards render asynchronously after networkidle.
                     # Wait up to 30s for at least one minicard to appear
@@ -382,6 +395,21 @@ class FormPublisher:
                                 });
                             } catch(e) {}
 
+                            // Build cardId -> formOcoid map from Meteor's
+                            // client-side Cards collection. Lets the
+                            // Python loop branch fast-vs-full path WITHOUT
+                            // having to open each panel first to read OID.
+                            // Falls back to {} if the collection isn't
+                            // accessible — the loop then treats every
+                            // card as needing full processing.
+                            let cardOidMap = {};
+                            try {
+                                Cards.find({archived: false}).forEach(c => {
+                                    if (c._id) cardOidMap[c._id] =
+                                        (c.formOcoid || '').toUpperCase();
+                                });
+                            } catch(e) {}
+
                             return [...document.querySelectorAll('.js-minicard')]
                                 .filter(el => {
                                     // If we have archived list data, skip cards in
@@ -399,10 +427,20 @@ class FormPublisher:
                                     }
                                     return true;
                                 })
-                                .map(el => ({
-                                    name: (el.innerText || '').trim(),
-                                    href: el.getAttribute('href') || ''
-                                }))
+                                .map(el => {
+                                    const href = el.getAttribute('href') || '';
+                                    // Extract Meteor card _id — last
+                                    // non-empty path segment of href.
+                                    const parts = href.split('/').filter(s => s);
+                                    const cardId = parts.length
+                                        ? parts[parts.length - 1] : '';
+                                    return {
+                                        name: (el.innerText || '').trim(),
+                                        href: href,
+                                        card_id: cardId,
+                                        form_oid: cardOidMap[cardId] || '',
+                                    };
+                                })
                                 .filter(c => c.name)
                         }
                     """)
@@ -449,6 +487,84 @@ class FormPublisher:
                             while True:
                                 attempts += 1
                                 try:
+                                    # FAST PATH: this card's form is
+                                    # already confirmed versioned (either
+                                    # uploaded earlier this session or
+                                    # pre-existing). Skip the full
+                                    # open-check-upload cycle — just
+                                    # click the card, wait briefly,
+                                    # click the radio, close. Requires
+                                    # knowing the OID upfront via the
+                                    # Meteor Cards collection (captured
+                                    # into card['form_oid']). If we
+                                    # don't have it, fall through to
+                                    # the full path.
+                                    pre_oid = (card.get('form_oid')
+                                               or '').upper()
+                                    if pre_oid and pre_oid in confirmed_versioned_oids:
+                                        # Clear overlay (cheap).
+                                        try:
+                                            await page.evaluate(
+                                                "document.querySelectorAll('.board-overlay')"
+                                                ".forEach(el => el.remove())")
+                                            await page.wait_for_timeout(200)
+                                        except Exception:
+                                            pass
+
+                                        # Click the minicard.
+                                        if card_href:
+                                            await page.locator(
+                                                f'.js-minicard[href="{card_href}"]'
+                                            ).click()
+                                        else:
+                                            await page.locator('.js-minicard').filter(
+                                                has_text=form_name).first.click()
+                                        # Short wait — version exists so
+                                        # the radio renders fast (not
+                                        # the 8s the full path takes).
+                                        await page.wait_for_timeout(500)
+
+                                        # Wait for the radio (cap 5s).
+                                        try:
+                                            await page.wait_for_selector(
+                                                'input[type=radio]',
+                                                timeout=5000)
+                                        except Exception as _re:
+                                            _res = str(_re).lower()
+                                            if ("target crashed" in _res
+                                                    or "browser has been closed" in _res
+                                                    or "browser was disconnected" in _res):
+                                                raise
+                                            print(f"[publisher] FAST "
+                                                  f"radio wait timeout "
+                                                  f"for {form_name} "
+                                                  f"(OID={pre_oid}): "
+                                                  f"{_re}", flush=True)
+
+                                        # Set default for this card.
+                                        try:
+                                            await page.locator(
+                                                'input[type=radio]'
+                                            ).first.click(timeout=5000)
+                                        except Exception as e:
+                                            _es = str(e).lower()
+                                            if ("target crashed" in _es
+                                                    or "browser has been closed" in _es
+                                                    or "browser was disconnected" in _es):
+                                                raise
+                                            result.warnings.append(
+                                                f"set-default (fast) "
+                                                f"failed for {form_name} "
+                                                f"({e})")
+                                        result.forms_uploaded += 1
+                                        print(f"[publisher] FAST "
+                                              f"set-default {form_name} "
+                                              f"(OID={pre_oid})",
+                                              flush=True)
+                                        break
+
+                                    # FULL PATH — first encounter of
+                                    # this OID OR OID not pre-known.
                                     # Force-clear any stuck board overlay
                                     # before clicking. The overlay can
                                     # become permanently stuck (e.g.
@@ -588,6 +704,8 @@ class FormPublisher:
                                                           f"propagated",
                                                           flush=True)
                                                     result.forms_uploaded += 1
+                                                if oid:
+                                                    confirmed_versioned_oids.add(oid)
                                                 break
 
                                             await page.set_input_files(
@@ -620,6 +738,11 @@ class FormPublisher:
                                                   f"{form_name} "
                                                   f"(OID={oid})",
                                                   flush=True)
+                                    # Mark this OID as confirmed
+                                    # versioned so subsequent cards for
+                                    # the same form take the FAST PATH.
+                                    if oid:
+                                        confirmed_versioned_oids.add(oid)
                                     break  # success — exit retry loop
                                 except Exception as e:
                                     _err = str(e).lower()
@@ -688,6 +811,10 @@ class FormPublisher:
                 finally:
                     await browser.close()
 
+            # Expose the per-session set of uploaded OIDs so callers can
+            # tell publish_to_test "trust these even if the OC REST API
+            # doesn't show their versions yet" (propagation delay).
+            result.uploaded_oids = sorted(session_uploaded_oids)
             result.success = (result.forms_uploaded == result.forms_total
                               and not result.errors)
             return result
