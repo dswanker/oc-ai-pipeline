@@ -366,6 +366,15 @@ class FormPublisher:
                     except Exception:
                         pass  # evaluate will return empty; logged below
 
+                    # Capture the board URL now that the board has rendered
+                    # — the FAST(JS) URL-nav fallback navigates away to a
+                    # specific card and tears down the Meteor minimongo
+                    # context for the page. Subsequent FAST(JS) attempts
+                    # then fail with "Cards/Meteor not in window scope".
+                    # We restore this URL after each fallback so the next
+                    # card's JS path has Meteor available again.
+                    board_url = page.url
+
                     # DIAGNOSTIC: log first 5 .js-list containers' classes
                     # + attributes so we can identify how archived vs
                     # active lists differ in the DOM (without needing the
@@ -558,8 +567,15 @@ class FormPublisher:
                                                 if (!versionId) {
                                                     return { ok: false,
                                                              reason: 'no version id found',
-                                                             versionKeys: Object.keys(card.versions[0]) };
+                                                             versionKeys: Object.keys(card.versions[0]),
+                                                             versionObj: JSON.stringify(card.versions[0]) };
                                                 }
+                                                const versionObj = card.versions[0];
+                                                const cardFields = {
+                                                    currentVersion: card.currentVersion,
+                                                    defaultVersion: card.defaultVersion,
+                                                    _version: card._version,
+                                                };
                                                 return await new Promise((resolve) => {
                                                     Meteor.call('/cards/update',
                                                         { _id: cardId },
@@ -569,11 +585,15 @@ class FormPublisher:
                                                             if (err) resolve({
                                                                 ok: false,
                                                                 reason: String(err.message || err),
-                                                                versionId: versionId
+                                                                versionId: versionId,
+                                                                versionObj: versionObj,
+                                                                cardFields: cardFields
                                                             });
                                                             else resolve({
                                                                 ok: true,
-                                                                versionId: versionId
+                                                                versionId: versionId,
+                                                                versionObj: versionObj,
+                                                                cardFields: cardFields
                                                             });
                                                         });
                                                 });
@@ -589,7 +609,11 @@ class FormPublisher:
                                                   f"{form_name} "
                                                   f"(OID={pre_oid}, "
                                                   f"versionId="
-                                                  f"{js_result.get('versionId')})",
+                                                  f"{js_result.get('versionId')}, "
+                                                  f"versionObj="
+                                                  f"{js_result.get('versionObj')}, "
+                                                  f"cardFields="
+                                                  f"{js_result.get('cardFields')})",
                                                   flush=True)
                                             break
 
@@ -600,11 +624,20 @@ class FormPublisher:
                                         reason = (js_result.get('reason')
                                                   if isinstance(js_result, dict)
                                                   else str(js_result))
+                                        _diag = ""
+                                        if isinstance(js_result, dict):
+                                            _diag = (
+                                                f" versionObj="
+                                                f"{js_result.get('versionObj')}"
+                                                f" cardFields="
+                                                f"{js_result.get('cardFields')}"
+                                                f" versionKeys="
+                                                f"{js_result.get('versionKeys')}")
                                         print(f"[publisher] FAST(JS) failed "
                                               f"for {form_name} "
-                                              f"(OID={pre_oid}): {reason} — "
-                                              f"falling back to URL nav",
-                                              flush=True)
+                                              f"(OID={pre_oid}): {reason}"
+                                              f"{_diag} — falling back to "
+                                              f"URL nav", flush=True)
 
                                         if card_href:
                                             abs_url = await page.evaluate(
@@ -660,6 +693,36 @@ class FormPublisher:
                                         print(f"[publisher] FAST(fallback) "
                                               f"set-default {form_name} "
                                               f"(OID={pre_oid})", flush=True)
+
+                                        # Restore board context before the
+                                        # next card's FAST(JS) attempt. The
+                                        # page.goto(card_url) above tore
+                                        # down minimongo for this page; if
+                                        # we don't return to the board, the
+                                        # next card hits "Cards/Meteor not
+                                        # in window scope" and every
+                                        # remaining card falls back too —
+                                        # the original failure cascades.
+                                        try:
+                                            await page.goto(
+                                                board_url,
+                                                wait_until="domcontentloaded")
+                                            # 2s settle when the prior
+                                            # failure was specifically that
+                                            # Meteor hadn't initialized —
+                                            # gives the client time to
+                                            # boot before the next JS call.
+                                            if ("Cards/Meteor not in "
+                                                    "window scope"
+                                                    in str(reason)):
+                                                await page.wait_for_timeout(
+                                                    2000)
+                                        except Exception as _ne:
+                                            print(f"[publisher] FAST"
+                                                  f"(fallback) board "
+                                                  f"restore failed for "
+                                                  f"{form_name}: {_ne}",
+                                                  flush=True)
                                         break
 
                                     # FULL PATH — first encounter of
