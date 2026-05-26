@@ -2811,13 +2811,24 @@ async def run_pipeline(item_id):
                 await append_log(item_id, "Could not extract JSON from edited XLSX — running fresh analysis.")
 
         # ── Path M: Source EDC Export (migration) ─────────────────────────────
-        # Customer uploaded an ODM XML (optionally inside a ZIP) to the
-        # Source EDC Export column. Run it through validate → parse →
-        # transform to produce struct_json, replacing the EDC_STRUCTURE_PROMPT
-        # branch below (which is gated by `struct_json is None`).
-        # Migration also uploads the Study Spec JSON to COL["spec_json"]
-        # itself, so no spec_json_upload_task wiring is needed here.
-        if struct_json is None and source_edc_export_bytes:
+        # Routing trigger: the AI Study Hub board's path-label column
+        # `label__1` must read "Migration". Migration is authoritative —
+        # we no longer fall back to "did a file get uploaded" because
+        # operators were occasionally attaching ODMs to non-migration
+        # rows and getting silently routed into Path M. Both label AND
+        # file are required; label without file is a hard error.
+        _migration_post_build_state: dict | None = None
+        _study_path_label = (cols.get("label__1") or {}).get("text", "") or ""
+        _is_migration_label = _study_path_label.strip().lower() == "migration"
+        if struct_json is None and _is_migration_label:
+            if not source_edc_export_bytes:
+                msg = ("Migration label set but no file on Source EDC "
+                       "Export column — upload an ODM XML (or ZIP) and "
+                       "re-trigger.")
+                print(f"Path M FAIL: {msg}", flush=True)
+                await append_log(item_id, msg)
+                await set_status(item_id, COL["pipeline_status"], STATUS["failed"])
+                return
             # protocol_bytes may be a real PDF, the b"%%DOCX_TEXT%%"-marked
             # text fallback from Word docs, or b""/None. run_migration
             # accepts all three: it routes truthy bytes into enrichment
@@ -2840,6 +2851,14 @@ async def run_pipeline(item_id):
                 await append_log(item_id, msg)
                 await set_status(item_id, COL["pipeline_status"], STATUS["failed"])
                 return
+            # Stash what the post-build gap-analysis hook will need so we
+            # don't have to re-parse the ODM later in run_pipeline.
+            _migration_post_build_state = {
+                "odm_metadata":       mig_result.get("odm_metadata"),
+                "source_system":      mig_result.get("source_system"),
+                "source_odm_bytes":   mig_result.get("source_odm_bytes"),
+                "source_odm_filename": mig_result.get("source_odm_filename"),
+            }
             # On success, fetch the freshly-uploaded Study Spec JSON so
             # downstream stages see the same in-memory struct.
             spec_bytes = await download_column_file(item_id, COL["spec_json"])
@@ -3717,6 +3736,35 @@ async def run_pipeline(item_id):
                 set_status(item_id, COL["pipeline_status"], final_status),
                 append_log(item_id, final_log),
             )
+
+            # ── Migration post-build hook: gap analysis + Migrations Hub upsert ──
+            # Runs only when this row was routed through Path M. Wrapped
+            # in try/except so any failure here cannot retroactively fail
+            # a build that has already posted its all_complete / failed
+            # status above. The Migrations Hub row is the long-lived
+            # per-study record; we upsert by study OID, write the gap
+            # report file, and post the Syndeo URL for human review.
+            if _migration_post_build_state and struct_json:
+                try:
+                    from migration_pipeline import run_gap_analysis_and_hub_upsert
+                    await run_gap_analysis_and_hub_upsert(
+                        item_id,
+                        odm_metadata=_migration_post_build_state[
+                            "odm_metadata"],
+                        spec_json=struct_json,
+                        source_system=_migration_post_build_state[
+                            "source_system"] or "UNKNOWN",
+                        source_odm_bytes=_migration_post_build_state.get(
+                            "source_odm_bytes"),
+                        source_odm_filename=_migration_post_build_state.get(
+                            "source_odm_filename"),
+                    )
+                except Exception as _ga_exc:
+                    # Non-fatal — the per-step error handling inside the
+                    # helper already logs to monday. Belt-and-braces.
+                    print(f"[gap-analysis] post-build hook crashed "
+                          f"(non-fatal): {type(_ga_exc).__name__}: "
+                          f"{_ga_exc}", flush=True)
 
             # ── Auto-trigger post-completion actions if checkboxes checked ──
             # The /webhook/publish_test handler only fires when the checkbox

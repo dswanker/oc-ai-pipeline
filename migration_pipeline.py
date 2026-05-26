@@ -74,7 +74,45 @@ if _MIG_DIR not in sys.path:
 from odm_validator import validate_odm, format_report
 from odm_reader import parse_odm_metadata
 from odm_to_spec import transform, transform_with_ai
+from gap_analysis import run_gap_analysis
 from trainer_integration import create_pending_row, trainer_enabled
+
+
+# ── Migrations AI Hub board — second-board target for gap report + Syndeo ────
+#
+# This board is the long-lived per-study record. A study OID owns exactly one
+# row here for its entire lifecycle; every subsequent run for the same source
+# study UPDATES that row rather than creating a new one. The AI Study Hub
+# board (BOARD_ID, defined in monday_client) is the per-pipeline-run board.
+
+MIGRATIONS_HUB_BOARD_ID = 18414959764
+
+# Column IDs confirmed against the live board. Treat this dict as the source
+# of truth — any new column on the hub goes here, not scattered as literals.
+MIGRATIONS_HUB_COLUMNS: dict[str, str] = {
+    "study_oid":          "text_mm3qqcwc",
+    "source_edc_system":  "dropdown_mm3qpxra",
+    "source_odm_xml":     "file_mm3qcwxm",
+    "target_oc4_xml":     "file_mm3qx4rk",
+    "gap_report":         "file_mm3qcpnr",
+    "syndeo_url":         "link_mm3qqgzk",
+    "pipeline_status":    "color_mm3qby19",
+    "last_pipeline_run":  "date_mm3qyxjq",
+    "notes":              "long_text_mm3qq5vr",
+}
+
+MIGRATIONS_HUB_GROUPS: dict[str, str] = {
+    "awaiting_build":     "topics",
+    "in_flight":          "group_mm3q4xew",
+    "testing":            "group_mm3qvfg1",
+    "production":         "group_mm3qyjen",
+    "complete":           "group_mm3qnzys",
+}
+
+# Syndeo UI fronts the gap report — URL pattern points at THIS board's row,
+# not the AI Study Hub row. Syndeo fetches gap-report file content from the
+# file column on the targeted row.
+SYNDEO_URL_BASE = "https://mapping-ui-production.up.railway.app"
 
 
 # ── ZIP unwrap ────────────────────────────────────────────────────────────────
@@ -202,6 +240,280 @@ def _spec_json_filename(spec_json: dict) -> str:
     protocol = sm.get("protocol_number") or sm.get("protocol") or "Migrated"
     version  = sm.get("protocol_version") or sm.get("version") or "v1"
     return f"{_safe_slug(protocol)}_Study_Specification_{_safe_slug(version)}.json"
+
+
+# ── Migrations AI Hub: row search / create / update ──────────────────────────
+
+async def _find_migrations_hub_row(study_oid: str) -> str | None:
+    """Search the Migrations AI Hub for an existing row with this study OID.
+
+    Returns the item_id (string) of the first match, or None if no row
+    exists yet. Uses Monday's items_page_by_column_values which scales
+    to large boards better than fetching all rows. Fails open (returns
+    None) on any API hiccup — caller's upsert logic will fall through
+    to create, which is the right behavior if our search couldn't see
+    a row that does exist (worst case: a duplicate that the operator
+    resolves manually, vs. a crash blocking the build).
+    """
+    if not study_oid:
+        return None
+    query = """
+    query ($board_id: ID!, $col: String!, $val: [String]!) {
+      items_page_by_column_values(
+        board_id: $board_id,
+        columns: [{column_id: $col, column_values: $val}],
+        limit: 5
+      ) {
+        items { id name }
+      }
+    }
+    """
+    variables = {
+        "board_id": MIGRATIONS_HUB_BOARD_ID,
+        "col":      MIGRATIONS_HUB_COLUMNS["study_oid"],
+        "val":      [study_oid],
+    }
+    try:
+        async with httpx.AsyncClient(timeout=30) as c:
+            r = await c.post(MONDAY_API_URL, headers=get_headers(),
+                             json={"query": query, "variables": variables})
+        if r.status_code != 200:
+            print(f"[migrations-hub] search HTTP {r.status_code}: "
+                  f"{r.text[:200]}", flush=True)
+            return None
+        body = r.json()
+        items = (body.get("data") or {}).get(
+            "items_page_by_column_values", {}
+        ).get("items") or []
+        if items:
+            return str(items[0]["id"])
+        return None
+    except Exception as e:
+        print(f"[migrations-hub] search failed: {e}", flush=True)
+        return None
+
+
+async def _create_migrations_hub_row(
+    study_oid: str, source_system: str,
+) -> str | None:
+    """Create a new row in the Migrations Hub's awaiting_build group.
+
+    Item name = study OID (operator-readable handle). Pre-populates the
+    study_oid text column and source_edc_system dropdown so the row is
+    immediately recognizable in the board UI. Returns the new item_id
+    or None on failure (caller skips the rest of the upsert silently)."""
+    name = study_oid or "MIGRATED_STUDY"
+    column_values = {
+        MIGRATIONS_HUB_COLUMNS["study_oid"]: study_oid or "",
+    }
+    if source_system:
+        column_values[MIGRATIONS_HUB_COLUMNS["source_edc_system"]] = {
+            "labels": [source_system],
+        }
+    query = """
+    mutation ($b: ID!, $g: String!, $n: String!, $cv: JSON!) {
+      create_item(board_id: $b, group_id: $g, item_name: $n,
+                  column_values: $cv) { id }
+    }
+    """
+    variables = {
+        "b":  MIGRATIONS_HUB_BOARD_ID,
+        "g":  MIGRATIONS_HUB_GROUPS["awaiting_build"],
+        "n":  name,
+        "cv": json.dumps(column_values),
+    }
+    try:
+        async with httpx.AsyncClient(timeout=30) as c:
+            r = await c.post(MONDAY_API_URL, headers=get_headers(),
+                             json={"query": query, "variables": variables})
+        _check_monday_response(r, "MIGRATIONS_HUB_CREATE")
+        new_id = (r.json().get("data") or {}).get(
+            "create_item", {}).get("id")
+        print(f"[migrations-hub] created row {new_id} for study "
+              f"OID={study_oid!r} in group=awaiting_build", flush=True)
+        return str(new_id) if new_id else None
+    except Exception as e:
+        print(f"[migrations-hub] create failed: {e}", flush=True)
+        return None
+
+
+async def _update_migrations_hub_row(
+    row_id: str, column_values: dict,
+) -> None:
+    """Apply a multi-column update in one mutation. column_values is the
+    Monday wire-format dict (string column → string label, link column →
+    {"url", "text"}, date column → {"date"}, etc.). No-op if row_id is
+    falsy or column_values is empty."""
+    if not row_id or not column_values:
+        return
+    query = """
+    mutation ($b: ID!, $i: ID!, $cv: JSON!) {
+      change_multiple_column_values(
+        board_id: $b, item_id: $i, column_values: $cv) { id }
+    }
+    """
+    variables = {
+        "b":  MIGRATIONS_HUB_BOARD_ID,
+        "i":  row_id,
+        "cv": json.dumps(column_values),
+    }
+    async with httpx.AsyncClient(timeout=30) as c:
+        r = await c.post(MONDAY_API_URL, headers=get_headers(),
+                         json={"query": query, "variables": variables})
+    _check_monday_response(r, "MIGRATIONS_HUB_UPDATE")
+
+
+async def _upload_to_migrations_hub_file_col(
+    row_id: str, col_id: str, filename: str, content: bytes,
+) -> None:
+    """Upload `content` as `filename` to a file column on the hub board.
+
+    Reuses the project's upload_file helper but targets the hub board's
+    row instead of the AI Study Hub row. upload_file takes item_id +
+    column_id; the board_id is implicit per-mutation."""
+    await upload_file(row_id, col_id, filename, content)
+
+
+async def run_gap_analysis_and_hub_upsert(
+    item_id,
+    odm_metadata: dict,
+    spec_json: dict,
+    source_system: str,
+    source_odm_bytes: bytes | None = None,
+    source_odm_filename: str | None = None,
+) -> dict | None:
+    """Non-blocking post-build hook: run gap analysis, upsert the
+    Migrations AI Hub row, upload the gap report, write the Syndeo URL.
+
+    Designed to never raise — every step is wrapped in try/except and
+    the build's success status is unaffected by failures here. Returns
+    the gap report dict on success (so callers can log/inspect) or
+    None on any failure.
+
+    Idempotency: re-running for the same study OID updates the existing
+    hub row (uses MIGRATIONS_HUB_COLUMNS["study_oid"] as the dedup key).
+    The gap report file column is overwritten on every run — the JSON
+    carries `generated_at` so history can be reconstructed from prior
+    monday revisions if needed.
+    """
+    import datetime as _dt
+
+    try:
+        report = run_gap_analysis(odm_metadata, spec_json, source_system)
+    except Exception as e:
+        print(f"[gap-analysis] generation failed (non-fatal): "
+              f"{type(e).__name__}: {e}", flush=True)
+        try:
+            await append_log(
+                item_id,
+                f"Gap analysis failed (non-fatal): "
+                f"{type(e).__name__}: {e}",
+            )
+        except Exception:
+            pass
+        return None
+
+    study_oid = report.get("source_study_oid") or ""
+    summary   = report.get("summary", {}) or {}
+    print(f"[gap-analysis] generated report for study_oid={study_oid!r}: "
+          f"total={summary.get('total')} clean={summary.get('clean')} "
+          f"warning={summary.get('warning')} "
+          f"data_loss_risk={summary.get('data_loss_risk')} "
+          f"blocking={summary.get('blocking')} "
+          f"unmapped={summary.get('unmapped')}", flush=True)
+
+    # ── Upsert row on Migrations AI Hub ────────────────────────────────
+    hub_row_id = await _find_migrations_hub_row(study_oid)
+    if hub_row_id is None:
+        hub_row_id = await _create_migrations_hub_row(study_oid, source_system)
+    else:
+        print(f"[migrations-hub] reusing existing row {hub_row_id} for "
+              f"study_oid={study_oid!r}", flush=True)
+
+    if not hub_row_id:
+        print("[migrations-hub] no row available — skipping uploads "
+              "(report still generated and logged above)", flush=True)
+        return report
+
+    # Status + date + Syndeo URL go in a single multi-column update.
+    syndeo_url = f"{SYNDEO_URL_BASE}?item_id={hub_row_id}"
+    today = _dt.date.today().isoformat()
+    hub_updates: dict[str, Any] = {
+        MIGRATIONS_HUB_COLUMNS["pipeline_status"]: {
+            "label": "Gap Analysis Complete",
+        },
+        MIGRATIONS_HUB_COLUMNS["last_pipeline_run"]: {"date": today},
+        MIGRATIONS_HUB_COLUMNS["syndeo_url"]: {
+            "url": syndeo_url, "text": "Open in Syndeo",
+        },
+    }
+    if source_system:
+        hub_updates[MIGRATIONS_HUB_COLUMNS["source_edc_system"]] = {
+            "labels": [source_system],
+        }
+    try:
+        await _update_migrations_hub_row(hub_row_id, hub_updates)
+    except Exception as e:
+        print(f"[migrations-hub] column update failed (non-fatal): "
+              f"{e}", flush=True)
+
+    # Upload the gap report JSON. Overwrites prior versions for this row.
+    try:
+        gap_filename = (
+            f"{study_oid or 'Migrated'}_Gap_Report_"
+            f"{report['generated_at'][:10]}.json"
+        )
+        gap_bytes = json.dumps(report, indent=2, default=str).encode("utf-8")
+        await _upload_to_migrations_hub_file_col(
+            hub_row_id,
+            MIGRATIONS_HUB_COLUMNS["gap_report"],
+            gap_filename,
+            gap_bytes,
+        )
+        print(f"[migrations-hub] uploaded {gap_filename} "
+              f"({len(gap_bytes)} bytes) → row {hub_row_id}", flush=True)
+    except Exception as e:
+        print(f"[migrations-hub] gap-report upload failed (non-fatal): "
+              f"{e}", flush=True)
+
+    # Optionally mirror the source ODM XML onto the hub row — only on
+    # the FIRST run for this study OID, since the source is immutable
+    # and re-uploading on every run wastes Monday storage. We detect
+    # "first run" as "the file column is currently empty".
+    if source_odm_bytes:
+        try:
+            existing = await list_column_filenames(
+                hub_row_id, MIGRATIONS_HUB_COLUMNS["source_odm_xml"],
+            )
+            if not existing:
+                fname = source_odm_filename or f"{study_oid or 'source'}.xml"
+                await _upload_to_migrations_hub_file_col(
+                    hub_row_id,
+                    MIGRATIONS_HUB_COLUMNS["source_odm_xml"],
+                    fname, source_odm_bytes,
+                )
+                print(f"[migrations-hub] mirrored source ODM {fname} "
+                      f"({len(source_odm_bytes)} bytes) → row "
+                      f"{hub_row_id}", flush=True)
+        except Exception as e:
+            print(f"[migrations-hub] source-ODM mirror failed (non-fatal): "
+                  f"{e}", flush=True)
+
+    try:
+        await append_log(
+            item_id,
+            f"Gap analysis complete: "
+            f"{summary.get('clean', 0)} clean, "
+            f"{summary.get('warning', 0)} warning, "
+            f"{summary.get('data_loss_risk', 0)} data-loss-risk, "
+            f"{summary.get('blocking', 0)} blocking, "
+            f"{summary.get('unmapped', 0)} unmapped. "
+            f"Open in Syndeo: {syndeo_url}",
+        )
+    except Exception:
+        pass
+
+    return report
 
 
 # ── Public entry point ───────────────────────────────────────────────────────
@@ -426,6 +738,13 @@ async def run_migration(
             "codelists":   len(odm_study.get("codelists", [])),
         },
         "spec_json_bytes": len(spec_bytes),
+        # Post-build hooks (gap analysis, Migrations Hub upsert) need the
+        # parsed ODM dict and the raw bytes. Carry them in the result
+        # rather than re-parsing in pipeline.py.
+        "odm_metadata":    odm_study,
+        "spec_json":       spec_json,
+        "source_odm_bytes":    raw,
+        "source_odm_filename": source_name,
     }
 
 
