@@ -489,6 +489,7 @@ class FormPublisher:
                     for card in minicard_cards:
                         form_name = card['name']
                         card_href = card['href']
+                        card_meteor_id = (card.get('card_id') or '').strip()
 
                         # Browser-crash recovery: wrap the per-card work
                         # in a 2-attempt retry loop. If Playwright surfaces
@@ -517,38 +518,101 @@ class FormPublisher:
                                     # the full path.
                                     pre_oid = (card.get('form_oid')
                                                or '').upper()
-                                    if pre_oid and pre_oid in confirmed_versioned_oids:
-                                        # Clear overlay (cheap).
-                                        try:
-                                            await page.evaluate(
-                                                "document.querySelectorAll('.board-overlay')"
-                                                ".forEach(el => el.remove())")
-                                            await page.wait_for_timeout(200)
-                                        except Exception:
-                                            pass
+                                    if (pre_oid
+                                            and pre_oid in confirmed_versioned_oids
+                                            and card_meteor_id):
+                                        # FAST PATH (JS injection): the DDP
+                                        # probe showed the radio click is
+                                        # handled client-side — no DDP
+                                        # method fires from the click alone.
+                                        # Replicate the underlying state
+                                        # change by calling Meteor's
+                                        # collection update method directly,
+                                        # skipping the panel-open + radio-
+                                        # render propagation lag (~17s →
+                                        # <1s per repeat card). The radio's
+                                        # HTML name attribute is "_version",
+                                        # so that's the Cards field we $set.
+                                        js_result = await page.evaluate(
+                                            """
+                                            async (cardId) => {
+                                                if (typeof Cards === 'undefined'
+                                                        || typeof Meteor === 'undefined') {
+                                                    return { ok: false,
+                                                             reason: 'Cards/Meteor not in window scope' };
+                                                }
+                                                const card = Cards.findOne(cardId);
+                                                if (!card) {
+                                                    return { ok: false,
+                                                             reason: 'card not in minimongo' };
+                                                }
+                                                if (!Array.isArray(card.versions)
+                                                        || card.versions.length === 0) {
+                                                    return { ok: false,
+                                                             reason: 'card has no versions',
+                                                             keys: Object.keys(card) };
+                                                }
+                                                const versionId = card.versions[0]._id;
+                                                return await new Promise((resolve) => {
+                                                    Meteor.call('/cards/update',
+                                                        { _id: cardId },
+                                                        { $set: { _version: versionId } },
+                                                        {},
+                                                        (err) => {
+                                                            if (err) resolve({
+                                                                ok: false,
+                                                                reason: String(err.message || err),
+                                                                versionId: versionId
+                                                            });
+                                                            else resolve({
+                                                                ok: true,
+                                                                versionId: versionId
+                                                            });
+                                                        });
+                                                });
+                                            }
+                                            """,
+                                            card_meteor_id)
 
-                                        # Click the minicard.
+                                        if (isinstance(js_result, dict)
+                                                and js_result.get('ok')):
+                                            result.forms_uploaded += 1
+                                            print(f"[publisher] FAST(JS) "
+                                                  f"set-default "
+                                                  f"{form_name} "
+                                                  f"(OID={pre_oid}, "
+                                                  f"versionId="
+                                                  f"{js_result.get('versionId')})",
+                                                  flush=True)
+                                            break
+
+                                        # JS approach failed — log details
+                                        # and fall back to URL navigation
+                                        # (still skips minicard-click
+                                        # animation + 8s panel-open wait).
+                                        reason = (js_result.get('reason')
+                                                  if isinstance(js_result, dict)
+                                                  else str(js_result))
+                                        print(f"[publisher] FAST(JS) failed "
+                                              f"for {form_name} "
+                                              f"(OID={pre_oid}): {reason} — "
+                                              f"falling back to URL nav",
+                                              flush=True)
+
                                         if card_href:
-                                            await page.locator(
-                                                f'.js-minicard[href="{card_href}"]'
-                                            ).click()
+                                            abs_url = await page.evaluate(
+                                                "(href) => new URL(href, "
+                                                "window.location).toString()",
+                                                card_href)
+                                            await page.goto(
+                                                abs_url,
+                                                wait_until="domcontentloaded")
                                         else:
-                                            await page.locator('.js-minicard').filter(
-                                                has_text=form_name).first.click()
-                                        # Short wait — version exists so
-                                        # the radio renders fast (not
-                                        # the 8s the full path takes).
-                                        await page.wait_for_timeout(500)
+                                            await page.locator(
+                                                '.js-minicard').filter(
+                                                has_text=form_name
+                                            ).first.click()
 
-                                        # Wait for the radio. Bump
-                                        # timeout to 15s if this OID
-                                        # was uploaded earlier this
-                                        # session — OC's backend has
-                                        # propagation lag for newly-
-                                        # uploaded versions, and 5s
-                                        # was consistently timing out
-                                        # on the second-through-Nth
-                                        # cards of just-uploaded forms.
                                         _radio_timeout = (
                                             15000
                                             if pre_oid in session_uploaded_oids
@@ -564,15 +628,13 @@ class FormPublisher:
                                                     or "browser has been closed" in _res
                                                     or "browser was disconnected" in _res):
                                                 raise
-                                            print(f"[publisher] FAST "
-                                                  f"radio wait timeout "
-                                                  f"for {form_name} "
-                                                  f"(OID={pre_oid}, "
-                                                  f"timeout="
+                                            print(f"[publisher] FAST(fallback) "
+                                                  f"radio wait timeout for "
+                                                  f"{form_name} (OID="
+                                                  f"{pre_oid}, timeout="
                                                   f"{_radio_timeout}ms): "
                                                   f"{_re}", flush=True)
 
-                                        # Set default for this card.
                                         try:
                                             await page.locator(
                                                 'input[type=radio]'
@@ -584,14 +646,13 @@ class FormPublisher:
                                                     or "browser was disconnected" in _es):
                                                 raise
                                             result.warnings.append(
-                                                f"set-default (fast) "
-                                                f"failed for {form_name} "
-                                                f"({e})")
+                                                f"set-default "
+                                                f"(fast-fallback) failed "
+                                                f"for {form_name} ({e})")
                                         result.forms_uploaded += 1
-                                        print(f"[publisher] FAST "
+                                        print(f"[publisher] FAST(fallback) "
                                               f"set-default {form_name} "
-                                              f"(OID={pre_oid})",
-                                              flush=True)
+                                              f"(OID={pre_oid})", flush=True)
                                         break
 
                                     # FULL PATH — first encounter of

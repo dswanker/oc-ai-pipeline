@@ -1787,17 +1787,33 @@ async def _publish_study_version(
     if description:
         body["description"] = description
 
-    async with httpx.AsyncClient(timeout=60) as c:
-        r = await c.post(url, headers={
-            "Authorization": f"Bearer {token}",
-            "Content-Type":  "application/json",
-        }, json=body)
-    print(f"OC Publish API: {r.status_code} {r.text[:300]}", flush=True)
-    if r.status_code not in (200, 201):
+    # Retry on the "No form version defined" 400 — OC's REST API can take
+    # tens of seconds to surface form versions uploaded moments earlier,
+    # so the publish call races against propagation. Any other 400 (or
+    # other non-2xx) raises immediately — those are real failures.
+    max_retries = 3
+    retries_used = 0
+    while True:
+        async with httpx.AsyncClient(timeout=60) as c:
+            r = await c.post(url, headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type":  "application/json",
+            }, json=body)
+        print(f"OC Publish API: {r.status_code} {r.text[:300]}", flush=True)
+        if r.status_code in (200, 201):
+            return r.json()
+        if (r.status_code == 400
+                and "No form version defined" in r.text
+                and retries_used < max_retries):
+            retries_used += 1
+            print(f"[publish] version propagation retry "
+                  f"{retries_used}/{max_retries} — waiting 30s...",
+                  flush=True)
+            await asyncio.sleep(30)
+            continue
         raise RuntimeError(
             f"Publish failed: {r.status_code} {r.text[:300]}"
         )
-    return r.json()
 
 
 async def publish_to_test(item_id, uploaded_oids=None):
