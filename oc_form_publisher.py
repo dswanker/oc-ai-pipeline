@@ -355,6 +355,16 @@ class FormPublisher:
                     # of the full open-check-upload cycle (~25s). Knowing
                     # the OID upfront comes from cardOidMap built above.
                     confirmed_versioned_oids: set = set()
+                    # Track OIDs that have had their per-session FAST(JS)
+                    # warmup wait applied. Just-uploaded forms (OID in
+                    # session_uploaded_oids) need ~15s for the Meteor
+                    # client to ingest the new version object into
+                    # minimongo — without the wait, the first FAST(JS)
+                    # attempt fires before Cards.findOne sees `versions`
+                    # and returns "card has no versions", forcing every
+                    # subsequent card for that form into the slower URL-
+                    # nav fallback. One wait per OID, not per card.
+                    fast_path_warmed: set = set()
 
                     # Board cards render asynchronously after networkidle.
                     # Wait up to 30s for at least one minicard to appear
@@ -552,6 +562,33 @@ class FormPublisher:
                                         # The collection stores version
                                         # ids as integers, so we $set the
                                         # raw int (not the string cast).
+
+                                        # Just-uploaded forms need a one-
+                                        # time warmup before the first
+                                        # FAST(JS) attempt — minimongo
+                                        # ingests the new version
+                                        # object async over DDP, and
+                                        # firing Cards.findOne too early
+                                        # returns "card has no versions"
+                                        # which then cascades every
+                                        # subsequent card for this form
+                                        # into the URL-nav fallback.
+                                        # 15s matches the observed
+                                        # propagation window. Skip on
+                                        # repeat encounters (only the
+                                        # FIRST fast-path hit per OID
+                                        # waits).
+                                        if (pre_oid in session_uploaded_oids
+                                                and pre_oid not in fast_path_warmed):
+                                            print(f"[publisher] FAST(JS) "
+                                                  f"warmup wait 15s for "
+                                                  f"{form_name} "
+                                                  f"(OID={pre_oid}) — "
+                                                  f"minimongo propagation",
+                                                  flush=True)
+                                            await page.wait_for_timeout(15000)
+                                            fast_path_warmed.add(pre_oid)
+
                                         js_result = await page.evaluate(
                                             """
                                             async (cardId) => {
@@ -679,10 +716,12 @@ class FormPublisher:
                                                 abs_url,
                                                 wait_until="domcontentloaded")
                                         else:
-                                            await page.locator(
+                                            _mc = page.locator(
                                                 '.js-minicard').filter(
-                                                has_text=form_name
-                                            ).first.click()
+                                                has_text=form_name).first
+                                            await _mc.scroll_into_view_if_needed(
+                                                timeout=5000)
+                                            await _mc.click()
 
                                         _radio_timeout = (
                                             15000
@@ -778,13 +817,25 @@ class FormPublisher:
                                     # name-only would always click the
                                     # first match). Fall back to name
                                     # match if the card had no href.
+                                    # Scroll the card into view before
+                                    # clicking — boards have several
+                                    # columns, late ones (AE/AESAE/CM/DV/
+                                    # DS) live in columns scrolled off-
+                                    # screen and the click times out
+                                    # waiting for the element to become
+                                    # actionable. scroll_into_view_if_needed
+                                    # is a no-op when the card is already
+                                    # visible, so safe to always run.
                                     if card_href:
-                                        await page.locator(
-                                            f'.js-minicard[href="{card_href}"]'
-                                        ).click()
+                                        _mc = page.locator(
+                                            f'.js-minicard[href="{card_href}"]')
                                     else:
-                                        await page.locator('.js-minicard').filter(
-                                            has_text=form_name).first.click()
+                                        _mc = page.locator(
+                                            '.js-minicard').filter(
+                                            has_text=form_name).first
+                                    await _mc.scroll_into_view_if_needed(
+                                        timeout=5000)
+                                    await _mc.click()
                                     await page.wait_for_timeout(8000)
 
                                     # Confirm the panel opened by waiting
