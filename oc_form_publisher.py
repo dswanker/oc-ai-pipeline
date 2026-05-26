@@ -552,7 +552,14 @@ class FormPublisher:
                                                              reason: 'card has no versions',
                                                              keys: Object.keys(card) };
                                                 }
-                                                const versionId = card.versions[0]._id;
+                                                const versionId = card.versions[0]._id
+                                                    || card.versions[0].id
+                                                    || null;
+                                                if (!versionId) {
+                                                    return { ok: false,
+                                                             reason: 'no version id found',
+                                                             versionKeys: Object.keys(card.versions[0]) };
+                                                }
                                                 return await new Promise((resolve) => {
                                                     Meteor.call('/cards/update',
                                                         { _id: cardId },
