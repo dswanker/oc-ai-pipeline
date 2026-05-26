@@ -1,5 +1,6 @@
 from fastapi import FastAPI, Request, BackgroundTasks, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 import hmac, hashlib, json, os, time, traceback, asyncio
 
@@ -10,8 +11,25 @@ from auth_manager import (
     render_instructions_page,
 )
 from monday_client import COL, PIPELINE_CONFIG_ITEM_ID, download_column_file
+from migration_pipeline import MIGRATIONS_HUB_COLUMNS
 
 app = FastAPI()
+
+# CORS — the Syndeo UI (mapping-ui) is a separate Railway service that
+# fetches gap reports from this API via cross-origin XHR. Restricted to
+# the known UI origins; webhook endpoints are server-to-server (Monday)
+# and don't go through CORS preflight.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "https://mapping-ui-production.up.railway.app",
+        "http://localhost:3000",  # CRA dev
+        "http://localhost:5173",  # Vite dev
+    ],
+    allow_credentials=False,
+    allow_methods=["GET"],
+    allow_headers=["*"],
+)
 
 # Add session middleware (required for OAuth state management)
 app.add_middleware(
@@ -34,6 +52,58 @@ LOAD_UAT_CHECKBOX     = "boolean_mm3gxe49"   # "Load UAT Test Data"
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Syndeo UI — gap report fetch
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.get("/api/gap-report/{item_id}")
+async def get_gap_report(item_id: str):
+    """Return the gap-analysis report JSON for a Migrations Hub row.
+
+    Reads the file currently in the gap_report file column
+    (file_mm3qcpnr) on the Migrations AI Hub board for the given item_id,
+    downloads its bytes, parses as JSON, and returns to the browser.
+
+    The Migrations Hub row is the long-lived per-study record produced
+    by migration_pipeline.run_gap_analysis_and_hub_upsert — the file
+    on this column is overwritten on every pipeline run for that study,
+    so this endpoint always serves the latest version. Each report has
+    a `generated_at` ISO timestamp inside it for client-side staleness
+    checks.
+
+    Errors:
+      404 — column empty (pipeline hasn't run gap analysis yet, or
+            item_id points at a row on a different board).
+      500 — Monday API failure, or file present but not valid JSON.
+    """
+    try:
+        blob = await download_column_file(
+            item_id, MIGRATIONS_HUB_COLUMNS["gap_report"],
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Monday fetch failed for item {item_id}: {e}",
+        )
+    if not blob:
+        raise HTTPException(
+            status_code=404,
+            detail=(f"No gap report uploaded on Migrations Hub item "
+                    f"{item_id} — either the pipeline hasn't produced "
+                    f"one yet, or this item is on a different board."),
+        )
+    try:
+        report = json.loads(blob.decode("utf-8"))
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=(f"Gap report file on item {item_id} is not valid "
+                    f"JSON: {e}"),
+        )
+    return JSONResponse(report)
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Auth bootstrap (Chrome extension session-capture flow)

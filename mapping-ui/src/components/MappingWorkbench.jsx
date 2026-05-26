@@ -1,962 +1,558 @@
 // src/components/MappingWorkbench.jsx
-// Two-panel source ↔ target mapping workbench
-import { useState, useMemo, useCallback, useRef, useEffect, useLayoutEffect } from "react";
+//
+// Gap-analysis report viewer. Reads ?item= from the URL, fetches the
+// corresponding GapAnalysisReport via /api/gap-report/{item_id} on the
+// pipeline backend, renders the per-field mappings sorted by risk
+// (Blocking → Data Loss Risk → Warning → Clean), and exposes
+// approve/override controls that write into the in-memory
+// reviewer_decision / reviewer_note fields of each row.
+//
+// Persistence: edits live in component state only — no save endpoint
+// exists yet. A POST companion can layer on top once the operator
+// workflow firms up.
+
+import { useEffect, useMemo, useState } from "react";
 import {
-  MAPPING_TYPES, EXPR_MODES,
-  createMapping, buildTemplateFromSources,
-  validateMapping, getMappingStats,
+  RISK_ORDER,
+  RISK_STYLES,
+  TYPE_STYLES,
+  REVIEWER_DECISIONS,
+  fetchGapReport,
+  sortByRisk,
+  applyReviewerDecision,
+  formatField,
+  describeField,
+  filterByRisk,
+  filterBySearch,
 } from "../api/mappingEngine";
-import ExpressionEditor from "./ExpressionEditor";
-import TransformPanel   from "./TransformPanel";
 
-const TYPE_LABELS = {
-  [MAPPING_TYPES.ONE_TO_ONE]:  "1:1",
-  [MAPPING_TYPES.MANY_TO_ONE]: "many:1",
-  [MAPPING_TYPES.ONE_TO_MANY]: "1:many",
-  [MAPPING_TYPES.UNMAPPED]:    "unmapped",
-  [MAPPING_TYPES.NEW]:         "new",
-};
+function getItemIdFromUrl() {
+  const p = new URLSearchParams(window.location.search);
+  return p.get("item_id") || p.get("item") || "";
+}
 
-const TYPE_COLORS = {
-  [MAPPING_TYPES.ONE_TO_ONE]:  "#0073B1",  // --oc-blue
-  [MAPPING_TYPES.MANY_TO_ONE]: "#7C3AED",  // --oc-purple
-  [MAPPING_TYPES.ONE_TO_MANY]: "#D97706",  // --oc-amber
-  [MAPPING_TYPES.UNMAPPED]:    "#C0392B",  // --oc-red
-  [MAPPING_TYPES.NEW]:         "#6B7A8F",  // --text-muted
-};
+const ALL_RISKS = new Set(RISK_ORDER);
 
-export default function MappingWorkbench({
-  spec,
-  formIdx,
-  sourceTree,
-  mappings,
-  onUpdateMapping,
-  onUpdateRow,
-  showToast,
-}) {
-  const form        = spec.forms[formIdx];
-  const [selectedTarget, setSelectedTarget] = useState(null); // "FORM_ID::fieldName"
-  const [selectedSources, setSelectedSources] = useState(new Set()); // source item OIDs
-  const [sourceFormIdx, setSourceFormIdx]   = useState(0);
-  const [sourceSearch,  setSourceSearch]    = useState("");
-  const [targetSearch,  setTargetSearch]    = useState("");
-  const [targetFilter,  setTargetFilter]    = useState("ALL"); // ALL | MAPPED | UNMAPPED | ISSUES
-  const [showExpr, setShowExpr] = useState(false);
+export default function MappingWorkbench() {
+  const itemId = getItemIdFromUrl();
 
-  // ── Refs + state for connector lines overlay ─────────────────────────────
-  const panelsRef  = useRef(null);
-  const sourceRefs = useRef(new Map());
-  const targetRefs = useRef(new Map());
-  const [connections, setConnections] = useState([]);
-  const [hiddenLines, setHiddenLines] = useState(new Set());
+  const [report, setReport]     = useState(null);
+  const [loading, setLoading]   = useState(true);
+  const [loadError, setLoadError] = useState("");
 
-  const toggleLineVisibility = useCallback(key => {
-    setHiddenLines(prev => {
-      const next = new Set(prev);
-      next.has(key) ? next.delete(key) : next.add(key);
-      return next;
-    });
-  }, []);
+  // Controlled-view state.
+  const [enabledRisks, setEnabledRisks] = useState(ALL_RISKS);
+  const [search, setSearch] = useState("");
+  const [overrideRow, setOverrideRow] = useState(null); // index | null
+  const [overrideDraft, setOverrideDraft] = useState("");
 
-  const stats = useMemo(() => getMappingStats(mappings), [mappings]);
-
-  // ── Source tree helpers ───────────────────────────────────────────────────
-  const sourceForms  = sourceTree?.forms || [];
-  const sourceForm   = sourceForms[sourceFormIdx] || null;
-
-  // Flat list of all source items across all groups in selected form
-  const sourceItems = useMemo(() => {
-    if (!sourceForm) return [];
-    return sourceForm.item_groups.flatMap(g =>
-      g.items.map(item => ({ ...item, groupName: g.name, groupOid: g.oid }))
-    );
-  }, [sourceForm]);
-
-  const filteredSourceItems = useMemo(() => {
-    if (!sourceSearch) return sourceItems;
-    const q = sourceSearch.toLowerCase();
-    return sourceItems.filter(i =>
-      i.name.toLowerCase().includes(q) ||
-      i.label.toLowerCase().includes(q) ||
-      (i.cdashAlias || "").toLowerCase().includes(q)
-    );
-  }, [sourceItems, sourceSearch]);
-
-  // ── Target helpers ───────────────────────────────────────────────────────
-  const targetRows = useMemo(() => {
-    return form.survey.filter(row => {
-      const key = `${form.form_id}::${row.name}`;
-      const m   = mappings[key];
-      if (targetFilter === "MAPPED"   && (!m || m.type === MAPPING_TYPES.NEW || !m.sources?.length)) return false;
-      if (targetFilter === "UNMAPPED" && m?.sources?.length) return false;
-      if (targetFilter === "ISSUES"   && m?.type !== MAPPING_TYPES.UNMAPPED && validateMapping(m).length === 0) return false;
-      if (targetSearch) {
-        const q = targetSearch.toLowerCase();
-        return row.name.toLowerCase().includes(q) || row.label.toLowerCase().includes(q) || (row.source_field||"").toLowerCase().includes(q);
-      }
-      return true;
-    });
-  }, [form, mappings, targetFilter, targetSearch]);
-
-  // ── Selected target mapping ───────────────────────────────────────────────
-  const activeMapping = selectedTarget ? mappings[selectedTarget] : null;
-  const activeRow     = selectedTarget
-    ? form.survey.find(r => `${form.form_id}::${r.name}` === selectedTarget)
-    : null;
-
-  // Source items selected in this mapping
-  const activeSources = useMemo(() => {
-    if (!activeMapping?.sources?.length || !sourceTree) return [];
-    return activeMapping.sources.map(oid => {
-      for (const f of sourceTree.forms) {
-        for (const g of f.item_groups) {
-          const found = g.items.find(i => i.oid === oid);
-          if (found) return { ...found, groupName: g.name, formName: f.name };
-        }
-      }
-    return { oid, name: oid, label: oid, groupName: "?", formName: "?" };
-    });
-  }, [activeMapping, sourceTree]);
-
-  // ── Compute line endpoints whenever selection or layout changes ──────────
-  const recomputeLines = useCallback(() => {
-    if (!panelsRef.current) return;
-    const containerRect = panelsRef.current.getBoundingClientRect();
-    const lines = [];
-    const seen  = new Set();
-
-    const addLine = (sourceOid, targetKey, reviewed) => {
-      const id = `${sourceOid}|${targetKey}`;
-      if (seen.has(id)) return;
-      seen.add(id);
-      const sEl = sourceRefs.current.get(sourceOid);
-      const tEl = targetRefs.current.get(targetKey);
-      if (!sEl || !tEl) return;
-      const sR = sEl.getBoundingClientRect();
-      const tR = tEl.getBoundingClientRect();
-      lines.push({
-        x1: sR.right - containerRect.left,
-        y1: sR.top + sR.height / 2 - containerRect.top,
-        x2: tR.left  - containerRect.left,
-        y2: tR.top + tR.height / 2 - containerRect.top,
-        status: reviewed ? "reviewed" : "proposed",
-        key: id,
-      });
-    };
-
-    // Lines from each selected source to all targets that include it
-    for (const sourceOid of selectedSources) {
-      for (const [key, m] of Object.entries(mappings)) {
-        if (m.sources?.includes(sourceOid)) addLine(sourceOid, key, !!m.reviewed);
-      }
-    }
-
-    // Lines from the selected target back to its sources
-    if (selectedTarget) {
-      const m = mappings[selectedTarget];
-      if (m?.sources?.length) {
-        for (const sourceOid of m.sources) addLine(sourceOid, selectedTarget, !!m.reviewed);
-      }
-    }
-
-    setConnections(lines);
-  }, [selectedSources, selectedTarget, mappings]);
-
-  // Recompute on layout-relevant changes (selection, filters, form swap, list contents)
-  useLayoutEffect(() => {
-    recomputeLines();
-  }, [recomputeLines, sourceFormIdx, targetFilter, targetSearch, sourceSearch]);
-
-  // Recompute on scroll (capture mode catches inner scroll containers) and window resize
+  // ── Load on mount / when item changes ──────────────────────────────────
   useEffect(() => {
-    const handler = () => recomputeLines();
-    window.addEventListener("resize", handler);
-    document.addEventListener("scroll", handler, true);
-    return () => {
-      window.removeEventListener("resize", handler);
-      document.removeEventListener("scroll", handler, true);
-    };
-  }, [recomputeLines]);
-
-
-  // ── Actions ──────────────────────────────────────────────────────────────
-  function selectTarget(key) {
-    setSelectedTarget(key);
-    setSelectedSources(new Set());
-    setShowExpr(false);
-    // Pre-select source form that best matches this target's form_id
-    if (sourceForms.length > 0) {
-      const targetFormId = key.split("::")[0];
-      const matchIdx = sourceForms.findIndex(f =>
-        f.name.toUpperCase().includes(targetFormId) ||
-        targetFormId.includes(f.name.toUpperCase().replace(/\s/g,""))
-      );
-      if (matchIdx >= 0) setSourceFormIdx(matchIdx);
+    let cancelled = false;
+    async function load() {
+      setLoading(true);
+      setLoadError("");
+      try {
+        const r = await fetchGapReport(itemId);
+        if (!cancelled) setReport(r);
+      } catch (e) {
+        if (!cancelled) setLoadError(e.message || String(e));
+      }
+      if (!cancelled) setLoading(false);
     }
+    load();
+    return () => { cancelled = true; };
+  }, [itemId]);
+
+  // ── Derived view ──────────────────────────────────────────────────────
+  const sortedMappings = useMemo(
+    () => sortByRisk(report?.mappings || []),
+    [report],
+  );
+
+  const visibleRows = useMemo(() => {
+    const byRisk = filterByRisk(sortedMappings, enabledRisks);
+    return filterBySearch(byRisk, search);
+  }, [sortedMappings, enabledRisks, search]);
+
+  // ── Reviewer actions ──────────────────────────────────────────────────
+  function approveRow(mapping) {
+    const idx = report.mappings.indexOf(mapping);
+    setReport({
+      ...report,
+      mappings: applyReviewerDecision(
+        report.mappings, idx, REVIEWER_DECISIONS.APPROVED, null,
+      ),
+    });
   }
 
-  function toggleSourceSelect(oid) {
-    setSelectedSources(prev => {
+  function startOverride(mapping) {
+    const idx = report.mappings.indexOf(mapping);
+    setOverrideRow(idx);
+    setOverrideDraft(mapping.reviewer_note || "");
+  }
+
+  function commitOverride() {
+    if (overrideRow == null) return;
+    setReport({
+      ...report,
+      mappings: applyReviewerDecision(
+        report.mappings, overrideRow,
+        REVIEWER_DECISIONS.OVERRIDE, overrideDraft.trim() || null,
+      ),
+    });
+    setOverrideRow(null);
+    setOverrideDraft("");
+  }
+
+  function cancelOverride() {
+    setOverrideRow(null);
+    setOverrideDraft("");
+  }
+
+  function clearReview(mapping) {
+    const idx = report.mappings.indexOf(mapping);
+    setReport({
+      ...report,
+      mappings: applyReviewerDecision(
+        report.mappings, idx, REVIEWER_DECISIONS.PENDING, null,
+      ),
+    });
+  }
+
+  function toggleRisk(risk) {
+    setEnabledRisks(prev => {
       const next = new Set(prev);
-      next.has(oid) ? next.delete(oid) : next.add(oid);
+      if (next.has(risk)) next.delete(risk);
+      else next.add(risk);
       return next;
     });
   }
 
-  function applyOneToOne(oid) {
-    if (!selectedTarget) { showToast("Select a target field first", "error"); return; }
-    const item = sourceItems.find(i => i.oid === oid);
-    onUpdateMapping(selectedTarget, createMapping(
-      MAPPING_TYPES.ONE_TO_ONE,
-      [oid],
-      `{${item?.name || oid}}`,
-      EXPR_MODES.TEMPLATE,
-      ""
-    ));
-    showToast(`Mapped → ${item?.name}`);
-  }
-
-  function applyManyToOne() {
-    if (!selectedTarget) { showToast("Select a target field first", "error"); return; }
-    if (selectedSources.size < 2) { showToast("Select at least 2 source fields for many-to-one", "error"); return; }
-    const items = [...selectedSources].map(oid => sourceItems.find(i => i.oid === oid)).filter(Boolean);
-    const expr  = buildTemplateFromSources(items);
-    onUpdateMapping(selectedTarget, createMapping(
-      MAPPING_TYPES.MANY_TO_ONE,
-      [...selectedSources],
-      expr,
-      EXPR_MODES.TEMPLATE,
-      ""
-    ));
-    setShowExpr(true);
-    showToast(`Many-to-one mapping created — edit the expression below`);
-  }
-
-  function setMappingType(type) {
-    if (!selectedTarget) return;
-    const cur = mappings[selectedTarget] || {};
-    onUpdateMapping(selectedTarget, createMapping(
-      type,
-      cur.sources || [],
-      cur.expression || "",
-      cur.expression_mode || EXPR_MODES.TEMPLATE,
-      cur.notes || ""
-    ));
-  }
-
-  function markReviewed() {
-    if (!selectedTarget || !activeMapping) return;
-    onUpdateMapping(selectedTarget, {
-      ...activeMapping,
-      reviewed: true,
-      reviewed_by: "DM",
-      reviewed_at: new Date().toISOString(),
-    });
-    showToast("Marked as reviewed ✓");
-  }
-
-  function clearMapping() {
-    if (!selectedTarget) return;
-    onUpdateMapping(selectedTarget, createMapping(MAPPING_TYPES.NEW, [], "", EXPR_MODES.TEMPLATE, ""));
-    setSelectedSources(new Set());
-  }
-
-  function removeSource(oid) {
-    if (!selectedTarget || !activeMapping) return;
-    const newSources = (activeMapping.sources || []).filter(s => s !== oid);
-    const newType = newSources.length === 0 ? MAPPING_TYPES.NEW :
-                    newSources.length === 1 ? MAPPING_TYPES.ONE_TO_ONE :
-                    MAPPING_TYPES.MANY_TO_ONE;
-    onUpdateMapping(selectedTarget, { ...activeMapping, sources: newSources, type: newType });
-  }
-
-  const noSource = !sourceTree || sourceForms.length === 0;
-
-  // ── Render ────────────────────────────────────────────────────────────────
-  return (
-    <div style={S.root}>
-
-      {/* ── Stats bar ─────────────────────────────────────────────────── */}
-      <div style={S.statsBar}>
-        <span style={S.statItem}>
-          <span style={S.statDot("#2E7D5E")} />
-          {stats.oneToOne} direct
-        </span>
-        <span style={S.statItem}>
-          <span style={S.statDot("#7C3AED")} />
-          {stats.manyToOne} combined
-        </span>
-        <span style={S.statItem}>
-          <span style={S.statDot("#D97706")} />
-          {stats.oneToMany} split
-        </span>
-        <span style={S.statItem}>
-          <span style={S.statDot("#C0392B")} />
-          {stats.unmapped} unmapped
-        </span>
-        <span style={S.statItem}>
-          <span style={S.statDot("#6B7A8F")} />
-          {stats.newField} new (no source)
-        </span>
-        <span style={{ ...S.statItem, marginLeft: "auto" }}>
-          {stats.reviewed}/{stats.total} reviewed
-        </span>
+  // ── Render ────────────────────────────────────────────────────────────
+  if (loading) {
+    return (
+      <div style={s.fullPage}>
+        <p style={s.muted}>Loading gap report for item {itemId}…</p>
       </div>
+    );
+  }
 
-      <div style={{ ...S.panels, position: "relative" }} ref={panelsRef}>
+  if (loadError) {
+    return (
+      <div style={s.fullPage}>
+        <h2 style={s.headerTitle}>Couldn't load gap report</h2>
+        <p style={s.errorBox}>{loadError}</p>
+        <p style={s.muted}>
+          The Syndeo URL points at a Migrations Hub item — make sure the
+          migration pipeline has run for this study at least once.
+        </p>
+      </div>
+    );
+  }
 
-        {/* ── LEFT: Source panel ──────────────────────────────────────── */}
-        <div style={S.sourcePanel}>
-          <div style={S.panelHeader}>
-            <span style={S.panelTitle}>
-              SOURCE
-              {sourceTree && <span style={S.panelSub}> — {sourceTree.sourceSystem}</span>}
-            </span>
-            {noSource && (
-              <span style={{ fontSize: 10, color: "var(--oc-amber)" }}>No ODM uploaded</span>
-            )}
-          </div>
+  if (!report) return null;
 
-          {noSource ? (
-            <div style={S.noSource}>
-              <div style={{ fontSize: 28, marginBottom: 8 }}>📄</div>
-              <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 4 }}>No source ODM XML found</div>
-              <div style={{ fontSize: 11, color: "var(--text-light)", textAlign: "center", lineHeight: 1.5 }}>
-                Upload the competitor ODM XML to the Monday row's<br/>
-                "Source EDC Export" column, then reload.
-              </div>
-            </div>
-          ) : (
-            <>
-              {/* Source form selector */}
-              <div style={S.sourceFormTabs}>
-                {sourceForms.map((f, i) => (
-                  <button
-                    key={f.oid}
-                    style={{
-                      ...S.sourceFormTab,
-                      background: i === sourceFormIdx ? "var(--oc-blue-light)" : "transparent",
-                      color: i === sourceFormIdx ? "var(--oc-blue)" : "var(--text-muted)",
-                      borderBottom: i === sourceFormIdx ? "2px solid var(--oc-blue)" : "2px solid transparent",
-                    }}
-                    onClick={() => setSourceFormIdx(i)}
-                    title={f.name}
-                  >
-                    {f.name.length > 10 ? f.name.slice(0, 10) + "…" : f.name}
-                    {f.repeating && <span style={{ fontSize: 8, color: "var(--oc-purple)", marginLeft: 3 }}>R</span>}
-                  </button>
-                ))}
-              </div>
+  const { summary = {}, warnings = [] } = report;
+  const reviewedCount = (report.mappings || []).filter(
+    m => m.reviewer_decision != null,
+  ).length;
 
-              {/* Search */}
-              <div style={{ padding: "6px 10px", borderBottom: "1px solid var(--border)", background: "#fff" }}>
-                <input
-                  style={S.searchInput}
-                  placeholder="Search source fields…"
-                  value={sourceSearch}
-                  onChange={e => setSourceSearch(e.target.value)}
-                />
-              </div>
-
-              {/* Selection hint */}
-              <div style={S.selectionHint}>
-                {!selectedTarget && selectedSources.size === 0 && (
-                  <span>Click a source to inspect it. Pick a target on the right to map.</span>
-                )}
-                {!selectedTarget && selectedSources.size > 0 && (
-                  <>
-                    <span style={{ fontWeight: 600, color: "var(--oc-blue)" }}>
-                      {selectedSources.size} selected
-                    </span>
-                    <span style={{ color: "var(--text-muted)" }}>
-                      · pick a target on the right to map
-                    </span>
-                    <button
-                      style={{
-                        ...S.applyBtn,
-                        background: "transparent",
-                        border: "1px solid var(--border)",
-                        color: "var(--text-muted)",
-                        fontWeight: 500,
-                        marginLeft: "auto",
-                      }}
-                      onClick={() => setSelectedSources(new Set())}
-                    >
-                      Clear
-                    </button>
-                  </>
-                )}
-                {selectedTarget && selectedSources.size === 0 && (
-                  <span>Click to select · Cmd+click to multi-select · Double-click to apply 1:1</span>
-                )}
-                {selectedTarget && selectedSources.size > 0 && (
-                  <>
-                    <span style={{ fontWeight: 600, color: "var(--oc-blue)" }}>
-                      {selectedSources.size} selected
-                    </span>
-                    {selectedSources.size === 1 && (
-                      <button
-                        style={S.applyBtn}
-                        onClick={() => applyOneToOne([...selectedSources][0])}
-                      >
-                        Apply 1:1 →
-                      </button>
-                    )}
-                    {selectedSources.size >= 2 && (
-                      <button style={S.applyBtn} onClick={applyManyToOne}>
-                        Apply many:1 →
-                      </button>
-                    )}
-                    <button
-                      style={{
-                        ...S.applyBtn,
-                        background: "transparent",
-                        border: "1px solid var(--border)",
-                        color: "var(--text-muted)",
-                        fontWeight: 500,
-                      }}
-                      onClick={() => setSelectedSources(new Set())}
-                    >
-                      Clear
-                    </button>
-                  </>
-                )}
-              </div>
-
-              {/* Source item list */}
-              <div style={S.itemList}>
-                {sourceForm?.item_groups.map(group => {
-                  const groupItems = filteredSourceItems.filter(i => i.groupOid === group.oid);
-                  if (!groupItems.length) return null;
-                  return (
-                    <div key={group.oid}>
-                      <div style={S.groupHeader}>
-                        {group.name}
-                        {group.repeating && <span style={{ fontSize: 9, color: "var(--oc-purple)", marginLeft: 4 }}>REPEAT</span>}
-                      </div>
-                      {groupItems.map(item => {
-                        const usedInMappings = Object.entries(mappings).filter(([_, m]) => m.sources?.includes(item.oid));
-                        const isUsed     = usedInMappings.length > 0;
-                        const isReviewed = isUsed && usedInMappings.some(([_, m]) => m.reviewed);
-                        const isProposed = isUsed && !isReviewed;
-                        const isSelected = selectedSources.has(item.oid);
-                        // Target field names this source maps to (strip "FORM::" prefix)
-                        const mappedToTargets = usedInMappings.map(([key]) => key.split("::")[1]);
-                        return (
-                          <div
-                            key={item.oid}
-                            ref={el => {
-                              if (el) sourceRefs.current.set(item.oid, el);
-                              else sourceRefs.current.delete(item.oid);
-                            }}
-                            style={{
-                              ...S.sourceItem,
-                              background: isSelected ? "var(--oc-blue-light)" : "#fff",
-                              borderLeft: isSelected ? "4px solid var(--oc-blue)" : "4px solid transparent",
-                              fontWeight: isSelected ? 600 : 400,
-                            }}
-                            onClick={e => {
-                              if (e.shiftKey || e.metaKey || e.ctrlKey) {
-                                // multi-select toggle
-                                toggleSourceSelect(item.oid);
-                              } else {
-                                // single-select replace — always allowed, even without a target
-                                setSelectedSources(new Set([item.oid]));
-                              }
-                            }}
-                            onDoubleClick={() => {
-                              if (!selectedTarget) {
-                                showToast("Select a target field on the right to map this", "error");
-                                return;
-                              }
-                              applyOneToOne(item.oid);
-                            }}
-                            onContextMenu={e => {
-                              e.preventDefault();
-                              toggleSourceSelect(item.oid);
-                            }}
-                          >
-                            <div style={{
-                              ...S.sourceItemName,
-                              color: "var(--oc-blue)",
-                              fontWeight: isSelected ? 700 : 500,
-                            }}>
-                              {item.name}
-                              {item.cdashAlias && item.cdashAlias !== item.name && (
-                                <span style={{ fontSize: 9, color: "var(--oc-purple)", marginLeft: 5, fontWeight: 600 }}>{item.cdashAlias}</span>
-                              )}
-                              {isReviewed && (
-                                <span style={{
-                                  fontSize: 9, color: "var(--oc-green)", marginLeft: 6, fontWeight: 700,
-                                  background: "var(--oc-green-light)", padding: "1px 5px", borderRadius: 3, border: "1px solid var(--oc-green)",
-                                }}>✓ mapped</span>
-                              )}
-                              {isProposed && (
-                                <span style={{
-                                  fontSize: 9, color: "var(--oc-amber)", marginLeft: 6, fontWeight: 600,
-                                  background: "var(--oc-amber-light)", padding: "1px 5px", borderRadius: 3, border: "1px solid var(--oc-amber)",
-                                }}>○ proposed</span>
-                              )}
-                            </div>
-                            <div style={S.sourceItemLabel}>{item.label}</div>
-                            {mappedToTargets.length > 0 && (
-                              <div style={{
-                                fontSize: 10, marginTop: 3, fontFamily: "monospace",
-                                color: isReviewed ? "var(--oc-green)" : "var(--oc-amber)",
-                                fontWeight: 600,
-                              }}>
-                                → {mappedToTargets.join(", ")}
-                              </div>
-                            )}
-                            <div style={S.sourceItemMeta}>
-                              {item.dataType}
-                              {item.length && ` · len:${item.length}`}
-                              {item.mandatory && <span style={{ color: "var(--oc-red)", marginLeft: 4 }}>*</span>}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  );
-                })}
-              </div>
-            </>
-          )}
+  return (
+    <div style={s.app}>
+      {/* ── Header ──────────────────────────────────────────────── */}
+      <header style={s.header}>
+        <div>
+          <h1 style={s.headerTitle}>Migration Gap Report</h1>
+          <p style={s.headerSub}>
+            <span><strong>Source:</strong> {report.source_system || "—"}</span>
+            <span style={s.dot}>·</span>
+            <span><strong>Study:</strong> {report.source_study_oid || "—"}
+              {" → "}{report.target_study_oid || "—"}</span>
+            <span style={s.dot}>·</span>
+            <span style={s.muted}>generated {report.generated_at}</span>
+          </p>
         </div>
-
-        {/* ── CENTER: Mapping detail ───────────────────────────────────── */}
-        <div style={S.centerPanel}>
-          <div style={S.panelHeader}>
-            <span style={S.panelTitle}>MAPPING</span>
-          </div>
-
-          {!selectedTarget ? (
-            <div style={S.noSelection}>
-              <div style={{ fontSize: 24, marginBottom: 8 }}>↔</div>
-              <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Select a target field</div>
-            </div>
-          ) : (
-            <div style={S.mappingDetail}>
-              {/* Target field info */}
-              <div style={S.mappingTarget}>
-                <div style={{ fontSize: 10, color: "var(--text-light)", marginBottom: 3, fontWeight: 600, letterSpacing: ".06em" }}>TARGET FIELD</div>
-                <div style={{ fontFamily: "monospace", fontSize: 13, color: "var(--oc-blue)", fontWeight: 600 }}>
-                  {activeRow?.name}
-                </div>
-                <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>{activeRow?.label}</div>
-                <div style={{ fontSize: 10, color: "var(--text-light)", marginTop: 2 }}>
-                  {activeRow?.type} · {activeRow?.bind__oc_itemgroup}
-                </div>
-              </div>
-
-              {/* Mapping type selector */}
-              <div style={{ padding: "10px 12px", borderBottom: "1px solid var(--border)" }}>
-                <div style={{ fontSize: 10, color: "var(--text-light)", marginBottom: 6, fontWeight: 600, letterSpacing: ".06em" }}>RELATIONSHIP TYPE</div>
-                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                  {Object.entries(TYPE_LABELS).map(([type, label]) => (
-                    <button
-                      key={type}
-                      style={{
-                        ...S.typeBtn,
-                        background: activeMapping?.type === type ? TYPE_COLORS[type] + "22" : "#fff",
-                        borderColor: activeMapping?.type === type ? TYPE_COLORS[type] : "var(--border)",
-                        color: activeMapping?.type === type ? TYPE_COLORS[type] : "var(--text-muted)",
-                      }}
-                      onClick={() => setMappingType(type)}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Source fields in this mapping */}
-              <div style={{ padding: "10px 12px", borderBottom: "1px solid var(--border)" }}>
-                <div style={{ fontSize: 10, color: "var(--text-light)", marginBottom: 6, fontWeight: 600, letterSpacing: ".06em" }}>
-                  SOURCE FIELDS ({activeSources.length})
-                </div>
-                {activeSources.length === 0 ? (
-                  <div style={{ fontSize: 11, color: "var(--text-light)", fontStyle: "italic" }}>
-                    {noSource ? "No ODM loaded" : "Click a source field to assign"}
-                  </div>
-                ) : (
-                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                    {activeSources.map((src, i) => (
-                      <div key={src.oid} style={S.srcChip}>
-                        <span style={{ fontFamily: "monospace", fontSize: 11, color: "var(--oc-blue)" }}>
-                          {src.name}
-                        </span>
-                        <span style={{ fontSize: 10, color: "var(--text-muted)", marginLeft: 6 }}>
-                          {src.formName} / {src.groupName}
-                        </span>
-                        <button style={S.removeBtn} onClick={() => removeSource(src.oid)}>✕</button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* Expression editor — shown for many:1, 1:many, or when forced */}
-              {(activeMapping?.type === MAPPING_TYPES.MANY_TO_ONE ||
-                activeMapping?.type === MAPPING_TYPES.ONE_TO_MANY ||
-                showExpr) && (
-                <ExpressionEditor
-                  mapping={activeMapping}
-                  sourceItems={activeSources}
-                  onUpdate={updated => onUpdateMapping(selectedTarget, updated)}
-                />
-              )}
-
-              {/* Show expression toggle for 1:1 */}
-              {activeMapping?.type === MAPPING_TYPES.ONE_TO_ONE && !showExpr && (
-                <div style={{ padding: "8px 12px", borderBottom: "1px solid var(--border)" }}>
-                  <button style={S.linkBtn} onClick={() => setShowExpr(true)}>
-                    + Add transformation expression
-                  </button>
-                </div>
-              )}
-
-              {/* Transform panel — always shown for active mapping */}
-              {activeMapping && (
-                <TransformPanel
-                  mapping={activeMapping}
-                  targetField={activeRow?.name || ""}
-                  onUpdateMapping={updated => onUpdateMapping(selectedTarget, updated)}
-                />
-              )}
-
-              {/* Notes */}
-              <div style={{ padding: "10px 12px", borderBottom: "1px solid var(--border)" }}>
-                <div style={{ fontSize: 10, color: "var(--text-light)", marginBottom: 4, fontWeight: 600, letterSpacing: ".06em" }}>NOTES</div>
-                <textarea
-                  style={S.notesInput}
-                  value={activeMapping?.notes || ""}
-                  onChange={e => onUpdateMapping(selectedTarget, { ...activeMapping, notes: e.target.value })}
-                  placeholder="Mapping rationale, data issues, instructions for build…"
-                  rows={3}
-                />
-              </div>
-
-              {/* Validation errors */}
-              {(() => {
-                const errs = validateMapping(activeMapping);
-                return errs.length > 0 ? (
-                  <div style={{ padding: "8px 12px", borderBottom: "1px solid var(--border)" }}>
-                    {errs.map((e, i) => (
-                      <div key={i} style={{ fontSize: 10, color: "var(--oc-red)", marginBottom: 2 }}>⚠ {e}</div>
-                    ))}
-                  </div>
-                ) : null;
-              })()}
-
-              {/* Actions */}
-              <div style={{ padding: "10px 12px", display: "flex", gap: 8, flexWrap: "wrap" }}>
-                <button
-                  style={{ ...S.actionBtn, background: "var(--oc-green-light)", color: "var(--oc-green)", border: "1px solid var(--oc-green)" }}
-                  onClick={markReviewed}
-                >
-                  {activeMapping?.reviewed ? "✓ Reviewed" : "Mark reviewed"}
-                </button>
-                <button
-                  style={{ ...S.actionBtn, color: "var(--text-muted)", border: "1px solid var(--border)" }}
-                  onClick={clearMapping}
-                >
-                  Clear mapping
-                </button>
-              </div>
-            </div>
-          )}
+        <div style={s.headerStats}>
+          <SummaryChip label="Total"          value={summary.total ?? 0} />
+          <SummaryChip label="Clean"          value={summary.clean ?? 0}          tone="Clean" />
+          <SummaryChip label="Warning"        value={summary.warning ?? 0}        tone="Warning" />
+          <SummaryChip label="Data Loss Risk" value={summary.data_loss_risk ?? 0} tone="Data Loss Risk" />
+          <SummaryChip label="Blocking"       value={summary.blocking ?? 0}       tone="Blocking" />
+          <SummaryChip label="Unmapped"       value={summary.unmapped ?? 0} />
+          <SummaryChip label="Reviewed"       value={`${reviewedCount}/${summary.total ?? 0}`} />
         </div>
+      </header>
 
-        {/* ── RIGHT: Target panel ──────────────────────────────────────── */}
-        <div style={S.targetPanel}>
-          <div style={S.panelHeader}>
-            <span style={S.panelTitle}>
-              TARGET
-              <span style={S.panelSub}> — OC4 / {form.form_id}</span>
-            </span>
-          </div>
-
-          {/* Target toolbar */}
-          <div style={{ padding: "6px 10px", borderBottom: "1px solid var(--border)", background: "#fff", display: "flex", gap: 6, flexWrap: "wrap" }}>
-            <input
-              style={{ ...S.searchInput, flex: 1 }}
-              placeholder="Search target fields…"
-              value={targetSearch}
-              onChange={e => setTargetSearch(e.target.value)}
-            />
-            {["ALL","MAPPED","UNMAPPED","ISSUES"].map(f => (
-              <button
-                key={f}
-                style={{
-                  ...S.filterBtn,
-                  background: targetFilter === f ? "var(--oc-blue-light)" : "#fff",
-                  borderColor: targetFilter === f ? "var(--oc-blue)" : "var(--border)",
-                  color: targetFilter === f ? "var(--oc-blue)" : "var(--text-muted)",
-                }}
-                onClick={() => setTargetFilter(f)}
-              >
-                {f}
-              </button>
-            ))}
-          </div>
-
-          {/* Target field list */}
-          <div style={S.itemList}>
-            {targetRows.map(row => {
-              const key = `${form.form_id}::${row.name}`;
-              const m   = mappings[key];
-              const isActive = selectedTarget === key;
-              const mType = m?.type || MAPPING_TYPES.NEW;
-              const color = TYPE_COLORS[mType];
-              const errs  = validateMapping(m);
-              const hasMapping = m?.sources?.length > 0;
-              const isReviewedT = hasMapping && m?.reviewed;
-              const isProposedT = hasMapping && !m?.reviewed;
-              return (
-                <div
-                  key={key}
-                  ref={el => {
-                    if (el) targetRefs.current.set(key, el);
-                    else targetRefs.current.delete(key);
-                  }}
-                  style={{
-                    ...S.targetItem,
-                    background: isActive ? "var(--oc-blue-light)" : "#fff",
-                    borderLeft: `3px solid ${isActive ? "var(--oc-blue)" : color}`,
-                  }}
-                  onClick={() => selectTarget(key)}
-                >
-                  <div style={S.targetItemTop}>
-                    <span style={{ fontFamily: "monospace", fontSize: 12, color: "var(--oc-blue)", fontWeight: isActive ? 700 : 500 }}>
-                      {isReviewedT && <span style={{ color: "var(--oc-green)", marginRight: 4, fontWeight: 700 }}>✓</span>}
-                      {isProposedT && <span style={{ color: "var(--oc-amber)", marginRight: 4, fontWeight: 700 }}>○</span>}
-                      {row.name}
-                    </span>
-                    <span style={{
-                      fontSize: 9, fontWeight: 600, padding: "1px 5px", borderRadius: 4,
-                      background: color + "22", color,
-                    }}>
-                      {TYPE_LABELS[mType]}
-                    </span>
-                  </div>
-                  <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 2 }}>{row.label}</div>
-                  {/* Source fields summary */}
-                  {hasMapping && (
-                    <div style={{
-                      fontSize: 11, marginTop: 4, fontFamily: "monospace", fontWeight: 600,
-                      color: isReviewedT ? "var(--oc-green)" : "var(--oc-amber)",
-                    }}>
-                      ← {m.sources.map(oid => {
-                        // Find name for OID
-                        for (const f of (sourceTree?.forms || [])) {
-                          for (const g of f.item_groups) {
-                            const found = g.items.find(i => i.oid === oid);
-                            if (found) return found.name;
-                          }
-                        }
-                        return oid;
-                      }).join(", ")}
-                    </div>
-                  )}
-                  {errs.length > 0 && (
-                    <div style={{ fontSize: 9, color: "var(--oc-red)", marginTop: 2 }}>⚠ {errs[0]}</div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
+      {/* ── Warnings strip ───────────────────────────────────────── */}
+      {warnings.length > 0 && (
+        <div style={s.warningStrip}>
+          {warnings.map((w, i) => (
+            <div key={i} style={s.warningRow}>
+              <strong>⚠</strong> {w}
+            </div>
+          ))}
         </div>
+      )}
 
-        {/* ── Connector-line overlay ──────────────────────────────────── */}
-        <svg
-          style={{
-            position: "absolute",
-            top: 0,
-            left: 0,
-            width: "100%",
-            height: "100%",
-            pointerEvents: "none",
-            zIndex: 5,
-          }}
-        >
-          {connections.map(c => {
-            const midX     = (c.x1 + c.x2) / 2;
-            const color    = c.status === "reviewed" ? "var(--oc-green)" : "var(--oc-amber)";
-            const isHidden = hiddenLines.has(c.key);
-            const tipText  = isHidden ? "Click to show line" : "Click to hide line";
+      {/* ── Controls ─────────────────────────────────────────────── */}
+      <div style={s.controls}>
+        <div style={s.riskChips}>
+          {RISK_ORDER.map(r => {
+            const on = enabledRisks.has(r);
+            const palette = RISK_STYLES[r];
             return (
-              <g key={c.key}>
-                {!isHidden && (
-                  <path
-                    d={`M ${c.x1} ${c.y1} C ${midX} ${c.y1}, ${midX} ${c.y2}, ${c.x2} ${c.y2}`}
-                    fill="none"
-                    stroke={color}
-                    strokeWidth="2.5"
-                    opacity="0.85"
-                  />
-                )}
-                {/* Visible dots — solid when line shown, hollow when hidden */}
-                <circle
-                  cx={c.x1} cy={c.y1} r="4.5"
-                  fill={isHidden ? "#fff" : color}
-                  stroke={color}
-                  strokeWidth="2"
-                />
-                <circle
-                  cx={c.x2} cy={c.y2} r="4.5"
-                  fill={isHidden ? "#fff" : color}
-                  stroke={color}
-                  strokeWidth="2"
-                />
-                {/* Invisible larger hit targets for easier clicking */}
-                <circle
-                  cx={c.x1} cy={c.y1} r="10"
-                  fill="transparent"
-                  style={{ pointerEvents: "auto", cursor: "pointer" }}
-                  onClick={() => toggleLineVisibility(c.key)}
-                >
-                  <title>{tipText}</title>
-                </circle>
-                <circle
-                  cx={c.x2} cy={c.y2} r="10"
-                  fill="transparent"
-                  style={{ pointerEvents: "auto", cursor: "pointer" }}
-                  onClick={() => toggleLineVisibility(c.key)}
-                >
-                  <title>{tipText}</title>
-                </circle>
-              </g>
+              <button
+                key={r}
+                onClick={() => toggleRisk(r)}
+                style={{
+                  ...s.chip,
+                  background: on ? palette.bg : "#F3F4F6",
+                  color:      on ? palette.fg : "#6B7280",
+                  borderColor: on ? palette.border : "#E5E7EB",
+                  fontWeight: on ? 600 : 400,
+                }}
+              >
+                {r}
+              </button>
             );
           })}
-        </svg>
-
+        </div>
+        <input
+          type="text"
+          placeholder="Search by OID, label, or reason…"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          style={s.search}
+        />
       </div>
+
+      {/* ── Mappings table ───────────────────────────────────────── */}
+      <table style={s.table}>
+        <thead>
+          <tr>
+            <th style={s.th}>Risk</th>
+            <th style={s.th}>Type</th>
+            <th style={s.th}>Source</th>
+            <th style={s.th}>Target</th>
+            <th style={s.th}>Reason</th>
+            <th style={s.th}>Review</th>
+          </tr>
+        </thead>
+        <tbody>
+          {visibleRows.length === 0 && (
+            <tr>
+              <td colSpan={6} style={s.empty}>
+                No mappings match the current filters.
+              </td>
+            </tr>
+          )}
+          {visibleRows.map((m) => {
+            const idx = report.mappings.indexOf(m);
+            const inOverride = overrideRow === idx;
+            const src = (m.sources || [])[0] || null;
+            const tgt = (m.targets || [])[0] || null;
+            return (
+              <tr key={idx} style={s.tr}>
+                <td style={s.td}>
+                  <RiskBadge risk={m.risk} />
+                </td>
+                <td style={s.td}>
+                  <TypeBadge type={m.mapping_type} />
+                </td>
+                <td style={s.td}>
+                  <code>{formatField(src)}</code>
+                  <div style={s.fieldDetail}>{describeField(src)}</div>
+                </td>
+                <td style={s.td}>
+                  <code>{formatField(tgt)}</code>
+                  <div style={s.fieldDetail}>{describeField(tgt)}</div>
+                </td>
+                <td style={s.td}>{m.reason}</td>
+                <td style={s.td}>
+                  {inOverride ? (
+                    <div style={s.overrideForm}>
+                      <textarea
+                        autoFocus
+                        rows={2}
+                        value={overrideDraft}
+                        onChange={e => setOverrideDraft(e.target.value)}
+                        placeholder="Reviewer note explaining the override…"
+                        style={s.overrideInput}
+                      />
+                      <div style={s.overrideButtons}>
+                        <button onClick={commitOverride} style={s.btnPrimary}>
+                          Save
+                        </button>
+                        <button onClick={cancelOverride} style={s.btnGhost}>
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <ReviewControls
+                      mapping={m}
+                      onApprove={() => approveRow(m)}
+                      onOverride={() => startOverride(m)}
+                      onClear={() => clearReview(m)}
+                    />
+                  )}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }
 
-// ── Styles ─────────────────────────────────────────────────────────────────
-const S = {
-  root: { display: "flex", flexDirection: "column", flex: 1, overflow: "hidden", minWidth: 0 },
+// ── Small presentational pieces ─────────────────────────────────────────
 
-  statsBar: {
-    display: "flex", alignItems: "center", gap: 16,
-    padding: "5px 14px", background: "var(--bg)",
-    borderBottom: "1px solid var(--border)", flexShrink: 0, flexWrap: "wrap",
-  },
-  statItem: { display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: "var(--text-muted)" },
-  statDot: col => ({ width: 7, height: 7, borderRadius: "50%", background: col, flexShrink: 0 }),
+function RiskBadge({ risk }) {
+  const palette = RISK_STYLES[risk] || RISK_STYLES.Clean;
+  return (
+    <span style={{
+      ...s.badge,
+      background: palette.bg,
+      color:      palette.fg,
+      border:     `1px solid ${palette.border}`,
+    }}>
+      {risk}
+    </span>
+  );
+}
 
-  panels: { display: "flex", flex: 1, overflow: "hidden" },
+function TypeBadge({ type }) {
+  const palette = TYPE_STYLES[type] || TYPE_STYLES["1:1"];
+  return (
+    <span style={{
+      ...s.badge,
+      background: palette.bg,
+      color:      palette.fg,
+      border: "1px solid transparent",
+      fontFamily: "monospace",
+    }}>
+      {type}
+    </span>
+  );
+}
 
-  // ── Source panel
-  sourcePanel: {
-    width: 280, background: "var(--bg)",
-    borderRight: "1px solid var(--border)", display: "flex",
-    flexDirection: "column", overflow: "hidden", flexShrink: 0,
-  },
-  panelHeader: {
-    padding: "8px 12px", background: "var(--bg)",
-    borderBottom: "1px solid var(--border)", flexShrink: 0,
-    display: "flex", alignItems: "center", justifyContent: "space-between",
-  },
-  panelTitle:  { fontSize: 10, fontWeight: 700, color: "var(--text-muted)", letterSpacing: ".08em", textTransform: "uppercase" },
-  panelSub:    { fontSize: 10, color: "var(--oc-blue)", fontWeight: 400 },
-  noSource: {
-    flex: 1, display: "flex", flexDirection: "column", alignItems: "center",
-    justifyContent: "center", padding: 24, textAlign: "center",
-    background: "#fff",
-  },
-  sourceFormTabs: {
-    display: "flex", overflow: "auto", borderBottom: "1px solid var(--border)",
-    background: "#fff", flexShrink: 0,
-  },
-  sourceFormTab: {
-    padding: "5px 9px", border: "none", cursor: "pointer",
-    fontSize: 10, fontWeight: 500, whiteSpace: "nowrap", flexShrink: 0,
-  },
-  selectionHint: {
-    padding: "4px 10px", background: "var(--oc-blue-pale)", fontSize: 10,
-    color: "var(--text-muted)", borderBottom: "1px solid var(--border)", display: "flex",
-    alignItems: "center", gap: 6, flexShrink: 0,
-  },
-  applyBtn: {
-    padding: "2px 8px", borderRadius: 4, border: "1px solid var(--oc-purple)",
-    background: "var(--oc-purple-light)", color: "var(--oc-purple)", fontSize: 10, cursor: "pointer", fontWeight: 600,
-  },
-  itemList: { flex: 1, overflow: "auto", background: "#fff" },
-  groupHeader: {
-    padding: "4px 10px", background: "var(--bg)", fontSize: 9,
-    fontWeight: 700, color: "var(--text-muted)", letterSpacing: ".07em",
-    textTransform: "uppercase", position: "sticky", top: 0, zIndex: 1,
-    borderBottom: "1px solid var(--border)",
-  },
-  sourceItem: {
-    padding: "7px 12px", cursor: "pointer", transition: "background .1s",
-    borderBottom: "1px solid var(--border)",
-  },
-  sourceItemName:  { fontSize: 11, fontFamily: "monospace", color: "var(--oc-blue)", fontWeight: 500 },
-  sourceItemLabel: { fontSize: 10, color: "var(--text-muted)", marginTop: 1 },
-  sourceItemMeta:  { fontSize: 9,  color: "var(--text-light)", marginTop: 1 },
+function SummaryChip({ label, value, tone }) {
+  const palette = tone ? RISK_STYLES[tone] : null;
+  return (
+    <div style={{
+      ...s.summaryChip,
+      background: palette ? palette.bg : "#F3F4F6",
+      color:      palette ? palette.fg : "#374151",
+    }}>
+      <div style={s.summaryLabel}>{label}</div>
+      <div style={s.summaryValue}>{value}</div>
+    </div>
+  );
+}
 
-  // ── Center panel
-  centerPanel: {
-    width: 300, background: "#fff",
-    borderRight: "1px solid var(--border)", display: "flex",
-    flexDirection: "column", overflow: "hidden", flexShrink: 0,
-  },
-  noSelection: {
-    flex: 1, display: "flex", flexDirection: "column", alignItems: "center",
-    justifyContent: "center", color: "var(--text-muted)",
-  },
-  mappingDetail: { flex: 1, overflow: "auto" },
-  mappingTarget: {
-    padding: "10px 12px", background: "var(--bg)",
-    borderBottom: "1px solid var(--border)",
-  },
-  typeBtn: {
-    padding: "3px 9px", borderRadius: 4, border: "1px solid",
-    fontSize: 10, fontWeight: 600, cursor: "pointer", letterSpacing: ".03em",
-  },
-  srcChip: {
-    display: "flex", alignItems: "center", gap: 4,
-    background: "var(--oc-blue-pale)", borderRadius: 4, padding: "4px 8px",
-    border: "1px solid var(--border)",
-  },
-  removeBtn: {
-    background: "transparent", border: "none", color: "var(--oc-red)",
-    cursor: "pointer", fontSize: 11, padding: "0 2px", marginLeft: "auto",
-  },
-  notesInput: {
-    width: "100%", background: "#fff", border: "1px solid var(--border)",
-    borderRadius: 4, color: "var(--text)", fontSize: 11, padding: "6px 8px",
-    resize: "vertical", fontFamily: "inherit",
-  },
-  actionBtn: {
-    padding: "5px 12px", borderRadius: 5, background: "transparent",
-    cursor: "pointer", fontSize: 11, fontWeight: 500,
-  },
-  linkBtn: {
-    background: "transparent", border: "none", color: "var(--oc-blue)",
-    fontSize: 11, cursor: "pointer", padding: 0, textDecoration: "underline",
-  },
+function ReviewControls({ mapping, onApprove, onOverride, onClear }) {
+  const decision = mapping.reviewer_decision;
+  if (decision === REVIEWER_DECISIONS.APPROVED) {
+    return (
+      <div style={s.reviewState}>
+        <span style={s.approved}>✓ Approved</span>
+        <button onClick={onClear} style={s.btnLink}>clear</button>
+      </div>
+    );
+  }
+  if (decision === REVIEWER_DECISIONS.OVERRIDE) {
+    return (
+      <div style={s.reviewState}>
+        <span style={s.overridden}>✎ Override</span>
+        {mapping.reviewer_note && (
+          <div style={s.reviewNote} title={mapping.reviewer_note}>
+            "{mapping.reviewer_note}"
+          </div>
+        )}
+        <button onClick={onClear} style={s.btnLink}>clear</button>
+      </div>
+    );
+  }
+  return (
+    <div style={s.buttonRow}>
+      <button onClick={onApprove}  style={s.btnPrimary}>Approve</button>
+      <button onClick={onOverride} style={s.btnSecondary}>Override</button>
+    </div>
+  );
+}
 
-  // ── Target panel
-  targetPanel: { flex: 1, background: "#fff", display: "flex", flexDirection: "column", overflow: "hidden" },
-  targetItem: {
-    padding: "8px 12px", cursor: "pointer", borderBottom: "1px solid var(--border)",
-    transition: "background .1s",
+// ── Inline styles ──────────────────────────────────────────────────────
+// Inline because the UI shipped as fixtures earlier and a global stylesheet
+// hasn't been authored for the gap-report view yet. Easy to lift into a
+// .css file as the design firms up.
+const s = {
+  app: {
+    fontFamily: "system-ui, -apple-system, sans-serif",
+    color: "#111827",
+    padding: "16px 24px",
+    maxWidth: 1400,
+    margin: "0 auto",
   },
-  targetItemTop: { display: "flex", alignItems: "center", justifyContent: "space-between" },
-
-  // ── Shared
-  searchInput: {
-    width: "100%", padding: "4px 8px", borderRadius: 4, border: "1px solid var(--border)",
-    background: "#fff", color: "var(--text)", fontSize: 11, outline: "none",
+  fullPage: {
+    padding: 40,
+    fontFamily: "system-ui, sans-serif",
+    color: "#374151",
   },
-  filterBtn: {
-    padding: "2px 7px", borderRadius: 4, border: "1px solid",
-    fontSize: 9, fontWeight: 600, cursor: "pointer",
+  header: {
+    display: "flex",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 16,
+    paddingBottom: 12,
+    borderBottom: "1px solid #E5E7EB",
+    marginBottom: 12,
+    flexWrap: "wrap",
+  },
+  headerTitle: { fontSize: 22, fontWeight: 700, margin: 0 },
+  headerSub:   { fontSize: 13, color: "#4B5563", margin: "4px 0 0" },
+  headerStats: { display: "flex", gap: 8, flexWrap: "wrap" },
+  dot: { margin: "0 8px", color: "#9CA3AF" },
+  muted: { color: "#6B7280", fontSize: 13 },
+  warningStrip: {
+    background: "#FFFBEB",
+    border: "1px solid #FDE68A",
+    color: "#854D0E",
+    padding: "8px 12px",
+    borderRadius: 6,
+    margin: "8px 0",
+    fontSize: 13,
+  },
+  warningRow: { padding: "2px 0" },
+  controls: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 12,
+    margin: "12px 0",
+    flexWrap: "wrap",
+  },
+  riskChips: { display: "flex", gap: 6, flexWrap: "wrap" },
+  chip: {
+    padding: "4px 12px",
+    borderRadius: 16,
+    border: "1px solid",
+    cursor: "pointer",
+    fontSize: 13,
+  },
+  search: {
+    flex: "1 1 280px",
+    minWidth: 240,
+    padding: "8px 12px",
+    border: "1px solid #D1D5DB",
+    borderRadius: 6,
+    fontSize: 14,
+  },
+  summaryChip: {
+    minWidth: 80,
+    padding: "6px 10px",
+    borderRadius: 6,
+    textAlign: "center",
+  },
+  summaryLabel: { fontSize: 11, opacity: 0.8, textTransform: "uppercase",
+                  letterSpacing: 0.5 },
+  summaryValue: { fontSize: 18, fontWeight: 700 },
+  table: {
+    width: "100%",
+    borderCollapse: "collapse",
+    fontSize: 13,
+    background: "white",
+  },
+  th: {
+    textAlign: "left",
+    padding: "8px 10px",
+    background: "#F9FAFB",
+    borderBottom: "1px solid #E5E7EB",
+    fontWeight: 600,
+    color: "#374151",
+    position: "sticky",
+    top: 0,
+  },
+  tr: { borderBottom: "1px solid #F3F4F6" },
+  td: { padding: "10px", verticalAlign: "top" },
+  fieldDetail: {
+    fontSize: 11,
+    color: "#6B7280",
+    marginTop: 2,
+    maxWidth: 220,
+    wordBreak: "break-word",
+  },
+  empty: { padding: 24, textAlign: "center", color: "#6B7280" },
+  badge: {
+    display: "inline-block",
+    padding: "2px 8px",
+    borderRadius: 12,
+    fontSize: 11,
+    fontWeight: 600,
+    whiteSpace: "nowrap",
+  },
+  buttonRow: { display: "flex", gap: 6 },
+  btnPrimary: {
+    padding: "4px 10px",
+    fontSize: 12,
+    background: "#0073B1",
+    color: "white",
+    border: "none",
+    borderRadius: 4,
+    cursor: "pointer",
+  },
+  btnSecondary: {
+    padding: "4px 10px",
+    fontSize: 12,
+    background: "white",
+    color: "#0073B1",
+    border: "1px solid #0073B1",
+    borderRadius: 4,
+    cursor: "pointer",
+  },
+  btnGhost: {
+    padding: "4px 10px",
+    fontSize: 12,
+    background: "white",
+    color: "#6B7280",
+    border: "1px solid #D1D5DB",
+    borderRadius: 4,
+    cursor: "pointer",
+  },
+  btnLink: {
+    padding: 0,
+    background: "transparent",
+    color: "#6B7280",
+    border: "none",
+    fontSize: 11,
+    textDecoration: "underline",
+    cursor: "pointer",
+  },
+  reviewState: { display: "flex", flexDirection: "column", gap: 2 },
+  approved:   { color: "#166534", fontWeight: 600, fontSize: 12 },
+  overridden: { color: "#9A3412", fontWeight: 600, fontSize: 12 },
+  reviewNote: { fontSize: 11, color: "#6B7280", fontStyle: "italic",
+                maxWidth: 220, wordBreak: "break-word" },
+  overrideForm: { display: "flex", flexDirection: "column", gap: 6 },
+  overrideInput: {
+    width: "100%",
+    minWidth: 200,
+    padding: 6,
+    border: "1px solid #D1D5DB",
+    borderRadius: 4,
+    fontSize: 12,
+    fontFamily: "inherit",
+  },
+  overrideButtons: { display: "flex", gap: 6 },
+  errorBox: {
+    background: "#FEE2E2",
+    border: "1px solid #FCA5A5",
+    color: "#991B1B",
+    padding: 12,
+    borderRadius: 6,
+    fontFamily: "monospace",
+    fontSize: 13,
+    whiteSpace: "pre-wrap",
   },
 };
