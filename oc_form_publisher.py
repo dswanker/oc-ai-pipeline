@@ -906,6 +906,8 @@ class FormPublisher:
             print(f"[publisher] session_uploaded_oids: "
                   f"{sorted(session_uploaded_oids)}", flush=True)
             result.uploaded_oids = sorted(session_uploaded_oids)
+            print(f"[publisher] result.uploaded_oids set: "
+                  f"{result.uploaded_oids}", flush=True)
             result.success = (result.forms_uploaded == result.forms_total
                               and not result.errors)
             return result
