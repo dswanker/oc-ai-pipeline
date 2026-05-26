@@ -391,6 +391,12 @@ def _build_survey_row(
         "completion_status":        status,
         "library_source":           "CDASH_DEFAULT" if item.get("cdash_alias") else "PROTOCOL_SPECIFIC",
         "flag_reason":              flag_reason,
+        # Source-OID stamp — empty for rows with no ODM origin (group
+        # wrappers, auto-injected SUBJID). gap_analysis.run_gap_analysis
+        # uses this to pair ODM items with their generated target rows
+        # without having to replay _oc_item_name and risk drift against
+        # AI-enriched specs.
+        "_source_oid":              item.get("oid", ""),
     }
     return row
 
@@ -642,6 +648,7 @@ def transform(odm_study: dict) -> dict:
                 "completion_status":   "COMPLETE",
                 "library_source":      "CDASH_DEFAULT",
                 "flag_reason":         "",
+                "_source_oid":         "",
             })
 
         # Group rows — iterate item groups for this form
@@ -668,6 +675,7 @@ def transform(odm_study: dict) -> dict:
                 "relevant": "", "calculation": "", "readonly": "",
                 "hint": "", "bind__oc_briefdescription": "", "bind__oc_description": "",
                 "completion_status": "COMPLETE", "library_source": "CDASH_DEFAULT", "flag_reason": "",
+                "_source_oid": "",
             })
 
             # Track field names within this group so multiple items sharing a
@@ -706,6 +714,7 @@ def transform(odm_study: dict) -> dict:
                 "calculation": "", "readonly": "", "hint": "",
                 "bind__oc_briefdescription": "", "bind__oc_description": "",
                 "completion_status": "COMPLETE", "library_source": "CDASH_DEFAULT", "flag_reason": "",
+                "_source_oid": "",
             })
 
         # Repeating forms — add the OC8 repeating structure at the end
@@ -726,6 +735,7 @@ def transform(odm_study: dict) -> dict:
                     "readonly": "", "hint": "", "bind__oc_briefdescription": "",
                     "bind__oc_description": "", "completion_status": "COMPLETE",
                     "library_source": "CDASH_DEFAULT", "flag_reason": "",
+                    "_source_oid": "",
                 },
                 {
                     "type": "end repeat", "name": "",
@@ -735,6 +745,7 @@ def transform(odm_study: dict) -> dict:
                     "readonly": "", "hint": "", "bind__oc_briefdescription": "",
                     "bind__oc_description": "", "completion_status": "COMPLETE",
                     "library_source": "CDASH_DEFAULT", "flag_reason": "",
+                    "_source_oid": "",
                 },
             ])
 
