@@ -68,16 +68,6 @@ import httpx
 SESSION_DIR = "/data/browser_sessions"
 
 
-# OIDs whose server-side ingest after upload routinely takes much longer
-# than the 5–10s baseline. Empirically (CRS-135 publish runs), these
-# forms take 30s+ to surface their version object in minimongo. We bump
-# the per-OID FAST(JS) warmup wait to 45s for these so the first repeat
-# card doesn't false-negative on `card has no versions` and cascade
-# every remaining card into the slower URL-nav fallback. All other
-# OIDs continue to use the 15s default warmup.
-SLOW_PROPAGATION_OIDS: set[str] = {"MH", "LWD", "SLEEP", "SF12", "EX"}
-
-
 # ── Result shape ───────────────────────────────────────────────────────────
 
 @dataclass
@@ -366,14 +356,16 @@ class FormPublisher:
                     # the OID upfront comes from cardOidMap built above.
                     confirmed_versioned_oids: set = set()
                     # Track OIDs that have had their per-session FAST(JS)
-                    # warmup wait applied. Just-uploaded forms (OID in
-                    # session_uploaded_oids) need ~15s for the Meteor
+                    # propagation poll completed. Just-uploaded forms
+                    # (OID in session_uploaded_oids) need the Meteor
                     # client to ingest the new version object into
-                    # minimongo — without the wait, the first FAST(JS)
-                    # attempt fires before Cards.findOne sees `versions`
-                    # and returns "card has no versions", forcing every
-                    # subsequent card for that form into the slower URL-
-                    # nav fallback. One wait per OID, not per card.
+                    # minimongo over DDP — propagation latency varies
+                    # by form (some land in <2s, some take 30s+). The
+                    # first FAST(JS) attempt polls Cards.findOne every
+                    # 2s up to 60s waiting for `versions` to appear;
+                    # subsequent cards for the same OID hit minimongo
+                    # in steady state and skip the poll. One poll per
+                    # OID, not per card.
                     fast_path_warmed: set = set()
 
                     # Board cards render asynchronously after networkidle.
@@ -573,44 +565,33 @@ class FormPublisher:
                                         # ids as integers, so we $set the
                                         # raw int (not the string cast).
 
-                                        # Just-uploaded forms need a one-
-                                        # time warmup before the first
-                                        # FAST(JS) attempt — minimongo
-                                        # ingests the new version
-                                        # object async over DDP, and
-                                        # firing Cards.findOne too early
-                                        # returns "card has no versions"
-                                        # which then cascades every
-                                        # subsequent card for this form
-                                        # into the URL-nav fallback.
-                                        # 15s matches the observed
-                                        # propagation window for most
-                                        # forms; OIDs in
-                                        # SLOW_PROPAGATION_OIDS (MH,
-                                        # LWD, SLEEP, SF12, EX) need
-                                        # 45s. Skip on repeat encounters
-                                        # (only the FIRST fast-path hit
-                                        # per OID waits).
-                                        if (pre_oid in session_uploaded_oids
-                                                and pre_oid not in fast_path_warmed):
-                                            warmup_ms = (
-                                                45000
-                                                if pre_oid in SLOW_PROPAGATION_OIDS
-                                                else 15000
-                                            )
-                                            print(f"[publisher] FAST(JS) "
-                                                  f"warmup wait "
-                                                  f"{warmup_ms // 1000}s "
-                                                  f"for {form_name} "
-                                                  f"(OID={pre_oid}) — "
-                                                  f"minimongo propagation",
-                                                  flush=True)
-                                            await page.wait_for_timeout(
-                                                warmup_ms)
-                                            fast_path_warmed.add(pre_oid)
-
-                                        js_result = await page.evaluate(
-                                            """
+                                        # Just-uploaded forms need the
+                                        # version object to land in
+                                        # minimongo before Cards.findOne
+                                        # can see it. Propagation latency
+                                        # varies — some forms <2s, some
+                                        # 30s+. Instead of a fixed worst-
+                                        # case wait, poll: re-run the
+                                        # FAST(JS) check every 2s up to
+                                        # 60s. Each failed poll returns
+                                        # ok:false before Cards.update
+                                        # fires (the JS early-returns on
+                                        # "card has no versions"), so
+                                        # polling is side-effect-free
+                                        # until the version appears.
+                                        # Only the FIRST card per OID
+                                        # pays the polling cost —
+                                        # subsequent cards proceed
+                                        # single-shot.
+                                        needs_warmup_poll = (
+                                            pre_oid in session_uploaded_oids
+                                            and pre_oid not in fast_path_warmed
+                                        )
+                                        elapsed_ms = 0
+                                        js_result = None
+                                        while True:
+                                            js_result = await page.evaluate(
+                                                """
                                             async (cardId) => {
                                                 if (typeof Cards === 'undefined'
                                                         || typeof Meteor === 'undefined') {
@@ -681,7 +662,57 @@ class FormPublisher:
                                                 }
                                             }
                                             """,
-                                            card_meteor_id)
+                                                card_meteor_id)
+
+                                            # ── Polling decision ──
+                                            # Success: leave the loop. The
+                                            # JS already fired Cards.update
+                                            # so we're done.
+                                            if (isinstance(js_result, dict)
+                                                    and js_result.get('ok')):
+                                                break
+                                            # Single-shot mode: this OID
+                                            # is either pre-existing or
+                                            # has already been polled in
+                                            # a prior card. Don't retry.
+                                            if not needs_warmup_poll:
+                                                break
+                                            # Only retry on the specific
+                                            # propagation-lag reasons.
+                                            # Anything else (Cards/Meteor
+                                            # not in scope, card not in
+                                            # minimongo at all, Cards.update
+                                            # threw, …) won't resolve by
+                                            # waiting longer — let the
+                                            # fallback handle it.
+                                            _r = (js_result.get('reason')
+                                                  if isinstance(js_result, dict)
+                                                  else str(js_result))
+                                            if _r not in (
+                                                'card has no versions',
+                                                'no version id found',
+                                            ):
+                                                break
+                                            if elapsed_ms >= 60_000:
+                                                break
+                                            print(
+                                                f"[publisher] FAST(JS) "
+                                                f"waiting for {form_name} "
+                                                f"(OID={pre_oid}) — version "
+                                                f"not yet in minimongo, "
+                                                f"retrying in 2s (elapsed "
+                                                f"{elapsed_ms // 1000}s)",
+                                                flush=True,
+                                            )
+                                            await page.wait_for_timeout(2000)
+                                            elapsed_ms += 2000
+
+                                        # Polling complete. Mark this OID
+                                        # as warmed regardless of outcome
+                                        # — subsequent cards for the same
+                                        # OID shouldn't repeat the wait.
+                                        if needs_warmup_poll:
+                                            fast_path_warmed.add(pre_oid)
 
                                         if (isinstance(js_result, dict)
                                                 and js_result.get('ok')):
@@ -690,7 +721,8 @@ class FormPublisher:
                                                   f"set-default {form_name} "
                                                   f"(OID={pre_oid}, "
                                                   f"versionId="
-                                                  f"{js_result.get('versionIdRaw')})",
+                                                  f"{js_result.get('versionIdRaw')}) "
+                                                  f"after {elapsed_ms // 1000}s",
                                                   flush=True)
                                             break
 
