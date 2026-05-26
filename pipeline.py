@@ -1587,8 +1587,6 @@ async def create_oc_study(subdomain, struct_json, is_production=False,
                 allowed_card_ids=_allowed_card_ids,
                 conflict_oids=_conflict_oids if _conflict_oids else None,
             )
-            print(f"[create-oc-study] forms_publish.uploaded_oids: "
-                  f"{forms_publish.uploaded_oids}", flush=True)
             print(f"Form publish: {forms_publish.forms_uploaded}/"
                   f"{forms_publish.forms_total} uploaded; "
                   f"errors={len(forms_publish.errors)}  "
@@ -1604,8 +1602,6 @@ async def create_oc_study(subdomain, struct_json, is_production=False,
             # current versions of that OID). For conflict OIDs we DO NOT
             # update the stored set — the conflict persists on the next
             # run until the human resolves it.
-            print(f"[upload-record] pre-gate check: uploaded_oids="
-                  f"{forms_publish.uploaded_oids}", flush=True)
             if item_id and forms_publish.uploaded_oids:
                 try:
                     # OC's REST API has propagation lag — a fetch

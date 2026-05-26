@@ -687,45 +687,25 @@ class FormPublisher:
                                                 and js_result.get('ok')):
                                             result.forms_uploaded += 1
                                             print(f"[publisher] FAST(JS) "
-                                                  f"set-default "
-                                                  f"{form_name} "
+                                                  f"set-default {form_name} "
                                                   f"(OID={pre_oid}, "
                                                   f"versionId="
-                                                  f"{js_result.get('versionId')!r}, "
-                                                  f"versionIdRaw="
-                                                  f"{js_result.get('versionIdRaw')!r}, "
-                                                  f"versionObj="
-                                                  f"{js_result.get('versionObj')}, "
-                                                  f"cardFields="
-                                                  f"{js_result.get('cardFields')})",
+                                                  f"{js_result.get('versionIdRaw')})",
                                                   flush=True)
                                             break
 
-                                        # JS approach failed — log details
-                                        # and fall back to URL navigation
-                                        # (still skips minicard-click
-                                        # animation + 8s panel-open wait).
+                                        # JS approach failed — fall back to
+                                        # URL navigation (still skips the
+                                        # minicard-click animation + 8s
+                                        # panel-open wait).
                                         reason = (js_result.get('reason')
                                                   if isinstance(js_result, dict)
                                                   else str(js_result))
-                                        _diag = ""
-                                        if isinstance(js_result, dict):
-                                            _diag = (
-                                                f" versionId="
-                                                f"{js_result.get('versionId')!r}"
-                                                f" versionIdRaw="
-                                                f"{js_result.get('versionIdRaw')!r}"
-                                                f" versionObj="
-                                                f"{js_result.get('versionObj')}"
-                                                f" cardFields="
-                                                f"{js_result.get('cardFields')}"
-                                                f" versionKeys="
-                                                f"{js_result.get('versionKeys')}")
                                         print(f"[publisher] FAST(JS) failed "
                                               f"for {form_name} "
-                                              f"(OID={pre_oid}): {reason}"
-                                              f"{_diag} — falling back to "
-                                              f"URL nav", flush=True)
+                                              f"(OID={pre_oid}): {reason} — "
+                                              f"falling back to URL nav",
+                                              flush=True)
 
                                         if card_href:
                                             abs_url = await page.evaluate(
@@ -1139,8 +1119,6 @@ class FormPublisher:
             print(f"[publisher] session_uploaded_oids: "
                   f"{sorted(session_uploaded_oids)}", flush=True)
             result.uploaded_oids = sorted(session_uploaded_oids)
-            print(f"[publisher] result.uploaded_oids set: "
-                  f"{result.uploaded_oids}", flush=True)
             result.success = (result.forms_uploaded == result.forms_total
                               and not result.errors)
             return result
