@@ -73,6 +73,21 @@ in a single pass:
    PDF, XLSX, and JSON outputs (see "Surfacing in the Study Specification"
    section of conventions.md).
 
+## Begin/end tag pairing — generate correctly first-pass
+
+For repeating forms, `begin_repeat` MUST be closed by `end_repeat`, never
+by `end_group`. Likewise `begin_group` closes with `end_group`. Earlier
+prompt revisions described a "phantom end_group" inside the repeat block
+as required — that was wrong. OC's form-service silently rejects forms
+with mismatched begin/end pairs (HTTP 200 on upload, no version object
+created), which surfaced as the CRS-135 "form refuses to publish" bug.
+
+The edc-builder script now runs ODK Validate after every form and
+attempts up to 3 AI re-generation rounds when validation fails. That is
+a backstop only — every correction round costs a model call and risks
+introducing other regressions. Generate the correct begin/end tag
+pairing in the first pass per RULE OC-8 in `prompts.py`.
+
 ---
 
 ## Input Detection

@@ -587,3 +587,21 @@ medications, deviations, or serious adverse events, skip the
 corresponding form entirely — do NOT emit `AE` etc. with empty content.
 SE_COMMON itself only exists when at least one of the four forms is in
 scope.
+
+---
+
+## Begin/End Tag Pairing Rules (CRITICAL)
+
+- `begin_repeat` MUST always be closed by `end_repeat`. NEVER by `end_group`.
+- `begin_group` MUST always be closed by `end_group`. NEVER by `end_repeat`.
+- The build script maintains a tag stack and asserts it is balanced at
+  form completion. Any mismatch is a hard error caught at build time.
+- All generated XLSForms are validated with ODK Validate before ZIP.
+- Self-correction loop: up to 3 re-generation attempts on validation failure.
+
+## What OC's form-service rejects (empirical — CRS-135, May 2026)
+
+- Mismatched begin/end tags: OC returns HTTP 200 on upload but never
+  creates a version object in minimongo. Symptom looks like propagation
+  lag but the version never appears. Root cause: form rejected server-side.
+- These errors are NOT caught by pyxform `validate=False`. Use ODK Validate.

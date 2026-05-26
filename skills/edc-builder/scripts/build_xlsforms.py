@@ -362,9 +362,15 @@ def _normalize_survey_rows(rows):
     XLSForm spec (and pyxform validation) requires that end group and
     end repeat rows have a BLANK name. Claude sometimes generates these
     rows with names (e.g. 'AE_REPEAT_END') which causes pyxform to look
-    for a matching begin_group by name and fail. This fix also handles
-    the OC-8 phantom end group (between begin repeat and end repeat)
-    which has no matching begin group by design.
+    for a matching begin_group by name and fail.
+
+    NOTE: begin/end TYPE pairing (begin_repeat closes with end_repeat,
+    begin_group closes with end_group) is enforced separately by
+    _balance_begin_end_tags, which runs before this normalizer. Earlier
+    comments here treated a phantom `end_group` inside a repeat as
+    intentional ("OC-8") — that was wrong; OC's form-service silently
+    rejects forms with that pattern. See xlsform-build-rules.md for the
+    full diagnosis.
     """
     END_TYPES = {'end group', 'end repeat', 'end_group', 'end_repeat'}
     normalized = []
@@ -375,6 +381,98 @@ def _normalize_survey_rows(rows):
             r['name'] = ''
         normalized.append(r)
     return normalized
+
+
+# ── Begin/end tag pairing balancer ────────────────────────────────────────────
+def _balance_begin_end_tags(rows, form_id, build_log=None):
+    """Walk the survey rows tracking a begin/end stack. Correct any end
+    tag whose type doesn't match its opener (e.g. begin_repeat closed by
+    end_group), drop orphan end rows whose stack is empty, and append
+    closer rows for any unclosed begins at the form tail.
+
+    Why this is a hard correctness requirement (not a defensive nicety):
+    OC's form-service silently rejects forms with mismatched begin/end
+    tags — uploads return HTTP 200 but no version object ever appears
+    in minimongo. The symptom looks like propagation lag but the form
+    was actually rejected at parse time. See xlsform-build-rules.md.
+
+    Correction policy:
+      * begin_repeat / end_group adjacency → rewrite end row's type to
+        'end repeat' (opener wins).
+      * begin_group / end_repeat adjacency → rewrite to 'end group'.
+      * end row with empty stack → drop (orphan, can't pair).
+      * begin row with no matching end before form end → auto-append
+        the matching end row (minimal — only `type`, blank `name`).
+
+    Returns the corrected row list. Logs every correction made into
+    build_log['tag_balance_corrections'] when build_log is provided.
+
+    Raises ValueError only if the input is genuinely unsalvageable
+    (currently no such case is reachable — the open/close model is
+    single-tier within one form's survey sheet).
+    """
+    def _classify(t: str):
+        u = (t or '').strip().lower().replace('_', ' ')
+        if u == 'begin group':  return ('begin', 'group')
+        if u == 'begin repeat': return ('begin', 'repeat')
+        if u == 'end group':    return ('end',   'group')
+        if u == 'end repeat':   return ('end',   'repeat')
+        return (None, None)
+
+    stack: list[str] = []
+    corrections: list[str] = []
+    out: list[dict] = []
+
+    for idx, row in enumerate(rows):
+        t = str(row.get('type', '') or '')
+        action, kind = _classify(t)
+
+        if action == 'begin':
+            stack.append(kind)
+            out.append(dict(row))
+
+        elif action == 'end':
+            if not stack:
+                corrections.append(
+                    f"row {idx + 2}: dropped orphan end ({t!r}) — "
+                    f"no matching begin on the stack"
+                )
+                continue
+            opener_kind = stack.pop()
+            corrected = 'end repeat' if opener_kind == 'repeat' else 'end group'
+            new_row = dict(row)
+            if kind != opener_kind:
+                corrections.append(
+                    f"row {idx + 2}: rewrote {t!r} → {corrected!r} "
+                    f"(opener was begin_{opener_kind})"
+                )
+                new_row['type'] = corrected
+            out.append(new_row)
+
+        else:
+            out.append(dict(row))
+
+    # Auto-close any unclosed begins at the tail.
+    while stack:
+        opener_kind = stack.pop()
+        closer = 'end repeat' if opener_kind == 'repeat' else 'end group'
+        out.append({'type': closer, 'name': ''})
+        corrections.append(
+            f"tail: appended {closer!r} to close unclosed begin_{opener_kind}"
+        )
+
+    if corrections:
+        print(f"[edc-builder] balanced begin/end tags for {form_id}:",
+              flush=True)
+        for c in corrections:
+            print(f"  {c}", flush=True)
+        if build_log is not None:
+            build_log.setdefault('tag_balance_corrections', []).append({
+                'form_id': form_id,
+                'corrections': corrections,
+            })
+
+    return out
 
 
 # ── Choice-list back-fill (CRS-136 fix) ───────────────────────────────────────
@@ -613,6 +711,10 @@ def build_single_xlsform(form_data, output_path, build_log):
         ws_sv.column_dimensions[get_column_letter(col_i)].width = \
             SURVEY_WIDTHS.get(col, 16)
 
+    # Balance begin/end tag pairs BEFORE the name-blanking normalizer:
+    # the balancer can drop or rewrite type, and the normalizer's name-
+    # blanking pass only operates correctly on a balanced row sequence.
+    survey = _balance_begin_end_tags(survey, form_id, build_log)
     survey = _normalize_survey_rows(survey)
 
     placeholders_in_form = []
@@ -659,16 +761,109 @@ def build_single_xlsform(form_data, output_path, build_log):
 
 
 # ── Build all XLSForms ─────────────────────────────────────────────────────────
+
+# Anthropic model used for the validation self-correction loop. Pinned per
+# the operator spec so behavior is reproducible across runs. If/when this
+# rolls forward, update both here and the prompt template.
+_SELF_CORRECTION_MODEL = "claude-sonnet-4-20250514"
+_SELF_CORRECTION_MAX_ATTEMPTS = 3
+
+
+def _regenerate_survey_via_ai(form, error_msg, attempt_num):
+    """Ask the Anthropic API to repair this form's survey rows given the
+    exact pyxform / ODK Validate error message.
+
+    Returns the new list of survey row dicts, or raises if the API call
+    fails or the response can't be parsed as a JSON array. Callers treat
+    a raise here as one failed attempt — the surrounding loop decides
+    whether to retry.
+
+    The prompt is intentionally tight: model gets enough context to
+    repair (form metadata + current rows + error) and is told to return
+    JSON only with no commentary. Begin/end tag pairing rules are stated
+    explicitly so the model doesn't reintroduce the very bug this loop
+    is fixing.
+    """
+    import json
+    try:
+        import anthropic
+    except ImportError as e:
+        raise RuntimeError(
+            f"anthropic SDK not installed — cannot self-correct "
+            f"validation failures: {e}"
+        ) from e
+
+    form_id    = form.get('form_id', '?')
+    form_title = form.get('form_title', form_id)
+    survey     = form.get('survey', [])
+
+    prompt = (
+        "You are correcting an XLSForm survey table that failed "
+        "validation for OpenClinica 4.\n\n"
+        f"Form ID: {form_id}\n"
+        f"Form title: {form_title}\n"
+        f"Attempt: {attempt_num} of {_SELF_CORRECTION_MAX_ATTEMPTS}\n\n"
+        f"Validation error:\n{error_msg}\n\n"
+        f"Current (invalid) survey rows:\n"
+        f"{json.dumps(survey, indent=2, default=str)}\n\n"
+        "Return ONLY the corrected survey rows as a JSON array. Apply "
+        "these rules:\n"
+        "  - begin_repeat MUST be closed by end_repeat (never end_group).\n"
+        "  - begin_group MUST be closed by end_group (never end_repeat).\n"
+        "  - end_group / end_repeat rows must have an empty name field.\n"
+        "  - Do not introduce new fields that were not in the input.\n"
+        "  - Preserve every original field's keys; only correct values "
+        "needed to pass validation.\n\n"
+        "Output: a single JSON array. No markdown fence, no commentary, "
+        "no preamble."
+    )
+
+    client = anthropic.Anthropic()
+    resp = client.messages.create(
+        model=_SELF_CORRECTION_MODEL,
+        max_tokens=8192,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    # Concatenate all text blocks. Anthropic responses are a list of
+    # content blocks; with a plain text-only response there's normally one.
+    raw = "".join(
+        b.text for b in resp.content if getattr(b, "type", "") == "text"
+    ).strip()
+    # Strip an accidental markdown fence if the model added one despite
+    # being told not to.
+    if raw.startswith("```"):
+        raw = re.sub(r"^```[a-zA-Z]*\n?", "", raw)
+        raw = re.sub(r"\n?```$", "", raw.rstrip())
+    parsed = json.loads(raw)
+    if not isinstance(parsed, list):
+        raise ValueError(
+            f"AI returned a {type(parsed).__name__}, expected JSON array"
+        )
+    return parsed
+
+
 def build_all_xlsforms(spec_data, output_dir, build_log):
     """
     Build all XLSForm files from spec_data.
     Returns list of (form_id, output_path) tuples.
 
-    Each successfully-built form is also validated using pyxform; results
-    are accumulated in build_log['validation_results'] for downstream
+    After each form is built we validate it (pyxform → ODK Validate when
+    Java is present). On validation failure we attempt up to
+    _SELF_CORRECTION_MAX_ATTEMPTS rounds of AI-assisted re-generation of
+    the form's survey rows; each round logs:
+        [edc-builder] VALIDATION FAILED: {form_id} — {error} (attempt N/3)
+    and on eventual success:
+        [edc-builder] VALIDATION PASSED: {form_id} after N correction(s)
+
+    Forms that fail every correction attempt are removed from the output
+    directory and recorded in build_log['build_errors'] with a
+    `hard_error: True` flag — they're excluded from the final ZIP.
+
+    Validation results (tuple form: (is_valid, errors, warnings)) are
+    accumulated in build_log['validation_results'] for downstream
     surfacing in BUILD_README and the Build Checklist PDF.
     """
-    # Lazy import to keep build_xlsforms.py lean
+    # Lazy import to keep build_xlsforms.py lean.
     try:
         from validate_form import validate_xlsform
     except ImportError:
@@ -677,6 +872,7 @@ def build_all_xlsforms(spec_data, output_dir, build_log):
     os.makedirs(output_dir, exist_ok=True)
     built = []
     build_log.setdefault('validation_results', [])
+    build_log.setdefault('forms_excluded', [])
 
     # Track form_ids to handle variants (same form_id, different designs)
     seen_form_ids = {}
@@ -708,10 +904,99 @@ def build_all_xlsforms(spec_data, output_dir, build_log):
             built.append((tab_prefix, output_path))
             build_log['forms_built'].append(form_id)
 
-            # Validate the form we just built
-            if validate_xlsform is not None:
-                v_result = validate_xlsform(output_path, form_id=tab_prefix)
-                build_log['validation_results'].append(v_result)
+            # Validate, then self-correct if the form is invalid.
+            if validate_xlsform is None:
+                continue
+
+            is_valid, errors, warnings = validate_xlsform(output_path)
+            build_log['validation_results'].append({
+                'form_id':  tab_prefix,
+                'is_valid': is_valid,
+                'errors':   errors,
+                'warnings': warnings,
+            })
+
+            if is_valid:
+                continue
+
+            # ── Self-correction loop ──────────────────────────────
+            corrected = False
+            working_form = dict(form)
+            for attempt in range(1, _SELF_CORRECTION_MAX_ATTEMPTS + 1):
+                err_preview = (errors[0] if errors else "<no detail>")[:200]
+                print(
+                    f"[edc-builder] VALIDATION FAILED: {tab_prefix} — "
+                    f"{err_preview} (attempt {attempt}/"
+                    f"{_SELF_CORRECTION_MAX_ATTEMPTS})",
+                    flush=True,
+                )
+                try:
+                    new_survey = _regenerate_survey_via_ai(
+                        working_form, errors[0] if errors else "", attempt,
+                    )
+                except Exception as ai_err:
+                    print(
+                        f"[edc-builder] correction attempt {attempt} "
+                        f"crashed: {type(ai_err).__name__}: {ai_err}",
+                        flush=True,
+                    )
+                    continue
+
+                working_form = dict(working_form)
+                working_form['survey'] = new_survey
+                try:
+                    build_single_xlsform(working_form, output_path, build_log)
+                except Exception as build_err:
+                    print(
+                        f"[edc-builder] correction attempt {attempt} "
+                        f"rebuild failed: {build_err}", flush=True,
+                    )
+                    continue
+
+                is_valid, errors, warnings = validate_xlsform(output_path)
+                build_log['validation_results'].append({
+                    'form_id':  tab_prefix,
+                    'is_valid': is_valid,
+                    'errors':   errors,
+                    'warnings': warnings,
+                    'attempt':  attempt,
+                })
+                if is_valid:
+                    print(
+                        f"[edc-builder] VALIDATION PASSED: {tab_prefix} "
+                        f"after {attempt} correction(s)", flush=True,
+                    )
+                    corrected = True
+                    break
+
+            if not corrected:
+                # Exhausted retries — exclude this form from the ZIP and
+                # record a hard error so the build report flags it.
+                build_log['build_errors'].append({
+                    'form_id':    form_id,
+                    'hard_error': True,
+                    'error':      (
+                        f"Validation failed after "
+                        f"{_SELF_CORRECTION_MAX_ATTEMPTS} self-correction "
+                        f"attempts. Last error: "
+                        f"{errors[0] if errors else '<none>'}"
+                    ),
+                })
+                build_log['forms_excluded'].append(tab_prefix)
+                # Remove the bad file from the output dir and the built
+                # list so downstream packaging doesn't ship it.
+                try:
+                    os.remove(output_path)
+                except OSError:
+                    pass
+                built = [b for b in built if b[1] != output_path]
+                if form_id in build_log['forms_built']:
+                    build_log['forms_built'].remove(form_id)
+                print(
+                    f"[edc-builder] EXCLUDED from ZIP: {tab_prefix} "
+                    f"(unrecoverable validation failure)", flush=True,
+                )
+
         except Exception as e:
             build_log['build_errors'].append({
                 'form_id': form_id,
