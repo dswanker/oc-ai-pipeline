@@ -901,6 +901,10 @@ class FormPublisher:
             # Expose the per-session set of uploaded OIDs so callers can
             # tell publish_to_test "trust these even if the OC REST API
             # doesn't show their versions yet" (propagation delay).
+            # Debug log so we can verify population at the source if
+            # downstream sees an empty list.
+            print(f"[publisher] session_uploaded_oids: "
+                  f"{sorted(session_uploaded_oids)}", flush=True)
             result.uploaded_oids = sorted(session_uploaded_oids)
             result.success = (result.forms_uploaded == result.forms_total
                               and not result.errors)

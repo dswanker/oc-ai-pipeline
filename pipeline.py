@@ -1604,6 +1604,17 @@ async def create_oc_study(subdomain, struct_json, is_production=False,
             # run until the human resolves it.
             if item_id and forms_publish.uploaded_oids:
                 try:
+                    # OC's REST API has propagation lag — a fetch
+                    # immediately after the publisher returns
+                    # observed only ~12 of 23 forms' versions on the
+                    # last run, so the stored record ended up with
+                    # empty pipeline_version_ids for most OIDs and
+                    # the next run over-flagged conflicts. 12s gives
+                    # OC time to surface the newly-uploaded versions
+                    # before we snapshot.
+                    print(f"[upload-record] waiting 12s for OC version "
+                          f"propagation before snapshot...", flush=True)
+                    await asyncio.sleep(12)
                     _oc_versions_after = await _fetch_oc_versions_by_oid(
                         subdomain, board_id,
                         is_production=is_production, token=token,
