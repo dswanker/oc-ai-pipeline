@@ -68,6 +68,16 @@ import httpx
 SESSION_DIR = "/data/browser_sessions"
 
 
+# OIDs whose server-side ingest after upload routinely takes much longer
+# than the 5–10s baseline. Empirically (CRS-135 publish runs), these
+# forms take 30s+ to surface their version object in minimongo. We bump
+# the per-OID FAST(JS) warmup wait to 45s for these so the first repeat
+# card doesn't false-negative on `card has no versions` and cascade
+# every remaining card into the slower URL-nav fallback. All other
+# OIDs continue to use the 15s default warmup.
+SLOW_PROPAGATION_OIDS: set[str] = {"MH", "LWD", "SLEEP", "SF12", "EX"}
+
+
 # ── Result shape ───────────────────────────────────────────────────────────
 
 @dataclass
@@ -574,19 +584,29 @@ class FormPublisher:
                                         # subsequent card for this form
                                         # into the URL-nav fallback.
                                         # 15s matches the observed
-                                        # propagation window. Skip on
-                                        # repeat encounters (only the
-                                        # FIRST fast-path hit per OID
-                                        # waits).
+                                        # propagation window for most
+                                        # forms; OIDs in
+                                        # SLOW_PROPAGATION_OIDS (MH,
+                                        # LWD, SLEEP, SF12, EX) need
+                                        # 45s. Skip on repeat encounters
+                                        # (only the FIRST fast-path hit
+                                        # per OID waits).
                                         if (pre_oid in session_uploaded_oids
                                                 and pre_oid not in fast_path_warmed):
+                                            warmup_ms = (
+                                                45000
+                                                if pre_oid in SLOW_PROPAGATION_OIDS
+                                                else 15000
+                                            )
                                             print(f"[publisher] FAST(JS) "
-                                                  f"warmup wait 15s for "
-                                                  f"{form_name} "
+                                                  f"warmup wait "
+                                                  f"{warmup_ms // 1000}s "
+                                                  f"for {form_name} "
                                                   f"(OID={pre_oid}) — "
                                                   f"minimongo propagation",
                                                   flush=True)
-                                            await page.wait_for_timeout(15000)
+                                            await page.wait_for_timeout(
+                                                warmup_ms)
                                             fast_path_warmed.add(pre_oid)
 
                                         js_result = await page.evaluate(
