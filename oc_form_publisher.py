@@ -532,16 +532,26 @@ class FormPublisher:
                                             and card_meteor_id):
                                         # FAST PATH (JS injection): the DDP
                                         # probe showed the radio click is
-                                        # handled client-side — no DDP
-                                        # method fires from the click alone.
-                                        # Replicate the underlying state
-                                        # change by calling Meteor's
-                                        # collection update method directly,
-                                        # skipping the panel-open + radio-
-                                        # render propagation lag (~17s →
-                                        # <1s per repeat card). The radio's
-                                        # HTML name attribute is "_version",
-                                        # so that's the Cards field we $set.
+                                        # handled client-side via direct
+                                        # minimongo update — no DDP method
+                                        # fires from the click, and the
+                                        # panel-close persist runs through
+                                        # the same allow/deny path. We
+                                        # replicate that exact sequence
+                                        # (Cards.update on the client; DDP
+                                        # sync is automatic), skipping the
+                                        # panel-open + radio-render lag
+                                        # (~17s → <1s per repeat card).
+                                        # Previous attempts ruled out:
+                                        #   - Meteor.call('/cards/update'):
+                                        #     server rejects with INVALID
+                                        #     [400] on _version
+                                        #   - PATCH /api/boards/.../cards
+                                        #     /...: read-only (Allow:
+                                        #     OPTIONS, GET, HEAD)
+                                        # The collection stores version
+                                        # ids as integers, so we $set the
+                                        # raw int (not the string cast).
                                         js_result = await page.evaluate(
                                             """
                                             async (cardId) => {
@@ -580,29 +590,38 @@ class FormPublisher:
                                                     defaultVersion: card.defaultVersion,
                                                     _version: card._version,
                                                 };
-                                                return await new Promise((resolve) => {
-                                                    Meteor.call('/cards/update',
-                                                        { _id: cardId },
-                                                        { $set: { _version: versionId } },
-                                                        {},
-                                                        (err) => {
-                                                            if (err) resolve({
-                                                                ok: false,
-                                                                reason: String(err.message || err),
-                                                                versionId: versionId,
-                                                                versionIdRaw: versionIdRaw,
-                                                                versionObj: versionObj,
-                                                                cardFields: cardFields
-                                                            });
-                                                            else resolve({
-                                                                ok: true,
-                                                                versionId: versionId,
-                                                                versionIdRaw: versionIdRaw,
-                                                                versionObj: versionObj,
-                                                                cardFields: cardFields
-                                                            });
-                                                        });
-                                                });
+                                                // Fire-and-forget direct minimongo
+                                                // update. The Meteor client syncs
+                                                // the change via DDP automatically;
+                                                // if the server's allow/deny rule
+                                                // rejects the field, the change is
+                                                // silently reverted on next sync
+                                                // and publish_to_test's API call
+                                                // surfaces the missing default
+                                                // downstream. No callback so we
+                                                // don't block per-card on a
+                                                // server round-trip.
+                                                try {
+                                                    Cards.update(cardId,
+                                                        { $set: { _version: versionIdRaw } });
+                                                    return {
+                                                        ok: true,
+                                                        versionId: versionId,
+                                                        versionIdRaw: versionIdRaw,
+                                                        versionObj: versionObj,
+                                                        cardFields: cardFields
+                                                    };
+                                                } catch (e) {
+                                                    return {
+                                                        ok: false,
+                                                        reason: 'Cards.update threw: '
+                                                            + String(e.message || e),
+                                                        versionId: versionId,
+                                                        versionIdRaw: versionIdRaw,
+                                                        versionObj: versionObj,
+                                                        cardFields: cardFields
+                                                    };
+                                                }
                                             }
                                             """,
                                             card_meteor_id)
