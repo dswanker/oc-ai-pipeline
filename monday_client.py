@@ -58,6 +58,9 @@ COL = {
     # EDC migration input (created by scripts/create_migration_columns.py)
     "source_edc_export": "file_mm386dte",   # file: ODM XML or ZIP containing ODM XML
     "source_edc_system": "dropdown_mm382w7d",  # dropdown: vendor (auto-detected, overridable)
+    # Path routing — status column gating Path M (Migration) vs the
+    # default PDF/protocol path. Pipeline reads via cols.get(COL["study_path_label"]).
+    "study_path_label":  "label__1",
     # Pipeline configuration assets (Configuration group row on AI Hub board)
     "pipeline_extension": "file_mm3jp6bm",   # file: zipped Chrome extension (OC Session Capture)
 }

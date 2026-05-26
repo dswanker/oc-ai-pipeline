@@ -2818,7 +2818,7 @@ async def run_pipeline(item_id):
         # rows and getting silently routed into Path M. Both label AND
         # file are required; label without file is a hard error.
         _migration_post_build_state: dict | None = None
-        _study_path_label = (cols.get("label__1") or {}).get("text", "") or ""
+        _study_path_label = (cols.get(COL["study_path_label"]) or {}).get("text", "") or ""
         _is_migration_label = _study_path_label.strip().lower() == "migration"
         if struct_json is None and _is_migration_label:
             if not source_edc_export_bytes:
