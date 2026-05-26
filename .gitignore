@@ -38,4 +38,8 @@ conventions_engine/build/
 # OC SSO session JSONs captured by scripts/oc_session_bootstrap.py.
 # These contain live auth cookies — MUST NOT be committed.
 sessions/
+
+# Local mirror of the Railway browser-session volume — populated by
+# test_publisher.py --capture-session. Same risk: live auth cookies.
+data/
 extension.zip
