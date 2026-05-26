@@ -3358,6 +3358,10 @@ async def run_pipeline(item_id):
             # ── Chain C: EDC Build → DVS ──────────────────────────────────────
             build_zip_holder  = [None]   # mutable container for async closure
             build_json_holder = [{"forms": {}}]
+            # Chain D writes forms_publish (dict from create_oc_study) here so
+            # the post-pipeline auto-trigger can read uploaded_oids without
+            # locals() — chain_d's locals are not visible from run_pipeline.
+            forms_publish_holder = [None]
             # Event set when chain_c's build is done (or if chain_c is skipped).
             # Chain E waits on this instead of re-triggering a duplicate build
             # when both "study build zip" and "build preview" are selected.
@@ -3546,6 +3550,7 @@ async def run_pipeline(item_id):
                     board_imported = result["board_imported"]
                     board_error    = result.get("board_error", "")
                     forms_publish  = result.get("forms_publish")
+                    forms_publish_holder[0] = forms_publish
                     await set_text(item_id, COL["oc_study_url"], study_url)
                     # Persist the raw UUID separately so publish_to_test can
                     # read it without parsing the URL (which historically
@@ -3720,14 +3725,13 @@ async def run_pipeline(item_id):
                     # Forward the just-uploaded OIDs to publish_to_test so
                     # its pre-flight doesn't false-positive on the OC REST
                     # API's propagation delay for newly-uploaded versions.
-                    # Defensive locals() lookup: forms_publish is only set
-                    # if Chain D ran, which depends on create_study+...
-                    _fp = locals().get("forms_publish")
-                    _uploaded_oids = None
-                    if isinstance(_fp, dict):
-                        _uploaded_oids = set(_fp.get("uploaded_oids") or [])
-                    print(f"[auto-publish] extracted _uploaded_oids: "
-                          f"{_uploaded_oids}", flush=True)
+                    # forms_publish_holder is populated by chain_d; None if
+                    # Chain D was skipped or failed before uploads ran.
+                    _fp = forms_publish_holder[0]
+                    _uploaded_oids = (
+                        set(_fp.get("uploaded_oids") or [])
+                        if isinstance(_fp, dict) else None
+                    )
                     print(f"[auto-publish] Publish to Test checkbox is "
                           f"checked — starting publish "
                           f"(trusting {len(_uploaded_oids or [])} "
