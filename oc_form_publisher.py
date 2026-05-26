@@ -561,15 +561,19 @@ class FormPublisher:
                                                              reason: 'card has no versions',
                                                              keys: Object.keys(card) };
                                                 }
-                                                const versionId = card.versions[0]._id
-                                                    || card.versions[0].id
-                                                    || null;
-                                                if (!versionId) {
+                                                // Versions array uses .id (integer), not ._id.
+                                                // Keep raw for logs, cast to string for the
+                                                // Meteor.call $set value — the integer form
+                                                // returned INVALID [400] last run.
+                                                const versionIdRaw = card.versions[0].id
+                                                    || card.versions[0]._id;
+                                                if (!versionIdRaw) {
                                                     return { ok: false,
                                                              reason: 'no version id found',
                                                              versionKeys: Object.keys(card.versions[0]),
                                                              versionObj: JSON.stringify(card.versions[0]) };
                                                 }
+                                                const versionId = String(versionIdRaw);
                                                 const versionObj = card.versions[0];
                                                 const cardFields = {
                                                     currentVersion: card.currentVersion,
@@ -586,12 +590,14 @@ class FormPublisher:
                                                                 ok: false,
                                                                 reason: String(err.message || err),
                                                                 versionId: versionId,
+                                                                versionIdRaw: versionIdRaw,
                                                                 versionObj: versionObj,
                                                                 cardFields: cardFields
                                                             });
                                                             else resolve({
                                                                 ok: true,
                                                                 versionId: versionId,
+                                                                versionIdRaw: versionIdRaw,
                                                                 versionObj: versionObj,
                                                                 cardFields: cardFields
                                                             });
@@ -609,7 +615,9 @@ class FormPublisher:
                                                   f"{form_name} "
                                                   f"(OID={pre_oid}, "
                                                   f"versionId="
-                                                  f"{js_result.get('versionId')}, "
+                                                  f"{js_result.get('versionId')!r}, "
+                                                  f"versionIdRaw="
+                                                  f"{js_result.get('versionIdRaw')!r}, "
                                                   f"versionObj="
                                                   f"{js_result.get('versionObj')}, "
                                                   f"cardFields="
@@ -627,6 +635,10 @@ class FormPublisher:
                                         _diag = ""
                                         if isinstance(js_result, dict):
                                             _diag = (
+                                                f" versionId="
+                                                f"{js_result.get('versionId')!r}"
+                                                f" versionIdRaw="
+                                                f"{js_result.get('versionIdRaw')!r}"
                                                 f" versionObj="
                                                 f"{js_result.get('versionObj')}"
                                                 f" cardFields="
