@@ -1382,8 +1382,20 @@ class FormPublisher:
                                     await _mcl.scroll_into_view_if_needed(
                                         timeout=5000)
                                     await _mcl.click()
+                                # state='attached' (not the default
+                                # 'visible'): for SLEEP/SF12/EX/AE/
+                                # AESAE/CM/DV the radio renders hidden
+                                # in the DOM until minimongo
+                                # processes the version — visible
+                                # state would time out the full 15s.
+                                # Same fix as the upload-loop wait in
+                                # commit 6e7b213; needed here too
+                                # because this fallback is what makes
+                                # publish-to-test succeed for those
+                                # forms when the batch missed them.
                                 await page.wait_for_selector(
                                     'input[type=radio]',
+                                    state='attached',
                                     timeout=15_000)
                                 await page.locator(
                                     'input[type=radio]'

@@ -3736,19 +3736,56 @@ async def run_pipeline(item_id):
                     print(f"Task {name} exception escaped: {result}", flush=True)
                     await append_log(item_id, f"Task {name} error: {result}")
 
+            # Read the post-completion checkboxes UP FRONT so we can
+            # decide whether to set pipeline_status="All Complete" now
+            # or defer it until publish-to-test succeeds. Previously
+            # this read happened later in the auto-trigger block, so
+            # the row briefly showed "All Complete" while publish was
+            # still in progress — confusing for operators and outright
+            # wrong if publish then failed.
+            publish_checked  = False
+            load_uat_checked = False
+            try:
+                _item_pre = await get_item(item_id)
+                _cols_pre = {c["id"]: c for c in
+                             _item_pre.get("column_values", [])}
+                publish_checked  = (_cols_pre.get("boolean_mm3g2vzf", {})
+                                    .get("text") == "v")
+                load_uat_checked = (_cols_pre.get("boolean_mm3gxe49", {})
+                                    .get("text") == "v")
+            except Exception as _ce:
+                print(f"[pipeline] checkbox read pre-status failed: "
+                      f"{_ce}", flush=True)
+
             if failed_chains:
                 final_status = STATUS["failed"]
                 final_log    = (f"Pipeline finished with errors in chains: "
                                 f"{', '.join(failed_chains)}. Check uploaded files "
                                 f"and logs above for details.")
+                await asyncio.gather(
+                    set_status(item_id, COL["pipeline_status"], final_status),
+                    append_log(item_id, final_log),
+                )
+            elif publish_checked:
+                # Chains succeeded but publish-to-test is queued.
+                # Defer "All Complete" until publish reports
+                # success — set it down in the auto-trigger block
+                # below after publish_to_test returns and
+                # published_status reads "Published".
+                print("[pipeline] Build chains complete — deferring "
+                      "'All Complete' until publish-to-test succeeds",
+                      flush=True)
+                await append_log(
+                    item_id,
+                    "Pipeline build complete. Awaiting publish to test.",
+                )
             else:
-                final_status = STATUS["all_complete"]
-                final_log    = "Pipeline complete. All outputs uploaded."
-
-            await asyncio.gather(
-                set_status(item_id, COL["pipeline_status"], final_status),
-                append_log(item_id, final_log),
-            )
+                await asyncio.gather(
+                    set_status(item_id, COL["pipeline_status"],
+                               STATUS["all_complete"]),
+                    append_log(item_id,
+                               "Pipeline complete. All outputs uploaded."),
+                )
 
             # ── Migration post-build hook: gap analysis + Migrations Hub upsert ──
             # Runs only when this row was routed through Path M. Wrapped
@@ -3782,18 +3819,11 @@ async def run_pipeline(item_id):
             # ── Auto-trigger post-completion actions if checkboxes checked ──
             # The /webhook/publish_test handler only fires when the checkbox
             # CHANGES — if it was already checked when the pipeline started,
-            # it never re-fires after run_pipeline ends. Read the column
-            # directly here so a pre-checked box still gets honored.
+            # it never re-fires after run_pipeline ends. publish_checked /
+            # load_uat_checked were read up above (before the chain-result
+            # status decision) so we'd know whether to defer 'All
+            # Complete'; reuse those values here.
             try:
-                item_data = await get_item(item_id)
-                cols_after = {c["id"]: c for c in
-                              item_data.get("column_values", [])}
-
-                publish_checked  = (cols_after.get("boolean_mm3g2vzf", {})
-                                    .get("text") == "v")
-                load_uat_checked = (cols_after.get("boolean_mm3gxe49", {})
-                                    .get("text") == "v")
-
                 if publish_checked:
                     # Forward the just-uploaded OIDs to publish_to_test so
                     # its pre-flight doesn't false-positive on the OC REST
@@ -3811,6 +3841,45 @@ async def run_pipeline(item_id):
                           f"just-uploaded OIDs)", flush=True)
                     await publish_to_test(
                         item_id, uploaded_oids=_uploaded_oids)
+
+                    # publish_to_test never raises — it writes its
+                    # outcome to COL["published_status"]. Read that
+                    # column back to decide pipeline_status. Only
+                    # promote pipeline_status to 'All Complete' on a
+                    # "Published" result. On "Failed" we leave
+                    # pipeline_status alone — published_status="Failed"
+                    # already tells operators publish broke, and we
+                    # don't want to overwrite the "Awaiting publish
+                    # to test" state with a misleading 'All Complete'.
+                    try:
+                        _post_item = await get_item(item_id)
+                        _post_cols = {c["id"]: c for c in
+                                      _post_item.get("column_values", [])}
+                        _published_status = (
+                            _post_cols.get(COL["published_status"], {})
+                            .get("text") or ""
+                        ).strip()
+                    except Exception as _pe:
+                        _published_status = ""
+                        print(f"[auto-publish] post-publish status "
+                              f"read failed: {_pe}", flush=True)
+                    if _published_status == "Published":
+                        await asyncio.gather(
+                            set_status(item_id,
+                                       COL["pipeline_status"],
+                                       STATUS["all_complete"]),
+                            append_log(item_id,
+                                       "Pipeline complete. Publish to "
+                                       "test succeeded."),
+                        )
+                        print(f"[auto-publish] publish-to-test "
+                              f"succeeded → pipeline_status="
+                              f"'All Complete'", flush=True)
+                    else:
+                        print(f"[auto-publish] publish-to-test "
+                              f"published_status={_published_status!r}"
+                              f" — leaving pipeline_status as-is",
+                              flush=True)
 
                 if load_uat_checked:
                     print(f"[auto-uat] Load UAT checkbox is checked — "
