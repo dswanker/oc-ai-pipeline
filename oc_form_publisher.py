@@ -1039,6 +1039,18 @@ class FormPublisher:
                             except Exception:
                                 pass
 
+                    # Boundary log: the upload loop has completed.
+                    # Confirms we exit the per-card loop cleanly and
+                    # shows the _session_lost flag value before the
+                    # batch-phase gate evaluates it. If you see
+                    # "Upload loop complete" but not "Batch prep:
+                    # navigating to ..." then the hang is in the
+                    # if-check or its prelude, not in goto.
+                    print("[publisher] Upload loop complete — entering "
+                          "batch phase check", flush=True)
+                    print(f"[publisher] _session_lost={_session_lost}",
+                          flush=True)
+
                     # ── Batch set-default phase ────────────────────────
                     # The upload loop above did NOT click any radios.
                     # All set-default work happens here in one shot:
