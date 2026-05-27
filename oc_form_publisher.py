@@ -536,13 +536,18 @@ class FormPublisher:
 
                     async def _capture_upload_response(response):
                         url = response.url
-                        # Narrow to formdesigner API endpoints — that's
-                        # where the actual upload XHR fires. Page-level
-                        # interception missed these because the upload
-                        # POST happens inside the formdesigner iframe;
-                        # the context-level handler below catches
-                        # frame responses too.
-                        if 'formdesigner' in url and '/api/' in url:
+                        # Broadened from formdesigner-only to cover the
+                        # design.openclinica.io host as well — the
+                        # upload POST observed on the wire actually
+                        # lands on the design host, not the
+                        # formdesigner iframe. Either-host plus
+                        # either-path-marker catches the upload XHR
+                        # plus the surrounding API chatter we want
+                        # to correlate it against.
+                        if (('formdesigner' in url
+                                or 'design.openclinica.io' in url)
+                                and ('/api/' in url
+                                     or 'upload' in url.lower())):
                             try:
                                 body = await response.text()
                                 # Log every formdesigner API response,
@@ -592,7 +597,13 @@ class FormPublisher:
                     # from incidental GETs.
                     async def _capture_upload_request(request):
                         url = request.url
-                        if 'formdesigner' in url:
+                        # Same broadened filter as the response side —
+                        # the upload POST lives on design.openclinica.io,
+                        # not just inside the formdesigner iframe.
+                        if (('formdesigner' in url
+                                or 'design.openclinica.io' in url)
+                                and ('/api/' in url
+                                     or 'upload' in url.lower())):
                             method = request.method
                             print(f"[upload-request] {method} {url}",
                                   flush=True)
@@ -825,6 +836,24 @@ class FormPublisher:
                                      for c in minicard_cards]
                     print(f"[publisher] form_oid sample (first 5): "
                           f"{oids_in_cards[:5]}", flush=True)
+
+                    # Session keepalive: ping page.evaluate every 60s
+                    # while the upload loop runs so Keycloak's SSO
+                    # window doesn't expire mid-run. Cumulative
+                    # set_input_files waits (now 30s × 7 slow forms
+                    # plus per-card overhead) used to drift past
+                    # the auth window and trip the SSO-recovery path
+                    # mid-loop. The ping is read-only so it can't
+                    # collide with concurrent uploads.
+                    async def _keepalive():
+                        while True:
+                            await asyncio.sleep(60)
+                            try:
+                                await page.evaluate('1')
+                            except Exception:
+                                break
+
+                    keepalive_task = asyncio.ensure_future(_keepalive())
 
                     for card in minicard_cards:
                         form_name = card['name']
@@ -1157,28 +1186,34 @@ class FormPublisher:
                                             # mounts cleanly.
                                             await page.wait_for_timeout(1000)
                                             # Wait for upload confirmation
-                                            # in two stages with a
-                                            # generous primary ceiling.
-                                            # 7 forms (SLEEP/SF12/EX/
-                                            # AE/AESAE/CM/DV) take
-                                            # noticeably longer than 30s
-                                            # for OC to process the
-                                            # XLSForm and surface the
-                                            # radio; the previous 30s
-                                            # cap timed those out
-                                            # silently and the upload
-                                            # never actually created a
-                                            # version on the OC side,
-                                            # which then broke publish-
-                                            # to-test with "No form
-                                            # version defined". 90s
-                                            # accommodates the slow
-                                            # forms.
+                                            # in two stages. Brought
+                                            # back down to 30s after
+                                            # the 90s ceiling pushed
+                                            # cumulative wall-clock
+                                            # past Keycloak's SSO
+                                            # window on long runs
+                                            # (7 slow forms × 90s =
+                                            # 10.5 extra minutes of
+                                            # dead time). The
+                                            # _keepalive coroutine
+                                            # started before the
+                                            # upload loop pings
+                                            # page.evaluate every
+                                            # 60s to keep the
+                                            # session warm; for the
+                                            # genuinely slow forms
+                                            # the 30s cap will still
+                                            # time out and fall
+                                            # through to the Stage 2
+                                            # prevBtn check, but
+                                            # subsequent uploads no
+                                            # longer drag a dying
+                                            # session along.
                                             try:
                                                 await page.wait_for_selector(
                                                     'input[type=radio]',
                                                     state='attached',
-                                                    timeout=90000)
+                                                    timeout=30000)
                                             except Exception as e:
                                                 # Stage 2 fallback for
                                                 # forms that don't ship
@@ -1301,6 +1336,15 @@ class FormPublisher:
                                 await page.wait_for_timeout(1500)
                             except Exception:
                                 pass
+
+                    # Cancel the session keepalive — no more long
+                    # waits to protect against from here. Don't await
+                    # the task; cancel() is sufficient and we don't
+                    # care about its final state.
+                    try:
+                        keepalive_task.cancel()
+                    except Exception:
+                        pass
 
                     # Boundary log: the upload loop has completed.
                     # Confirms we exit the per-card loop cleanly and
