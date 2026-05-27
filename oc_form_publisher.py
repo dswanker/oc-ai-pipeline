@@ -1093,9 +1093,18 @@ class FormPublisher:
                             # Close the panel before the next iteration.
                             # Panel may have already closed (or the page
                             # is dead from a crash) — swallow either.
+                            # `timeout=1000` caps the click attempt at
+                            # 1s instead of Playwright's 30s default;
+                            # when the early-exit short-circuit fires
+                            # (no panel was opened for this card), the
+                            # close button isn't present and waiting
+                            # 30s × duplicate-card-count produced a
+                            # multi-minute tail after the last unique
+                            # form uploaded. Fail fast and continue.
                             try:
                                 await page.click(
-                                    'a.js-close-card-details')
+                                    'a.js-close-card-details',
+                                    timeout=1000)
                                 await page.wait_for_timeout(1500)
                             except Exception:
                                 pass
