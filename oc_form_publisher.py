@@ -1053,6 +1053,39 @@ class FormPublisher:
                     # run with 121 cards this collapses ~60 min of
                     # per-card navigation into <1s of batched JS.
                     if not _session_lost:
+                        # ── Batch prep ────────────────────────────────
+                        # The per-card upload loop may have left us on
+                        # a card detail page (or, if SSO slipped, the
+                        # auth page). Navigate back to the board so
+                        # Meteor/Cards is guaranteed in scope before
+                        # the batch JS runs — otherwise the bulk
+                        # lookup hangs silently inside page.evaluate
+                        # waiting on an undefined `Cards`.
+                        try:
+                            await page.goto(
+                                study_url,
+                                wait_until="domcontentloaded",
+                            )
+                            await page.wait_for_selector(
+                                ".js-minicard", timeout=30_000,
+                            )
+                        except Exception as _ne:
+                            print(f"[publisher] Batch prep: board nav "
+                                  f"failed ({_ne}) — batch phase will "
+                                  f"likely fall through to URL nav "
+                                  f"fallback", flush=True)
+
+                        # Give slow-propagating forms a few seconds to
+                        # land in minimongo after the upload-loop's
+                        # final wait_for_selector returned. Empirically
+                        # the difference between "version_id visible
+                        # at this moment" and "visible 5s later" is
+                        # the difference between batch success and
+                        # batch-then-fallback for a handful of OIDs.
+                        await page.wait_for_timeout(5000)
+                        print("[publisher] Batch set-default starting...",
+                              flush=True)
+
                         import time as _bt_time
                         _batch_start_t = _bt_time.time()
 
@@ -1064,26 +1097,39 @@ class FormPublisher:
                               f"versions for {len(_eligible_ids)} cards in "
                               f"minimongo", flush=True)
 
-                        # Step 1: bulk version lookup
+                        # Step 1: bulk version lookup (30s ceiling via
+                        # asyncio.wait_for — page.evaluate itself has
+                        # no native timeout argument, so without this
+                        # wrapper a hung JS execution would block the
+                        # whole publish indefinitely).
                         try:
-                            _versions_by_card = await page.evaluate(
-                                """
-                                (cardIds) => {
-                                    const out = {};
-                                    for (const cid of cardIds) {
-                                        const c = Cards.findOne(cid);
-                                        if (c && Array.isArray(c.versions)
-                                                && c.versions.length) {
-                                            const v = c.versions[0];
-                                            const vid = (v && (v.id || v._id)) || null;
-                                            if (vid !== null) out[cid] = vid;
+                            _versions_by_card = await asyncio.wait_for(
+                                page.evaluate(
+                                    """
+                                    (cardIds) => {
+                                        const out = {};
+                                        for (const cid of cardIds) {
+                                            const c = Cards.findOne(cid);
+                                            if (c && Array.isArray(c.versions)
+                                                    && c.versions.length) {
+                                                const v = c.versions[0];
+                                                const vid = (v && (v.id || v._id)) || null;
+                                                if (vid !== null) out[cid] = vid;
+                                            }
                                         }
+                                        return out;
                                     }
-                                    return out;
-                                }
-                                """,
-                                _eligible_ids,
+                                    """,
+                                    _eligible_ids,
+                                ),
+                                timeout=30,
                             )
+                        except asyncio.TimeoutError:
+                            print(f"[publisher] Batch version lookup "
+                                  f"timed out after 30s — falling back "
+                                  f"to per-card URL nav for everything",
+                                  flush=True)
+                            _versions_by_card = {}
                         except Exception as _be:
                             print(f"[publisher] Batch version lookup "
                                   f"failed ({_be}) — falling back to "
@@ -1106,29 +1152,44 @@ class FormPublisher:
                                   f"minimongo — they'll go through "
                                   f"URL-nav fallback", flush=True)
 
-                        # Step 2: batch Cards.update
+                        # Step 2: batch Cards.update (same 30s ceiling
+                        # as Step 1 — single hung Cards.update inside
+                        # the JS loop would otherwise block forever).
                         _batch_results: dict = {}
                         if _card_version_map:
                             try:
-                                _batch_results = await page.evaluate(
-                                    """
-                                    async (cardVersionMap) => {
-                                        const results = {};
-                                        for (const [cardId, versionId] of Object.entries(cardVersionMap)) {
-                                            try {
-                                                Cards.update(cardId,
-                                                    {$set: {_version: versionId}});
-                                                results[cardId] = {ok: true};
-                                            } catch(e) {
-                                                results[cardId] = {ok: false,
-                                                                    error: e.toString()};
+                                _batch_results = await asyncio.wait_for(
+                                    page.evaluate(
+                                        """
+                                        async (cardVersionMap) => {
+                                            const results = {};
+                                            for (const [cardId, versionId] of Object.entries(cardVersionMap)) {
+                                                try {
+                                                    Cards.update(cardId,
+                                                        {$set: {_version: versionId}});
+                                                    results[cardId] = {ok: true};
+                                                } catch(e) {
+                                                    results[cardId] = {ok: false,
+                                                                        error: e.toString()};
+                                                }
                                             }
+                                            return results;
                                         }
-                                        return results;
-                                    }
-                                    """,
-                                    _card_version_map,
+                                        """,
+                                        _card_version_map,
+                                    ),
+                                    timeout=30,
                                 )
+                            except asyncio.TimeoutError:
+                                print(f"[publisher] Batch Cards.update "
+                                      f"timed out after 30s — every "
+                                      f"card will retry via URL nav",
+                                      flush=True)
+                                _batch_results = {
+                                    cid: {"ok": False,
+                                          "error": "batch update timed out"}
+                                    for cid in _card_version_map
+                                }
                             except Exception as _ue:
                                 print(f"[publisher] Batch Cards.update "
                                       f"failed ({_ue}) — every card "
