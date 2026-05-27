@@ -746,6 +746,40 @@ class FormPublisher:
                                     # the full path.
                                     pre_oid = (card.get('form_oid')
                                                or '').upper()
+
+                                    # Early exit: if this OID was
+                                    # uploaded earlier in THIS run
+                                    # (multiple cards share the same
+                                    # form — only the first triggers
+                                    # the upload), skip all minicard
+                                    # navigation. The post-loop batch
+                                    # phase handles set-default for
+                                    # every card by card_id. Without
+                                    # this short-circuit, each
+                                    # duplicate card still clicked the
+                                    # minicard + waited 8s for the
+                                    # panel, dragging the per-loop
+                                    # tail out for minutes after the
+                                    # last unique form uploaded.
+                                    #
+                                    # Doesn't gate on card_meteor_id
+                                    # (unlike the FAST PATH check
+                                    # below) because the batch phase
+                                    # iterates minicard_cards directly
+                                    # and looks up each card's id from
+                                    # there — even a card we skip
+                                    # here gets set-defaulted later.
+                                    #
+                                    # `break` (not `continue`): we're
+                                    # inside `while True: attempts += 1`
+                                    # so `continue` would loop back to
+                                    # the same condition. `break` exits
+                                    # the attempts loop and lets the
+                                    # outer `for card` move on.
+                                    if pre_oid and pre_oid in session_uploaded_oids:
+                                        confirmed_versioned_oids.add(pre_oid)
+                                        break
+
                                     if (pre_oid
                                             and pre_oid in confirmed_versioned_oids
                                             and card_meteor_id):
