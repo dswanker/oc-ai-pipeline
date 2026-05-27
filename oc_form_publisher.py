@@ -996,47 +996,39 @@ class FormPublisher:
                                                 'input.js-design-form-input',
                                                 str(xlsx_path))
                                             # Wait for upload confirmation
-                                            # in two stages. Playwright's
-                                            # default state='visible' was
-                                            # burning the full 30s on the
-                                            # 7 forms (SLEEP, SF12, EX,
-                                            # AE, AESAE, CM, DV) whose
-                                            # radio renders hidden in the
-                                            # DOM until minimongo
-                                            # processes the new version.
-                                            #
-                                            # Stage 1: attached-only check
-                                            # on input[type=radio] — that
-                                            # node lands in the DOM
-                                            # almost immediately after
-                                            # upload completes regardless
-                                            # of visibility, so we get
-                                            # the same "OC accepted the
-                                            # upload" signal in <1s
-                                            # instead of 30s.
-                                            try:
-                                                await page.wait_for_selector(
-                                                    'input[type=radio]',
-                                                    state='attached',
-                                                    timeout=30000)
-                                            except Exception as e:
-                                                # Stage 2: fall back to
-                                                # #prevBtn for forms that
-                                                # don't carry a radio at
-                                                # all. Short ceiling — if
-                                                # neither selector fires
-                                                # the upload is suspect.
+                                            # by polling. SLEEP/SF12/EX/
+                                            # AE/AESAE/CM/DV genuinely
+                                            # don't have any radio in
+                                            # the DOM immediately after
+                                            # set_input_files — OC
+                                            # processes the XLSForm
+                                            # asynchronously and the
+                                            # radio appears several
+                                            # seconds later. A single
+                                            # 30s wait_for_selector
+                                            # burned the full window
+                                            # for these forms; six
+                                            # 5s polls hit the same
+                                            # 30s ceiling but exit
+                                            # the moment the radio
+                                            # lands.
+                                            confirmed = False
+                                            for _attempt in range(6):
                                                 try:
                                                     await page.wait_for_selector(
-                                                        '#prevBtn:not(.disabled)',
+                                                        'input[type=radio]',
+                                                        state='attached',
                                                         timeout=5000)
+                                                    confirmed = True
+                                                    break
                                                 except Exception:
-                                                    print(f"[publisher] "
-                                                          f"Upload success "
-                                                          f"signal not seen "
-                                                          f"for {form_name}: "
-                                                          f"{e}",
-                                                          flush=True)
+                                                    pass
+                                            if not confirmed:
+                                                print(f"[publisher] "
+                                                      f"Upload success "
+                                                      f"signal not seen "
+                                                      f"for {form_name}",
+                                                      flush=True)
                                             # set-default for this card
                                             # happens in the post-loop
                                             # batch phase — no per-card
@@ -1184,6 +1176,26 @@ class FormPublisher:
                         print(f"[publisher] Batch prep: navigating to "
                               f"board {study_url!r}", flush=True)
                         try:
+                            # SSO can expire during the upload loop's
+                            # dead time (~3.5 min × 7 hidden-radio
+                            # forms historically — even with the
+                            # poll-and-break shortening, long runs
+                            # still push the cumulative wall clock
+                            # past Keycloak's session window). If the
+                            # current URL shows we're already on the
+                            # auth page, the upcoming page.goto would
+                            # bounce through the callback chain and
+                            # never re-mount the board; run recovery
+                            # first so the goto lands on a clean
+                            # board session.
+                            if await _session_expired(page):
+                                print("[publisher] SSO expired before "
+                                      "batch phase — recovering",
+                                      flush=True)
+                                await self._recover_session(
+                                    page, context, study_url,
+                                    "batch-prep",
+                                )
                             await page.goto(
                                 study_url,
                                 wait_until="domcontentloaded",
