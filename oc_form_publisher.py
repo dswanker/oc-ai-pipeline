@@ -1366,22 +1366,37 @@ class FormPublisher:
                             # cleanly after an SSO recovery without
                             # duplicating the body. Raises on any
                             # failure; caller decides whether to retry.
+                            #
+                            # Minicard CLICK navigation only — never
+                            # page.goto a card URL. Direct URL nav
+                            # triggers the Keycloak callback redirect
+                            # chain (oidc/auth → /callback → board),
+                            # and Meteor's client router doesn't re-
+                            # mount the form panel after the bounce,
+                            # so no radio ever renders regardless of
+                            # state='attached'. The board is already
+                            # loaded at this point (batch prep
+                            # navigated to it), so clicking the
+                            # minicard opens the panel inline the
+                            # same way the upload loop does.
                             async def _nav_and_set_default():
-                                if _href:
-                                    _abs = await page.evaluate(
-                                        "(h) => new URL(h, window.location).toString()",
-                                        _href,
-                                    )
-                                    await page.goto(
-                                        _abs,
-                                        wait_until="domcontentloaded")
-                                else:
-                                    _mcl = page.locator(
+                                _mcl = (
+                                    page.locator(
+                                        f'.js-minicard[href="{_href}"]')
+                                    if _href
+                                    else page.locator(
                                         '.js-minicard').filter(
                                         has_text=_fn).first
-                                    await _mcl.scroll_into_view_if_needed(
-                                        timeout=5000)
-                                    await _mcl.click()
+                                )
+                                await _mcl.scroll_into_view_if_needed(
+                                    timeout=5000)
+                                await _mcl.click()
+                                # Brief settle so the panel has a
+                                # chance to mount before we probe
+                                # for the radio. Matches the timing
+                                # the upload loop uses after a
+                                # minicard click.
+                                await page.wait_for_timeout(3000)
                                 # state='attached' (not the default
                                 # 'visible'): for SLEEP/SF12/EX/AE/
                                 # AESAE/CM/DV the radio renders hidden
