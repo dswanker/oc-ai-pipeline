@@ -1061,6 +1061,15 @@ class FormPublisher:
                         # the batch JS runs — otherwise the bulk
                         # lookup hangs silently inside page.evaluate
                         # waiting on an undefined `Cards`.
+                        #
+                        # The whole prep block (goto + wait_for_selector
+                        # + 5s settle) is wrapped together so any hang
+                        # or error surfaces with a clear log line; an
+                        # earlier version of this code printed nothing
+                        # before the goto and silently hung when
+                        # navigation got stuck.
+                        print(f"[publisher] Batch prep: navigating to "
+                              f"board {study_url!r}", flush=True)
                         try:
                             await page.goto(
                                 study_url,
@@ -1069,20 +1078,21 @@ class FormPublisher:
                             await page.wait_for_selector(
                                 ".js-minicard", timeout=30_000,
                             )
+                            # Give slow-propagating forms a few seconds
+                            # to land in minimongo after the upload
+                            # loop's final wait_for_selector returned.
+                            # Empirically the difference between
+                            # "version_id visible at this moment" and
+                            # "visible 5s later" is the difference
+                            # between batch success and batch-then-
+                            # fallback for a handful of OIDs.
+                            await page.wait_for_timeout(5000)
                         except Exception as _ne:
-                            print(f"[publisher] Batch prep: board nav "
-                                  f"failed ({_ne}) — batch phase will "
-                                  f"likely fall through to URL nav "
-                                  f"fallback", flush=True)
-
-                        # Give slow-propagating forms a few seconds to
-                        # land in minimongo after the upload-loop's
-                        # final wait_for_selector returned. Empirically
-                        # the difference between "version_id visible
-                        # at this moment" and "visible 5s later" is
-                        # the difference between batch success and
-                        # batch-then-fallback for a handful of OIDs.
-                        await page.wait_for_timeout(5000)
+                            print(f"[publisher] Batch prep FAILED "
+                                  f"({type(_ne).__name__}: {_ne}) — "
+                                  f"batch phase will likely fall "
+                                  f"through to URL nav fallback",
+                                  flush=True)
                         print("[publisher] Batch set-default starting...",
                               flush=True)
 
