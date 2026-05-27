@@ -550,10 +550,12 @@ class FormPublisher:
                                 # banner we're trying to debug surfaces
                                 # via a 200 response whose body
                                 # contains the failure reason in
-                                # JSON. Cap at 5000 bytes so we
+                                # JSON. Cap at 10000 bytes so we
                                 # skip large static assets that
-                                # happen to slip past the URL filter.
-                                if len(body) < 5000:
+                                # happen to slip past the URL filter
+                                # but still capture JSON payloads
+                                # that occasionally exceed 5KB.
+                                if len(body) < 10000:
                                     print(f"[upload-intercept] "
                                           f"{response.status} {url}",
                                           flush=True)
@@ -578,6 +580,45 @@ class FormPublisher:
                         'response',
                         lambda r: asyncio.ensure_future(
                             _capture_upload_response(r)
+                        ),
+                    )
+
+                    # Request-side mirror of the response interceptor.
+                    # Logs URL + method + (small) body for every
+                    # formdesigner request so we can identify which
+                    # POST is the actual upload XHR — the response
+                    # interceptor alone showed us bodies but didn't
+                    # surface methods or distinguish the upload POST
+                    # from incidental GETs.
+                    async def _capture_upload_request(request):
+                        url = request.url
+                        if 'formdesigner' in url:
+                            method = request.method
+                            print(f"[upload-request] {method} {url}",
+                                  flush=True)
+                            if method in ('POST', 'PUT', 'PATCH'):
+                                try:
+                                    post_data = request.post_data
+                                    if post_data and len(post_data) < 200:
+                                        print(f"[upload-request] data: "
+                                              f"{post_data[:200]}",
+                                              flush=True)
+                                    else:
+                                        size = (len(post_data)
+                                                if post_data else 0)
+                                        print(f"[upload-request] data: "
+                                              f"<binary or large, "
+                                              f"{size} bytes>",
+                                              flush=True)
+                                except Exception as _e:
+                                    print(f"[upload-request] data "
+                                          f"read error: {_e}",
+                                          flush=True)
+
+                    page.context.on(
+                        'request',
+                        lambda r: asyncio.ensure_future(
+                            _capture_upload_request(r)
                         ),
                     )
 

@@ -572,11 +572,25 @@ def build_edc_pdf(data: dict, output_path: str):
 
     sched_headers = ["Event OID", "Timepoint Label", "Arm", "Forms Assigned"]
     sched_cw = [CONTENT_W*0.16, CONTENT_W*0.20, CONTENT_W*0.10, CONTENT_W*0.54]
+    # Each event's arm = the set of arms it appears under in the timepoint rows
+    # (rows carry per-arm `arm` codes). Shared events appear under both → TRT/CTRL.
+    event_arms = {}
+    for r in tpt_rows:
+        a = r.get("arm")
+        if a:
+            event_arms.setdefault(r["event"], set()).add(a)
+
+    def _arm_label(ev):
+        arms = event_arms.get(ev, set())
+        if not arms:
+            return "—"
+        order = [a for a in ("TRT", "CTRL") if a in arms]
+        order += sorted(arms - {"TRT", "CTRL"})
+        return "/".join(order)
+
     sched_data = []
     for ev, info in event_map.items():
-        arm = "TREATMENT" if "CTL" not in ev and ev not in ["SE_BASELINE","SE_UNSCH"] else \
-              "CONTROL" if "CTL" in ev else "BOTH"
-        if ev in ["SE_BASELINE", "SE_UNSCH"]: arm = "BOTH"
+        arm = _arm_label(ev)
         label = tpt_lookup.get(ev, ev)
         forms_str = ", ".join(info["forms"][:8])
         if len(info["forms"]) > 8:

@@ -441,23 +441,15 @@ def build_pricing_pdf(data: dict, output_path: str, struct_json: dict = None):
             tpt_lookup = {r.get("event", ""): r.get("timepoint", "")
                           for r in tpt_rows if isinstance(r, dict)}
 
-            soe_headers = ["Timepoint Label", "Arm", "Forms Assigned"]
-            soe_cw = [CONTENT_W * 0.24, CONTENT_W * 0.12, CONTENT_W * 0.64]
+            soe_headers = ["Timepoint Label", "Forms Assigned"]
+            soe_cw = [CONTENT_W * 0.30, CONTENT_W * 0.70]
             soe_data = []
             for ev, form_ids in event_map.items():
-                # Derive arm from event OID convention
-                if "CTL" in ev:
-                    arm = "CONTROL"
-                elif ev in ("SE_BASELINE", "SE_UNSCH", "SE_COMMON"):
-                    arm = "BOTH"
-                else:
-                    arm = "TREATMENT"
-
                 label = tpt_lookup.get(ev, ev)
                 forms_str = ", ".join(form_ids[:8])
                 if len(form_ids) > 8:
                     forms_str += f" +{len(form_ids) - 8} more"
-                soe_data.append([label, arm, forms_str])
+                soe_data.append([label, forms_str])
 
             if soe_data:
                 story.append(Paragraph(
