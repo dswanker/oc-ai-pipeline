@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request, BackgroundTasks, HTTPException
+from fastapi import FastAPI, Request, BackgroundTasks, HTTPException, Header
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
@@ -194,6 +194,39 @@ async def clear_upload_record_oids(request: Request):
         "remaining": rec["uploaded_oids"],
         "forms_after": sorted((rec.get("forms") or {}).keys()),
     }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Temporary diagnostic — slow-forms upload timing test
+#
+# Drives the upload sequence for the 7 OIDs that historically time out
+# during normal publish runs (SLEEP, SF12, EX, AE, AESAE, CM, DV) and
+# returns per-form timing + OC REST verification. Runs inside the
+# Railway container where the SSO session JSON and the prebuilt xlsx
+# files already live.
+#
+# DELETE THIS ROUTE once the slow-form upload timing is resolved.
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.post("/test/slow-forms")
+async def test_slow_forms_endpoint(
+    x_admin_secret: str = Header(None, alias="X-Admin-Secret"),
+):
+    """Run the slow-forms diagnostic and return the result dict.
+
+    Gated by X-Admin-Secret header against the ADMIN_SECRET env var
+    (default fallback "oc-admin-2026" so local invocations work
+    without env wiring).
+
+    Returns the dict from test_slow_forms.run_test() — see that
+    function's docstring for the response shape. Per-form prints
+    still flow to server stdout so Railway logs show live progress.
+    """
+    expected_secret = os.environ.get("ADMIN_SECRET", "oc-admin-2026")
+    if x_admin_secret != expected_secret:
+        raise HTTPException(status_code=403, detail="unauthorized")
+    from test_slow_forms import run_test
+    return await run_test()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
