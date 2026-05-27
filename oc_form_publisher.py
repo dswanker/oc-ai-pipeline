@@ -995,45 +995,57 @@ class FormPublisher:
                                             await page.set_input_files(
                                                 'input.js-design-form-input',
                                                 str(xlsx_path))
-                                            # Dismiss OC's red error
-                                            # banner if it shows up
-                                            # immediately after the
-                                            # file is set. The banner
-                                            # text observed in the
-                                            # field is "Upload version
-                                            # is successful while
-                                            # update the form is
-                                            # failed" — the upload DID
-                                            # land but the banner
-                                            # overlays the form-version
-                                            # radio and blocks our
-                                            # subsequent wait_for_
-                                            # selector. Clicking its
-                                            # close button lets the
-                                            # radio render and the
-                                            # wait below fires
-                                            # normally. 2s gives OC
-                                            # time to show the banner
-                                            # (it appears post-upload,
-                                            # not instantly); selector
-                                            # union covers a few
-                                            # variants of OC's alert
-                                            # markup. Wrapped in
-                                            # try/except: no banner
-                                            # = no-op.
+                                            # 2s settle: OC needs a
+                                            # moment to either render
+                                            # the form-version radio
+                                            # OR raise the red error
+                                            # banner. Both happen
+                                            # post-upload but not
+                                            # instantly.
                                             await page.wait_for_timeout(2000)
-                                            try:
-                                                close_btn = await page.query_selector(
-                                                    '.alert .close, '
-                                                    '.alert button[data-dismiss], '
-                                                    '.notification-close, '
-                                                    '[class*="alert"] .close'
-                                                )
-                                                if close_btn:
-                                                    await close_btn.click()
-                                                    await page.wait_for_timeout(500)
-                                            except Exception:
-                                                pass
+                                            # Dismiss any OC error
+                                            # banner. Observed text is
+                                            # "Upload version is
+                                            # successful while update
+                                            # the form is failed" —
+                                            # the upload DID land but
+                                            # the banner overlays the
+                                            # radio AND, critically,
+                                            # an undismissed banner
+                                            # also blocks the NEXT
+                                            # card's upload from
+                                            # firing (we'd see silent
+                                            # cascading failures
+                                            # across subsequent
+                                            # forms). Iterate
+                                            # selectors from most-
+                                            # specific to most-
+                                            # generic so we pick up
+                                            # whichever variant of
+                                            # OC's alert markup is
+                                            # in play.
+                                            for _sel in [
+                                                '.alert-danger .close',
+                                                '.alert .close',
+                                                'button[data-dismiss="alert"]',
+                                                '.notification .close',
+                                                '[class*="alert"] [class*="close"]',
+                                            ]:
+                                                try:
+                                                    _btn = await page.query_selector(_sel)
+                                                    if _btn:
+                                                        await _btn.click(timeout=1000)
+                                                        await page.wait_for_timeout(300)
+                                                        break
+                                                except Exception:
+                                                    pass
+                                            # Small extra settle
+                                            # before the radio wait —
+                                            # after a banner dismiss
+                                            # the DOM may briefly
+                                            # reflow before the radio
+                                            # mounts cleanly.
+                                            await page.wait_for_timeout(1000)
                                             # Wait for upload confirmation
                                             # in two stages with a
                                             # generous primary ceiling.
