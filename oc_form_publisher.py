@@ -1010,7 +1010,18 @@ class FormPublisher:
                                             # happens in the post-loop
                                             # batch phase — no per-card
                                             # radio click here.
-                                            session_uploaded_oids.add(oid)
+                                            # `oid` is read from the
+                                            # panel's formOcOidValue
+                                            # input which sometimes
+                                            # comes back empty on slow-
+                                            # rendering forms; fall
+                                            # back to `pre_oid` (from
+                                            # card['form_oid']) so the
+                                            # early-exit short-circuit
+                                            # for subsequent duplicate
+                                            # cards still fires.
+                                            session_uploaded_oids.add(
+                                                oid if oid else pre_oid)
                                             print(f"[publisher] Uploaded "
                                                   f"{xlsx_path.name} → "
                                                   f"{form_name} "
@@ -1019,8 +1030,10 @@ class FormPublisher:
                                     # Mark this OID as confirmed
                                     # versioned so subsequent cards for
                                     # the same form take the FAST PATH.
-                                    if oid:
-                                        confirmed_versioned_oids.add(oid)
+                                    # Same pre_oid fallback as above.
+                                    if oid or pre_oid:
+                                        confirmed_versioned_oids.add(
+                                            oid if oid else pre_oid)
                                     break  # success — exit retry loop
                                 except Exception as e:
                                     _err = str(e).lower()
