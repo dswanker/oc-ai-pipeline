@@ -1400,6 +1400,20 @@ class FormPublisher:
                                         '.js-minicard').filter(
                                         has_text=_fn).first
                                 )
+                                # Dismiss any panel left open from the
+                                # previous card — its overlay sits on
+                                # top of the minicards and intercepts
+                                # the click below. Escape is the OC
+                                # designer's canonical close gesture
+                                # (same mechanism the DDP probe used
+                                # to trigger the panel-close path).
+                                # Failure is fine: no panel open means
+                                # the keypress is a no-op.
+                                try:
+                                    await page.keyboard.press('Escape')
+                                    await page.wait_for_timeout(500)
+                                except Exception:
+                                    pass
                                 await _mcl.scroll_into_view_if_needed(
                                     timeout=5000)
                                 await _mcl.click()

@@ -3772,12 +3772,21 @@ async def run_pipeline(item_id):
                 # success — set it down in the auto-trigger block
                 # below after publish_to_test returns and
                 # published_status reads "Published".
+                # Without this set_status the column would be left
+                # at whatever in-progress label the last chain wrote
+                # (typically "Build + Pricing Running"), which then
+                # sticks if publish later fails. "Build Complete"
+                # is the correct interstitial state: the build IS
+                # complete, only publish-to-test remains.
                 print("[pipeline] Build chains complete — deferring "
                       "'All Complete' until publish-to-test succeeds",
                       flush=True)
-                await append_log(
-                    item_id,
-                    "Pipeline build complete. Awaiting publish to test.",
+                await asyncio.gather(
+                    set_status(item_id, COL["pipeline_status"],
+                               STATUS["build_complete"]),
+                    append_log(item_id,
+                               "Pipeline build complete. "
+                               "Awaiting publish to test."),
                 )
             else:
                 await asyncio.gather(
