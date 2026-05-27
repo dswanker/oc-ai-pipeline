@@ -702,6 +702,20 @@ class FormPublisher:
                           f"({len(set(c['name'] for c in minicard_cards))} "
                           f"unique forms)", flush=True)
 
+                    # Diagnostic: confirms the minicard JS extraction
+                    # actually populated form_oid. The early-exit at
+                    # the top of the per-card loop gates on
+                    # `pre_oid in session_uploaded_oids`; if all
+                    # form_oid values come back empty, that check
+                    # never fires and the loop falls through to FULL
+                    # PATH for every card. Showing the first 5 here
+                    # surfaces the issue in the run log before any
+                    # uploads happen.
+                    oids_in_cards = [c.get('form_oid', '')
+                                     for c in minicard_cards]
+                    print(f"[publisher] form_oid sample (first 5): "
+                          f"{oids_in_cards[:5]}", flush=True)
+
                     for card in minicard_cards:
                         form_name = card['name']
                         card_href = card['href']
