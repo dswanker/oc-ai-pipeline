@@ -48,6 +48,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import json
 import os
 import shutil
 import tempfile
@@ -66,6 +67,30 @@ import httpx
 # for Google SSO interaction; that cannot succeed on a headless server.
 # Bootstrap each user's session locally and copy the JSON into the volume.
 SESSION_DIR = "/data/browser_sessions"
+
+
+# ── SSO redirect detection ────────────────────────────────────────────────
+#
+# When a Keycloak SSO session expires mid-run, OC silently redirects the
+# browser to the auth page. Meteor isn't loaded there, so JS evaluations
+# return "Cards/Meteor not in window scope" and URL navs fail with no
+# clear signal. Detect by URL substring — async signature for symmetry
+# with Playwright callers and so future implementations can do network
+# probes if needed.
+
+async def _session_expired(page) -> bool:
+    """True when the page has been redirected to the OC/Keycloak login
+    flow. Checks page.url against the two known marker substrings.
+    Returns False on any unexpected exception so detection failures
+    don't compound the original problem."""
+    try:
+        url = page.url
+    except Exception:
+        return False
+    if not url:
+        return False
+    return ("auth.openclinica.io" in url
+            or "openid-connect/auth" in url)
 
 
 # ── Result shape ───────────────────────────────────────────────────────────
@@ -126,6 +151,7 @@ class FormPublisher:
         user_email: Optional[str] = None,
         allowed_card_ids: Optional[set] = None,
         conflict_oids: Optional[set] = None,
+        item_id: Optional[str] = None,
     ):
         """
         Args:
@@ -144,11 +170,18 @@ class FormPublisher:
                 whose href contains one of these IDs — skipping stale
                 cards left in the DOM from prior runs. None (default) =
                 visit every .js-minicard (legacy behavior).
+            item_id: Optional Monday item id. Required for mid-run SSO
+                recovery — _recover_session posts the auth link back to
+                this row's oc_auth_link column and appends to its run
+                log when a Keycloak session expires mid-publish. When
+                None, recovery falls back to silent-retry only and
+                hard-fails immediately if that doesn't suffice.
         """
         self.auth_token = auth_token
         self.headless = headless
         self.user_email = user_email
         self.allowed_card_ids = allowed_card_ids
+        self.item_id = item_id
         # Form OIDs that the caller's pre-flight identified as having
         # manual edits in OC4 (version IDs not in pipeline's stored
         # record). For each, the publisher SKIPS upload (don't
@@ -169,6 +202,162 @@ class FormPublisher:
     def _session_exists(self) -> bool:
         p = self._session_path
         return bool(p and os.path.exists(p))
+
+    # ── Mid-run SSO recovery ─────────────────────────────────────────────
+
+    async def _try_silent_session_recovery(
+        self, page, board_url: str,
+    ) -> bool:
+        """Step 1 of mid-run recovery: navigate back to the board and
+        check whether minicards render. Sometimes the Playwright page
+        just slipped to the auth page while Keycloak's server-side
+        session is still alive; a plain navigate brings it back with
+        no user action needed.
+
+        Returns True iff `.js-minicard` appears within 10s AND we
+        weren't redirected back to the auth page during navigation."""
+        try:
+            await page.goto(board_url, wait_until="domcontentloaded")
+        except Exception as e:
+            print(f"[publisher] silent recovery goto failed: {e}",
+                  flush=True)
+            return False
+        if await _session_expired(page):
+            return False
+        try:
+            await page.wait_for_selector(".js-minicard", timeout=10_000)
+            return True
+        except Exception:
+            return False
+
+    async def _recover_session(
+        self, page, context, board_url: str, form_name: str,
+    ) -> bool:
+        """Step 1-3 recovery flow for a mid-run SSO expiry.
+
+        Step 1 — silent goto: works when Keycloak still has us in a
+            server-side session; the Playwright tab just slipped.
+        Step 2 — re-auth: post the auth link back to Monday, then poll
+            the user's session_state JSON for an mtime change every 5s.
+            When the operator completes the auth flow, the
+            /api/session/upload handler in main.py writes the fresh
+            session file; we detect that and reload cookies into the
+            running context.
+        Step 3 — hard fail: after 10 minutes with no fresh session,
+            return False. Caller is expected to mark remaining cards
+            as errors and exit the per-card loop.
+
+        Returns True on recovery, False on hard fail. Never raises.
+        """
+        print(f"[publisher] SSO session expired at card {form_name} — "
+              f"attempting recovery", flush=True)
+
+        # Step 1: silent recovery — cheapest case
+        if await self._try_silent_session_recovery(page, board_url):
+            print(f"[publisher] silent session recovery succeeded for "
+                  f"{form_name}", flush=True)
+            return True
+
+        # Step 2 prerequisites — without item_id we can't tell the
+        # operator their session needs refreshing, and without a
+        # known session-file path we can't watch for the new upload.
+        if not self.item_id:
+            print(f"[publisher] re-auth needed but no item_id was "
+                  f"provided to FormPublisher — hard-failing recovery",
+                  flush=True)
+            return False
+        if not self._session_path:
+            print(f"[publisher] re-auth needed but user_email is unset "
+                  f"— cannot locate session file; hard-failing",
+                  flush=True)
+            return False
+
+        # Lazy import — keeps the publisher importable in test
+        # contexts where the monday/auth modules aren't wired up.
+        try:
+            from monday_client import COL, append_log, set_link
+            from auth_manager import AuthManager
+        except Exception as e:
+            print(f"[publisher] re-auth imports failed ({e}); "
+                  f"hard-failing recovery", flush=True)
+            return False
+
+        auth_link = AuthManager().generate_auth_link(
+            self.user_email,
+            "https://oc-ai-pipeline-production.up.railway.app",
+        )
+        try:
+            await set_link(
+                self.item_id, COL["oc_auth_link"], auth_link,
+                text="Re-authenticate OpenClinica",
+            )
+            await append_log(
+                self.item_id,
+                f"⚠️ Session expired mid-publish — please re-authenticate "
+                f"via the OC Auth Link. Publisher will resume "
+                f"automatically once a fresh session is uploaded "
+                f"(10 min timeout):\n\n{auth_link}",
+            )
+        except Exception as e:
+            # Posting to Monday failed — operator won't see the link.
+            # Still poll the session file in case a fresh one lands
+            # via some other path, but mark this as best-effort.
+            print(f"[publisher] failed to post re-auth link to Monday: "
+                  f"{e} — continuing to poll session file anyway",
+                  flush=True)
+
+        # Step 3: poll session file mtime
+        DEADLINE_S = 600          # 10 min total wait budget
+        POLL_INTERVAL_S = 5
+        try:
+            initial_mtime = os.path.getmtime(self._session_path)
+        except OSError:
+            initial_mtime = 0.0   # file doesn't exist yet → any write wins
+
+        elapsed_s = 0
+        while elapsed_s < DEADLINE_S:
+            await asyncio.sleep(POLL_INTERVAL_S)
+            elapsed_s += POLL_INTERVAL_S
+            try:
+                cur_mtime = os.path.getmtime(self._session_path)
+            except OSError:
+                continue
+            if cur_mtime <= initial_mtime:
+                continue
+
+            print(f"[publisher] fresh session detected after {elapsed_s}s "
+                  f"— reloading cookies", flush=True)
+            try:
+                with open(self._session_path) as f:
+                    state = json.load(f)
+                cookies = state.get("cookies", []) or []
+                # Replace the context's cookie jar wholesale —
+                # otherwise stale expired cookies might shadow the
+                # fresh ones with the same name+domain.
+                await context.clear_cookies()
+                if cookies:
+                    await context.add_cookies(cookies)
+                await page.goto(board_url, wait_until="domcontentloaded")
+                await page.wait_for_selector(".js-minicard", timeout=15_000)
+                if await _session_expired(page):
+                    # Fresh session was also stale, somehow. Continue
+                    # polling — bump the baseline so we don't re-load
+                    # this same file on the next iteration.
+                    initial_mtime = cur_mtime
+                    continue
+                print(f"[publisher] session recovered after {elapsed_s}s — "
+                      f"resuming from {form_name}", flush=True)
+                return True
+            except Exception as e:
+                print(f"[publisher] cookie reload failed ({e}) — "
+                      f"continuing to poll", flush=True)
+                initial_mtime = cur_mtime
+                continue
+
+        print(f"[publisher] session recovery TIMED OUT after "
+              f"{DEADLINE_S}s — hard-failing remaining cards",
+              flush=True)
+        return False
 
     async def publish_all_forms(
         self,
@@ -367,6 +556,12 @@ class FormPublisher:
                     # in steady state and skip the poll. One poll per
                     # OID, not per card.
                     fast_path_warmed: set = set()
+                    # Flag set by mid-run SSO recovery when the 10-min
+                    # re-auth window elapses with no fresh session.
+                    # Checked at the top of the per-card loop so
+                    # remaining cards short-circuit to errors instead
+                    # of cascading through the same expired session.
+                    _session_lost: bool = False
 
                     # Board cards render asynchronously after networkidle.
                     # Wait up to 30s for at least one minicard to appear
@@ -511,6 +706,18 @@ class FormPublisher:
                         form_name = card['name']
                         card_href = card['href']
                         card_meteor_id = (card.get('card_id') or '').strip()
+
+                        # Bail-out gate: if mid-run SSO recovery
+                        # exhausted its 10-min window, mark every
+                        # remaining card as an error and skip
+                        # processing. The loop continues only to
+                        # populate `result.errors` consistently.
+                        if _session_lost:
+                            result.errors.append(
+                                f"{form_name}: skipped — SSO session "
+                                f"expired and recovery timed out"
+                            )
+                            continue
 
                         # Browser-crash recovery: wrap the per-card work
                         # in a 2-attempt retry loop. If Playwright surfaces
@@ -739,6 +946,34 @@ class FormPublisher:
                                               f"falling back to URL nav",
                                               flush=True)
 
+                                        # Mid-run SSO expiry check.
+                                        # "Cards/Meteor not in window
+                                        # scope" is the specific JS
+                                        # failure mode that fires when
+                                        # the page was redirected to
+                                        # the Keycloak login flow —
+                                        # Meteor isn't loaded there.
+                                        # On match, recover before
+                                        # trying the URL-nav fallback
+                                        # (which would also fail).
+                                        if (reason == 'Cards/Meteor not in window scope'
+                                                and await _session_expired(page)):
+                                            recovered = await self._recover_session(
+                                                page, context, study_url,
+                                                form_name,
+                                            )
+                                            if recovered:
+                                                # Retry this card from the
+                                                # top of the attempts loop.
+                                                continue
+                                            _session_lost = True
+                                            result.errors.append(
+                                                f"{form_name}: SSO session "
+                                                f"expired and recovery "
+                                                f"timed out"
+                                            )
+                                            break
+
                                         if card_href:
                                             abs_url = await page.evaluate(
                                                 "(href) => new URL(href, "
@@ -770,6 +1005,27 @@ class FormPublisher:
                                                     or "browser has been closed" in _res
                                                     or "browser was disconnected" in _res):
                                                 raise
+                                            # Same SSO check as
+                                            # integration point 1.
+                                            # A radio wait timeout can
+                                            # mean propagation lag OR a
+                                            # silent redirect to the
+                                            # auth page; only the latter
+                                            # is worth recovering from.
+                                            if await _session_expired(page):
+                                                recovered = await self._recover_session(
+                                                    page, context,
+                                                    study_url, form_name,
+                                                )
+                                                if recovered:
+                                                    continue
+                                                _session_lost = True
+                                                result.errors.append(
+                                                    f"{form_name}: SSO "
+                                                    f"session expired and "
+                                                    f"recovery timed out"
+                                                )
+                                                break
                                             print(f"[publisher] FAST(fallback) "
                                                   f"radio wait timeout for "
                                                   f"{form_name} (OID="
@@ -1222,19 +1478,15 @@ async def publish_forms_to_openclinica(
     user_email: Optional[str] = None,
     allowed_card_ids: Optional[set] = None,
     conflict_oids: Optional[set] = None,
+    item_id: Optional[str] = None,
 ) -> FormPublishResult:
     """Thin wrapper around FormPublisher.publish_all_forms.
 
-    Use from pipeline.py:
-
-        from oc_form_publisher import publish_forms_to_openclinica
-        result = await publish_forms_to_openclinica(
-            study_url=study_url,
-            edc_zip_url=edc_zip_url,
-            auth_token=token,
-            user_email=oc_email,
-            allowed_card_ids=current_run_card_ids,
-        )
+    Pass item_id when calling from the pipeline so mid-run SSO recovery
+    can post a fresh auth link back to the row. Without item_id the
+    publisher still runs and still recovers silently when Keycloak's
+    server-side session is alive, but a true session expiry hard-fails
+    the remaining cards because there's no way to prompt the operator.
     """
     publisher = FormPublisher(
         auth_token=auth_token,
@@ -1242,5 +1494,6 @@ async def publish_forms_to_openclinica(
         user_email=user_email,
         allowed_card_ids=allowed_card_ids,
         conflict_oids=conflict_oids,
+        item_id=item_id,
     )
     return await publisher.publish_all_forms(study_url, edc_zip_url)

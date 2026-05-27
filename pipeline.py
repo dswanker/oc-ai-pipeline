@@ -1586,6 +1586,7 @@ async def create_oc_study(subdomain, struct_json, is_production=False,
                 user_email=oc_email,
                 allowed_card_ids=_allowed_card_ids,
                 conflict_oids=_conflict_oids if _conflict_oids else None,
+                item_id=item_id,
             )
             print(f"Form publish: {forms_publish.forms_uploaded}/"
                   f"{forms_publish.forms_total} uploaded; "
