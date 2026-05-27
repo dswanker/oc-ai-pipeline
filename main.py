@@ -170,6 +170,18 @@ async def clear_upload_record_oids(request: Request):
         rec = json.load(f)
     before = set(rec.get("uploaded_oids", []) or [])
     rec["uploaded_oids"] = sorted(before - oids_to_remove)
+    # Conflict-detector store: pipeline.py reads
+    # rec["forms"][oid]["pipeline_version_ids"] to decide whether an
+    # OC version is pipeline-managed or human-edited. Clearing the
+    # entry here lets the OID fall through the conflict detector's
+    # "OID not in stored forms → unmanaged → upload fresh" branch on
+    # the next run.
+    if "forms" in rec and isinstance(rec["forms"], dict):
+        for oid in oids_to_remove:
+            rec["forms"].pop(oid, None)
+    # Legacy key — older records used a flat top-level oc_version_ids
+    # dict. Pop it too if present so old records don't carry stale
+    # state forward after a clear.
     if "oc_version_ids" in rec and isinstance(rec["oc_version_ids"], dict):
         for oid in oids_to_remove:
             rec["oc_version_ids"].pop(oid, None)
@@ -177,9 +189,10 @@ async def clear_upload_record_oids(request: Request):
         json.dump(rec, f, indent=2)
 
     return {
-        "item_id": item_id,
+        "item_id":   item_id,
         "removed":   sorted(oids_to_remove),
         "remaining": rec["uploaded_oids"],
+        "forms_after": sorted((rec.get("forms") or {}).keys()),
     }
 
 

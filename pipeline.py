@@ -1566,8 +1566,20 @@ async def create_oc_study(subdomain, struct_json, is_production=False,
                       f"item {item_id} — skipping conflict detection "
                       f"on first run, establishing baseline", flush=True)
             else:
+                # Conflict semantics: only flag when the pipeline HAS
+                # a record for this OID and OC has at least one version
+                # ID outside that record. When the pipeline has no
+                # record for an OID at all (fresh upload record, admin
+                # cleared it, etc.), treat OC's existing version as
+                # unmanaged — upload fresh rather than flagging.
+                # Previously the absent-record case auto-flagged every
+                # OC version as a conflict, which made the conflict
+                # detector over-aggressive across re-runs and after
+                # record resets.
                 for _oid, _oc_vids in _oc_versions_before.items():
-                    _stored_vids = set(_stored_forms.get(_oid, {})
+                    if _oid not in _stored_forms:
+                        continue
+                    _stored_vids = set(_stored_forms[_oid]
                                        .get("pipeline_version_ids", []))
                     if _oc_vids - _stored_vids:
                         _conflict_oids.add(_oid)
