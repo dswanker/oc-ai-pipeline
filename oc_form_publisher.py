@@ -995,17 +995,48 @@ class FormPublisher:
                                             await page.set_input_files(
                                                 'input.js-design-form-input',
                                                 str(xlsx_path))
+                                            # Wait for upload confirmation
+                                            # in two stages. Playwright's
+                                            # default state='visible' was
+                                            # burning the full 30s on the
+                                            # 7 forms (SLEEP, SF12, EX,
+                                            # AE, AESAE, CM, DV) whose
+                                            # radio renders hidden in the
+                                            # DOM until minimongo
+                                            # processes the new version.
+                                            #
+                                            # Stage 1: attached-only check
+                                            # on input[type=radio] — that
+                                            # node lands in the DOM
+                                            # almost immediately after
+                                            # upload completes regardless
+                                            # of visibility, so we get
+                                            # the same "OC accepted the
+                                            # upload" signal in <1s
+                                            # instead of 30s.
                                             try:
                                                 await page.wait_for_selector(
-                                                    '#prevBtn:not(.disabled), '
                                                     'input[type=radio]',
+                                                    state='attached',
                                                     timeout=30000)
                                             except Exception as e:
-                                                print(f"[publisher] "
-                                                      f"Upload success "
-                                                      f"signal not seen "
-                                                      f"for {form_name}: "
-                                                      f"{e}", flush=True)
+                                                # Stage 2: fall back to
+                                                # #prevBtn for forms that
+                                                # don't carry a radio at
+                                                # all. Short ceiling — if
+                                                # neither selector fires
+                                                # the upload is suspect.
+                                                try:
+                                                    await page.wait_for_selector(
+                                                        '#prevBtn:not(.disabled)',
+                                                        timeout=5000)
+                                                except Exception:
+                                                    print(f"[publisher] "
+                                                          f"Upload success "
+                                                          f"signal not seen "
+                                                          f"for {form_name}: "
+                                                          f"{e}",
+                                                          flush=True)
                                             # set-default for this card
                                             # happens in the post-loop
                                             # batch phase — no per-card
