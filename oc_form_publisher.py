@@ -995,6 +995,45 @@ class FormPublisher:
                                             await page.set_input_files(
                                                 'input.js-design-form-input',
                                                 str(xlsx_path))
+                                            # Dismiss OC's red error
+                                            # banner if it shows up
+                                            # immediately after the
+                                            # file is set. The banner
+                                            # text observed in the
+                                            # field is "Upload version
+                                            # is successful while
+                                            # update the form is
+                                            # failed" — the upload DID
+                                            # land but the banner
+                                            # overlays the form-version
+                                            # radio and blocks our
+                                            # subsequent wait_for_
+                                            # selector. Clicking its
+                                            # close button lets the
+                                            # radio render and the
+                                            # wait below fires
+                                            # normally. 2s gives OC
+                                            # time to show the banner
+                                            # (it appears post-upload,
+                                            # not instantly); selector
+                                            # union covers a few
+                                            # variants of OC's alert
+                                            # markup. Wrapped in
+                                            # try/except: no banner
+                                            # = no-op.
+                                            await page.wait_for_timeout(2000)
+                                            try:
+                                                close_btn = await page.query_selector(
+                                                    '.alert .close, '
+                                                    '.alert button[data-dismiss], '
+                                                    '.notification-close, '
+                                                    '[class*="alert"] .close'
+                                                )
+                                                if close_btn:
+                                                    await close_btn.click()
+                                                    await page.wait_for_timeout(500)
+                                            except Exception:
+                                                pass
                                             # Wait for upload confirmation
                                             # in two stages with a
                                             # generous primary ceiling.
