@@ -524,6 +524,62 @@ class FormPublisher:
                     # so we proceed straight to the upload loop. A second
                     # goto here would force a cold SPA reload.
 
+                    # ── Diagnostic interceptors ────────────────────────
+                    # Capture upload-related HTTP responses and browser
+                    # console errors. The OC banner "Upload version is
+                    # successful while update the form is failed" hides
+                    # the actual backend error payload — these listeners
+                    # surface it so we can see what OC rejected.
+                    # Temporary debug logging; remove once the slow-form
+                    # upload mystery is fully understood.
+                    _upload_errors: dict = {}
+
+                    async def _capture_upload_response(response):
+                        url = response.url
+                        if ('design-form' in url
+                                or 'xlsform' in url
+                                or 'upload' in url.lower()
+                                or 'form' in url.lower()):
+                            if response.status >= 400 or response.status == 200:
+                                try:
+                                    body = await response.text()
+                                    if ('error' in body.lower()
+                                            or 'fail' in body.lower()
+                                            or response.status >= 400):
+                                        print(f"[upload-intercept] "
+                                              f"{response.status} {url}",
+                                              flush=True)
+                                        print(f"[upload-intercept] "
+                                              f"body: {body[:500]}",
+                                              flush=True)
+                                        _upload_errors[url] = {
+                                            'status': response.status,
+                                            'body': body[:500],
+                                        }
+                                except Exception as _e:
+                                    print(f"[upload-intercept] failed "
+                                          f"to read body: {_e}",
+                                          flush=True)
+
+                    page.on(
+                        'response',
+                        lambda r: asyncio.ensure_future(
+                            _capture_upload_response(r)
+                        ),
+                    )
+
+                    async def _capture_console(msg):
+                        if msg.type in ('error', 'warning'):
+                            print(f"[browser-console] {msg.type}: "
+                                  f"{msg.text}", flush=True)
+
+                    page.on(
+                        'console',
+                        lambda m: asyncio.ensure_future(
+                            _capture_console(m)
+                        ),
+                    )
+
                     # Per-form upload sequence. Match xlsx files to board
                     # forms by OID — the xlsx stem (e.g. "VS.xlsx" → "VS")
                     # matches the form's formOcOidValue field. We iterate
