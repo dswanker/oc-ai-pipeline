@@ -106,6 +106,84 @@ async def get_gap_report(item_id: str):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Temporary admin endpoint — clear false-positive conflict OIDs from
+# the per-item upload record (CRS-135 one-time fix, May 2026).
+#
+# DELETE THIS ROUTE once the operational backlog of stale records is
+# cleared. Keeping a write-anywhere endpoint in production is a liability
+# even when gated by a shared secret.
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.post("/admin/clear-upload-record-oids")
+async def clear_upload_record_oids(request: Request):
+    """Remove specific OIDs from an item's upload record so the
+    conflict detector stops flagging them on the next publish-to-test.
+
+    Body  : {"item_id": "<numeric>", "oids": ["AE", "CM", ...]}
+    Header: X-Admin-Secret must match the ADMIN_SECRET env var.
+
+    Errors:
+      503 — ADMIN_SECRET env var is not set. The endpoint refuses to
+            run with an empty default so an unset env doesn't quietly
+            authorise everyone.
+      403 — secret header missing or mismatched.
+      400 — item_id missing/non-numeric, or oids list empty.
+      404 — no upload record file on disk for that item.
+    """
+    admin_secret = os.environ.get("ADMIN_SECRET", "")
+    if not admin_secret:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "ADMIN_SECRET env var not set — endpoint disabled. "
+                "Set it on Railway before calling."
+            ),
+        )
+    if request.headers.get("X-Admin-Secret", "") != admin_secret:
+        raise HTTPException(status_code=403, detail="unauthorized")
+
+    body = await request.json()
+    item_id = str(body.get("item_id", "")).strip()
+    oids_to_remove = set(body.get("oids", []) or [])
+    # item_id is interpolated into a filesystem path — keep it strictly
+    # numeric to block path-traversal even though the secret check
+    # already gates access.
+    if not item_id or not item_id.isdigit():
+        raise HTTPException(
+            status_code=400,
+            detail="item_id is required and must be numeric",
+        )
+    if not oids_to_remove:
+        raise HTTPException(
+            status_code=400,
+            detail="oids must be a non-empty list",
+        )
+
+    path = f"/data/pipeline_upload_records/{item_id}.json"
+    if not os.path.exists(path):
+        raise HTTPException(
+            status_code=404,
+            detail=f"upload record not found: {path}",
+        )
+
+    with open(path) as f:
+        rec = json.load(f)
+    before = set(rec.get("uploaded_oids", []) or [])
+    rec["uploaded_oids"] = sorted(before - oids_to_remove)
+    if "oc_version_ids" in rec and isinstance(rec["oc_version_ids"], dict):
+        for oid in oids_to_remove:
+            rec["oc_version_ids"].pop(oid, None)
+    with open(path, "w") as f:
+        json.dump(rec, f, indent=2)
+
+    return {
+        "item_id": item_id,
+        "removed":   sorted(oids_to_remove),
+        "remaining": rec["uploaded_oids"],
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Auth bootstrap (Chrome extension session-capture flow)
 # ─────────────────────────────────────────────────────────────────────────────
 
