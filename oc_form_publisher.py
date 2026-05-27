@@ -996,39 +996,48 @@ class FormPublisher:
                                                 'input.js-design-form-input',
                                                 str(xlsx_path))
                                             # Wait for upload confirmation
-                                            # by polling. SLEEP/SF12/EX/
-                                            # AE/AESAE/CM/DV genuinely
-                                            # don't have any radio in
-                                            # the DOM immediately after
-                                            # set_input_files — OC
-                                            # processes the XLSForm
-                                            # asynchronously and the
-                                            # radio appears several
-                                            # seconds later. A single
-                                            # 30s wait_for_selector
-                                            # burned the full window
-                                            # for these forms; six
-                                            # 5s polls hit the same
-                                            # 30s ceiling but exit
-                                            # the moment the radio
-                                            # lands.
-                                            confirmed = False
-                                            for _attempt in range(6):
+                                            # in two stages with a
+                                            # generous primary ceiling.
+                                            # 7 forms (SLEEP/SF12/EX/
+                                            # AE/AESAE/CM/DV) take
+                                            # noticeably longer than 30s
+                                            # for OC to process the
+                                            # XLSForm and surface the
+                                            # radio; the previous 30s
+                                            # cap timed those out
+                                            # silently and the upload
+                                            # never actually created a
+                                            # version on the OC side,
+                                            # which then broke publish-
+                                            # to-test with "No form
+                                            # version defined". 90s
+                                            # accommodates the slow
+                                            # forms.
+                                            try:
+                                                await page.wait_for_selector(
+                                                    'input[type=radio]',
+                                                    state='attached',
+                                                    timeout=90000)
+                                            except Exception as e:
+                                                # Stage 2 fallback for
+                                                # forms that don't ship
+                                                # a radio at all. 10s
+                                                # is enough — if
+                                                # neither selector
+                                                # fires within their
+                                                # budgets the upload
+                                                # is suspect.
                                                 try:
                                                     await page.wait_for_selector(
-                                                        'input[type=radio]',
-                                                        state='attached',
-                                                        timeout=5000)
-                                                    confirmed = True
-                                                    break
+                                                        '#prevBtn:not(.disabled)',
+                                                        timeout=10000)
                                                 except Exception:
-                                                    pass
-                                            if not confirmed:
-                                                print(f"[publisher] "
-                                                      f"Upload success "
-                                                      f"signal not seen "
-                                                      f"for {form_name}",
-                                                      flush=True)
+                                                    print(f"[publisher] "
+                                                          f"Upload success "
+                                                          f"signal not seen "
+                                                          f"for {form_name}: "
+                                                          f"{e}",
+                                                          flush=True)
                                             # set-default for this card
                                             # happens in the post-loop
                                             # batch phase — no per-card
@@ -1174,23 +1183,14 @@ class FormPublisher:
                         # before the goto and silently hung when
                         # navigation got stuck.
 
-                        # Last-run observation: 15 of 23 cards landed
-                        # in the "no version in minimongo" bucket and
-                        # had to take the URL-nav fallback. Those 15
-                        # forms' upload confirmation timed out earlier
-                        # in the loop — OC's backend was still
-                        # processing them when the upload moved on,
-                        # and minimongo hadn't yet received the
-                        # version object by the time the batch
-                        # lookup ran. A blanket 45s wait here gives
-                        # OC's async processing time to finish across
-                        # the whole board before the batch lookup
-                        # samples minimongo, eliminating the
-                        # ~15-card per-card fallback tail.
-                        print("[publisher] Waiting 45s for minimongo "
-                              "version propagation...", flush=True)
-                        await page.wait_for_timeout(45000)
-
+                        # (The 45s minimongo propagation wait that
+                        # used to live here was removed once the
+                        # root cause was diagnosed as upload
+                        # confirmation timing out at 30s instead of
+                        # a propagation issue. The upload loop now
+                        # waits up to 90s per form, so by the time
+                        # we reach this point every successful
+                        # upload has its version visible to OC.)
                         print(f"[publisher] Batch prep: navigating to "
                               f"board {study_url!r}", flush=True)
                         try:
