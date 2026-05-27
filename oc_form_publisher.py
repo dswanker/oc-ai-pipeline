@@ -536,32 +536,45 @@ class FormPublisher:
 
                     async def _capture_upload_response(response):
                         url = response.url
-                        if ('design-form' in url
-                                or 'xlsform' in url
-                                or 'upload' in url.lower()
-                                or 'form' in url.lower()):
-                            if response.status >= 400 or response.status == 200:
-                                try:
-                                    body = await response.text()
-                                    if ('error' in body.lower()
-                                            or 'fail' in body.lower()
-                                            or response.status >= 400):
-                                        print(f"[upload-intercept] "
-                                              f"{response.status} {url}",
-                                              flush=True)
-                                        print(f"[upload-intercept] "
-                                              f"body: {body[:500]}",
-                                              flush=True)
-                                        _upload_errors[url] = {
-                                            'status': response.status,
-                                            'body': body[:500],
-                                        }
-                                except Exception as _e:
-                                    print(f"[upload-intercept] failed "
-                                          f"to read body: {_e}",
+                        # Narrow to formdesigner API endpoints — that's
+                        # where the actual upload XHR fires. Page-level
+                        # interception missed these because the upload
+                        # POST happens inside the formdesigner iframe;
+                        # the context-level handler below catches
+                        # frame responses too.
+                        if 'formdesigner' in url and '/api/' in url:
+                            try:
+                                body = await response.text()
+                                # Log every formdesigner API response,
+                                # not just error-flagged ones — the
+                                # banner we're trying to debug surfaces
+                                # via a 200 response whose body
+                                # contains the failure reason in
+                                # JSON. Cap at 5000 bytes so we
+                                # skip large static assets that
+                                # happen to slip past the URL filter.
+                                if len(body) < 5000:
+                                    print(f"[upload-intercept] "
+                                          f"{response.status} {url}",
                                           flush=True)
+                                    print(f"[upload-intercept] "
+                                          f"body: {body[:500]}",
+                                          flush=True)
+                                    _upload_errors[url] = {
+                                        'status': response.status,
+                                        'body': body[:500],
+                                    }
+                            except Exception as _e:
+                                print(f"[upload-intercept] failed "
+                                      f"to read body: {_e}",
+                                      flush=True)
 
-                    page.on(
+                    # Context-level listener: fires for responses in
+                    # the main frame AND every child iframe, including
+                    # the formdesigner one where the upload XHR
+                    # actually lives. page.on('response') only fired
+                    # for the main frame.
+                    page.context.on(
                         'response',
                         lambda r: asyncio.ensure_future(
                             _capture_upload_response(r)
