@@ -1173,6 +1173,24 @@ class FormPublisher:
                         # earlier version of this code printed nothing
                         # before the goto and silently hung when
                         # navigation got stuck.
+
+                        # Last-run observation: 15 of 23 cards landed
+                        # in the "no version in minimongo" bucket and
+                        # had to take the URL-nav fallback. Those 15
+                        # forms' upload confirmation timed out earlier
+                        # in the loop — OC's backend was still
+                        # processing them when the upload moved on,
+                        # and minimongo hadn't yet received the
+                        # version object by the time the batch
+                        # lookup ran. A blanket 45s wait here gives
+                        # OC's async processing time to finish across
+                        # the whole board before the batch lookup
+                        # samples minimongo, eliminating the
+                        # ~15-card per-card fallback tail.
+                        print("[publisher] Waiting 45s for minimongo "
+                              "version propagation...", flush=True)
+                        await page.wait_for_timeout(45000)
+
                         print(f"[publisher] Batch prep: navigating to "
                               f"board {study_url!r}", flush=True)
                         try:
@@ -1392,55 +1410,76 @@ class FormPublisher:
                             # minicard opens the panel inline the
                             # same way the upload loop does.
                             async def _nav_and_set_default():
-                                _mcl = (
-                                    page.locator(
-                                        f'.js-minicard[href="{_href}"]')
-                                    if _href
-                                    else page.locator(
-                                        '.js-minicard').filter(
-                                        has_text=_fn).first
-                                )
-                                # Dismiss any panel left open from the
-                                # previous card — its overlay sits on
-                                # top of the minicards and intercepts
-                                # the click below. Escape is the OC
-                                # designer's canonical close gesture
-                                # (same mechanism the DDP probe used
-                                # to trigger the panel-close path).
-                                # Failure is fine: no panel open means
-                                # the keypress is a no-op.
+                                # Whole body wrapped in try/finally so
+                                # the panel ALWAYS closes after each
+                                # card whether the radio click
+                                # succeeded, the wait_for_selector
+                                # timed out, or any earlier step raised.
+                                # Without the finally, a failure mid-
+                                # sequence left the panel open and its
+                                # board overlay then blocked the next
+                                # card's minicard click — the very
+                                # cascade we hit in b1364b4.
                                 try:
-                                    await page.keyboard.press('Escape')
-                                    await page.wait_for_timeout(500)
-                                except Exception:
-                                    pass
-                                await _mcl.scroll_into_view_if_needed(
-                                    timeout=5000)
-                                await _mcl.click()
-                                # Brief settle so the panel has a
-                                # chance to mount before we probe
-                                # for the radio. Matches the timing
-                                # the upload loop uses after a
-                                # minicard click.
-                                await page.wait_for_timeout(3000)
-                                # state='attached' (not the default
-                                # 'visible'): for SLEEP/SF12/EX/AE/
-                                # AESAE/CM/DV the radio renders hidden
-                                # in the DOM until minimongo
-                                # processes the version — visible
-                                # state would time out the full 15s.
-                                # Same fix as the upload-loop wait in
-                                # commit 6e7b213; needed here too
-                                # because this fallback is what makes
-                                # publish-to-test succeed for those
-                                # forms when the batch missed them.
-                                await page.wait_for_selector(
-                                    'input[type=radio]',
-                                    state='attached',
-                                    timeout=15_000)
-                                await page.locator(
-                                    'input[type=radio]'
-                                ).first.click(timeout=5000)
+                                    # Dismiss any panel left open from
+                                    # the previous card up front too —
+                                    # the finally below guarantees
+                                    # cleanup on the happy path, but
+                                    # the first iteration after the
+                                    # upload loop may still inherit a
+                                    # stale panel.
+                                    try:
+                                        await page.keyboard.press('Escape')
+                                        await page.wait_for_timeout(500)
+                                    except Exception:
+                                        pass
+                                    _mcl = (
+                                        page.locator(
+                                            f'.js-minicard[href="{_href}"]')
+                                        if _href
+                                        else page.locator(
+                                            '.js-minicard').filter(
+                                            has_text=_fn).first
+                                    )
+                                    await _mcl.scroll_into_view_if_needed(
+                                        timeout=5000)
+                                    await _mcl.click()
+                                    # Brief settle so the panel has a
+                                    # chance to mount before we probe
+                                    # for the radio. Matches the
+                                    # timing the upload loop uses
+                                    # after a minicard click.
+                                    await page.wait_for_timeout(3000)
+                                    # state='attached' (not the default
+                                    # 'visible'): for SLEEP/SF12/EX/AE/
+                                    # AESAE/CM/DV the radio renders
+                                    # hidden in the DOM until
+                                    # minimongo processes the version
+                                    # — visible state would time out
+                                    # the full 15s. Same fix as the
+                                    # upload-loop wait in commit
+                                    # 6e7b213; needed here too
+                                    # because this fallback is what
+                                    # makes publish-to-test succeed
+                                    # for those forms when the batch
+                                    # missed them.
+                                    await page.wait_for_selector(
+                                        'input[type=radio]',
+                                        state='attached',
+                                        timeout=15_000)
+                                    await page.locator(
+                                        'input[type=radio]'
+                                    ).first.click(timeout=5000)
+                                finally:
+                                    # Always close the panel before the
+                                    # next card's _nav_and_set_default
+                                    # call. Best-effort — no panel open
+                                    # means Escape is a no-op.
+                                    try:
+                                        await page.keyboard.press('Escape')
+                                        await page.wait_for_timeout(300)
+                                    except Exception:
+                                        pass
 
                             try:
                                 await _nav_and_set_default()
