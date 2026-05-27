@@ -1329,7 +1329,13 @@ class FormPublisher:
                                 continue
                             _fn = _card.get('name', _cid)
                             _href = _card.get('href', '')
-                            try:
+
+                            # Inner helper: full nav-and-set-default
+                            # sequence as one unit, so we can retry it
+                            # cleanly after an SSO recovery without
+                            # duplicating the body. Raises on any
+                            # failure; caller decides whether to retry.
+                            async def _nav_and_set_default():
                                 if _href:
                                     _abs = await page.evaluate(
                                         "(h) => new URL(h, window.location).toString()",
@@ -1345,18 +1351,66 @@ class FormPublisher:
                                     await _mcl.scroll_into_view_if_needed(
                                         timeout=5000)
                                     await _mcl.click()
-                                try:
-                                    await page.wait_for_selector(
-                                        'input[type=radio]',
-                                        timeout=15_000)
-                                    await page.locator(
-                                        'input[type=radio]'
-                                    ).first.click(timeout=5000)
-                                    result.forms_uploaded += 1
-                                    print(f"[publisher] Fallback set-"
-                                          f"default OK: {_fn}",
+                                await page.wait_for_selector(
+                                    'input[type=radio]',
+                                    timeout=15_000)
+                                await page.locator(
+                                    'input[type=radio]'
+                                ).first.click(timeout=5000)
+
+                            try:
+                                await _nav_and_set_default()
+                                result.forms_uploaded += 1
+                                print(f"[publisher] Fallback set-default "
+                                      f"OK: {_fn}", flush=True)
+                            except Exception as _rfe:
+                                # SSO can expire during the long-running
+                                # batch-fallback phase (the URL navs
+                                # trigger Keycloak redirects). If the
+                                # current URL shows we're in the auth
+                                # flow, run the existing recovery (silent
+                                # navigate-back → re-auth prompt → cookie
+                                # reload) and retry the nav once. Same
+                                # mechanism the upload loop uses; we just
+                                # invoke it from this phase too.
+                                _url_now = page.url or ''
+                                _sso_lost = (
+                                    await _session_expired(page)
+                                    or '/callback' in _url_now
+                                )
+                                _retried_ok = False
+                                if _sso_lost:
+                                    print(f"[publisher] Fallback SSO "
+                                          f"expiry for {_fn} "
+                                          f"(url={_url_now!r}) — "
+                                          f"recovering + retrying once",
                                           flush=True)
-                                except Exception as _rfe:
+                                    try:
+                                        recovered = await self._recover_session(
+                                            page, context, study_url,
+                                            _fn,
+                                        )
+                                    except Exception as _rec_e:
+                                        recovered = False
+                                        print(f"[publisher] Fallback "
+                                              f"SSO recovery crashed: "
+                                              f"{type(_rec_e).__name__}"
+                                              f": {_rec_e}", flush=True)
+                                    if recovered:
+                                        try:
+                                            await _nav_and_set_default()
+                                            result.forms_uploaded += 1
+                                            print(f"[publisher] Fallback "
+                                                  f"set-default OK "
+                                                  f"after SSO recovery: "
+                                                  f"{_fn}", flush=True)
+                                            _retried_ok = True
+                                        except Exception as _rfe2:
+                                            # Retry failed — fall
+                                            # through to the failure
+                                            # path with the new error.
+                                            _rfe = _rfe2
+                                if not _retried_ok:
                                     result.warnings.append(
                                         f"Fallback set-default failed "
                                         f"for {_fn}: {_rfe}"
@@ -1364,11 +1418,6 @@ class FormPublisher:
                                     print(f"[publisher] Fallback set-"
                                           f"default FAILED: {_fn}: "
                                           f"{_rfe}", flush=True)
-                            except Exception as _nfe:
-                                result.warnings.append(
-                                    f"Fallback URL nav failed for "
-                                    f"{_fn}: {_nfe}"
-                                )
 
                 finally:
                     await browser.close()
