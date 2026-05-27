@@ -749,338 +749,22 @@ class FormPublisher:
                                     if (pre_oid
                                             and pre_oid in confirmed_versioned_oids
                                             and card_meteor_id):
-                                        # FAST PATH (JS injection): the DDP
-                                        # probe showed the radio click is
-                                        # handled client-side via direct
-                                        # minimongo update — no DDP method
-                                        # fires from the click, and the
-                                        # panel-close persist runs through
-                                        # the same allow/deny path. We
-                                        # replicate that exact sequence
-                                        # (Cards.update on the client; DDP
-                                        # sync is automatic), skipping the
-                                        # panel-open + radio-render lag
-                                        # (~17s → <1s per repeat card).
-                                        # Previous attempts ruled out:
-                                        #   - Meteor.call('/cards/update'):
-                                        #     server rejects with INVALID
-                                        #     [400] on _version
-                                        #   - PATCH /api/boards/.../cards
-                                        #     /...: read-only (Allow:
-                                        #     OPTIONS, GET, HEAD)
-                                        # The collection stores version
-                                        # ids as integers, so we $set the
-                                        # raw int (not the string cast).
-
-                                        # Just-uploaded forms need the
-                                        # version object to land in
-                                        # minimongo before Cards.findOne
-                                        # can see it. Propagation latency
-                                        # varies — some forms <2s, some
-                                        # 30s+. Instead of a fixed worst-
-                                        # case wait, poll: re-run the
-                                        # FAST(JS) check every 2s up to
-                                        # 60s. Each failed poll returns
-                                        # ok:false before Cards.update
-                                        # fires (the JS early-returns on
-                                        # "card has no versions"), so
-                                        # polling is side-effect-free
-                                        # until the version appears.
-                                        # Only the FIRST card per OID
-                                        # pays the polling cost —
-                                        # subsequent cards proceed
-                                        # single-shot.
-                                        needs_warmup_poll = (
-                                            pre_oid in session_uploaded_oids
-                                            and pre_oid not in fast_path_warmed
-                                        )
-                                        elapsed_ms = 0
-                                        js_result = None
-                                        while True:
-                                            js_result = await page.evaluate(
-                                                """
-                                            async (cardId) => {
-                                                if (typeof Cards === 'undefined'
-                                                        || typeof Meteor === 'undefined') {
-                                                    return { ok: false,
-                                                             reason: 'Cards/Meteor not in window scope' };
-                                                }
-                                                const card = Cards.findOne(cardId);
-                                                if (!card) {
-                                                    return { ok: false,
-                                                             reason: 'card not in minimongo' };
-                                                }
-                                                if (!Array.isArray(card.versions)
-                                                        || card.versions.length === 0) {
-                                                    return { ok: false,
-                                                             reason: 'card has no versions',
-                                                             keys: Object.keys(card) };
-                                                }
-                                                // Versions array uses .id (integer), not ._id.
-                                                // Keep raw for logs, cast to string for the
-                                                // Meteor.call $set value — the integer form
-                                                // returned INVALID [400] last run.
-                                                const versionIdRaw = card.versions[0].id
-                                                    || card.versions[0]._id;
-                                                if (!versionIdRaw) {
-                                                    return { ok: false,
-                                                             reason: 'no version id found',
-                                                             versionKeys: Object.keys(card.versions[0]),
-                                                             versionObj: JSON.stringify(card.versions[0]) };
-                                                }
-                                                const versionId = String(versionIdRaw);
-                                                const versionObj = card.versions[0];
-                                                const cardFields = {
-                                                    currentVersion: card.currentVersion,
-                                                    defaultVersion: card.defaultVersion,
-                                                    _version: card._version,
-                                                };
-                                                // Fire-and-forget direct minimongo
-                                                // update. The Meteor client syncs
-                                                // the change via DDP automatically;
-                                                // if the server's allow/deny rule
-                                                // rejects the field, the change is
-                                                // silently reverted on next sync
-                                                // and publish_to_test's API call
-                                                // surfaces the missing default
-                                                // downstream. No callback so we
-                                                // don't block per-card on a
-                                                // server round-trip.
-                                                try {
-                                                    Cards.update(cardId,
-                                                        { $set: { _version: versionIdRaw } });
-                                                    return {
-                                                        ok: true,
-                                                        versionId: versionId,
-                                                        versionIdRaw: versionIdRaw,
-                                                        versionObj: versionObj,
-                                                        cardFields: cardFields
-                                                    };
-                                                } catch (e) {
-                                                    return {
-                                                        ok: false,
-                                                        reason: 'Cards.update threw: '
-                                                            + String(e.message || e),
-                                                        versionId: versionId,
-                                                        versionIdRaw: versionIdRaw,
-                                                        versionObj: versionObj,
-                                                        cardFields: cardFields
-                                                    };
-                                                }
-                                            }
-                                            """,
-                                                card_meteor_id)
-
-                                            # ── Polling decision ──
-                                            # Success: leave the loop. The
-                                            # JS already fired Cards.update
-                                            # so we're done.
-                                            if (isinstance(js_result, dict)
-                                                    and js_result.get('ok')):
-                                                break
-                                            # Single-shot mode: this OID
-                                            # is either pre-existing or
-                                            # has already been polled in
-                                            # a prior card. Don't retry.
-                                            if not needs_warmup_poll:
-                                                break
-                                            # Only retry on the specific
-                                            # propagation-lag reasons.
-                                            # Anything else (Cards/Meteor
-                                            # not in scope, card not in
-                                            # minimongo at all, Cards.update
-                                            # threw, …) won't resolve by
-                                            # waiting longer — let the
-                                            # fallback handle it.
-                                            _r = (js_result.get('reason')
-                                                  if isinstance(js_result, dict)
-                                                  else str(js_result))
-                                            if _r not in (
-                                                'card has no versions',
-                                                'no version id found',
-                                            ):
-                                                break
-                                            if elapsed_ms >= 60_000:
-                                                break
-                                            print(
-                                                f"[publisher] FAST(JS) "
-                                                f"waiting for {form_name} "
-                                                f"(OID={pre_oid}) — version "
-                                                f"not yet in minimongo, "
-                                                f"retrying in 2s (elapsed "
-                                                f"{elapsed_ms // 1000}s)",
-                                                flush=True,
-                                            )
-                                            await page.wait_for_timeout(2000)
-                                            elapsed_ms += 2000
-
-                                        # Polling complete. Mark this OID
-                                        # as warmed regardless of outcome
-                                        # — subsequent cards for the same
-                                        # OID shouldn't repeat the wait.
-                                        if needs_warmup_poll:
-                                            fast_path_warmed.add(pre_oid)
-
-                                        if (isinstance(js_result, dict)
-                                                and js_result.get('ok')):
-                                            result.forms_uploaded += 1
-                                            print(f"[publisher] FAST(JS) "
-                                                  f"set-default {form_name} "
-                                                  f"(OID={pre_oid}, "
-                                                  f"versionId="
-                                                  f"{js_result.get('versionIdRaw')}) "
-                                                  f"after {elapsed_ms // 1000}s",
-                                                  flush=True)
-                                            break
-
-                                        # JS approach failed — fall back to
-                                        # URL navigation (still skips the
-                                        # minicard-click animation + 8s
-                                        # panel-open wait).
-                                        reason = (js_result.get('reason')
-                                                  if isinstance(js_result, dict)
-                                                  else str(js_result))
-                                        print(f"[publisher] FAST(JS) failed "
-                                              f"for {form_name} "
-                                              f"(OID={pre_oid}): {reason} — "
-                                              f"falling back to URL nav",
-                                              flush=True)
-
-                                        # Mid-run SSO expiry check.
-                                        # "Cards/Meteor not in window
-                                        # scope" is the specific JS
-                                        # failure mode that fires when
-                                        # the page was redirected to
-                                        # the Keycloak login flow —
-                                        # Meteor isn't loaded there.
-                                        # On match, recover before
-                                        # trying the URL-nav fallback
-                                        # (which would also fail).
-                                        if (reason == 'Cards/Meteor not in window scope'
-                                                and await _session_expired(page)):
-                                            recovered = await self._recover_session(
-                                                page, context, study_url,
-                                                form_name,
-                                            )
-                                            if recovered:
-                                                # Retry this card from the
-                                                # top of the attempts loop.
-                                                continue
-                                            _session_lost = True
-                                            result.errors.append(
-                                                f"{form_name}: SSO session "
-                                                f"expired and recovery "
-                                                f"timed out"
-                                            )
-                                            break
-
-                                        if card_href:
-                                            abs_url = await page.evaluate(
-                                                "(href) => new URL(href, "
-                                                "window.location).toString()",
-                                                card_href)
-                                            await page.goto(
-                                                abs_url,
-                                                wait_until="domcontentloaded")
-                                        else:
-                                            _mc = page.locator(
-                                                '.js-minicard').filter(
-                                                has_text=form_name).first
-                                            await _mc.scroll_into_view_if_needed(
-                                                timeout=5000)
-                                            await _mc.click()
-
-                                        _radio_timeout = (
-                                            15000
-                                            if pre_oid in session_uploaded_oids
-                                            else 5000
-                                        )
-                                        try:
-                                            await page.wait_for_selector(
-                                                'input[type=radio]',
-                                                timeout=_radio_timeout)
-                                        except Exception as _re:
-                                            _res = str(_re).lower()
-                                            if ("target crashed" in _res
-                                                    or "browser has been closed" in _res
-                                                    or "browser was disconnected" in _res):
-                                                raise
-                                            # Same SSO check as
-                                            # integration point 1.
-                                            # A radio wait timeout can
-                                            # mean propagation lag OR a
-                                            # silent redirect to the
-                                            # auth page; only the latter
-                                            # is worth recovering from.
-                                            if await _session_expired(page):
-                                                recovered = await self._recover_session(
-                                                    page, context,
-                                                    study_url, form_name,
-                                                )
-                                                if recovered:
-                                                    continue
-                                                _session_lost = True
-                                                result.errors.append(
-                                                    f"{form_name}: SSO "
-                                                    f"session expired and "
-                                                    f"recovery timed out"
-                                                )
-                                                break
-                                            print(f"[publisher] FAST(fallback) "
-                                                  f"radio wait timeout for "
-                                                  f"{form_name} (OID="
-                                                  f"{pre_oid}, timeout="
-                                                  f"{_radio_timeout}ms): "
-                                                  f"{_re}", flush=True)
-
-                                        try:
-                                            await page.locator(
-                                                'input[type=radio]'
-                                            ).first.click(timeout=5000)
-                                        except Exception as e:
-                                            _es = str(e).lower()
-                                            if ("target crashed" in _es
-                                                    or "browser has been closed" in _es
-                                                    or "browser was disconnected" in _es):
-                                                raise
-                                            result.warnings.append(
-                                                f"set-default "
-                                                f"(fast-fallback) failed "
-                                                f"for {form_name} ({e})")
-                                        result.forms_uploaded += 1
-                                        print(f"[publisher] FAST(fallback) "
-                                              f"set-default {form_name} "
-                                              f"(OID={pre_oid})", flush=True)
-
-                                        # Restore board context before the
-                                        # next card's FAST(JS) attempt. The
-                                        # page.goto(card_url) above tore
-                                        # down minimongo for this page; if
-                                        # we don't return to the board, the
-                                        # next card hits "Cards/Meteor not
-                                        # in window scope" and every
-                                        # remaining card falls back too —
-                                        # the original failure cascades.
-                                        try:
-                                            await page.goto(
-                                                board_url,
-                                                wait_until="domcontentloaded")
-                                            # 2s settle when the prior
-                                            # failure was specifically that
-                                            # Meteor hadn't initialized —
-                                            # gives the client time to
-                                            # boot before the next JS call.
-                                            if ("Cards/Meteor not in "
-                                                    "window scope"
-                                                    in str(reason)):
-                                                await page.wait_for_timeout(
-                                                    2000)
-                                        except Exception as _ne:
-                                            print(f"[publisher] FAST"
-                                                  f"(fallback) board "
-                                                  f"restore failed for "
-                                                  f"{form_name}: {_ne}",
-                                                  flush=True)
+                                        # FAST PATH retired in favor
+                                        # of the post-loop batch
+                                        # phase (see "Batch set-
+                                        # default phase" below).
+                                        # The per-card Cards.update
+                                        # + URL-nav fallback that
+                                        # used to live here cost
+                                        # ~30s per card on the slow
+                                        # path and dominated long
+                                        # runs (~60 min for 121
+                                        # cards). Cards whose form
+                                        # is already confirmed-
+                                        # versioned just skip the
+                                        # per-card work; one batch
+                                        # JS call sets every default
+                                        # at the end of the run.
                                         break
 
                                     # FULL PATH — first encounter of
@@ -1180,35 +864,21 @@ class FormPublisher:
                                     if (oid and self.conflict_oids
                                             and oid.upper() in self.conflict_oids):
                                         # CONFLICT — don't overwrite.
-                                        if existing_version:
-                                            try:
-                                                await page.locator(
-                                                    'input[type=radio]'
-                                                ).first.click(timeout=5000)
-                                            except Exception as e:
-                                                _es = str(e).lower()
-                                                if ("target crashed" in _es
-                                                        or "browser has been closed" in _es
-                                                        or "browser was disconnected" in _es):
-                                                    raise
-                                                result.warnings.append(
-                                                    f"set-default (conflict) "
-                                                    f"failed for {form_name} "
-                                                    f"({e})")
-                                        else:
-                                            # Conflict declared but no
-                                            # radio visible on panel.
-                                            # Could be propagation lag.
+                                        # Set-default for the existing
+                                        # version is handled by the
+                                        # post-loop batch phase along
+                                        # with every other card.
+                                        if not existing_version:
                                             print(f"[publisher] CONFLICT "
                                                   f"{form_name} (OID={oid}) "
                                                   f"declared but no "
                                                   f"version visible on "
-                                                  f"panel — skipping "
-                                                  f"set-default",
+                                                  f"panel — batch phase "
+                                                  f"will look it up via "
+                                                  f"minimongo",
                                                   flush=True)
                                         result.conflicts.append(
                                             f"{form_name} (OID={oid})")
-                                        result.forms_uploaded += 1
                                         print(f"[publisher] CONFLICT: "
                                               f"{form_name} (OID={oid}) "
                                               f"was manually edited in "
@@ -1234,43 +904,21 @@ class FormPublisher:
                                             # version yet. Wait briefly,
                                             # re-check.
                                             if oid in session_uploaded_oids:
-                                                await page.wait_for_timeout(5000)
-                                                recheck = await page.query_selector(
-                                                    'input[type=radio]')
-                                                if recheck:
-                                                    try:
-                                                        await page.locator(
-                                                            'input[type=radio]'
-                                                        ).first.click(timeout=5000)
-                                                    except Exception as e:
-                                                        result.warnings.append(
-                                                            f"set-default "
-                                                            f"failed for "
-                                                            f"{form_name} "
-                                                            f"({e})")
-                                                    result.forms_uploaded += 1
-                                                    print(f"[publisher] "
-                                                          f"{form_name} "
-                                                          f"(OID={oid}) "
-                                                          f"version now "
-                                                          f"visible after "
-                                                          f"wait — set "
-                                                          f"default",
-                                                          flush=True)
-                                                else:
-                                                    print(f"[publisher] "
-                                                          f"Skipping "
-                                                          f"re-upload of "
-                                                          f"{form_name} "
-                                                          f"(OID={oid}) — "
-                                                          f"already "
-                                                          f"uploaded this "
-                                                          f"session, "
-                                                          f"version not "
-                                                          f"yet "
-                                                          f"propagated",
-                                                          flush=True)
-                                                    result.forms_uploaded += 1
+                                                # Already uploaded this
+                                                # OID earlier in the loop
+                                                # (multiple cards share
+                                                # the same form). Skip
+                                                # re-upload; the batch
+                                                # phase sets the default.
+                                                print(f"[publisher] "
+                                                      f"Skipping re-upload "
+                                                      f"of {form_name} "
+                                                      f"(OID={oid}) — "
+                                                      f"already uploaded "
+                                                      f"this session; "
+                                                      f"batch phase will "
+                                                      f"set-default",
+                                                      flush=True)
                                                 if oid:
                                                     confirmed_versioned_oids.add(oid)
                                                 break
@@ -1310,16 +958,10 @@ class FormPublisher:
                                                       f"signal not seen "
                                                       f"for {form_name}: "
                                                       f"{e}", flush=True)
-                                            try:
-                                                await page.locator(
-                                                    'input[type=radio]'
-                                                ).first.click(timeout=5000)
-                                            except Exception as e:
-                                                result.warnings.append(
-                                                    f"set-default failed "
-                                                    f"for {form_name} "
-                                                    f"({e})")
-                                            result.forms_uploaded += 1
+                                            # set-default for this card
+                                            # happens in the post-loop
+                                            # batch phase — no per-card
+                                            # radio click here.
                                             session_uploaded_oids.add(oid)
                                             print(f"[publisher] Uploaded "
                                                   f"{xlsx_path.name} → "
@@ -1396,6 +1038,185 @@ class FormPublisher:
                                 await page.wait_for_timeout(1500)
                             except Exception:
                                 pass
+
+                    # ── Batch set-default phase ────────────────────────
+                    # The upload loop above did NOT click any radios.
+                    # All set-default work happens here in one shot:
+                    #   (1) ask minimongo for every card's current
+                    #       versions[0].id via a single page.evaluate;
+                    #   (2) Cards.update each card's _version in a
+                    #       second page.evaluate that returns per-card
+                    #       success/failure.
+                    # Cards that fail the batch (or have no version
+                    # visible in minimongo yet) fall through to a
+                    # per-card URL-nav fallback below. On a healthy
+                    # run with 121 cards this collapses ~60 min of
+                    # per-card navigation into <1s of batched JS.
+                    if not _session_lost:
+                        import time as _bt_time
+                        _batch_start_t = _bt_time.time()
+
+                        _eligible = [
+                            c for c in minicard_cards if c.get('card_id')
+                        ]
+                        _eligible_ids = [c['card_id'] for c in _eligible]
+                        print(f"[publisher] Batch set-default: looking up "
+                              f"versions for {len(_eligible_ids)} cards in "
+                              f"minimongo", flush=True)
+
+                        # Step 1: bulk version lookup
+                        try:
+                            _versions_by_card = await page.evaluate(
+                                """
+                                (cardIds) => {
+                                    const out = {};
+                                    for (const cid of cardIds) {
+                                        const c = Cards.findOne(cid);
+                                        if (c && Array.isArray(c.versions)
+                                                && c.versions.length) {
+                                            const v = c.versions[0];
+                                            const vid = (v && (v.id || v._id)) || null;
+                                            if (vid !== null) out[cid] = vid;
+                                        }
+                                    }
+                                    return out;
+                                }
+                                """,
+                                _eligible_ids,
+                            )
+                        except Exception as _be:
+                            print(f"[publisher] Batch version lookup "
+                                  f"failed ({_be}) — falling back to "
+                                  f"per-card URL nav for everything",
+                                  flush=True)
+                            _versions_by_card = {}
+
+                        _card_version_map = {
+                            cid: vid
+                            for cid, vid in _versions_by_card.items()
+                            if vid is not None
+                        }
+                        _no_version_ids = [
+                            cid for cid in _eligible_ids
+                            if cid not in _card_version_map
+                        ]
+                        if _no_version_ids:
+                            print(f"[publisher] {len(_no_version_ids)} "
+                                  f"cards have no version visible in "
+                                  f"minimongo — they'll go through "
+                                  f"URL-nav fallback", flush=True)
+
+                        # Step 2: batch Cards.update
+                        _batch_results: dict = {}
+                        if _card_version_map:
+                            try:
+                                _batch_results = await page.evaluate(
+                                    """
+                                    async (cardVersionMap) => {
+                                        const results = {};
+                                        for (const [cardId, versionId] of Object.entries(cardVersionMap)) {
+                                            try {
+                                                Cards.update(cardId,
+                                                    {$set: {_version: versionId}});
+                                                results[cardId] = {ok: true};
+                                            } catch(e) {
+                                                results[cardId] = {ok: false,
+                                                                    error: e.toString()};
+                                            }
+                                        }
+                                        return results;
+                                    }
+                                    """,
+                                    _card_version_map,
+                                )
+                            except Exception as _ue:
+                                print(f"[publisher] Batch Cards.update "
+                                      f"failed ({_ue}) — every card "
+                                      f"will retry via URL nav",
+                                      flush=True)
+                                _batch_results = {
+                                    cid: {"ok": False, "error": str(_ue)}
+                                    for cid in _card_version_map
+                                }
+
+                        _batch_ok = [
+                            cid for cid, r in _batch_results.items()
+                            if r.get("ok")
+                        ]
+                        _batch_failed = [
+                            cid for cid, r in _batch_results.items()
+                            if not r.get("ok")
+                        ]
+                        _elapsed = _bt_time.time() - _batch_start_t
+                        print(f"[publisher] FAST(JS) batch set-default: "
+                              f"{len(_batch_ok)} cards updated in "
+                              f"~{_elapsed:.1f}s "
+                              f"({len(_batch_failed)} batch failures, "
+                              f"{len(_no_version_ids)} no-version)",
+                              flush=True)
+                        result.forms_uploaded += len(_batch_ok)
+
+                        # Step 3: URL-nav fallback for batch failures +
+                        # cards that had no version in minimongo. This
+                        # is the ONLY place per-card URL nav happens
+                        # in the new design; on a clean run the list
+                        # is empty and we skip it entirely.
+                        _fallback_ids = _batch_failed + _no_version_ids
+                        if _fallback_ids:
+                            print(f"[publisher] URL-nav fallback for "
+                                  f"{len(_fallback_ids)} cards",
+                                  flush=True)
+                        _card_by_id = {
+                            c['card_id']: c for c in minicard_cards
+                            if c.get('card_id')
+                        }
+                        for _cid in _fallback_ids:
+                            _card = _card_by_id.get(_cid)
+                            if _card is None:
+                                continue
+                            _fn = _card.get('name', _cid)
+                            _href = _card.get('href', '')
+                            try:
+                                if _href:
+                                    _abs = await page.evaluate(
+                                        "(h) => new URL(h, window.location).toString()",
+                                        _href,
+                                    )
+                                    await page.goto(
+                                        _abs,
+                                        wait_until="domcontentloaded")
+                                else:
+                                    _mcl = page.locator(
+                                        '.js-minicard').filter(
+                                        has_text=_fn).first
+                                    await _mcl.scroll_into_view_if_needed(
+                                        timeout=5000)
+                                    await _mcl.click()
+                                try:
+                                    await page.wait_for_selector(
+                                        'input[type=radio]',
+                                        timeout=15_000)
+                                    await page.locator(
+                                        'input[type=radio]'
+                                    ).first.click(timeout=5000)
+                                    result.forms_uploaded += 1
+                                    print(f"[publisher] Fallback set-"
+                                          f"default OK: {_fn}",
+                                          flush=True)
+                                except Exception as _rfe:
+                                    result.warnings.append(
+                                        f"Fallback set-default failed "
+                                        f"for {_fn}: {_rfe}"
+                                    )
+                                    print(f"[publisher] Fallback set-"
+                                          f"default FAILED: {_fn}: "
+                                          f"{_rfe}", flush=True)
+                            except Exception as _nfe:
+                                result.warnings.append(
+                                    f"Fallback URL nav failed for "
+                                    f"{_fn}: {_nfe}"
+                                )
+
                 finally:
                     await browser.close()
 
