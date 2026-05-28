@@ -445,7 +445,7 @@ Before defining any forms, map the complete visit schedule.
 For each visit in the Schedule of Assessments, assign:
 - `event_oid` — short machine-readable ID (e.g., `SE_BASELINE`, `SE_C1`)
 - `timepoint_label` — human-readable label (e.g., `Baseline`, `Course 1`)
-- `arm` — `TREATMENT`, `CONTROL`, or `BOTH`
+- `arm` — `TRT`, `CTRL`, or `BOTH` (short arm codes matching the timepoint CSV; distinct from the long-form `arm_applicability` labels used on forms)
 - `visit_window` — timing relative to key study events
 - `forms_assigned` — list of form_ids assigned to this visit
 - `anchor_event_oid` — the event OID this visit is scheduled relative to (e.g., `SE_INJECTION_2`). Set to `null` for the study's index event (the first scheduled visit). **Critical: do NOT assume all events anchor to Day 0 / baseline. Read the protocol text and footnotes carefully — chained scheduling (event C is relative to event B, which is relative to event A) is common and must be resolved from the protocol text, not assumed.**
@@ -462,7 +462,7 @@ Use this naming convention for event OIDs:
 - `SE_C{n}POST{timing}` — post-course timepoints
 - `SE_EOS` — end of study
 - `SE_EOT` — end of treatment
-- `SE_CTL{label}` — control group specific visits
+- `SE_CTL{label}` — control-arm-specific visits. Generated ONLY when the ePRO-split rule in Step 1d forces a full timepoint split. Most control-arm timepoints share an event OID with the treatment arm (arm: BOTH); SE_CTL* events are created only when an arm-specific ePRO form is present at that timepoint.
 - `SE_UNSCH` — unscheduled visit
 
 ### 1b: Generate Timepoint CSV Content
@@ -480,6 +480,28 @@ array in the JSON output — one entry per event OID, in the same order as the
 timepoint CSV. This is the machine-readable timing specification that
 downstream calendaring automation consumes. Every event must have an entry;
 use `null` for any field the protocol does not specify.
+
+### 1d: Determine Per-Arm Event Splits and Compile Study Calendars
+
+**Default — shared events.** Most timepoints use a single shared event OID with `arm: BOTH`. Arm differences for non-ePRO forms are handled by each form's `arm_applicability` and `relevant` expressions. Do not create SE_CTL* events unless the ePRO exception below applies.
+
+**Exception — ePRO-triggered full split (Option A).** If any form at a timepoint has BOTH `is_epro: true` AND `arm_applicability` that is not `BOTH` (i.e., it is arm-specific), split that entire timepoint into per-arm events:
+- Treatment-arm event: keep the standard OID (e.g., `SE_SCREENING` → `SE_SCREENING`, `arm: TRT`).
+- Control-arm event: apply the `SE_CTL{label}` convention (e.g., `SE_CTL_SCREENING`, `arm: CTRL`).
+- Move ALL forms at that timepoint — ePRO and non-ePRO alike — to their arm-specific events. Forms with `arm_applicability: BOTH` are placed on both events.
+
+**Emit `study_calendars`.** After resolving all shared and split events, emit a top-level `study_calendars` array — one entry per arm — listing every event OID that belongs to that arm's schedule. This is the contract consumed by `edc-builder` to mint per-arm calendars and by `calendaring-rules` for event routing:
+
+```json
+"study_calendars": [
+  { "arm_code": "TRT", "arm_name": "Treatment Group",
+    "event_oids": ["SE_SCREENING", "SE_BASELINE_INJECTION_1", "SE_EOS", "SE_UNSCH"] },
+  { "arm_code": "CTRL", "arm_name": "Concurrent Control Group",
+    "event_oids": ["SE_SCREENING", "SE_CTL_WEEK_2_3", "SE_EOS", "SE_UNSCH"] }
+]
+```
+
+Note: shared events (arm: BOTH) appear in both arms' `event_oids` lists. SE_CTL* events appear only in the CTRL list.
 
 ---
 
@@ -943,6 +965,12 @@ directly by the `edc-builder` skill.
       "conditional_trigger": null
     }
   ],
+  "study_calendars": [
+    { "arm_code": "TRT", "arm_name": "Treatment Group",
+      "event_oids": ["SE_BASELINE"] },
+    { "arm_code": "CTRL", "arm_name": "Concurrent Control Group",
+      "event_oids": ["SE_BASELINE"] }
+  ],
   "labranges_csv": {
     "filename": "labranges.csv",
     "columns": ["lab_name","test_code","test_name","lower","upper","unit","sex_filter","age_lower","age_upper"],
@@ -1013,7 +1041,7 @@ directly by the `edc-builder` skill.
     ],
     "form_placements": [
       { "target_visit_oid": "SE_BASELINE", "form_id": "DM",
-        "required": true, "repeating": false, "notes": "" }
+        "required": true, "repeating": false, "arm": "BOTH", "notes": "" }
     ],
     "arm_mappings": [
       { "source_arm": null, "target_arm": "TRT", "action": "pending" }
