@@ -588,51 +588,38 @@ class FormPublisher:
                         ),
                     )
 
-                    # Request-side mirror of the response interceptor.
-                    # Logs URL + method + (small) body for every
-                    # formdesigner request so we can identify which
-                    # POST is the actual upload XHR — the response
-                    # interceptor alone showed us bodies but didn't
-                    # surface methods or distinguish the upload POST
-                    # from incidental GETs.
-                    async def _capture_upload_request(request):
+                    # Network-layer interceptor via page.route, replacing
+                    # the earlier context.on('request') approach. route()
+                    # hooks at a lower layer than the event-based
+                    # request listener — it sees traffic that service
+                    # workers proxy or originate, which 'request'
+                    # event listeners can miss. The upload XHR
+                    # apparently goes through a service worker
+                    # (consistent with our context.on('request')
+                    # logging never capturing it across three rounds
+                    # of broadening filters).
+                    #
+                    # Pattern '**/*' matches every URL. Each
+                    # intercepted request is logged then explicitly
+                    # forwarded via route.continue_() — without that
+                    # the browser would hang waiting for our handler
+                    # to dispatch.
+                    async def _log_upload_route(route, request):
+                        method = request.method
                         url = request.url
-                        # Debug pass: capture writes to ANY domain so
-                        # we can identify where the XLSForm upload
-                        # POST actually lands. Previous filters
-                        # ('formdesigner' / 'design.openclinica.io')
-                        # were both too narrow — the upload XHR
-                        # apparently hits a host we haven't accounted
-                        # for. Method gate kept to suppress GET flood.
-                        if True:  # catch all domains to find upload endpoint
-                            method = request.method
-                            if method in ('POST', 'PUT', 'PATCH'):
-                                print(f"[upload-request] {method} {url}",
-                                      flush=True)
-                                try:
-                                    post_data = request.post_data
-                                    if post_data and len(post_data) < 200:
-                                        print(f"[upload-request] data: "
-                                              f"{post_data[:200]}",
-                                              flush=True)
-                                    else:
-                                        size = (len(post_data)
-                                                if post_data else 0)
-                                        print(f"[upload-request] data: "
-                                              f"<binary or large, "
-                                              f"{size} bytes>",
-                                              flush=True)
-                                except Exception as _e:
-                                    print(f"[upload-request] data "
-                                          f"read error: {_e}",
-                                          flush=True)
+                        if method in ('POST', 'PUT', 'PATCH'):
+                            print(f"[route-intercept] {method} {url}",
+                                  flush=True)
+                            try:
+                                post_data = request.post_data
+                                size = len(post_data) if post_data else 0
+                                print(f"[route-intercept] body size: "
+                                      f"{size} bytes", flush=True)
+                            except Exception:
+                                pass
+                        await route.continue_()
 
-                    page.context.on(
-                        'request',
-                        lambda r: asyncio.ensure_future(
-                            _capture_upload_request(r)
-                        ),
-                    )
+                    await page.route('**/*', _log_upload_route)
 
                     async def _capture_console(msg):
                         if msg.type in ('error', 'warning'):
