@@ -380,6 +380,19 @@ def _normalize_survey_rows(rows):
         if t in END_TYPES:
             r['name'] = ''
         normalized.append(r)
+
+    _BEGIN_TYPES = {
+        'begin group', 'begin repeat',
+        'begin_group', 'begin_repeat',
+    }
+    for r in normalized:
+        t_norm = str(r.get('type', '') or '').strip().lower()
+        if t_norm in _BEGIN_TYPES:
+            if not str(r.get('label', '') or '').strip():
+                r['label'] = (
+                    str(r.get('name', '') or '').strip() or 'Repeat'
+                )
+
     return normalized
 
 
@@ -596,6 +609,35 @@ def build_single_xlsform(form_data, output_path, build_log):
         if not settings.get(k):
             settings[k] = default
 
+    def _ascii_safe_title(title: str) -> str:
+        """Replace known non-ASCII characters in XLSForm settings
+        fields with safe ASCII equivalents.
+
+        Scope: applied only to form_title in the settings sheet.
+        Survey labels are left as-is — they are display text and
+        OC renders them correctly. The issue is specifically with
+        non-ASCII in the settings form_title field.
+
+        Confirmed by engineering feedback for OpenClinica 4.
+        """
+        _REPLACEMENTS = {
+            '°': 'deg',   # ° DEGREE SIGN → deg
+            '®': '(R)',   # ® REGISTERED SIGN
+            '©': '(C)',   # © COPYRIGHT SIGN
+            '™': '(TM)',  # ™ TRADE MARK SIGN
+            '’': "'",     # ' RIGHT SINGLE QUOTATION MARK
+            '‘': "'",     # ' LEFT SINGLE QUOTATION MARK
+            '“': '"',     # " LEFT DOUBLE QUOTATION MARK
+            '”': '"',     # " RIGHT DOUBLE QUOTATION MARK
+            '–': '-',     # – EN DASH
+            '—': '-',     # — EM DASH
+            '…': '...',   # … HORIZONTAL ELLIPSIS
+        }
+        result = str(title or '')
+        for char, repl in _REPLACEMENTS.items():
+            result = result.replace(char, repl)
+        return result
+
     use_template = os.path.exists(TEMPLATE_PATH)
 
     # ── Load workbook ──────────────────────────────────────────────────────
@@ -653,9 +695,12 @@ def build_single_xlsform(form_data, output_path, build_log):
         for col_i, col in enumerate(SETTINGS_COLS, start=1):
             _header_cell(ws_set.cell(row=1, column=col_i), col)
 
+    # Write settings values; sanitize form_title for OC compatibility.
     for col_i, col in enumerate(SETTINGS_COLS, start=1):
-        val = settings.get(col, '')
-        ws_set.cell(row=2, column=col_i).value = val or ''
+        val = settings.get(col, '') or ''
+        if col == 'form_title':
+            val = _ascii_safe_title(val)
+        ws_set.cell(row=2, column=col_i).value = val
         ws_set.column_dimensions[get_column_letter(col_i)].width = \
             SETTINGS_WIDTHS.get(col, 20)
 
@@ -665,20 +710,31 @@ def build_single_xlsform(form_data, output_path, build_log):
 
     # ── Sheet: choices ─────────────────────────────────────────────────────
     choice_extra_cols = []
+    _seen_choice_extra = set()
     for ch in choices:
         for k in ch:
-            if k not in CHOICES_COLS and k not in STRIP_COLS and k not in choice_extra_cols:
+            if (k not in CHOICES_COLS
+                    and k not in STRIP_COLS
+                    and k not in _seen_choice_extra
+                    and ' ' not in str(k)):   # strips phantom instruction col
                 choice_extra_cols.append(k)
+                _seen_choice_extra.add(k)
     all_choice_cols = CHOICES_COLS + choice_extra_cols
 
     if not use_template:
         for col_i, col in enumerate(all_choice_cols, start=1):
             _header_cell(ws_ch.cell(row=1, column=col_i), col)
     else:
-        # Extra columns beyond the template's 4 still need headers written
+        # Always rewrite every choices header so the template's
+        # phantom instruction column (col 5) is replaced cleanly.
         for col_i, col in enumerate(all_choice_cols, start=1):
-            if col_i > len(CHOICES_COLS):
-                _header_cell(ws_ch.cell(row=1, column=col_i), col)
+            _header_cell(ws_ch.cell(row=1, column=col_i), col)
+        # Null out any residual template columns beyond our valid set.
+        for col_i in range(len(all_choice_cols) + 1,
+                           ws_ch.max_column + 1):
+            cell = ws_ch.cell(row=1, column=col_i)
+            if cell.value is not None:
+                cell.value = None
 
     for col_i in range(1, len(all_choice_cols) + 1):
         col = all_choice_cols[col_i - 1]

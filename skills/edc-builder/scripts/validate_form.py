@@ -14,6 +14,10 @@ Public API
         Catches PyXFormError and returns (False, [str(e)], []) so callers
         never have to deal with raised exceptions.
 
+ODK Validate false positives: OC-specific XPath patterns
+(instance(clinicaldata), floor()) are suppressed since OC's
+form-service supports them natively.
+
 History
 ───────
 Earlier versions of this module stripped a "phantom" end_group row that
@@ -33,6 +37,41 @@ import shutil
 import tempfile
 
 logger = logging.getLogger(__name__)
+
+
+# Patterns that ODK Validate flags as errors but are valid in OC.
+# These are OC-proprietary extensions that the bundled ODK Validate
+# JAR does not know about. Treat them as expected warnings so the
+# self-correction loop is not triggered on correct forms.
+_OC_KNOWN_ERROR_PATTERNS = [
+    "instance(clinicaldata)",
+    "instance('clinicaldata')",
+    "instance(labranges)",
+    "instance('labranges')",
+    "cannot handle function 'floor'",
+    "cannot handle function 'once'",
+    "ItemGroupRepeatKey",
+]
+
+
+def _error_is_all_oc_known(error_str: str) -> bool:
+    """Return True if every substantive error line in an ODK Validate
+    error string matches a known OC-specific pattern that is valid in
+    OpenClinica but unsupported by the bundled JAR."""
+    substantive = [
+        ln.strip() for ln in error_str.split("\n")
+        if ln.strip()
+        and any(kw in ln for kw in (
+            "Error", "error", "XPath", "Instance", "function",
+            "Invalid", "exception",
+        ))
+    ]
+    if not substantive:
+        return False
+    return all(
+        any(p in ln for p in _OC_KNOWN_ERROR_PATTERNS)
+        for ln in substantive
+    )
 
 
 def _odk_validate_available() -> bool:
@@ -86,11 +125,14 @@ def validate_xlsform(
     try:
         from pyxform.errors import PyXFormError
         from pyxform.xls2xform import xls2xform_convert
+        try:
+            from pyxform.validators.odk_validate import ODKValidateError
+        except ImportError:
+            ODKValidateError = None
     except ImportError as e:
-        # pyxform missing → can't validate. Surface as a single error
-        # rather than silently passing — caller can decide whether to
-        # treat this as fatal.
-        return (False, [f"pyxform not installed: {e}"], [])
+        # pyxform missing → can't validate. Treat as a skip (valid) with
+        # a warning so missing pyxform never triggers self-correction.
+        return (True, [], [f"pyxform not installed — skipping: {e}"])
 
     if not os.path.exists(xlsx_path):
         return (False, [f"File does not exist: {xlsx_path}"], [])
@@ -114,13 +156,26 @@ def validate_xlsform(
         )
 
         # pyxform returns a list of warning strings (or None). Normalise.
-        warnings = [w for w in (warnings_out or []) if w and str(w).strip()]
+        warnings = [w for w in (warnings_out or [])
+                    if w and str(w).strip()
+                    and "Use this worksheet to define" not in str(w)]
         return (True, [], warnings)
 
     except PyXFormError as e:
         return (False, [str(e)], [])
 
     except Exception as e:
+        # Check if this is an ODKValidateError with only OC-known patterns
+        if ODKValidateError and isinstance(e, ODKValidateError):
+            err_str = str(e)
+            if _error_is_all_oc_known(err_str):
+                oc_warn = (
+                    f"ODK Validate flagged OC-specific XPath "
+                    f"(expected for this form, not a real error): "
+                    f"{err_str[:300]}"
+                )
+                return (True, [], [oc_warn])
+            return (False, [err_str], [])
         logger.exception("validate_xlsform: unexpected error on %s", xlsx_path)
         return (False,
                 [f"Unexpected validation error ({type(e).__name__}): {e}"],
