@@ -597,16 +597,14 @@ class FormPublisher:
                     # from incidental GETs.
                     async def _capture_upload_request(request):
                         url = request.url
-                        # Two-stage filter: first by host (catches both
-                        # the formdesigner iframe and design.openclinica.io
-                        # itself, which is where the actual XLSForm
-                        # upload POST lands — the earlier '/api/' + 'upload'
-                        # path gate was blocking it because the upload
-                        # endpoint uses neither marker in its URL).
-                        # Then by method, so the log only carries write
-                        # requests; GETs would flood the output.
-                        if ('formdesigner' in url
-                                or 'design.openclinica.io' in url):
+                        # Debug pass: capture writes to ANY domain so
+                        # we can identify where the XLSForm upload
+                        # POST actually lands. Previous filters
+                        # ('formdesigner' / 'design.openclinica.io')
+                        # were both too narrow — the upload XHR
+                        # apparently hits a host we haven't accounted
+                        # for. Method gate kept to suppress GET flood.
+                        if True:  # catch all domains to find upload endpoint
                             method = request.method
                             if method in ('POST', 'PUT', 'PATCH'):
                                 print(f"[upload-request] {method} {url}",
