@@ -1134,42 +1134,79 @@ class FormPublisher:
                                                           f"for {form_name}: "
                                                           f"{e}",
                                                           flush=True)
-                                                    # Close + reopen the
-                                                    # card to nudge OC into
-                                                    # completing its bridge
-                                                    # update. Manual testing
-                                                    # showed the version
-                                                    # appears in the Versions
-                                                    # panel only after a
-                                                    # close/reopen cycle —
-                                                    # this is the fix for the
-                                                    # 7 slow forms. Guarded
-                                                    # on card_meteor_id so an
-                                                    # empty id can't turn the
-                                                    # href*= selector into a
-                                                    # match-everything click.
-                                                    if card_meteor_id:
-                                                        try:
-                                                            await page.keyboard.press('Escape')
-                                                            await page.wait_for_timeout(2000)
-                                                            _mcl = page.locator(
-                                                                f'.js-minicard[href*="{card_meteor_id}"]'
-                                                            ).first
-                                                            await _mcl.click()
-                                                            await page.wait_for_timeout(3000)
-                                                            await page.wait_for_selector(
-                                                                'input[type=radio]',
-                                                                state='attached',
-                                                                timeout=15000)
-                                                            print(f"[publisher] "
-                                                                  f"Version "
-                                                                  f"appeared "
-                                                                  f"after card "
-                                                                  f"reopen for "
-                                                                  f"{form_name}",
+                                                    # REST verify: did OC
+                                                    # actually create the
+                                                    # version despite the
+                                                    # UI timeout? The
+                                                    # publisher has no
+                                                    # standalone token /
+                                                    # subdomain / board_id —
+                                                    # the token is
+                                                    # self.auth_token
+                                                    # (passed by pipeline's
+                                                    # caller), subdomain +
+                                                    # board_id parse out of
+                                                    # study_url, and the OID
+                                                    # is oid|pre_oid. Board
+                                                    # JSON shape per
+                                                    # pipeline._fetch_oc_versions_by_oid:
+                                                    # top-level cards[] with
+                                                    # formOcoid + versions[]
+                                                    # (NOT lists[].cards[] /
+                                                    # formVersionId).
+                                                    _version_created = False
+                                                    try:
+                                                        _host = urlparse(
+                                                            study_url).hostname or ""
+                                                        _subdomain = (
+                                                            _host.split(".")[0]
+                                                            if _host else "")
+                                                        _board_id = ""
+                                                        _bparts = study_url.split("/b/")
+                                                        if len(_bparts) > 1:
+                                                            _board_id = _bparts[1].split("/")[0]
+                                                        _target_oid = (oid or pre_oid or "").upper()
+                                                        if (self.auth_token and _subdomain
+                                                                and _board_id and _target_oid):
+                                                            _vurl = (
+                                                                f"https://{_subdomain}"
+                                                                f".design.openclinica.io"
+                                                                f"/api/boards/{_board_id}")
+                                                            async with httpx.AsyncClient(
+                                                                    timeout=10) as _vc:
+                                                                _vr = await _vc.get(
+                                                                    _vurl,
+                                                                    headers={
+                                                                        "Authorization":
+                                                                            f"Bearer {self.auth_token}",
+                                                                        "Content-Type":
+                                                                            "application/json",
+                                                                    })
+                                                            if _vr.status_code == 200:
+                                                                _bdata = _vr.json()
+                                                                for _card in (_bdata.get("cards") or []):
+                                                                    if ((_card.get("formOcoid") or "").upper()
+                                                                            == _target_oid
+                                                                            and _card.get("versions")):
+                                                                        _version_created = True
+                                                                        break
+                                                        if _version_created:
+                                                            print(f"[publisher] REST "
+                                                                  f"verify: version "
+                                                                  f"confirmed for "
+                                                                  f"{form_name} despite "
+                                                                  f"UI timeout",
                                                                   flush=True)
-                                                        except Exception:
-                                                            pass  # fallback set-default handles it
+                                                        else:
+                                                            print(f"[publisher] REST "
+                                                                  f"verify: NO version "
+                                                                  f"found for "
+                                                                  f"{form_name} — upload "
+                                                                  f"likely failed",
+                                                                  flush=True)
+                                                    except Exception as _ve:
+                                                        print(f"[publisher] REST verify "
+                                                              f"error: {_ve}", flush=True)
                                             # set-default for this card
                                             # happens in the post-loop
                                             # batch phase — no per-card

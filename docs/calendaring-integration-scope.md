@@ -194,7 +194,7 @@ Single-purpose enrichment (one block), streaming API if it raises token count �
 | 1 | Add structured `scheduling` block to `protocol-analysis` (timing-encoding fix) as calendaring Phase 0 | **Settled — yes.** Track A, Phase 0. Single-purpose patch, independent of the arm work. |
 | 2 | Mint per-arm study calendars + enrollment Participant Action routing | **Settled — yes (per-arm calendars).** Arms modeled as distinct event sets / per-arm calendars; routing via enrollment Participant Action. Remaining work = event-model design. Gates only Tier 3c. |
 | 3 | Advanced JSON is the sole *generated* output; simple-mode rules documented as recommendations | **Settled — yes.** |
-| 4 | Customer-facing API to publish calendaring rules | **OPEN — Dan to confirm with engineering.** Default = hand-paste artifacts. |
+| 4 | Customer-facing API to publish calendaring rules | **Settled — yes.** Engineering confirmed same API as form-definition publish. Auto-publish to OC study instance is in scope; confirm endpoint format and required study status before implementing the pipeline handler. |
 | 5 | Call the XPath evaluator endpoint as a generation-time gate | **Settled — yes (ideal).** Adds TEST-study + `OC_API_*` dependency. |
 | 6 | Track the arm gap as its own build-correctness fix (Track B), not bundled into calendaring | **Settled — yes.** Two parallel tracks (§3, §10). |
 | 7 | B0 audit outcome: arm is recognized but modeled at form level on a shared timeline; SOE arm column is computed, not read | **DONE.** Split into B-report (generator) + B-model (skill); see §10. |
