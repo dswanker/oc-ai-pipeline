@@ -487,45 +487,38 @@ especially §2.4.4 (Using the Form Template), §2.4.5 (Form Logic),
 §2.4.6 (Functions), and §2.4.9 (Locating Object Identifiers).
 
 RULE OC-8 — REPEATING-FORM STRUCTURAL PATTERN
-  OpenClinica uses a NON-STANDARD repeating-form structure. The data
-  fields live in a gated begin_group / end_group block, and the form is
-  made repeating by a THREE-ROW closing marker:
-
-    begin repeat   name=<form_id>   bind::oc:itemgroup=<group>
-    end group                       bind::oc:itemgroup=<group>   ← phantom, REQUIRED
-    end repeat                      bind::oc:itemgroup=<group>
-
-  The inner `end group` between `begin repeat` and `end repeat` is a
-  PHANTOM — it has no matching `begin group`. OpenClinica REQUIRES it to
-  activate the form version; WITHOUT it the form uploads but stays stuck
-  at "Please select default version for data entry" and no data entry is
-  possible. This is OC-specific and contradicts the standard XLSForm
-  spec (pyxform flags "Unmatched 'end_group'"), which is expected and
-  tolerated by the build. See
+  OpenClinica makes a form's group repeating via `bind::oc:itemgroup` on
+  the data fields — NOT via XLSForm begin_repeat/end_repeat. The data
+  fields sharing one itemgroup ARE the repeating group. Do NOT emit
+  begin_repeat or end_repeat rows, and do NOT emit a "phantom" end_group:
+  OC rejects XLSForm repeat syntax with "Unmatched end statement"
+  (confirmed by manual testing, CRS-135). See
   skills/edc-builder/references/xlsform-build-rules.md (OC-8).
 
+  The correct shape for a repeating form:
+
+    begin group   name=<group>_GRP   relevant=${YN}='Y'   appearance=field-list
+      <data fields, each with bind::oc:itemgroup=<group>>
+    end group
+
   Begin/end tag pairing rules (HARD REQUIREMENTS):
-    - The OC-8 phantom `end group` above is REQUIRED — emit it exactly,
-      and never "balance" it away or rewrite it to `end repeat`.
-    - Every OTHER begin_repeat MUST be closed by end_repeat, and every
-      OTHER begin_group by end_group.
-    - `end group` and `end repeat` rows MUST have a BLANK name field.
-      Never put a name (e.g. "AE_REPEAT_END") on these rows.
+    - NO begin_repeat / end_repeat rows anywhere. Repetition is conveyed
+      solely by bind::oc:itemgroup on the data fields.
+    - Every begin_group MUST be closed by a matching end_group. No orphan
+      end_group rows.
+    - `end group` rows MUST have a BLANK name field. Never put a name
+      (e.g. "AE_GROUP_END") on them.
 
   Build-side safety net:
-    The edc-builder script maintains a stack-based balancer that
-    PRESERVES the OC-8 phantom while correcting genuine mismatches, and
-    validates every generated XLSForm (pyxform + ODK Validate, with the
-    OC-8 "Unmatched end_group" treated as expected). Genuine mismatches
-    trigger a self-correction loop (up to 3 AI re-generation attempts).
-    HOWEVER: generate correct tags — including the phantom — in the
-    first pass. Each correction round costs an API call.
+    The edc-builder balancer strips any stray begin_repeat/end_repeat and
+    orphan end_group rows and re-balances the begin_group/end_group pairs,
+    then validates with pyxform + ODK Validate. Generate the correct
+    structure in the first pass anyway — self-correction costs an API call.
 
   For repeating forms:
-    - All data fields wrapped in a begin_group / end_group block (with
-      `relevant` gating on the YN first-entry flag, e.g. `${CMYN}='Y'`).
-    - The three-row OC-8 closing marker (begin repeat / phantom end
-      group / end repeat) immediately after that block.
+    - All data fields wrapped in a single begin_group / end_group block
+      (gate it with `relevant` on the YN first-entry flag, e.g.
+      `${CMYN}='Y'`), every data field tagged bind::oc:itemgroup=<group>.
     - DO NOT include a top-level SUBJID text row. OC uses its built-in
       subject context for repeating forms.
     - The first-entry YN gate (e.g. CMYN, AEYN, MHYN) uses
@@ -540,15 +533,14 @@ RULE OC-8 — REPEATING-FORM STRUCTURAL PATTERN
     CMID_CALC      (local calc, display form, has itemgroup)
     ICFDAT_CF      (external calc, for date floor, no itemgroup)
     CMYN           (select_one yn, relevant=${CMID}=1)
-    begin group CM1                relevant=${CMYN}='Y'
-      CMSPID       (type=text + calc + readonly — see OC-5b)
-      CMTRT        (data field)
-      ... more data fields ...
-      CMENDAT
+    begin group CM_GRP             relevant=${CMYN}='Y'  appearance=field-list
+      CMSPID       (type=text + calc + readonly — see OC-5b, itemgroup=CM)
+      CMTRT        (data field, itemgroup=CM)
+      ... more data fields, all itemgroup=CM ...
+      CMENDAT      (itemgroup=CM)
     end group
-    begin repeat CM                bind::oc:itemgroup=CM
-    end group                      bind::oc:itemgroup=CM   ← phantom, REQUIRED
-    end repeat                     bind::oc:itemgroup=CM
+    (no begin repeat / end repeat — the shared bind::oc:itemgroup=CM
+     is what makes the group repeating in OpenClinica)
 
 RULE OC-9 — COMMON VISIT FOR CROSS-VISIT FORMS
 

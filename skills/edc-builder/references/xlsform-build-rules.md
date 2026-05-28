@@ -495,7 +495,11 @@ Rule of thumb: `type=calculate` for values consumed by other expressions;
 
 ## Repeating-Form Structural Pattern (OC-8)
 
-OpenClinica uses a NON-STANDARD XLSForm structure for repeating forms.
+OpenClinica makes a group repeating via `bind::oc:itemgroup` on the data
+fields — NOT via XLSForm `begin_repeat` / `end_repeat`. Data fields that
+share an itemgroup ARE the repeating group. OC rejects begin_repeat /
+end_repeat syntax with "Unmatched end statement" (confirmed by manual
+testing, CRS-135), so the build emits none.
 
 The structural shape of every repeating form:
 
@@ -503,21 +507,24 @@ The structural shape of every repeating form:
 2. Local display/helper calcs
 3. First-entry YN gate: `relevant: ${REPKEY_ID}=1`
 4. `begin group` wrapping all data fields: `relevant: ${YN}='Y'`
-5. Data fields inside the group
+5. Data fields inside the group, each with `bind::oc:itemgroup=<group>`
 6. `end group` closing the data group
-7. Three closing rows:
 
 ```
-type=begin repeat   name=<form_id>   bind::oc:itemgroup=<group>
-type=end group                       bind::oc:itemgroup=<group>   ← REQUIRED
-type=end repeat                      bind::oc:itemgroup=<group>
+type=begin group   name=<group>_GRP   relevant=${YN}='Y'   appearance=field-list
+type=<data type>   name=...           bind::oc:itemgroup=<group>
+...                                    bind::oc:itemgroup=<group>
+type=end group
 ```
 
-The inner `end group` between `begin repeat` and `end repeat` is REQUIRED
-even though there's no matching `begin group` inside the repeat block.
-Without it, the XLSForm uploads successfully but OC fails to activate the
-version — the form stays at "Please select default version for data entry"
-and no data entry is possible.
+There is **no** `begin repeat`, **no** `end repeat`, and **no** phantom
+`end group`. The shared `bind::oc:itemgroup` is the only thing that makes
+the group repeat in OpenClinica.
+
+> History: earlier builds wrapped data in a `begin repeat / end repeat`
+> pair, then in a `begin repeat / phantom end group / end repeat` trailer.
+> Both were wrong — OC rejects XLSForm repeat syntax outright. The repeat
+> is expressed purely through `bind::oc:itemgroup`.
 
 ### Additional rules for repeating forms
 
@@ -592,32 +599,27 @@ scope.
 
 ## Begin/End Tag Pairing Rules (CRITICAL)
 
-- **OC-8 exception comes first:** the repeating-form closing marker
-  `begin repeat` / `end group` / `end repeat` (see OC-8 above) is the ONE
-  required "mismatch". The inner phantom `end group` has no matching
-  `begin group` and MUST be preserved — OpenClinica needs it to activate
-  the form version.
-- Apart from that phantom, `begin_repeat` MUST be closed by `end_repeat`
-  (never `end_group`), and `begin_group` by `end_group` (never
-  `end_repeat`).
-- The build script maintains a tag stack (`_balance_begin_end_tags`) that
-  PRESERVES the OC-8 phantom and corrects only genuine mismatches. It does
-  NOT hard-error on the phantom.
+- **No `begin_repeat` / `end_repeat` rows at all.** OC defines repeating
+  groups from `bind::oc:itemgroup` on the data fields, and rejects XLSForm
+  repeat syntax with "Unmatched end statement". The build emits none.
+- Every `begin_group` MUST be closed by a matching `end_group`. No orphan
+  `end_group` rows (including the legacy OC-8 phantom).
+- The build script runs `_balance_begin_end_tags`, which STRIPS any stray
+  `begin_repeat`/`end_repeat` and orphan `end_group` rows and re-balances
+  the `begin_group`/`end_group` pairs.
 - All generated XLSForms are validated with pyxform + ODK Validate before
-  ZIP. pyxform flags the phantom as "Unmatched 'end_group'"; the validator
-  recognises the OC-8 marker and treats that specific error as expected.
-- Self-correction loop: up to 3 re-generation attempts on a GENUINE
-  validation failure (the OC-8 phantom does not trigger it).
+  ZIP. The stripped structure (plain begin_group/end_group) is standard
+  XLSForm, so pyxform accepts it without special-casing.
+- Self-correction loop: up to 3 re-generation attempts on a genuine
+  validation failure.
 
 ## What OC's form-service rejects (empirical — CRS-135, May 2026)
 
-- GENUINELY mismatched begin/end tags (NOT the OC-8 phantom): OC returns
-  HTTP 200 on upload but never creates a version object in minimongo.
-  Symptom looks like propagation lag but the version never appears.
-- A repeating form MISSING the OC-8 phantom `end group`: the version is
-  created but cannot be activated — the form stays at "Please select
-  default version for data entry" and no data entry is possible. This is
-  the regression that removing the phantom introduced.
-- These conditions are NOT caught by pyxform `validate=False`. Use the
-  full validator (pyxform conversion + ODK Validate) — but note the OC-8
-  phantom is REQUIRED and must never be "fixed" away.
+- `begin_repeat` / `end_repeat` rows: OC rejects the form with "Unmatched
+  end statement" — the XLSForm repeat construct is not supported. Repeats
+  are expressed only via `bind::oc:itemgroup`.
+- Genuinely mismatched / orphan begin/end group tags: OC returns HTTP 200
+  on upload but never creates a version object in minimongo. Symptom looks
+  like propagation lag but the version never appears.
+- Invalid `bind::oc:itemgroup` values (contains a period, starts with a
+  digit, etc.): silent rejection.

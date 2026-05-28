@@ -717,37 +717,12 @@ def transform(odm_study: dict) -> dict:
                 "_source_oid": "",
             })
 
-        # Repeating forms — add the OC8 repeating structure at the end
-        if is_repeating:
-            repeat_group_code = cdash_domain or form_id
-            # The inner item group above already uses `form_id` as its name when
-            # the ODM ItemGroup name matches the form (e.g. AE → IG.AE/"AE").
-            # Naming the repeat wrapper `form_id` too produces a duplicate-name
-            # collision at the form-root scope, which pyxform rejects. Suffix
-            # the repeat so it's unique among its siblings.
-            repeat_name = f"{form_id}_LOG"
-            survey_rows.extend([
-                {
-                    "type": "begin repeat", "name": repeat_name,
-                    "bind__oc_itemgroup": repeat_group_code,
-                    "label": "", "appearance": "", "required": "", "constraint": "",
-                    "constraint_message": "", "relevant": "", "calculation": "",
-                    "readonly": "", "hint": "", "bind__oc_briefdescription": "",
-                    "bind__oc_description": "", "completion_status": "COMPLETE",
-                    "library_source": "CDASH_DEFAULT", "flag_reason": "",
-                    "_source_oid": "",
-                },
-                {
-                    "type": "end repeat", "name": "",
-                    "bind__oc_itemgroup": repeat_group_code,
-                    "label": "", "appearance": "", "required": "", "constraint": "",
-                    "constraint_message": "", "relevant": "", "calculation": "",
-                    "readonly": "", "hint": "", "bind__oc_briefdescription": "",
-                    "bind__oc_description": "", "completion_status": "COMPLETE",
-                    "library_source": "CDASH_DEFAULT", "flag_reason": "",
-                    "_source_oid": "",
-                },
-            ])
+        # Repeating forms — NO XLSForm begin_repeat/end_repeat trailer.
+        # OpenClinica defines a repeating group from `bind::oc:itemgroup`
+        # on the data fields (already set above), and rejects begin/end
+        # repeat rows with "Unmatched end statement" (manual testing,
+        # CRS-135). `has_repeating_group` is still recorded on the form for
+        # downstream metadata; it just no longer changes the survey rows.
 
         choices  = _build_choices(form_items, codelist_lookup)
         settings = _build_settings(form_id, form_title, visits_assigned)

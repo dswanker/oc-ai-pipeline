@@ -379,14 +379,13 @@ def _normalize_survey_rows(rows):
     rows with names (e.g. 'AE_REPEAT_END') which causes pyxform to look
     for a matching begin_group by name and fail.
 
-    NOTE: begin/end TYPE pairing is enforced separately by
+    NOTE: block-tag handling is done separately by
     _balance_begin_end_tags, which runs before this normalizer. That
-    balancer intentionally PRESERVES the OC-8 phantom `end_group` that
-    sits between a `begin repeat` and its `end repeat` — OpenClinica
-    requires this marker to activate the form version. Do not blank or
-    rewrite that phantom here; this normalizer only clears stray names on
-    end rows and back-fills labels on begin rows. See xlsform-build-rules.md
-    (OC-8) for the full diagnosis.
+    balancer strips all begin_repeat/end_repeat rows (OC defines repeating
+    groups via bind::oc:itemgroup, not XLSForm repeat syntax) and drops
+    orphan end_group rows, leaving only balanced begin_group/end_group.
+    This normalizer only clears stray names on end rows and back-fills
+    labels on begin rows. See xlsform-build-rules.md (OC-8).
     """
     END_TYPES = {'end group', 'end repeat', 'end_group', 'end_repeat'}
     normalized = []
@@ -414,42 +413,30 @@ def _normalize_survey_rows(rows):
 
 # ── Begin/end tag pairing balancer ────────────────────────────────────────────
 def _balance_begin_end_tags(rows, form_id, build_log=None):
-    """Walk the survey rows tracking a begin/end stack. Correct any end
-    tag whose type doesn't match its opener (e.g. begin_repeat closed by
-    end_group), drop orphan end rows whose stack is empty, and append
-    closer rows for any unclosed begins at the form tail.
+    """Normalize survey block tags for OpenClinica.
 
-    Why this is a hard correctness requirement (not a defensive nicety):
-    OC's form-service silently rejects forms with genuinely mismatched
-    begin/end tags — uploads return HTTP 200 but no version object ever
-    appears in minimongo. The symptom looks like propagation lag but the
-    form was actually rejected at parse time. See xlsform-build-rules.md.
+    OC does NOT use XLSForm begin_repeat/end_repeat to define repeating
+    groups — it derives repetition from `bind::oc:itemgroup` on the data
+    fields. A form whose data fields share an itemgroup IS the repeating
+    group; the XLSForm repeat syntax is not just unnecessary but actively
+    rejected by OC's form-service with "Unmatched end statement"
+    (confirmed by manual testing, CRS-135). See xlsform-build-rules.md.
 
-    OC-8 EXCEPTION — the one intentional "mismatch" OC requires: a
-    repeating form's closing marker is `begin repeat` / `end group` /
-    `end repeat`, where the inner `end group` is a phantom with no
-    matching `begin group`. OpenClinica needs this phantom to activate
-    the form version; without it the form stays stuck at "Please select
-    default version for data entry". This balancer therefore PRESERVES a
-    phantom `end group` that sits directly between a `begin repeat` and
-    its `end repeat`, and only corrects other mismatches.
+    This balancer therefore:
+      * DROPS every `begin repeat` and `end repeat` row outright.
+      * DROPS any orphan `end group` (no matching open `begin group`) —
+        this also removes the legacy OC-8 "phantom" end_group that used to
+        sit between begin_repeat and end_repeat.
+      * Keeps `begin group` / `end group` properly paired, auto-appending
+        an `end group` for any unclosed `begin group` at the form tail.
 
-    Correction policy:
-      * begin_repeat → phantom end_group → end_repeat (OC-8 marker) →
-        PRESERVE the end_group verbatim; the end_repeat closes the repeat.
-      * any OTHER begin_repeat / end_group adjacency → rewrite end row's
-        type to 'end repeat' (opener wins).
-      * begin_group / end_repeat adjacency → rewrite to 'end group'.
-      * end row with empty stack → drop (orphan, can't pair).
-      * begin row with no matching end before form end → auto-append
-        the matching end row (minimal — only `type`, blank `name`).
+    The result is the structure OC actually wants:
+        begin group  (relevant-gated wrapper, optional)
+          <data fields, each with bind::oc:itemgroup=GROUP>
+        end group
 
-    Returns the corrected row list. Logs every correction made into
+    Returns the corrected row list. Logs every change into
     build_log['tag_balance_corrections'] when build_log is provided.
-
-    Raises ValueError only if the input is genuinely unsalvageable
-    (currently no such case is reachable — the open/close model is
-    single-tier within one form's survey sheet).
     """
     def _classify(t: str):
         u = (t or '').strip().lower().replace('_', ' ')
@@ -459,7 +446,7 @@ def _balance_begin_end_tags(rows, form_id, build_log=None):
         if u == 'end repeat':   return ('end',   'repeat')
         return (None, None)
 
-    stack: list[str] = []
+    stack: list[str] = []   # only ever holds 'group' now
     corrections: list[str] = []
     out: list[dict] = []
 
@@ -467,62 +454,39 @@ def _balance_begin_end_tags(rows, form_id, build_log=None):
         t = str(row.get('type', '') or '')
         action, kind = _classify(t)
 
-        if action == 'begin':
-            stack.append(kind)
+        # Repeats are not an XLSForm construct in OC — strip both ends.
+        if kind == 'repeat':
+            corrections.append(
+                f"row {idx + 2}: dropped {t!r} — OC defines repeating "
+                f"groups via bind::oc:itemgroup, not begin/end repeat"
+            )
+            continue
+
+        if action == 'begin':   # begin group
+            stack.append('group')
             out.append(dict(row))
 
-        elif action == 'end':
+        elif action == 'end':   # end group
             if not stack:
+                # Orphan end_group — no open group to close. Includes the
+                # legacy OC-8 phantom that followed a (now-dropped) repeat.
                 corrections.append(
-                    f"row {idx + 2}: dropped orphan end ({t!r}) — "
-                    f"no matching begin on the stack"
+                    f"row {idx + 2}: dropped orphan {t!r} — no matching "
+                    f"begin group on the stack"
                 )
                 continue
-
-            # OC-8 phantom end_group: an `end group` whose enclosing open
-            # scope is a `begin repeat` AND which is immediately followed by
-            # `end repeat` is the REQUIRED OpenClinica repeating-form marker
-            # (see xlsform-build-rules.md OC-8). OC fails to activate the
-            # form version without it ("Please select default version for
-            # data entry"). Preserve it verbatim and leave the repeat open
-            # so the following `end repeat` closes it normally. A standard
-            # tag-stack would (wrongly) read this as a mismatched closer.
-            if kind == 'group' and stack[-1] == 'repeat':
-                nxt = rows[idx + 1] if idx + 1 < len(rows) else None
-                nxt_action, nxt_kind = (
-                    _classify(str(nxt.get('type', '') or ''))
-                    if nxt else (None, None)
-                )
-                if nxt_action == 'end' and nxt_kind == 'repeat':
-                    out.append(dict(row))
-                    corrections.append(
-                        f"row {idx + 2}: preserved OC-8 phantom end_group "
-                        f"inside begin_repeat (required for OC version "
-                        f"activation)"
-                    )
-                    continue
-
-            opener_kind = stack.pop()
-            corrected = 'end repeat' if opener_kind == 'repeat' else 'end group'
-            new_row = dict(row)
-            if kind != opener_kind:
-                corrections.append(
-                    f"row {idx + 2}: rewrote {t!r} → {corrected!r} "
-                    f"(opener was begin_{opener_kind})"
-                )
-                new_row['type'] = corrected
-            out.append(new_row)
+            stack.pop()
+            out.append(dict(row))
 
         else:
             out.append(dict(row))
 
-    # Auto-close any unclosed begins at the tail.
+    # Auto-close any unclosed groups at the tail.
     while stack:
-        opener_kind = stack.pop()
-        closer = 'end repeat' if opener_kind == 'repeat' else 'end group'
-        out.append({'type': closer, 'name': ''})
+        stack.pop()
+        out.append({'type': 'end group', 'name': ''})
         corrections.append(
-            f"tail: appended {closer!r} to close unclosed begin_{opener_kind}"
+            "tail: appended 'end group' to close an unclosed begin group"
         )
 
     if corrections:
