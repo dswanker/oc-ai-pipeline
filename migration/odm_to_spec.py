@@ -348,6 +348,24 @@ def _build_survey_row(
     constraint = " and ".join(constraints) if constraints else ""
     constraint_msg = "; ".join(messages) if messages else ""
 
+    # OC does not support XLSForm `time` / `dateTime` — emit `text` with a
+    # format constraint instead, so the migration spec never carries an
+    # unsupported type. (build_xlsforms._coerce_unsupported_types is the
+    # canonical safety net; this mirrors it at spec-build time.)
+    if xlsform_type in ("time", "dateTime"):
+        if not constraint:
+            if xlsform_type == "time":
+                constraint = ("regex(.,'([01][0-9]|2[0-3]):[0-5][0-9]') "
+                              "and string-length(.)=5")
+                constraint_msg = constraint_msg or "Time must be HH:MM (24-hour)"
+            else:
+                constraint = ("regex(.,'[0-9]{4}-[0-9]{2}-[0-9]{2} "
+                              "([01][0-9]|2[0-3]):[0-5][0-9]') "
+                              "and string-length(.)=16")
+                constraint_msg = (constraint_msg
+                                  or "Date/time must be YYYY-MM-DD HH:MM")
+        xlsform_type = "text"
+
     # Appearance heuristics
     appearance = ""
     if xlsform_type == "text":
@@ -357,7 +375,7 @@ def _build_survey_row(
             appearance = "w4"
     elif xlsform_type in ("integer", "decimal"):
         appearance = "w2"
-    elif xlsform_type in ("date", "time", "dateTime"):
+    elif xlsform_type == "date":
         appearance = "w2"
     elif xlsform_type.startswith("select_one"):
         n_choices = len(codelist_lookup.get(cl_oid, {}).get("items", []))

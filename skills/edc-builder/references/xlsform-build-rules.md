@@ -99,8 +99,6 @@ maintaining the standard order prevents import errors.
 | integer | Whole number |
 | decimal | Decimal number |
 | date | Full date (YYYY-MM-DD) |
-| time | Time |
-| dateTime | Date and time |
 | select_one [list] | Single choice |
 | select_multiple [list] | Multiple choices |
 | note | Display-only text |
@@ -109,6 +107,13 @@ maintaining the standard order prevents import errors.
 | end group | End a group |
 | begin repeat | Start a repeating group |
 | end repeat | End a repeating group |
+
+> **No `time` / `dateTime` types.** OpenClinica rejects them with
+> "unsupported data type: time". Capture a time as `text` with a format
+> constraint — `regex(.,'([01][0-9]|2[0-3]):[0-5][0-9]') and string-length(.)=5`
+> (message: "Time must be HH:MM (24-hour)") — and a date+time as `text`
+> with a `YYYY-MM-DD HH:MM` constraint. The build coerces any stray
+> time/dateTime to text automatically.
 
 ---
 
@@ -449,7 +454,7 @@ incompatible with their type. The table below is exhaustive.
 
 | Element type | Allowed columns | Forbidden columns |
 |---|---|---|
-| `text`, `integer`, `decimal`, `date`, `time`, `dateTime`, `select_one`, `select_multiple` | all columns | — |
+| `text`, `integer`, `decimal`, `date`, `select_one`, `select_multiple` | all columns | — |
 | `calculate` (local) | `name`, `label`, `appearance`, `relevant`, `calculation`, `bind::oc:itemgroup` | `readonly`, `constraint`, `required` |
 | `calculate` + `bind::oc:external=clinicaldata` | `name`, `calculation`, `bind::oc:external` | `bind::oc:itemgroup`, `readonly`, `constraint`, `required`, `label` (usually) |
 | `note` | `name`, `label`, `appearance`, `relevant` | `bind::oc:itemgroup`, `required`, `constraint` |

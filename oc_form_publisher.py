@@ -1491,15 +1491,22 @@ class FormPublisher:
                             for cid, vid in _versions_by_card.items()
                             if vid is not None
                         }
+                        # Cards with NO version in minimongo are skipped
+                        # entirely: they're absent from _card_version_map (so
+                        # no Meteor write) AND excluded from the URL-nav
+                        # fallback below. There is no version object to set as
+                        # default, and the per-card Playwright nav has been
+                        # observed to CORRUPT manually-created cards — leaving
+                        # them unable to accept future uploads. Leave them
+                        # untouched.
                         _no_version_ids = [
                             cid for cid in _eligible_ids
                             if cid not in _card_version_map
                         ]
                         if _no_version_ids:
                             print(f"[publisher] {len(_no_version_ids)} "
-                                  f"cards have no version visible in "
-                                  f"minimongo — they'll go through "
-                                  f"URL-nav fallback", flush=True)
+                                  f"cards have no version — skipping fallback, "
+                                  f"left untouched", flush=True)
 
                         # Step 2: batch Cards.update (same 30s ceiling
                         # as Step 1 — single hung Cards.update inside
@@ -1566,12 +1573,14 @@ class FormPublisher:
                               flush=True)
                         result.forms_uploaded += len(_batch_ok)
 
-                        # Step 3: URL-nav fallback for batch failures +
-                        # cards that had no version in minimongo. This
-                        # is the ONLY place per-card URL nav happens
-                        # in the new design; on a clean run the list
-                        # is empty and we skip it entirely.
-                        _fallback_ids = _batch_failed + _no_version_ids
+                        # Step 3: URL-nav fallback for batch failures ONLY —
+                        # i.e. cards that HAD a version but whose Meteor
+                        # Cards.update didn't take. No-version cards are
+                        # NOT included: there's nothing to set as default,
+                        # so they're skipped entirely (see above). This is
+                        # the ONLY place per-card URL nav happens; on a
+                        # clean run the list is empty and we skip it.
+                        _fallback_ids = _batch_failed
                         if _fallback_ids:
                             print(f"[publisher] URL-nav fallback for "
                                   f"{len(_fallback_ids)} cards",

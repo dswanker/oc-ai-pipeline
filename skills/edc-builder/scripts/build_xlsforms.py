@@ -411,6 +411,62 @@ def _normalize_survey_rows(rows):
     return normalized
 
 
+# ── Unsupported data-type coercion ────────────────────────────────────────────
+# OpenClinica's form-service does NOT support the XLSForm temporal types
+# `time` or `dateTime` — it rejects the form with
+# "Element <NAME> has an unsupported data type: time". Represent them as
+# `text` with a validation constraint instead. The HH:MM pattern mirrors the
+# LBTIM convention used by the protocol-analysis spec generator.
+_UNSUPPORTED_TYPE_COERCION = {
+    'time': {
+        'constraint':
+            "regex(.,'([01][0-9]|2[0-3]):[0-5][0-9]') and string-length(.)=5",
+        'constraint_message': "Time must be HH:MM (24-hour)",
+        'hint': "HH:MM (24-hour)",
+    },
+    'datetime': {  # matches XLSForm 'dateTime' (compared lower-cased)
+        'constraint':
+            "regex(.,'[0-9]{4}-[0-9]{2}-[0-9]{2} "
+            "([01][0-9]|2[0-3]):[0-5][0-9]') and string-length(.)=16",
+        'constraint_message': "Date/time must be YYYY-MM-DD HH:MM",
+        'hint': "YYYY-MM-DD HH:MM",
+    },
+}
+
+
+def _coerce_unsupported_types(rows, form_id='', build_log=None):
+    """Convert OC-unsupported temporal types (`time`, `dateTime`) to `text`
+    with a format-validation constraint.
+
+    Only fills `constraint` / `constraint_message` / `hint` when they're
+    empty, so an explicit value from the spec is never clobbered. Returns
+    the (possibly modified) row list and logs any coercions.
+    """
+    out = []
+    coerced = []
+    for row in rows:
+        r = dict(row)
+        t = str(r.get('type', '') or '').strip().lower()
+        rule = _UNSUPPORTED_TYPE_COERCION.get(t)
+        if rule:
+            r['type'] = 'text'
+            for col, val in rule.items():
+                if not str(r.get(col, '') or '').strip():
+                    r[col] = val
+            coerced.append(f"{r.get('name', '') or '(unnamed)'}({t})")
+        out.append(r)
+    if coerced:
+        print(f"[edc-builder] {form_id}: coerced {len(coerced)} unsupported "
+              f"temporal type(s) to text: {', '.join(coerced)}", flush=True)
+        if build_log is not None:
+            build_log.setdefault('type_coercions', []).append({
+                'form_id': form_id,
+                'rule': 'time/dateTime -> text',
+                'fields': coerced,
+            })
+    return out
+
+
 # ── Begin/end tag pairing balancer ────────────────────────────────────────────
 def _balance_begin_end_tags(rows, form_id, build_log=None):
     """Normalize survey block tags for OpenClinica.
@@ -787,6 +843,8 @@ def build_single_xlsform(form_data, output_path, build_log):
     # blanking pass only operates correctly on a balanced row sequence.
     survey = _balance_begin_end_tags(survey, form_id, build_log)
     survey = _normalize_survey_rows(survey)
+    # OC rejects XLSForm `time`/`dateTime`; represent them as text+constraint.
+    survey = _coerce_unsupported_types(survey, form_id, build_log)
 
     placeholders_in_form = []
     for row_i, row in enumerate(survey, start=2):

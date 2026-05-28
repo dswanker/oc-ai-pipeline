@@ -481,7 +481,8 @@ incompatible with their type. The table below is exhaustive.
 
 | Element type | Allowed columns | Forbidden columns |
 |---|---|---|
-| `text`, `integer`, `decimal`, `date`, `time`, `dateTime`, `select_one`, `select_multiple` | all columns | — |
+| `text`, `integer`, `decimal`, `date`, `select_one`, `select_multiple` | all columns | — |
+| (no `time` / `dateTime` — OC rejects them; use `text` + a regex constraint) | | |
 | `calculate` (local) | `name`, `label`, `appearance`, `relevant`, `calculation`, `bind::oc:itemgroup` | `readonly`, `constraint`, `required` |
 | `calculate` + `bind::oc:external=clinicaldata` | `name`, `calculation`, `bind::oc:external` | `bind::oc:itemgroup`, `readonly`, `constraint`, `required`, `label` (usually) |
 | `note` | `name`, `label`, `appearance`, `relevant` | `bind::oc:itemgroup`, `required`, `constraint` |

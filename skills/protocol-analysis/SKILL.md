@@ -361,7 +361,8 @@ Map ODM DataType → XLSForm type:
 | `integer` | `integer` |
 | `float` | `decimal` |
 | `date` | `date` |
-| `datetime` | `dateTime` |
+| `time` | `text` + HH:MM regex constraint (OC has no `time` type) |
+| `datetime` | `text` + `YYYY-MM-DD HH:MM` constraint (OC has no `dateTime` type) |
 | `boolean` | `select_one yn` |
 | `string` | `text` |
 | item with CodeListRef | `select_one [list]` or `select_multiple [list]` |

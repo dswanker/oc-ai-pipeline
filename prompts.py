@@ -141,7 +141,7 @@ RULE OC-1 — VALIDATED FUNCTIONS ONLY
 
 RULE OC-2 — ITEMGROUP IS MANDATORY ON EVERY DATA ROW
   Every survey row whose `type` is a data type (text, integer, decimal,
-  date, time, dateTime, select_one, select_multiple, note, calculate)
+  date, select_one, select_multiple, note, calculate)
   MUST have `bind__oc_itemgroup` populated with a short group code —
   letters, digits, and underscores only, must not start with a digit,
   MUST NOT contain a period/dot.
@@ -155,6 +155,16 @@ RULE OC-2 — ITEMGROUP IS MANDATORY ON EVERY DATA ROW
   `bind__oc_external: "clinicaldata"` (external lookups) MUST NOT have
   an itemgroup. They read from elsewhere and do not persist locally.
   Forms uploaded with invalid itemgroups are silently rejected.
+
+RULE OC-2b — NO `time` OR `dateTime` TYPE
+  OpenClinica does NOT support the XLSForm `time` or `dateTime` data
+  types — the form-service rejects the form with
+  "Element <NAME> has an unsupported data type: time". Represent a time
+  as `type: text` with a format constraint:
+    constraint: regex(.,'([01][0-9]|2[0-3]):[0-5][0-9]') and string-length(.)=5
+    constraint_message: "Time must be HH:MM (24-hour)"
+  A date+time is `text` with a `YYYY-MM-DD HH:MM` constraint. (The
+  edc-builder also coerces any stray time/dateTime to text as a safety net.)
 
 RULE OC-3 — SETTINGS FIELDS REQUIRED
   The settings sheet needs these six cells populated (per OC4 docs
@@ -205,8 +215,8 @@ RULE OC-5a — ELEMENT-TYPE COLUMN RESTRICTIONS
   ELEMENT TYPE                     | ALLOWED COLUMNS
   ──────────────────────────────────────────────────────────────────────
   Data types: text, integer,       | name, label, appearance, required,
-  decimal, date, time, dateTime,   | constraint, constraint_message,
-  select_one, select_multiple      | relevant, calculation, readonly,
+  decimal, date, select_one,       | constraint, constraint_message,
+  select_multiple                  | relevant, calculation, readonly,
                                    | bind::oc:itemgroup
                                    | (all columns valid)
   ──────────────────────────────────────────────────────────────────────
