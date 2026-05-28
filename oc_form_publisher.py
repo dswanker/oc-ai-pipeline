@@ -69,6 +69,20 @@ import httpx
 SESSION_DIR = "/data/browser_sessions"
 
 
+def _strip_form_oid_prefix(oid: str) -> str:
+    """Bridge a board card's formOcoid to its EDC-zip xlsx filename stem.
+
+    Board cards reference forms by their OpenClinica-stored OID, which
+    carries the F_ prefix OC adds internally (e.g. 'F_AE'). The xlsx files
+    in the EDC zip keep bare filenames ('AE.xlsx'). Strip a leading F_ so a
+    card OID matches its xlsx stem. Idempotent and backward-compatible with
+    not-yet-migrated bare cards: 'F_AE' -> 'AE', 'AE' -> 'AE'."""
+    o = str(oid or "").strip()
+    if o.upper().startswith("F_"):
+        return o[2:]
+    return o
+
+
 # ── SSO redirect detection ────────────────────────────────────────────────
 #
 # When a Keycloak SSO session expires mid-run, OC silently redirects the
@@ -977,7 +991,11 @@ class FormPublisher:
                                         # NO CONFLICT — always upload the
                                         # current build (whether or not an
                                         # existing version is present).
-                                        xlsx_path = xlsx_map.get(oid)
+                                        # Board OID is F_-prefixed (OC's
+                                        # stored OID); xlsx filenames are
+                                        # bare — strip F_ to match the stem.
+                                        xlsx_path = xlsx_map.get(
+                                            _strip_form_oid_prefix(oid))
                                         if not xlsx_path:
                                             print(f"[publisher] Skipping "
                                                   f"{form_name} "

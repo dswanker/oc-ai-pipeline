@@ -250,7 +250,10 @@ def read_spec_xlsx(spec_path):
 
     for form_meta in form_list:
         form_id = form_meta['form_id']
-        survey_tab = form_meta.get('survey_tab', f"{form_id}_survey")
+        # Use `or` (not get's default) so an empty-string survey_tab — the
+        # INDEX column is often blank — falls back to the conventional tab
+        # name instead of '', which would match no sheet and skip the form.
+        survey_tab = form_meta.get('survey_tab') or f"{form_id}_survey"
         choices_tab = f"{form_id}_choices"
         settings_tab = f"{form_id}_settings"
 

@@ -766,6 +766,16 @@ def _build_board_json(struct_json):
             h //= len(chars)
         return ''.join(result)
 
+    def _form_ocoid(form_id):
+        """Board cards reference forms by their OpenClinica-stored OID, which
+        carries the F_ prefix OC adds internally (e.g. 'F_AE'). The XLSForm
+        settings form_id stays bare per OC contract — only the board card
+        formOcoid is prefixed so it matches OC's stored OID. Idempotent."""
+        fid = str(form_id or "").strip()
+        if not fid:
+            return fid
+        return fid if fid.upper().startswith("F_") else f"F_{fid}"
+
     raw_timepoint_rows = struct_json.get("timepoint_csv", {}).get("rows", [])
     forms              = struct_json.get("forms", [])
 
@@ -845,7 +855,7 @@ def _build_board_json(struct_json):
                 "_id":      card_id,
                 "title":    form_title,
                 "listId":   list_id,
-                "formOcoid": form_id,
+                "formOcoid": _form_ocoid(form_id),
                 "sort":     sort_idx,
             }
 
