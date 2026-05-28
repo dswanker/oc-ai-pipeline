@@ -448,6 +448,13 @@ For each visit in the Schedule of Assessments, assign:
 - `arm` — `TREATMENT`, `CONTROL`, or `BOTH`
 - `visit_window` — timing relative to key study events
 - `forms_assigned` — list of form_ids assigned to this visit
+- `anchor_event_oid` — the event OID this visit is scheduled relative to (e.g., `SE_INJECTION_2`). Set to `null` for the study's index event (the first scheduled visit). **Critical: do NOT assume all events anchor to Day 0 / baseline. Read the protocol text and footnotes carefully — chained scheduling (event C is relative to event B, which is relative to event A) is common and must be resolved from the protocol text, not assumed.**
+  Note: the `arm` field in the scheduling block uses the short arm codes from the timepoint CSV (`TRT`, `CTRL`) — not the long-form `arm_applicability` labels (`TREATMENT`, `CONTROL`, `BOTH`).
+- `offset_target_days` — integer day count from the anchor event to this visit's target date. Use the midpoint for ranges (e.g., "2–3 weeks" → 17 days). Use 0 for same-day sub-day visits (e.g., 2hr, 24hr post-injection — sub-day precision is preserved in `visit_window`).
+- `window_lower_days` — lower bound of the acceptable visit window in days from anchor (e.g., -3 for "Day 14 ± 3"). Null if the protocol does not specify a window.
+- `window_upper_days` — upper bound in days. Null if not specified.
+- `repeating` — `true` if this event type recurs within the study (e.g., treatment cycles, repeated assessments); `false` otherwise.
+- `conditional_trigger` — free-text description if this event is triggered by a data event rather than purely scheduled (e.g., "Triggered if AE reported on prior visit"). Null if purely scheduled.
 
 Use this naming convention for event OIDs:
 - `SE_BASELINE` — screening/baseline
@@ -462,6 +469,17 @@ Use this naming convention for event OIDs:
 Output the full content of `{study_id}_tpt.csv` with columns: `event,timepoint`
 One row per event OID. This CSV is referenced by every form via:
 `pulldata('{study_id}_tpt','timepoint','event',${EVENT_CF})`
+
+Note: `visit_window`, `forms_assigned`, and the new scheduling timing fields
+are extraction-time fields that do not flow into the timepoint CSV. Note:
+`arm` and `visit_number` DO appear in the timepoint CSV rows.
+
+### 1c: Compile the Scheduling Block
+From the per-event timing data extracted in 1a, emit a top-level `scheduling`
+array in the JSON output — one entry per event OID, in the same order as the
+timepoint CSV. This is the machine-readable timing specification that
+downstream calendaring automation consumes. Every event must have an entry;
+use `null` for any field the protocol does not specify.
 
 ---
 
@@ -911,8 +929,20 @@ directly by the `edc-builder` skill.
   },
   "timepoint_csv": {
     "filename": "{study_id}_tpt.csv",
-    "rows": [ { "event": "SE_BASELINE", "timepoint": "Baseline" } ]
+    "rows": [ { "event": "SE_BASELINE", "timepoint": "Baseline", "visit_number": 1, "arm": "TRT" } ]
   },
+  "scheduling": [
+    {
+      "event_oid": "SE_BASELINE",
+      "anchor_event_oid": null,
+      "offset_target_days": 0,
+      "window_lower_days": null,
+      "window_upper_days": null,
+      "repeating": false,
+      "arm": "TRT",
+      "conditional_trigger": null
+    }
+  ],
   "labranges_csv": {
     "filename": "labranges.csv",
     "columns": ["lab_name","test_code","test_name","lower","upper","unit","sex_filter","age_lower","age_upper"],
