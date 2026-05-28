@@ -524,99 +524,15 @@ class FormPublisher:
                     # so we proceed straight to the upload loop. A second
                     # goto here would force a cold SPA reload.
 
-                    # ── Diagnostic interceptors ────────────────────────
-                    # Capture upload-related HTTP responses and browser
-                    # console errors. The OC banner "Upload version is
-                    # successful while update the form is failed" hides
-                    # the actual backend error payload — these listeners
-                    # surface it so we can see what OC rejected.
-                    # Temporary debug logging; remove once the slow-form
-                    # upload mystery is fully understood.
-                    _upload_errors: dict = {}
-
-                    async def _capture_upload_response(response):
-                        url = response.url
-                        # Broadened from formdesigner-only to cover the
-                        # design.openclinica.io host as well — the
-                        # upload POST observed on the wire actually
-                        # lands on the design host, not the
-                        # formdesigner iframe. Either-host plus
-                        # either-path-marker catches the upload XHR
-                        # plus the surrounding API chatter we want
-                        # to correlate it against.
-                        if (('formdesigner' in url
-                                or 'design.openclinica.io' in url)
-                                and ('/api/' in url
-                                     or 'upload' in url.lower())):
-                            try:
-                                body = await response.text()
-                                # Log every formdesigner API response,
-                                # not just error-flagged ones — the
-                                # banner we're trying to debug surfaces
-                                # via a 200 response whose body
-                                # contains the failure reason in
-                                # JSON. Cap at 10000 bytes so we
-                                # skip large static assets that
-                                # happen to slip past the URL filter
-                                # but still capture JSON payloads
-                                # that occasionally exceed 5KB.
-                                if len(body) < 10000:
-                                    print(f"[upload-intercept] "
-                                          f"{response.status} {url}",
-                                          flush=True)
-                                    print(f"[upload-intercept] "
-                                          f"body: {body[:500]}",
-                                          flush=True)
-                                    _upload_errors[url] = {
-                                        'status': response.status,
-                                        'body': body[:500],
-                                    }
-                            except Exception as _e:
-                                print(f"[upload-intercept] failed "
-                                      f"to read body: {_e}",
-                                      flush=True)
-
-                    # Context-level listener: fires for responses in
-                    # the main frame AND every child iframe, including
-                    # the formdesigner one where the upload XHR
-                    # actually lives. page.on('response') only fired
-                    # for the main frame.
-                    page.context.on(
-                        'response',
-                        lambda r: asyncio.ensure_future(
-                            _capture_upload_response(r)
-                        ),
-                    )
-
-                    # CDP network interception — the lowest layer
-                    # available. page.route() still didn't surface the
-                    # upload POST, so it's being dispatched by a
-                    # service worker below Playwright's route layer.
-                    # Network.requestWillBeSent fires for EVERY request
-                    # on the page regardless of origin, service-worker
-                    # mediation, or iframe nesting, so this is the
-                    # last-resort observer. Passive (no
-                    # Network.setRequestInterception), so we don't have
-                    # to forward/continue anything — it just reports.
-                    _cdp = await page.context.new_cdp_session(page)
-                    await _cdp.send('Network.enable')
-
-                    def _on_request_will_be_sent(params):
-                        method = params.get('request', {}).get('method', '')
-                        url = params.get('request', {}).get('url', '')
-                        if method in ('POST', 'PUT', 'PATCH'):
-                            print(f"[cdp-request] {method} {url}",
-                                  flush=True)
-                            post_data = params.get(
-                                'request', {}).get('postData', '')
-                            if post_data:
-                                size = len(post_data)
-                                print(f"[cdp-request] body size: "
-                                      f"{size} bytes", flush=True)
-
-                    _cdp.on('Network.requestWillBeSent',
-                            _on_request_will_be_sent)
-
+                    # Browser console capture. The HTTP-layer
+                    # interceptors (page.route, context.on('response'),
+                    # CDP Network.requestWillBeSent) were all removed
+                    # once we confirmed the XLSForm upload goes over
+                    # WebSocket/DDP — no HTTP request to intercept.
+                    # Console capture stays because OC/Meteor surfaces
+                    # DDP-level errors and warnings through the browser
+                    # console, which is the one channel that can still
+                    # show an upload failure.
                     async def _capture_console(msg):
                         if msg.type in ('error', 'warning'):
                             print(f"[browser-console] {msg.type}: "
@@ -1218,6 +1134,42 @@ class FormPublisher:
                                                           f"for {form_name}: "
                                                           f"{e}",
                                                           flush=True)
+                                                    # Close + reopen the
+                                                    # card to nudge OC into
+                                                    # completing its bridge
+                                                    # update. Manual testing
+                                                    # showed the version
+                                                    # appears in the Versions
+                                                    # panel only after a
+                                                    # close/reopen cycle —
+                                                    # this is the fix for the
+                                                    # 7 slow forms. Guarded
+                                                    # on card_meteor_id so an
+                                                    # empty id can't turn the
+                                                    # href*= selector into a
+                                                    # match-everything click.
+                                                    if card_meteor_id:
+                                                        try:
+                                                            await page.keyboard.press('Escape')
+                                                            await page.wait_for_timeout(2000)
+                                                            _mcl = page.locator(
+                                                                f'.js-minicard[href*="{card_meteor_id}"]'
+                                                            ).first
+                                                            await _mcl.click()
+                                                            await page.wait_for_timeout(3000)
+                                                            await page.wait_for_selector(
+                                                                'input[type=radio]',
+                                                                state='attached',
+                                                                timeout=15000)
+                                                            print(f"[publisher] "
+                                                                  f"Version "
+                                                                  f"appeared "
+                                                                  f"after card "
+                                                                  f"reopen for "
+                                                                  f"{form_name}",
+                                                                  flush=True)
+                                                        except Exception:
+                                                            pass  # fallback set-default handles it
                                             # set-default for this card
                                             # happens in the post-loop
                                             # batch phase — no per-card
