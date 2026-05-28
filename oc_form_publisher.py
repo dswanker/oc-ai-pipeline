@@ -597,17 +597,20 @@ class FormPublisher:
                     # from incidental GETs.
                     async def _capture_upload_request(request):
                         url = request.url
-                        # Same broadened filter as the response side —
-                        # the upload POST lives on design.openclinica.io,
-                        # not just inside the formdesigner iframe.
-                        if (('formdesigner' in url
-                                or 'design.openclinica.io' in url)
-                                and ('/api/' in url
-                                     or 'upload' in url.lower())):
+                        # Two-stage filter: first by host (catches both
+                        # the formdesigner iframe and design.openclinica.io
+                        # itself, which is where the actual XLSForm
+                        # upload POST lands — the earlier '/api/' + 'upload'
+                        # path gate was blocking it because the upload
+                        # endpoint uses neither marker in its URL).
+                        # Then by method, so the log only carries write
+                        # requests; GETs would flood the output.
+                        if ('formdesigner' in url
+                                or 'design.openclinica.io' in url):
                             method = request.method
-                            print(f"[upload-request] {method} {url}",
-                                  flush=True)
                             if method in ('POST', 'PUT', 'PATCH'):
+                                print(f"[upload-request] {method} {url}",
+                                      flush=True)
                                 try:
                                     post_data = request.post_data
                                     if post_data and len(post_data) < 200:
