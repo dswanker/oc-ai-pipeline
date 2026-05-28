@@ -327,13 +327,25 @@ def read_spec_xlsx(spec_path):
         }
         if st_tab:
             ws = wb[st_tab]
-            setting_keys = ['form_title', 'form_id', 'version', 'style',
-                            'crossform_references', 'namespaces']
+            # Key-based read: use column A label as the key, not row position.
+            # Falls back to positional only if column A is blank.
+            # Fixes silent value-swap when _settings tab rows appear in a different order.
+            _valid_keys = {'form_title', 'form_id', 'version', 'style',
+                           'crossform_references', 'namespaces'}
+            _positional_keys = ['form_title', 'form_id', 'version', 'style',
+                                'crossform_references', 'namespaces']
             for i, row in enumerate(ws.iter_rows(min_row=3, max_row=8, values_only=True)):
-                if i < len(setting_keys) and row[1] is not None:
-                    val = str(row[1]).strip()
-                    if val:
-                        settings_dict[setting_keys[i]] = val
+                if row[1] is None:
+                    continue
+                val = str(row[1]).strip()
+                if not val:
+                    continue
+                if row[0] is not None:
+                    key = str(row[0]).strip().lower().replace(' ', '_')
+                    if key in _valid_keys:
+                        settings_dict[key] = val
+                elif i < len(_positional_keys):
+                    settings_dict[_positional_keys[i]] = val
 
         result['forms'].append({
             'form_id':    form_id,
