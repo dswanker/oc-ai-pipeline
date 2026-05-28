@@ -1937,8 +1937,16 @@ async def publish_to_test(item_id, uploaded_oids=None):
                 _board_oids = await _get_board_form_oids(
                     oc_subdomain, _board_id, is_production=False)
                 if _board_oids is not None:
+                    # Board cards carry the F_-prefixed OID (e.g. F_SLEEP)
+                    # that OC stores; the spec uses the bare OID (SLEEP).
+                    # Strip a leading F_ (case-insensitive) from BOTH sides
+                    # before diffing so the prefix alone never reads as
+                    # "missing from board".
+                    _strip_f = lambda o: o[2:] if o.upper().startswith("F_") else o
+                    _board_bare = {_strip_f(_o) for _o in _board_oids}
                     _missing_from_board = sorted(
-                        set(_expected_oid_to_name) - _board_oids)
+                        {_strip_f(_o) for _o in _expected_oid_to_name}
+                        - _board_bare)
 
             # Missing-version check (existing helper, unchanged sig).
             _all_versions_ok, _missing_versions = (
