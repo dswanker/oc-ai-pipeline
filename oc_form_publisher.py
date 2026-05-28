@@ -588,38 +588,34 @@ class FormPublisher:
                         ),
                     )
 
-                    # Network-layer interceptor via page.route, replacing
-                    # the earlier context.on('request') approach. route()
-                    # hooks at a lower layer than the event-based
-                    # request listener — it sees traffic that service
-                    # workers proxy or originate, which 'request'
-                    # event listeners can miss. The upload XHR
-                    # apparently goes through a service worker
-                    # (consistent with our context.on('request')
-                    # logging never capturing it across three rounds
-                    # of broadening filters).
-                    #
-                    # Pattern '**/*' matches every URL. Each
-                    # intercepted request is logged then explicitly
-                    # forwarded via route.continue_() — without that
-                    # the browser would hang waiting for our handler
-                    # to dispatch.
-                    async def _log_upload_route(route, request):
-                        method = request.method
-                        url = request.url
-                        if method in ('POST', 'PUT', 'PATCH'):
-                            print(f"[route-intercept] {method} {url}",
-                                  flush=True)
-                            try:
-                                post_data = request.post_data
-                                size = len(post_data) if post_data else 0
-                                print(f"[route-intercept] body size: "
-                                      f"{size} bytes", flush=True)
-                            except Exception:
-                                pass
-                        await route.continue_()
+                    # CDP network interception — the lowest layer
+                    # available. page.route() still didn't surface the
+                    # upload POST, so it's being dispatched by a
+                    # service worker below Playwright's route layer.
+                    # Network.requestWillBeSent fires for EVERY request
+                    # on the page regardless of origin, service-worker
+                    # mediation, or iframe nesting, so this is the
+                    # last-resort observer. Passive (no
+                    # Network.setRequestInterception), so we don't have
+                    # to forward/continue anything — it just reports.
+                    _cdp = await page.context.new_cdp_session(page)
+                    await _cdp.send('Network.enable')
 
-                    await page.route('**/*', _log_upload_route)
+                    def _on_request_will_be_sent(params):
+                        method = params.get('request', {}).get('method', '')
+                        url = params.get('request', {}).get('url', '')
+                        if method in ('POST', 'PUT', 'PATCH'):
+                            print(f"[cdp-request] {method} {url}",
+                                  flush=True)
+                            post_data = params.get(
+                                'request', {}).get('postData', '')
+                            if post_data:
+                                size = len(post_data)
+                                print(f"[cdp-request] body size: "
+                                      f"{size} bytes", flush=True)
+
+                    _cdp.on('Network.requestWillBeSent',
+                            _on_request_will_be_sent)
 
                     async def _capture_console(msg):
                         if msg.type in ('error', 'warning'):
