@@ -487,35 +487,45 @@ especially §2.4.4 (Using the Form Template), §2.4.5 (Form Logic),
 §2.4.6 (Functions), and §2.4.9 (Locating Object Identifiers).
 
 RULE OC-8 — REPEATING-FORM STRUCTURAL PATTERN
-  OpenClinica's repeating-form pattern is plain XLSForm: a data-fields
-  group wrapped in a single begin_repeat / end_repeat pair. There is NO
-  "phantom end_group" inside the repeat block — earlier versions of
-  this prompt instructed otherwise, but empirical CRS-135 testing
-  (May 2026) confirmed OC's form-service silently rejects forms with
-  that pattern (HTTP 200 on upload, no version object ever appears in
-  minimongo). See skills/edc-builder/references/xlsform-build-rules.md
-  for the full diagnosis.
+  OpenClinica uses a NON-STANDARD repeating-form structure. The data
+  fields live in a gated begin_group / end_group block, and the form is
+  made repeating by a THREE-ROW closing marker:
+
+    begin repeat   name=<form_id>   bind::oc:itemgroup=<group>
+    end group                       bind::oc:itemgroup=<group>   ← phantom, REQUIRED
+    end repeat                      bind::oc:itemgroup=<group>
+
+  The inner `end group` between `begin repeat` and `end repeat` is a
+  PHANTOM — it has no matching `begin group`. OpenClinica REQUIRES it to
+  activate the form version; WITHOUT it the form uploads but stays stuck
+  at "Please select default version for data entry" and no data entry is
+  possible. This is OC-specific and contradicts the standard XLSForm
+  spec (pyxform flags "Unmatched 'end_group'"), which is expected and
+  tolerated by the build. See
+  skills/edc-builder/references/xlsform-build-rules.md (OC-8).
 
   Begin/end tag pairing rules (HARD REQUIREMENTS):
-    - begin_repeat MUST be closed by end_repeat (never by end_group).
-    - begin_group MUST be closed by end_group (never by end_repeat).
+    - The OC-8 phantom `end group` above is REQUIRED — emit it exactly,
+      and never "balance" it away or rewrite it to `end repeat`.
+    - Every OTHER begin_repeat MUST be closed by end_repeat, and every
+      OTHER begin_group by end_group.
     - `end group` and `end repeat` rows MUST have a BLANK name field.
-      Never put a name (e.g. "AE_REPEAT_END") on these rows — pyxform
-      validation fails with "Unmatched end_group" if a name is present.
+      Never put a name (e.g. "AE_REPEAT_END") on these rows.
 
   Build-side safety net:
-    The edc-builder script maintains a stack-based balancer and
-    validates every generated XLSForm with ODK Validate. Mismatched
-    pairs trigger a self-correction loop (up to 3 AI re-generation
-    attempts). HOWEVER: generate correct tags in the first pass —
-    self-correction is a backstop, not a substitute for getting the
-    structure right up front. Each correction round costs an API call
-    and may introduce other regressions.
+    The edc-builder script maintains a stack-based balancer that
+    PRESERVES the OC-8 phantom while correcting genuine mismatches, and
+    validates every generated XLSForm (pyxform + ODK Validate, with the
+    OC-8 "Unmatched end_group" treated as expected). Genuine mismatches
+    trigger a self-correction loop (up to 3 AI re-generation attempts).
+    HOWEVER: generate correct tags — including the phantom — in the
+    first pass. Each correction round costs an API call.
 
   For repeating forms:
     - All data fields wrapped in a begin_group / end_group block (with
       `relevant` gating on the YN first-entry flag, e.g. `${CMYN}='Y'`).
-    - The whole form wrapped in a begin_repeat / end_repeat pair.
+    - The three-row OC-8 closing marker (begin repeat / phantom end
+      group / end repeat) immediately after that block.
     - DO NOT include a top-level SUBJID text row. OC uses its built-in
       subject context for repeating forms.
     - The first-entry YN gate (e.g. CMYN, AEYN, MHYN) uses
@@ -536,9 +546,9 @@ RULE OC-8 — REPEATING-FORM STRUCTURAL PATTERN
       ... more data fields ...
       CMENDAT
     end group
-    begin repeat CM
-    end repeat                    ← closes begin_repeat directly, no
-                                    inner end_group
+    begin repeat CM                bind::oc:itemgroup=CM
+    end group                      bind::oc:itemgroup=CM   ← phantom, REQUIRED
+    end repeat                     bind::oc:itemgroup=CM
 
 RULE OC-9 — COMMON VISIT FOR CROSS-VISIT FORMS
 

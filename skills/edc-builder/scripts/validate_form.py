@@ -14,19 +14,24 @@ Public API
         Catches PyXFormError and returns (False, [str(e)], []) so callers
         never have to deal with raised exceptions.
 
-ODK Validate false positives: OC-specific XPath patterns
-(instance(clinicaldata), floor()) are suppressed since OC's
-form-service supports them natively.
+Known OC-specific false positives suppressed by this validator:
+  * OC XPath extensions — instance(clinicaldata), floor(), etc. The
+    bundled ODK Validate JAR does not know them; OC's form-service does.
+  * OC-8 phantom end_group — the orphan `end group` between begin_repeat
+    and end_repeat that OpenClinica REQUIRES to activate a repeating
+    form's version. Standard pyxform flags it as "Unmatched 'end_group'";
+    we treat that error as expected when the OC-8 marker is present.
 
 History
 ───────
-Earlier versions of this module stripped a "phantom" end_group row that
-appeared between begin_repeat and end_repeat in OC-built forms, in the
-belief that OC required this pattern. That was wrong — OC's form-service
-silently rejects forms with mismatched begin/end pairs. The strip step
-hid the bug from validation. The fix lives upstream in
-build_xlsforms._balance_begin_end_tags, which now produces correctly
-paired rows. This validator no longer transforms the input file.
+This module briefly stripped the OC-8 phantom end_group on the belief
+that OC rejected it. That was the wrong direction: OpenClinica REQUIRES
+the phantom (without it the form stays stuck at "Please select default
+version for data entry"), and the build now preserves it
+(build_xlsforms._balance_begin_end_tags). Since standard pyxform rejects
+the phantom, this validator recognises the OC-8 marker and treats the
+resulting "Unmatched 'end_group'" error as an expected, OC-required
+pattern. See xlsform-build-rules.md (OC-8).
 """
 
 from __future__ import annotations
@@ -72,6 +77,53 @@ def _error_is_all_oc_known(error_str: str) -> bool:
         any(p in ln for p in _OC_KNOWN_ERROR_PATTERNS)
         for ln in substantive
     )
+
+
+def _has_oc8_phantom_marker(xlsx_path: str) -> bool:
+    """True if the survey sheet contains the OpenClinica OC-8 repeating-form
+    marker: an `end group` row sitting directly between `begin repeat` and
+    `end repeat`.
+
+    This pattern is invalid per the standard XLSForm spec — pyxform raises
+    "Unmatched 'end_group'" — but OpenClinica REQUIRES it for the form
+    version to activate (see xlsform-build-rules.md OC-8). We use this to
+    distinguish the OC-required phantom from a genuinely broken form before
+    suppressing the pyxform error.
+    """
+    try:
+        import openpyxl
+    except ImportError:
+        return False
+    try:
+        wb = openpyxl.load_workbook(xlsx_path, read_only=True, data_only=True)
+    except Exception:
+        return False
+    try:
+        if "survey" not in wb.sheetnames:
+            return False
+        ws = wb["survey"]
+        rows = list(ws.iter_rows(values_only=True))
+    finally:
+        wb.close()
+    if not rows:
+        return False
+    header = [str(c).strip().lower() if c is not None else "" for c in rows[0]]
+    try:
+        ti = header.index("type")
+    except ValueError:
+        return False
+    types = []
+    for r in rows[1:]:
+        v = r[ti] if ti < len(r) else None
+        t = str(v).strip().lower().replace("_", " ") if v is not None else ""
+        if t:
+            types.append(t)
+    for i in range(len(types) - 2):
+        if (types[i] == "begin repeat"
+                and types[i + 1] == "end group"
+                and types[i + 2] == "end repeat"):
+            return True
+    return False
 
 
 def _odk_validate_available() -> bool:
@@ -162,7 +214,19 @@ def validate_xlsform(
         return (True, [], warnings)
 
     except PyXFormError as e:
-        return (False, [str(e)], [])
+        err_str = str(e)
+        # OC-8 phantom end_group: standard pyxform rejects the orphan
+        # `end group` between begin_repeat and end_repeat, but OpenClinica
+        # REQUIRES it to activate a repeating form's version. Treat the
+        # resulting "Unmatched 'end_group'" error as expected when the OC-8
+        # marker is actually present, so the self-correction loop does not
+        # strip the OC-required phantom back out. See xlsform-build-rules.md.
+        if "Unmatched 'end_group'" in err_str and _has_oc8_phantom_marker(xlsx_path):
+            return (True, [], [
+                f"pyxform flagged the OC-8 phantom end_group "
+                f"(required by OpenClinica, not a real error): {err_str[:200]}"
+            ])
+        return (False, [err_str], [])
 
     except Exception as e:
         # Check if this is an ODKValidateError with only OC-known patterns

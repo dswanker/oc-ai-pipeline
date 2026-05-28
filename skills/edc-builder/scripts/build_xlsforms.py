@@ -376,13 +376,14 @@ def _normalize_survey_rows(rows):
     rows with names (e.g. 'AE_REPEAT_END') which causes pyxform to look
     for a matching begin_group by name and fail.
 
-    NOTE: begin/end TYPE pairing (begin_repeat closes with end_repeat,
-    begin_group closes with end_group) is enforced separately by
-    _balance_begin_end_tags, which runs before this normalizer. Earlier
-    comments here treated a phantom `end_group` inside a repeat as
-    intentional ("OC-8") — that was wrong; OC's form-service silently
-    rejects forms with that pattern. See xlsform-build-rules.md for the
-    full diagnosis.
+    NOTE: begin/end TYPE pairing is enforced separately by
+    _balance_begin_end_tags, which runs before this normalizer. That
+    balancer intentionally PRESERVES the OC-8 phantom `end_group` that
+    sits between a `begin repeat` and its `end repeat` — OpenClinica
+    requires this marker to activate the form version. Do not blank or
+    rewrite that phantom here; this normalizer only clears stray names on
+    end rows and back-fills labels on begin rows. See xlsform-build-rules.md
+    (OC-8) for the full diagnosis.
     """
     END_TYPES = {'end group', 'end repeat', 'end_group', 'end_repeat'}
     normalized = []
@@ -416,14 +417,25 @@ def _balance_begin_end_tags(rows, form_id, build_log=None):
     closer rows for any unclosed begins at the form tail.
 
     Why this is a hard correctness requirement (not a defensive nicety):
-    OC's form-service silently rejects forms with mismatched begin/end
-    tags — uploads return HTTP 200 but no version object ever appears
-    in minimongo. The symptom looks like propagation lag but the form
-    was actually rejected at parse time. See xlsform-build-rules.md.
+    OC's form-service silently rejects forms with genuinely mismatched
+    begin/end tags — uploads return HTTP 200 but no version object ever
+    appears in minimongo. The symptom looks like propagation lag but the
+    form was actually rejected at parse time. See xlsform-build-rules.md.
+
+    OC-8 EXCEPTION — the one intentional "mismatch" OC requires: a
+    repeating form's closing marker is `begin repeat` / `end group` /
+    `end repeat`, where the inner `end group` is a phantom with no
+    matching `begin group`. OpenClinica needs this phantom to activate
+    the form version; without it the form stays stuck at "Please select
+    default version for data entry". This balancer therefore PRESERVES a
+    phantom `end group` that sits directly between a `begin repeat` and
+    its `end repeat`, and only corrects other mismatches.
 
     Correction policy:
-      * begin_repeat / end_group adjacency → rewrite end row's type to
-        'end repeat' (opener wins).
+      * begin_repeat → phantom end_group → end_repeat (OC-8 marker) →
+        PRESERVE the end_group verbatim; the end_repeat closes the repeat.
+      * any OTHER begin_repeat / end_group adjacency → rewrite end row's
+        type to 'end repeat' (opener wins).
       * begin_group / end_repeat adjacency → rewrite to 'end group'.
       * end row with empty stack → drop (orphan, can't pair).
       * begin row with no matching end before form end → auto-append
@@ -463,6 +475,30 @@ def _balance_begin_end_tags(rows, form_id, build_log=None):
                     f"no matching begin on the stack"
                 )
                 continue
+
+            # OC-8 phantom end_group: an `end group` whose enclosing open
+            # scope is a `begin repeat` AND which is immediately followed by
+            # `end repeat` is the REQUIRED OpenClinica repeating-form marker
+            # (see xlsform-build-rules.md OC-8). OC fails to activate the
+            # form version without it ("Please select default version for
+            # data entry"). Preserve it verbatim and leave the repeat open
+            # so the following `end repeat` closes it normally. A standard
+            # tag-stack would (wrongly) read this as a mismatched closer.
+            if kind == 'group' and stack[-1] == 'repeat':
+                nxt = rows[idx + 1] if idx + 1 < len(rows) else None
+                nxt_action, nxt_kind = (
+                    _classify(str(nxt.get('type', '') or ''))
+                    if nxt else (None, None)
+                )
+                if nxt_action == 'end' and nxt_kind == 'repeat':
+                    out.append(dict(row))
+                    corrections.append(
+                        f"row {idx + 2}: preserved OC-8 phantom end_group "
+                        f"inside begin_repeat (required for OC version "
+                        f"activation)"
+                    )
+                    continue
+
             opener_kind = stack.pop()
             corrected = 'end repeat' if opener_kind == 'repeat' else 'end group'
             new_row = dict(row)
@@ -876,8 +912,14 @@ def _regenerate_survey_via_ai(form, error_msg, attempt_num):
         f"{json.dumps(survey, indent=2, default=str)}\n\n"
         "Return ONLY the corrected survey rows as a JSON array. Apply "
         "these rules:\n"
-        "  - begin_repeat MUST be closed by end_repeat (never end_group).\n"
-        "  - begin_group MUST be closed by end_group (never end_repeat).\n"
+        "  - PRESERVE the OpenClinica OC-8 repeating-form marker EXACTLY: a "
+        "`begin repeat` followed by a phantom `end group` (with no matching "
+        "`begin group`) and then `end repeat`. OpenClinica REQUIRES this "
+        "phantom `end group` to activate the form version — NEVER remove it, "
+        "rewrite it to `end repeat`, or 'correct' it, even though it looks "
+        "like a mismatched tag.\n"
+        "  - Every OTHER begin_group MUST be closed by end_group, and every "
+        "OTHER begin_repeat by end_repeat.\n"
         "  - end_group / end_repeat rows must have an empty name field.\n"
         "  - Do not introduce new fields that were not in the input.\n"
         "  - Preserve every original field's keys; only correct values "

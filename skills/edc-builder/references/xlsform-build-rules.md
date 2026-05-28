@@ -592,16 +592,32 @@ scope.
 
 ## Begin/End Tag Pairing Rules (CRITICAL)
 
-- `begin_repeat` MUST always be closed by `end_repeat`. NEVER by `end_group`.
-- `begin_group` MUST always be closed by `end_group`. NEVER by `end_repeat`.
-- The build script maintains a tag stack and asserts it is balanced at
-  form completion. Any mismatch is a hard error caught at build time.
-- All generated XLSForms are validated with ODK Validate before ZIP.
-- Self-correction loop: up to 3 re-generation attempts on validation failure.
+- **OC-8 exception comes first:** the repeating-form closing marker
+  `begin repeat` / `end group` / `end repeat` (see OC-8 above) is the ONE
+  required "mismatch". The inner phantom `end group` has no matching
+  `begin group` and MUST be preserved — OpenClinica needs it to activate
+  the form version.
+- Apart from that phantom, `begin_repeat` MUST be closed by `end_repeat`
+  (never `end_group`), and `begin_group` by `end_group` (never
+  `end_repeat`).
+- The build script maintains a tag stack (`_balance_begin_end_tags`) that
+  PRESERVES the OC-8 phantom and corrects only genuine mismatches. It does
+  NOT hard-error on the phantom.
+- All generated XLSForms are validated with pyxform + ODK Validate before
+  ZIP. pyxform flags the phantom as "Unmatched 'end_group'"; the validator
+  recognises the OC-8 marker and treats that specific error as expected.
+- Self-correction loop: up to 3 re-generation attempts on a GENUINE
+  validation failure (the OC-8 phantom does not trigger it).
 
 ## What OC's form-service rejects (empirical — CRS-135, May 2026)
 
-- Mismatched begin/end tags: OC returns HTTP 200 on upload but never
-  creates a version object in minimongo. Symptom looks like propagation
-  lag but the version never appears. Root cause: form rejected server-side.
-- These errors are NOT caught by pyxform `validate=False`. Use ODK Validate.
+- GENUINELY mismatched begin/end tags (NOT the OC-8 phantom): OC returns
+  HTTP 200 on upload but never creates a version object in minimongo.
+  Symptom looks like propagation lag but the version never appears.
+- A repeating form MISSING the OC-8 phantom `end group`: the version is
+  created but cannot be activated — the form stays at "Please select
+  default version for data entry" and no data entry is possible. This is
+  the regression that removing the phantom introduced.
+- These conditions are NOT caught by pyxform `validate=False`. Use the
+  full validator (pyxform conversion + ODK Validate) — but note the OC-8
+  phantom is REQUIRED and must never be "fixed" away.
