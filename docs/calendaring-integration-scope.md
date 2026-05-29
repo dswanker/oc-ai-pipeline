@@ -95,7 +95,7 @@ The scheduling-block fix decides *how* each event's timing is encoded; B-model d
 
 - **New downstream skill `calendaring-rules`**, positioned like `dvs-specification`: it reads the **EDC build output** (not the protocol independently). Reading the build is the only way to guarantee rules reference the **exact OIDs** edc-builder minted; parallel generation would drift OIDs (cf. `form_specs` naming drift).
 - **Inputs:** study-spec JSON (visit map + minted OIDs + new structured `scheduling` block, §6.1) + EDC build (form/item OID inventory for XPath references).
-- **Pipeline wiring:** new `output_requested` value ("Calendaring Rules") on `dropdown_mm2nc7d4`, gated by `_want()`; new file column on AI Hub board for the pack; optional "Calendaring Update Input" column mirroring the DVS write-back pattern. Handler is a surgical addition to the EDC chain reusing the `build_zip_holder` shared-state pattern — no wholesale rewrite.
+- **Pipeline wiring:** new `output_requested` value ("Calendaring Rules") on `dropdown_mm2nc7d4` (label ID 7), gated by `_want()`; output zip posts to file column `file_mm3te0de` ("Calendaring Output"); human write-back uploads to `file_mm3tgqeg` ("Calendaring Rules Update Input") — same pattern as DVS Spec Update Input. Handler is a surgical addition to the EDC chain reusing the `build_zip_holder` shared-state pattern — no wholesale rewrite. All three board changes deployed to AI Hub board 18409146946.
 - **Publish:** see Decision #4 — no confirmed customer-facing rules API; default deliverable is *reviewable artifacts for a human to paste into Rules Management*.
 
 ---
