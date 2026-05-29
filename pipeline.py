@@ -3278,6 +3278,23 @@ async def run_pipeline(item_id):
                   f"{len(struct_json.get('forms', []))} forms, "
                   f"source={mig_result.get('source_system')}", flush=True)
 
+        # ── Guard: ODM XML present but label is not "Migration" ───────────────
+        # A Source EDC Export file in file_mm386dte without label__1="Migration"
+        # means the operator most likely forgot to set the label on a duplication
+        # or is testing with a migration file on a non-migration row.  Letting
+        # the pipeline fall through silently to Protocol Analysis here is what
+        # caused the VAX1001-copy → PrTK05 data-corruption incident.  Fail hard.
+        if struct_json is None and source_edc_export_bytes and not _is_migration_label:
+            _odm_msg = (
+                "FAILED: Source EDC Export file found but Study Path Label is "
+                f"'{_study_path_label or '(empty)'}', not 'Migration'. "
+                "Set the label column to 'Migration' and re-trigger."
+            )
+            print(f"Path M GUARD (label mismatch): {_odm_msg}", flush=True)
+            await append_log(item_id, _odm_msg)
+            await set_status(item_id, COL["pipeline_status"], STATUS["failed"])
+            return
+
         # ── Read AI Instructions from edited XLSX (if present) ──────────────
         ai_instructions_block = ""
         if edited_spec_xlsx:
@@ -3376,6 +3393,25 @@ async def run_pipeline(item_id):
         # concurrently with the chains at the main asyncio.gather below.
         # It's set to a coroutine only when we fresh-extract struct_json.
         spec_json_upload_task = None
+
+        # ── Guard: no spec JSON and no protocol bytes ─────────────────────────
+        # If struct_json is still None after Path A / Path M / Path R, and there
+        # are no protocol bytes to give Claude, Protocol Analysis will run on
+        # empty input.  Empty-input extraction can silently consume in-process
+        # Railway worker state from a concurrent run (as in the VAX1001-copy
+        # incident) or produce a spec for the wrong study entirely.  Fail hard
+        # with a clear operator message instead.
+        if struct_json is None and needs_analysis and not (protocol_bytes and len(protocol_bytes) > 1024):
+            _no_proto_msg = (
+                "FAILED: Protocol Analysis cannot run — no protocol document found "
+                "(Protocol column is empty) and no valid Study Spec JSON is on this "
+                "row to fast-rerun from.  Upload a protocol PDF or DOCX to the "
+                "Protocol column and re-trigger."
+            )
+            print(f"Protocol Analysis blocked — no protocol bytes: {_no_proto_msg}", flush=True)
+            await append_log(item_id, _no_proto_msg)
+            await set_status(item_id, COL["pipeline_status"], STATUS["failed"])
+            return
 
         if struct_json is None and needs_analysis:
             await set_status(item_id, COL["pipeline_status"], STATUS["analysis_running"])
