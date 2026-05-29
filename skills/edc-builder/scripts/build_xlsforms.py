@@ -467,16 +467,98 @@ def _coerce_unsupported_types(rows, form_id='', build_log=None):
     return out
 
 
+def _wrap_repeat_group(rows, repeat_group_name, form_id, build_log=None):
+    """Wrap the form's data rows in begin_repeat / end_repeat using the
+    group name from the study spec (repeat_group_name field).
+
+    Called AFTER _balance_begin_end_tags, which has already stripped the
+    OC-8 phantom structure. At that point the survey is either:
+      (a) flat — all group/repeat tags stripped
+      (b) group-wrapped — begin group / end group preserved
+
+    In case (a): inserts begin_repeat before the first row that has a
+    bind::oc:itemgroup value, and end_repeat after the last such row.
+    In case (b): renames begin group → begin repeat (using repeat_group_name)
+    and end group → end repeat (with empty name).
+
+    Only called when repeat_group_name is a non-empty string.
+    """
+    has_group = any(
+        str(r.get('type', '') or '').strip().lower().replace('_', ' ')
+        in ('begin group', 'begin_group')
+        for r in rows
+    )
+
+    if has_group:
+        out = []
+        for row in rows:
+            t = str(row.get('type', '') or '').strip().lower().replace('_', ' ')
+            if t in ('begin group', 'begin_group'):
+                new_row = dict(row)
+                new_row['type'] = 'begin repeat'
+                new_row['name'] = repeat_group_name
+                out.append(new_row)
+            elif t in ('end group', 'end_group'):
+                new_row = dict(row)
+                new_row['type'] = 'end repeat'
+                new_row['name'] = ''
+                out.append(new_row)
+            else:
+                out.append(row)
+        print(f"[edc-builder] {form_id}: converted begin/end group → "
+              f"begin/end repeat ({repeat_group_name})", flush=True)
+        if build_log is not None:
+            build_log.setdefault('repeat_wrap', []).append(
+                {'form_id': form_id, 'method': 'group_rename',
+                 'repeat_group_name': repeat_group_name})
+        return out
+
+    # Flat path — find first and last rows with bind::oc:itemgroup
+    first_idx, last_idx = None, None
+    for i, row in enumerate(rows):
+        if row.get('bind::oc:itemgroup'):
+            if first_idx is None:
+                first_idx = i
+            last_idx = i
+
+    if first_idx is None:
+        print(f"[edc-builder] {form_id}: repeat_group_name={repeat_group_name!r} "
+              f"set but no rows with bind::oc:itemgroup found — skipping wrap",
+              flush=True)
+        return rows
+
+    out = (
+        rows[:first_idx]
+        + [{'type': 'begin repeat', 'name': repeat_group_name}]
+        + rows[first_idx:last_idx + 1]
+        + [{'type': 'end repeat', 'name': ''}]
+        + rows[last_idx + 1:]
+    )
+    print(f"[edc-builder] {form_id}: wrapped rows {first_idx}–{last_idx} "
+          f"in begin/end repeat ({repeat_group_name})", flush=True)
+    if build_log is not None:
+        build_log.setdefault('repeat_wrap', []).append(
+            {'form_id': form_id, 'method': 'flat_wrap',
+             'repeat_group_name': repeat_group_name,
+             'first_idx': first_idx, 'last_idx': last_idx})
+    return out
+
+
 # ── Begin/end tag pairing balancer ────────────────────────────────────────────
 def _balance_begin_end_tags(rows, form_id, build_log=None):
     """Normalize survey block tags for OpenClinica.
 
-    OC does NOT use XLSForm begin_repeat/end_repeat to define repeating
-    groups — it derives repetition from `bind::oc:itemgroup` on the data
-    fields. A form whose data fields share an itemgroup IS the repeating
-    group; the XLSForm repeat syntax is not just unnecessary but actively
-    rejected by OC's form-service with "Unmatched end statement"
-    (confirmed by manual testing, CRS-135). See xlsform-build-rules.md.
+    Normalizes begin/end group and repeat tags from OC-8 source library forms.
+
+    OC-8 source CRFs use a phantom pattern — begin group + data + end group +
+    empty begin repeat + end repeat — that OC's form-service rejects with
+    "Unmatched end statement". This balancer strips the phantom repeat rows
+    and preserves only valid begin group / end group pairs.
+
+    Note: begin_repeat / end_repeat ARE valid in OC XLSForms for repeating
+    forms, but they are applied AFTER this balancer runs via _wrap_repeat_group,
+    which reads repeat_group_name from the study spec. This function's job is
+    only to clean up the OC-8 source artifacts.
 
     This balancer therefore:
       * DROPS every `begin repeat` and `end repeat` row outright.
@@ -878,6 +960,9 @@ def build_single_xlsform(form_data, output_path, build_log):
     # the balancer can drop or rewrite type, and the normalizer's name-
     # blanking pass only operates correctly on a balanced row sequence.
     survey = _balance_begin_end_tags(survey, form_id, build_log)
+    _repeat_group_name = (form_data.get('repeat_group_name') or '').strip()
+    if _repeat_group_name:
+        survey = _wrap_repeat_group(survey, _repeat_group_name, form_id, build_log)
     survey = _normalize_survey_rows(survey)
     # OC rejects XLSForm `time`/`dateTime`; represent them as text+constraint.
     survey = _coerce_unsupported_types(survey, form_id, build_log)
