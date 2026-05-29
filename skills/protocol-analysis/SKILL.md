@@ -595,6 +595,7 @@ For each unique CRF record:
 - reuse_count
 - complexity (Simple / Average / Complex — from Step 5 of Protocol Summary)
 - has_repeating_group (Yes / No)
+- repeat_group_name — XLSForm group name for the repeating group; empty if has_repeating_group is No
 - is_epro (Yes / No)
 - priority_source (XLSX_STANDARD / ODM_XML / PDF_LIBRARY / CDASH_DEFAULT)
 - cdash_alignment (FULL / PARTIAL / NONE) — always populated; based on Claude's
@@ -685,6 +686,21 @@ Read `references/cdash-domain-library.md` for the complete field list per domain
 **Repeating groups:**
 - First occurrence: `[DOMAIN]YN` (select_one NY) — "Did participant report any X?"
 - Group: `begin group [DOMAIN]1` with `relevant: ${[DOMAIN]YN}='Y' or ${[DOMAIN]YN_CF}='Y'`
+
+**repeat_group_name derivation:**
+- If the source form (library xlsx or CDASH default) uses an explicit group name
+  (e.g. `MHGRP`, `AE_GRP`, `DV_GRP`): use that name verbatim.
+- If no explicit group name exists in the source: use `{DOMAIN}_GRP`
+  (e.g. `CM_GRP` for Concomitant Medications).
+- Always populate `repeat_group_name` in the spec JSON when
+  `has_repeating_group` is true.
+- The edc-builder reads this field and wraps the form's data rows
+  (all rows with bind::oc:itemgroup matching the form domain) in
+  `begin repeat ({repeat_group_name})` / `end repeat` in the output
+  XLSForm. Do NOT emit the OC-8 phantom structure
+  (begin_group + end_group + empty begin_repeat + end_repeat) in the
+  XLSForm definition — that convention is handled internally by the
+  edc-builder transformation and must not appear in spec output.
 
 **Cross-form references:**
 - Add `calculate` row with `bind__oc_external: clinicaldata`
@@ -985,6 +1001,12 @@ directly by the `edc-builder` skill.
       "cdash_domain": "",
       "visits_assigned": [],
       "has_repeating_group": false,
+      "repeat_group_name": "",  // XLSForm begin_repeat/end_repeat group name for this form;
+                                // empty string if has_repeating_group is false.
+                                // Derived from the source form's group name (e.g. "MHGRP",
+                                // "AE_GRP"). Used by the edc-builder to wrap data rows
+                                // in begin_repeat / end_repeat. NEVER leave empty when
+                                // has_repeating_group is true.
       "is_epro": false,
       "arm_applicability": "TREATMENT | CONTROL | BOTH",
       "reuse_count": null,
