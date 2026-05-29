@@ -945,6 +945,47 @@ async def _get_board_card_ids(
     return card_ids if card_ids else None
 
 
+async def _count_board_cards(
+    subdomain: str, board_id: str,
+    is_production: bool = False, token: str = None,
+) -> int | None:
+    """GET /api/boards/{board_id} and return the non-archived card COUNT.
+
+    Unlike _get_board_card_ids (which returns None for an empty board, to
+    signal "no filter"), this distinguishes 0 (genuinely empty board) from
+    None (API/parse failure). The fast-rerun path uses it to decide whether
+    to force a full reimport: an empty board means the prior import never
+    populated it, so skipping reimport would leave nothing to publish.
+    """
+    import httpx
+    if token is None:
+        token = await _get_oc_token(subdomain, is_production=is_production)
+    url = f"https://{subdomain}.design.openclinica.io/api/boards/{board_id}"
+    try:
+        async with httpx.AsyncClient(timeout=30) as c:
+            r = await c.get(url, headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            })
+    except Exception as e:
+        print(f"[board-card-count] GET request failed: {e}", flush=True)
+        return None
+    if r.status_code != 200:
+        print(f"[board-card-count] GET /api/boards/{board_id} returned "
+              f"{r.status_code}", flush=True)
+        return None
+    try:
+        data = r.json()
+    except Exception as e:
+        print(f"[board-card-count] response not JSON: {e}", flush=True)
+        return None
+    cards = data.get("cards") or []
+    n = sum(1 for c in cards if not c.get("archived"))
+    print(f"[board-card-count] {n} non-archived cards on board {board_id}",
+          flush=True)
+    return n
+
+
 async def _check_board_form_versions(
     subdomain: str, board_id: str,
     is_production: bool = False, token: str = None,
@@ -1415,6 +1456,21 @@ async def create_oc_study(subdomain, struct_json, is_production=False,
     board_error    = None
     try:
         board_id = await _get_board_id(subdomain, study_uuid, is_production, token=token)
+        # Force a full reimport if a fast-rerun would otherwise skip import
+        # but the board is actually EMPTY (0 cards) — e.g. a freshly-created
+        # study/board, or one whose prior import failed. Skipping import on
+        # an empty board leaves nothing to publish and trips the
+        # publish-preflight "MISSING FROM BOARD" for every form. Only
+        # downgrade on a CONFIRMED-empty board (count == 0); on a count
+        # failure (None) keep fast_rerun as-is (safe default — clone-into-
+        # empty on a populated board would duplicate cards).
+        if fast_rerun:
+            _board_card_n = await _count_board_cards(
+                subdomain, board_id, is_production, token=token)
+            if _board_card_n == 0:
+                print("[board-import] fast-rerun requested but board has 0 "
+                      "cards — forcing full reimport", flush=True)
+                fast_rerun = False
         if fast_rerun:
             # Skip the import — board already exists from the prior
             # full run. _import_board is a CLONE-INTO-EMPTY op; running

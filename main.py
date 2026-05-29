@@ -196,6 +196,55 @@ async def clear_upload_record_oids(request: Request):
     }
 
 
+@app.post("/admin/reset-upload-record")
+async def reset_upload_record(request: Request):
+    """Overwrite an item's upload record with a fresh empty record so the
+    next pipeline run is treated as a first-ever run (no conflict history).
+
+    Body  : {"item_id": "<numeric>", "study_uuid": "<uuid, optional>"}
+    Header: X-Admin-Secret must match the ADMIN_SECRET env var.
+
+    Writes (overwriting any existing record):
+        {"study_uuid": <uuid or "">, "forms": {}, "uploaded_oids": []}
+
+    Errors:
+      503 — ADMIN_SECRET env var is not set (endpoint refuses to run so an
+            unset env never authorises everyone).
+      403 — secret header missing or mismatched.
+      400 — item_id missing or non-numeric.
+    """
+    admin_secret = os.environ.get("ADMIN_SECRET", "")
+    if not admin_secret:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "ADMIN_SECRET env var not set — endpoint disabled. "
+                "Set it on Railway before calling."
+            ),
+        )
+    if request.headers.get("X-Admin-Secret", "") != admin_secret:
+        raise HTTPException(status_code=403, detail="unauthorized")
+
+    body = await request.json()
+    item_id = str(body.get("item_id", "")).strip()
+    study_uuid = str(body.get("study_uuid", "")).strip()
+    # item_id is interpolated into a filesystem path — keep it strictly
+    # numeric to block path-traversal even though the secret gates access.
+    if not item_id or not item_id.isdigit():
+        raise HTTPException(
+            status_code=400,
+            detail="item_id is required and must be numeric",
+        )
+
+    record = {"study_uuid": study_uuid, "forms": {}, "uploaded_oids": []}
+    os.makedirs("/data/pipeline_upload_records", exist_ok=True)
+    path = f"/data/pipeline_upload_records/{item_id}.json"
+    with open(path, "w") as f:
+        json.dump(record, f, indent=2)
+
+    return {"item_id": item_id, "path": path, "written": record}
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Temporary diagnostic — slow-forms upload timing test
 #
