@@ -1197,7 +1197,9 @@ class FormPublisher:
                                             _ddp_methods = {}
                                             _ddp_log = {"methods": 0,
                                                         "results": 0,
-                                                        "errors": 0}
+                                                        "errors": 0,
+                                                        "failed": False,
+                                                        "version_confirmed": False}
                                             # Track the uploadVersion method
                                             # call id(s) so we can wait for the
                                             # matching DDP result — the 7 simple
@@ -1264,22 +1266,32 @@ class FormPublisher:
                                                 for m in _ddp_frames(payload):
                                                     if m.get("msg") != "result":
                                                         continue
+                                                    _mid = m.get("id", "")
+                                                    _ours = _mid in _uploadver_ids
                                                     if "error" in m:
                                                         _ddp_log["errors"] += 1
                                                         print(f"[publisher] DDP error "
                                                               f"result for {form_name}: "
                                                               f"{json.dumps(m.get('error'), default=str)[:1200]}",
                                                               flush=True)
-                                                    elif m.get("id", "") in _ddp_methods:
+                                                        if _ours:
+                                                            _ddp_log["failed"] = True
+                                                    elif _mid in _ddp_methods:
                                                         _ddp_log["results"] += 1
                                                         print(f"[publisher] DDP result "
                                                               f"for {form_name}: "
                                                               f"{json.dumps(m.get('result'), default=str)[:1200]}",
                                                               flush=True)
+                                                        if _ours:
+                                                            _res = m.get("result")
+                                                            if (isinstance(_res, dict)
+                                                                    and isinstance(_res.get("container"), dict)
+                                                                    and _res["container"].get("id")):
+                                                                _ddp_log["version_confirmed"] = True
                                                     # The uploadVersion result
                                                     # (success OR error) ends
                                                     # the capture wait below.
-                                                    if m.get("id", "") in _uploadver_ids:
+                                                    if _ours:
                                                         _upload_result_event.set()
 
                                             for _ws in _ddp_sockets:
@@ -1291,14 +1303,12 @@ class FormPublisher:
                                             await page.set_input_files(
                                                 'input.js-design-form-input',
                                                 str(xlsx_path))
-                                            # 2s settle: OC needs a
-                                            # moment to either render
-                                            # the form-version radio
-                                            # OR raise the red error
-                                            # banner. Both happen
-                                            # post-upload but not
-                                            # instantly.
-                                            await page.wait_for_timeout(2000)
+                                            # 500ms settle: just enough for the
+                                            # browser to begin processing the
+                                            # upload. The DDP listener captures
+                                            # results as they arrive, so a long
+                                            # fixed settle is no longer needed.
+                                            await page.wait_for_timeout(500)
                                             # (1) Extend the DDP capture window:
                                             # if an uploadVersion method was
                                             # seen, keep the listeners attached
@@ -1343,6 +1353,13 @@ class FormPublisher:
                                                       f"frames for {form_name} "
                                                       f"(sockets={len(_ddp_sockets)})",
                                                       flush=True)
+                                            # DDP verdicts for the timing
+                                            # optimizations below: skip the
+                                            # radio wait + pre-verify wait on a
+                                            # confirmed failure, and skip the
+                                            # REST verify on a confirmed success.
+                                            _upload_failed_by_ddp = _ddp_log["failed"]
+                                            _ddp_version_confirmed = _ddp_log["version_confirmed"]
                                             # ── Upload-result banner detection.
                                             # Read BEFORE the dismiss loop
                                             # below closes the banners. The
@@ -1433,6 +1450,13 @@ class FormPublisher:
                                             # longer drag a dying
                                             # session along.
                                             try:
+                                                # DDP already confirmed failure —
+                                                # the radio will never appear, so
+                                                # skip the wait entirely (saves
+                                                # the full 15s).
+                                                if _upload_failed_by_ddp:
+                                                    raise TimeoutError(
+                                                        "DDP confirmed failure")
                                                 # Green success banner already
                                                 # confirmed the upload — skip
                                                 # the radio wait entirely and
@@ -1469,17 +1493,20 @@ class FormPublisher:
                                                     # OC's REST API lags the
                                                     # UI — wait before the
                                                     # verify so a version
-                                                    # that's still
-                                                    # propagating isn't read
-                                                    # as missing.
-                                                    print(f"[publisher] "
-                                                          f"waiting "
-                                                          f"{self.REST_VERIFY_PREWAIT_S}s "
-                                                          f"before REST verify "
-                                                          f"of {form_name}",
-                                                          flush=True)
-                                                    await asyncio.sleep(
-                                                        self.REST_VERIFY_PREWAIT_S)
+                                                    # that's still propagating
+                                                    # isn't read as missing.
+                                                    # Skip the wait when DDP
+                                                    # already confirmed failure
+                                                    # (no version will appear).
+                                                    if not _upload_failed_by_ddp:
+                                                        print(f"[publisher] "
+                                                              f"waiting "
+                                                              f"{self.REST_VERIFY_PREWAIT_S}s "
+                                                              f"before REST verify "
+                                                              f"of {form_name}",
+                                                              flush=True)
+                                                        await asyncio.sleep(
+                                                            self.REST_VERIFY_PREWAIT_S)
                                                     # REST verify: did OC
                                                     # actually create the
                                                     # version despite the
@@ -1500,7 +1527,19 @@ class FormPublisher:
                                                     # formOcoid + versions[]
                                                     # (NOT lists[].cards[] /
                                                     # formVersionId).
+                                                    # DDP already confirmed the
+                                                    # version (result had a
+                                                    # container with an id) — set
+                                                    # the flag and skip the REST
+                                                    # verify call entirely.
                                                     _version_created = False
+                                                    if _ddp_version_confirmed:
+                                                        _version_created = True
+                                                        print(f"[publisher] DDP "
+                                                              f"confirmed version "
+                                                              f"for {form_name}: "
+                                                              f"skipping REST verify",
+                                                              flush=True)
                                                     try:
                                                         _host = urlparse(
                                                             study_url).hostname or ""
@@ -1512,7 +1551,8 @@ class FormPublisher:
                                                         if len(_bparts) > 1:
                                                             _board_id = _bparts[1].split("/")[0]
                                                         _target_oid = (oid or pre_oid or "").upper()
-                                                        if (self.auth_token and _subdomain
+                                                        if (not _version_created
+                                                                and self.auth_token and _subdomain
                                                                 and _board_id and _target_oid):
                                                             _vurl = (
                                                                 f"https://{_subdomain}"
@@ -1536,14 +1576,14 @@ class FormPublisher:
                                                                             and _card.get("versions")):
                                                                         _version_created = True
                                                                         break
-                                                        if _version_created:
+                                                        if _version_created and not _ddp_version_confirmed:
                                                             print(f"[publisher] REST "
                                                                   f"verify: version "
                                                                   f"confirmed for "
                                                                   f"{form_name} despite "
                                                                   f"UI timeout",
                                                                   flush=True)
-                                                        else:
+                                                        elif not _version_created:
                                                             print(f"[publisher] REST "
                                                                   f"verify: NO version "
                                                                   f"found for "
