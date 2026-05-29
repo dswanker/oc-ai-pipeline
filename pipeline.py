@@ -1033,6 +1033,150 @@ async def _count_board_cards(
     return n
 
 
+async def _get_board_structure(
+    subdomain: str, board_id: str,
+    is_production: bool = False, token: str = None,
+) -> dict:
+    """GET /api/boards/{board_id} and return the board's current structure.
+
+    Returns a dict with two keys:
+        events: {title: list_id}              — non-archived lists (events)
+        cards:  {formOcoid: {"_id","listId"}} — non-archived cards by form OID
+
+    Used to make board import idempotent: a board that already has events is
+    reconciled (card property updates only) rather than cleared + reimported,
+    which would duplicate SOE events. On API/parse failure returns empty
+    dicts so the caller treats it as a fresh board.
+    """
+    import httpx
+    empty = {"events": {}, "cards": {}}
+    if token is None:
+        token = await _get_oc_token(subdomain, is_production=is_production)
+    url = f"https://{subdomain}.design.openclinica.io/api/boards/{board_id}"
+    try:
+        async with httpx.AsyncClient(timeout=30) as c:
+            r = await c.get(url, headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            })
+    except Exception as e:
+        print(f"[board-structure] GET request failed: {e}", flush=True)
+        return empty
+    if r.status_code != 200:
+        print(f"[board-structure] GET /api/boards/{board_id} returned "
+              f"{r.status_code}", flush=True)
+        return empty
+    try:
+        data = r.json()
+    except Exception as e:
+        print(f"[board-structure] response not JSON: {e}", flush=True)
+        return empty
+    events = {}
+    for lst in (data.get("lists") or []):
+        if lst.get("archived"):
+            continue
+        title, lid = lst.get("title"), lst.get("_id")
+        if title and lid:
+            events[title] = lid
+    cards = {}
+    for c in (data.get("cards") or []):
+        if c.get("archived"):
+            continue
+        foid, cid = c.get("formOcoid"), c.get("_id")
+        if foid and cid:
+            cards[foid] = {"_id": cid, "listId": c.get("listId")}
+    print(f"[board-structure] {len(events)} events, {len(cards)} cards "
+          f"on board {board_id}", flush=True)
+    return {"events": events, "cards": cards}
+
+
+async def _reconcile_board_cards(subdomain, board_id, board_json,
+                                 existing_structure, session_path,
+                                 is_production, token=None):
+    """Apply card-property updates (required / sdv / itemLevelSdv) to cards
+    that ALREADY exist on the board, via the Meteor client-side Cards.update
+    DDP call — the same mechanism oc_form_publisher uses to set _version.
+
+    Only touches cards whose formOcoid is already present in
+    existing_structure["cards"]. Missing cards are logged as warnings, not
+    created (the card-creation DDP method is unknown). Never clears or
+    reimports, so it cannot duplicate SOE events.
+    """
+    from playwright.async_api import async_playwright
+
+    # Build {existing_card_id: {required, sdv, itemLevelSdv}} from board_json,
+    # matched to live cards by formOcoid. Dedupe by formOcoid (multiple cards
+    # of the same form share an OID; existing_structure keys by OID too).
+    existing_cards = (existing_structure or {}).get("cards", {}) or {}
+    updates, missing, seen = {}, [], set()
+    for card in board_json.get("cards", []):
+        foid = card.get("formOcoid")
+        if not foid or foid in seen:
+            continue
+        seen.add(foid)
+        match = existing_cards.get(foid)
+        if match and match.get("_id"):
+            updates[match["_id"]] = {
+                "required":     card.get("required"),
+                "sdv":          card.get("sdv"),
+                "itemLevelSdv": card.get("itemLevelSdv"),
+            }
+        else:
+            missing.append(foid)
+
+    if not updates:
+        print(f"[board-reconcile] updated 0 existing cards, {len(missing)} "
+              f"cards not found (manual addition required)", flush=True)
+        return
+
+    ok = 0
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        try:
+            ctx  = await browser.new_context(storage_state=session_path)
+            page = await ctx.new_page()
+            board_url = f"https://{subdomain}.design.openclinica.io/b/{board_id}"
+            await page.goto(board_url, wait_until="networkidle", timeout=60000)
+            # Wait for the Meteor client to connect so client-initiated
+            # Cards.update calls reach the server (board DOM need not render —
+            # the update is a server-side DDP method).
+            try:
+                await page.wait_for_function(
+                    "() => typeof Meteor !== 'undefined' "
+                    "&& Meteor.status().connected",
+                    timeout=20000)
+            except Exception:
+                print("[board-reconcile] Meteor client not confirmed "
+                      "connected — attempting updates anyway", flush=True)
+            results = await page.evaluate(
+                """
+                async (updates) => {
+                    const out = {};
+                    for (const [cardId, set] of Object.entries(updates)) {
+                        try {
+                            Cards.update(cardId, {$set: set});
+                            out[cardId] = {ok: true};
+                        } catch(e) {
+                            out[cardId] = {ok: false, error: e.toString()};
+                        }
+                    }
+                    return out;
+                }
+                """,
+                updates,
+            )
+            ok = sum(1 for v in results.values() if v.get("ok"))
+            for cid, v in results.items():
+                if not v.get("ok"):
+                    print(f"[board-reconcile] Cards.update {cid} failed: "
+                          f"{v.get('error')}", flush=True)
+        finally:
+            await browser.close()
+
+    print(f"[board-reconcile] updated {ok} existing cards, {len(missing)} "
+          f"cards not found (manual addition required)", flush=True)
+
+
 async def _check_board_form_versions(
     subdomain: str, board_id: str,
     is_production: bool = False, token: str = None,
@@ -1599,7 +1743,70 @@ async def create_oc_study(subdomain, struct_json, is_production=False,
                 study_url = _short_url
                 print(f"[board-import] fast-rerun — URL read failed "
                       f"({_ue}), using short URL: {study_url}", flush=True)
+            # Propagate SDV/required property changes to existing cards on
+            # every fast-rerun, so board_json property edits always reach the
+            # live board even when the reimport is skipped.
+            _session_path = (f"/data/browser_sessions/{oc_email}.json"
+                             if oc_email else "")
+            if _session_path and os.path.exists(_session_path):
+                try:
+                    _existing = await _get_board_structure(
+                        subdomain, board_id, is_production, token=token)
+                    await _reconcile_board_cards(
+                        subdomain, board_id, board_json, _existing,
+                        _session_path, is_production, token=token)
+                except Exception as _rce:
+                    print(f"[board-reconcile] fast-rerun reconcile failed "
+                          f"(non-fatal): {_rce}", flush=True)
+            else:
+                print("[board-reconcile] fast-rerun — skipped, no usable "
+                      "session", flush=True)
         else:
+            existing_structure = await _get_board_structure(
+                subdomain, board_id, is_production, token=token)
+        if not fast_rerun and existing_structure["events"]:
+            print("[board-import] board has existing events — skipping "
+                  "clear+reimport to prevent SOE duplication", flush=True)
+            board_imported = True
+            # Set study_url from the monday saved URL (same logic as the
+            # fast-rerun path) — the slug form is needed downstream.
+            _short_url = f"{designer_url}/b/{board_id}"
+            try:
+                _item = await get_item(item_id) if item_id else None
+                _saved_url = ""
+                if _item:
+                    for _cv in (_item.get("column_values") or []):
+                        if _cv.get("id") == COL["oc_study_url"]:
+                            _saved_url = (_cv.get("text") or "").strip()
+                            break
+                if _saved_url and "/b/" in _saved_url:
+                    study_url = _saved_url
+                    print(f"[board-import] reconcile — using saved "
+                          f"board URL: {study_url}", flush=True)
+                else:
+                    study_url = _short_url
+                    print(f"[board-import] reconcile — no saved URL, "
+                          f"using short URL: {study_url}", flush=True)
+            except Exception as _ue:
+                study_url = _short_url
+                print(f"[board-import] reconcile — URL read failed "
+                      f"({_ue}), using short URL: {study_url}", flush=True)
+            # Apply required/sdv/itemLevelSdv updates to existing cards.
+            _session_path = (f"/data/browser_sessions/{oc_email}.json"
+                             if oc_email else "")
+            if _session_path and os.path.exists(_session_path):
+                try:
+                    await _reconcile_board_cards(
+                        subdomain, board_id, board_json,
+                        existing_structure, _session_path,
+                        is_production, token=token)
+                except Exception as _rce:
+                    print(f"[board-reconcile] failed (non-fatal): {_rce}",
+                          flush=True)
+            else:
+                print("[board-reconcile] skipped — no usable session",
+                      flush=True)
+        elif not fast_rerun:
             # Clear the board via the Meteor archiveList method before
             # reimporting. _import_board is CLONE-INTO-EMPTY — calling
             # it on a non-empty board appends cards rather than
