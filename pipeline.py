@@ -3713,6 +3713,35 @@ async def run_pipeline(item_id):
                     await append_log(item_id, f"DVS error: {e}")
                     raise   # B6: propagate to chain_c
 
+                # Calendaring Rules (local) — Tier 1 mechanical rules. Gated on
+                # the "calendaring rules" output-requested label (_want matches
+                # the dropdown TEXT, not the numeric label ID).
+                if _want("calendaring rules"):
+                    print("Chain C: Running Calendaring Rules (local)...", flush=True)
+                    try:
+                        loop = asyncio.get_event_loop()
+                        cal_zip = await loop.run_in_executor(
+                            None,
+                            lambda: run_calendaring_rules(
+                                struct_json if struct_json
+                                    else {"study_meta": {"protocol_number": protocol_num}},
+                                build_json_holder[0] or {"forms": {}},
+                            ),
+                        )
+                        if cal_zip:
+                            await upload_file(item_id, COL["calendaring_output"],
+                                              f"{protocol_num}_Calendaring_{version}.zip",
+                                              cal_zip)
+                            await append_log(item_id, "Calendaring Rules complete.")
+                        else:
+                            await append_log(item_id,
+                                             "Calendaring Rules skipped — skill unavailable.")
+                    except Exception as e:
+                        print(f"Calendaring Rules error: {e}", flush=True)
+                        traceback.print_exc()
+                        await append_log(item_id, f"Calendaring Rules error: {e}")
+                        # Calendaring is additive — log and continue, do not abort the chain
+
             # ── Chain D: Create OC Study (parallel, only needs struct_json) ───
             async def chain_d():
                 if not (create_study and oc_subdomain and struct_json):

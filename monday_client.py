@@ -16,6 +16,7 @@ COL = {
     "dvs_input":         "file_mm2n517e",    # Edited DVS XLSX
     "quote_input":       "file_mm2npqge",    # Edited Quote XLSX
     "soe_input":         "file_mm2ns9hr",    # Edited Schedule of Events CSV
+    "calendaring_input": "file_mm3tgqeg",    # Calendaring Rules Update Input
     # Trigger + metadata
     "ai_trigger":        "single_select5ogcb0g",
     "protocol_number":   "text_mm2hcfre",
@@ -28,6 +29,7 @@ COL = {
     "pricing_quote":     "file_mm2g16gn",
     "edc_build":         "file_mm2h51qw",
     "dvs_output":        "file_mm2hhwmk",
+    "calendaring_output": "file_mm3te0de",   # Calendaring Output
     # Status + logging
     "pipeline_status":   "color_mm2h9g3m",
     "ai_run_log":        "long_text_mm2h9mnq",
