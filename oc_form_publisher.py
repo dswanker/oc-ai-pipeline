@@ -1024,6 +1024,50 @@ class FormPublisher:
                                     oid = ((await oid_el.input_value()).upper()
                                            if oid_el else "")
 
+                                    # (2)+(3) Per-card minimongo diagnostics:
+                                    # the event (list) type/repeating flag and
+                                    # the card's link status. Looked up live
+                                    # from the Cards/Lists collections so they
+                                    # reflect the actual board; logged for
+                                    # EVERY card.
+                                    try:
+                                        _cdiag = await page.evaluate(
+                                            """(cid) => {
+                                                const c = (typeof Cards !== 'undefined')
+                                                    ? Cards.findOne(cid) : null;
+                                                if (!c) return null;
+                                                const l = (c.listId && typeof Lists !== 'undefined')
+                                                    ? Lists.findOne(c.listId) : null;
+                                                return {
+                                                    listId: c.listId || '',
+                                                    parentId: c._parentId || '',
+                                                    listType: l ? (l.type || '') : '',
+                                                    isRepeating: l ? (l.isRepeating === undefined
+                                                        ? null : !!l.isRepeating) : null,
+                                                    eventOid: l ? (l.eventOid || l.oid
+                                                        || l.title || l.name || '') : '',
+                                                };
+                                            }""",
+                                            card['card_id'])
+                                    except Exception:
+                                        _cdiag = None
+                                    if _cdiag:
+                                        print(f"[publisher] Card event type for "
+                                              f"{form_name} (OID={oid}): "
+                                              f"listType={_cdiag.get('listType')!r} "
+                                              f"repeating={_cdiag.get('isRepeating')} "
+                                              f"eventOid={_cdiag.get('eventOid')!r}",
+                                              flush=True)
+                                        print(f"[publisher] Card link status for "
+                                              f"{form_name}: parentId="
+                                              f"{_cdiag.get('parentId') or 'NONE'}",
+                                              flush=True)
+                                    else:
+                                        print(f"[publisher] Card diag unavailable "
+                                              f"for {form_name} (card "
+                                              f"{card['card_id']!r} not in "
+                                              f"minimongo)", flush=True)
+
                                     # Conflict-aware branching:
                                     #   (1) If caller pre-flagged this OID as
                                     #       a conflict (OC has version IDs
@@ -1131,6 +1175,34 @@ class FormPublisher:
                                                       f"{form_name} "
                                                       f"(OID={oid})",
                                                       flush=True)
+                                            # (1) One-shot capture of OC's
+                                            # form-service HTTP response for
+                                            # this upload. Registered right
+                                            # before the file input is set;
+                                            # removed after the settle below.
+                                            # Most important diagnostic — shows
+                                            # exactly what OC returns on reject.
+                                            _http_capture = {}
+                                            async def _on_upload_response(resp):
+                                                try:
+                                                    _u = resp.url
+                                                    if (resp.request.method in ('POST', 'PUT')
+                                                            and ('/form-service/' in _u
+                                                                 or '/forms/' in _u
+                                                                 or '/xlsform/' in _u)):
+                                                        try:
+                                                            _b = (await resp.text())[:600]
+                                                        except Exception:
+                                                            _b = "<body unreadable>"
+                                                        _http_capture.setdefault('status', resp.status)
+                                                        _http_capture.setdefault('url', _u)
+                                                        _http_capture.setdefault('body', _b)
+                                                except Exception:
+                                                    pass
+                                            def _resp_handler(resp):
+                                                asyncio.ensure_future(
+                                                    _on_upload_response(resp))
+                                            page.on('response', _resp_handler)
                                             await page.set_input_files(
                                                 'input.js-design-form-input',
                                                 str(xlsx_path))
@@ -1142,6 +1214,30 @@ class FormPublisher:
                                             # post-upload but not
                                             # instantly.
                                             await page.wait_for_timeout(2000)
+                                            # (1) Log the captured form-service
+                                            # HTTP response, then remove the
+                                            # one-shot listener.
+                                            try:
+                                                page.remove_listener(
+                                                    'response', _resp_handler)
+                                            except Exception:
+                                                pass
+                                            if _http_capture:
+                                                print(f"[publisher] OC upload "
+                                                      f"HTTP response for "
+                                                      f"{form_name}: status="
+                                                      f"{_http_capture.get('status')} "
+                                                      f"url={_http_capture.get('url')} "
+                                                      f"body={_http_capture.get('body')}",
+                                                      flush=True)
+                                            else:
+                                                print(f"[publisher] OC upload "
+                                                      f"HTTP response for "
+                                                      f"{form_name}: none captured "
+                                                      f"(no /form-service//forms//"
+                                                      f"xlsform/ POST seen — upload "
+                                                      f"may be over WebSocket/DDP)",
+                                                      flush=True)
                                             # ── Upload-result banner detection.
                                             # Read BEFORE the dismiss loop
                                             # below closes the banners. The
