@@ -693,6 +693,45 @@ def run_dvs_xlsx(struct_json, forms_json):
         build_dvs(dvs_data, xlsx_path)
         return open(xlsx_path, "rb").read()
 
+def run_calendaring_rules(struct_json, forms_json):
+    """Generate calendaring rules zip. Returns bytes or None if skill not available.
+
+    Tier 1: mechanical Event Action rules from the scheduling block.
+    Falls back to timepoint_csv rows with NEEDS_REVIEW flag when scheduling absent.
+    Pipeline wiring:
+      _want() trigger : dropdown_mm2nc7d4 label ID 7 = "Calendaring Rules"
+      output column   : file_mm3te0de  (Calendaring Output)
+      update input    : file_mm3tgqeg  (Calendaring Rules Update Input)
+    """
+    _add_scripts("calendaring-rules")
+    try:
+        from extract_calendar_rules import extract_calendar_rules
+        from validate_rules import validate_rules
+        from generate_rule_artifacts import generate_rule_artifacts
+    except ImportError as e:
+        print(f"Calendaring rules skill not available: {e}", flush=True)
+        return None
+
+    build_log = {"build_warnings": []}
+
+    rule_data = extract_calendar_rules(struct_json, forms_json)
+    rule_data = validate_rules(rule_data)
+
+    summary = rule_data.get("validation_summary", {})
+    print(
+        f"Calendaring — {len(rule_data['rules'])} rules, "
+        f"{summary.get('passed', 0)} passed, {summary.get('failed', 0)} failed",
+        flush=True,
+    )
+    for w in rule_data.get("warnings", []):
+        print(f"  WARNING: {w}", flush=True)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        zip_bytes = generate_rule_artifacts(rule_data, tmp, build_log)
+        for w in build_log.get("build_warnings", []):
+            print(f"  BUILD WARNING: {w}", flush=True)
+        return zip_bytes
+
 
 # ── OpenClinica Study Service API ─────────────────────────────────────────────
 
