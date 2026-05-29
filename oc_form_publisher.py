@@ -536,6 +536,16 @@ class FormPublisher:
                         context = await browser.new_context()
 
                     page = await context.new_page()
+                    # DDP frame capture: the XLSForm upload travels over
+                    # Meteor's WebSocket (DDP), not HTTP. page.on('websocket')
+                    # only fires for sockets opened AFTER registration, and
+                    # the DDP socket opens during the board load below — so we
+                    # collect sockets HERE, before navigation. The per-form
+                    # upload loop attaches frame listeners to these sockets and
+                    # detaches them after each upload's settle.
+                    _ddp_sockets = []
+                    page.on('websocket',
+                            lambda ws: _ddp_sockets.append(ws))
                     auth_ok = await self._authenticate_via_sso(
                         page, study_url)
 
@@ -1175,34 +1185,88 @@ class FormPublisher:
                                                       f"{form_name} "
                                                       f"(OID={oid})",
                                                       flush=True)
-                                            # (1) One-shot capture of OC's
-                                            # form-service HTTP response for
-                                            # this upload. Registered right
-                                            # before the file input is set;
-                                            # removed after the settle below.
-                                            # Most important diagnostic — shows
-                                            # exactly what OC returns on reject.
-                                            _http_capture = {}
-                                            async def _on_upload_response(resp):
+                                            # (1) DDP frame capture for this
+                                            # upload — the form upload travels
+                                            # over Meteor's WebSocket, not
+                                            # HTTP. Attach frame listeners to
+                                            # the socket(s) collected at session
+                                            # start; detached after the settle.
+                                            # Logs the form-related 'method'
+                                            # frame and its matching 'result'
+                                            # (or any error result).
+                                            _ddp_methods = {}
+                                            _ddp_log = {"methods": 0,
+                                                        "results": 0,
+                                                        "errors": 0}
+
+                                            def _ddp_frames(payload):
+                                                out = []
                                                 try:
-                                                    _u = resp.url
-                                                    if (resp.request.method in ('POST', 'PUT')
-                                                            and ('/form-service/' in _u
-                                                                 or '/forms/' in _u
-                                                                 or '/xlsform/' in _u)):
+                                                    if not isinstance(payload, (str, bytes, bytearray)):
+                                                        payload = getattr(payload, "payload", None)
+                                                    if isinstance(payload, (bytes, bytearray)):
+                                                        payload = payload.decode("utf-8", "replace")
+                                                    if not isinstance(payload, str):
+                                                        return out
+                                                    s = payload.strip()
+                                                    if not s or s[0] in ("o", "h"):
+                                                        return out
+                                                    if s[0] in ("a", "c"):
+                                                        s = s[1:]
+                                                    data = json.loads(s)
+                                                    items = data if isinstance(data, list) else [data]
+                                                    for it in items:
                                                         try:
-                                                            _b = (await resp.text())[:600]
+                                                            obj = json.loads(it) if isinstance(it, str) else it
+                                                            if isinstance(obj, dict):
+                                                                out.append(obj)
                                                         except Exception:
-                                                            _b = "<body unreadable>"
-                                                        _http_capture.setdefault('status', resp.status)
-                                                        _http_capture.setdefault('url', _u)
-                                                        _http_capture.setdefault('body', _b)
+                                                            pass
                                                 except Exception:
                                                     pass
-                                            def _resp_handler(resp):
-                                                asyncio.ensure_future(
-                                                    _on_upload_response(resp))
-                                            page.on('response', _resp_handler)
+                                                return out
+
+                                            def _on_frame_sent(payload):
+                                                for m in _ddp_frames(payload):
+                                                    if m.get("msg") != "method":
+                                                        continue
+                                                    _name = m.get("method", "") or ""
+                                                    _ps = json.dumps(m.get("params", []), default=str)
+                                                    if any(k in (_name + " " + _ps).lower()
+                                                           for k in ("form", "upload", "xlsform", "design")):
+                                                        _mid = m.get("id", "")
+                                                        if _mid:
+                                                            _ddp_methods[_mid] = _name
+                                                        _ddp_log["methods"] += 1
+                                                        print(f"[publisher] DDP method "
+                                                              f"sent for {form_name}: "
+                                                              f"method={_name} "
+                                                              f"params={_ps[:300]}",
+                                                              flush=True)
+
+                                            def _on_frame_recv(payload):
+                                                for m in _ddp_frames(payload):
+                                                    if m.get("msg") != "result":
+                                                        continue
+                                                    if "error" in m:
+                                                        _ddp_log["errors"] += 1
+                                                        print(f"[publisher] DDP error "
+                                                              f"result for {form_name}: "
+                                                              f"{json.dumps(m.get('error'), default=str)[:300]}",
+                                                              flush=True)
+                                                    elif m.get("id", "") in _ddp_methods:
+                                                        _ddp_log["results"] += 1
+                                                        print(f"[publisher] DDP result "
+                                                              f"for {form_name}: "
+                                                              f"{json.dumps(m.get('result'), default=str)[:300]}",
+                                                              flush=True)
+
+                                            for _ws in _ddp_sockets:
+                                                try:
+                                                    _ws.on("framesent", _on_frame_sent)
+                                                    _ws.on("framereceived", _on_frame_recv)
+                                                except Exception:
+                                                    pass
                                             await page.set_input_files(
                                                 'input.js-design-form-input',
                                                 str(xlsx_path))
@@ -1214,29 +1278,30 @@ class FormPublisher:
                                             # post-upload but not
                                             # instantly.
                                             await page.wait_for_timeout(2000)
-                                            # (1) Log the captured form-service
-                                            # HTTP response, then remove the
-                                            # one-shot listener.
-                                            try:
-                                                page.remove_listener(
-                                                    'response', _resp_handler)
-                                            except Exception:
-                                                pass
-                                            if _http_capture:
-                                                print(f"[publisher] OC upload "
-                                                      f"HTTP response for "
-                                                      f"{form_name}: status="
-                                                      f"{_http_capture.get('status')} "
-                                                      f"url={_http_capture.get('url')} "
-                                                      f"body={_http_capture.get('body')}",
+                                            # (1) Detach the DDP frame listeners
+                                            # and log a capture summary (keeps a
+                                            # "none captured" path when no
+                                            # form/upload frames were seen).
+                                            for _ws in _ddp_sockets:
+                                                try:
+                                                    _ws.remove_listener("framesent", _on_frame_sent)
+                                                    _ws.remove_listener("framereceived", _on_frame_recv)
+                                                except Exception:
+                                                    pass
+                                            if (_ddp_log["methods"] or _ddp_log["results"]
+                                                    or _ddp_log["errors"]):
+                                                print(f"[publisher] DDP capture "
+                                                      f"summary for {form_name}: "
+                                                      f"methods={_ddp_log['methods']} "
+                                                      f"results={_ddp_log['results']} "
+                                                      f"errors={_ddp_log['errors']} "
+                                                      f"(sockets={len(_ddp_sockets)})",
                                                       flush=True)
                                             else:
-                                                print(f"[publisher] OC upload "
-                                                      f"HTTP response for "
-                                                      f"{form_name}: none captured "
-                                                      f"(no /form-service//forms//"
-                                                      f"xlsform/ POST seen — upload "
-                                                      f"may be over WebSocket/DDP)",
+                                                print(f"[publisher] OC upload: none "
+                                                      f"captured — no DDP form/upload "
+                                                      f"frames for {form_name} "
+                                                      f"(sockets={len(_ddp_sockets)})",
                                                       flush=True)
                                             # ── Upload-result banner detection.
                                             # Read BEFORE the dismiss loop
