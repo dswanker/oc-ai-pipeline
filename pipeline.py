@@ -1366,6 +1366,50 @@ async def _import_board(subdomain, board_id, board_json, is_production, token=No
         print(f"Board import: response JSON parse failed ({e}); "
               f"caller will fall back to UUID-based study_url.", flush=True)
     print(f"Board import: extracted board_url={board_url!r}", flush=True)
+
+    # importStudy returns 200 as soon as the payload is accepted, but the
+    # design service creates the cards asynchronously — an immediate board
+    # read has been observed returning only a fraction of the expected cards
+    # (e.g. 10 of 121). Poll until the count reaches the expected total or
+    # stops climbing, so the caller (and the publish-preflight) see the full
+    # board. We only WARN on a shortfall — never raise and never auto-
+    # re-import: re-importing a non-empty board duplicates the cards that DID
+    # land, and the downstream "MISSING FROM BOARD" preflight already blocks
+    # publish for an incomplete board.
+    _expected = len(board_json.get("cards") or [])
+    if _expected:
+        _deadline, _interval, _stable_needed = 120, 5, 4
+        _waited, _last, _stable, _n = 0, -1, 0, None
+        while _waited <= _deadline:
+            _n = await _count_board_cards(
+                subdomain, board_id, is_production, token=token)
+            if _n is not None and _n >= _expected:
+                print(f"[board-import] cards settled: {_n}/{_expected} "
+                      f"after ~{_waited}s", flush=True)
+                break
+            # Detect a stalled (partial) import: a non-zero count that hasn't
+            # changed across several reads means the server is done and
+            # created fewer cards than we sent. A count of 0 keeps waiting
+            # (server may not have started) up to the deadline.
+            if _n is not None and _n > 0:
+                if _n == _last:
+                    _stable += 1
+                else:
+                    _stable, _last = 1, _n
+                if _stable >= _stable_needed:
+                    print(f"[board-import] WARNING: card count stalled at "
+                          f"{_n}/{_expected} (unchanged for {_stable} reads, "
+                          f"~{_waited}s) — import appears PARTIAL. Missing "
+                          f"forms will fail the publish-preflight; clear the "
+                          f"board and re-import to retry.", flush=True)
+                    break
+            await asyncio.sleep(_interval)
+            _waited += _interval
+        else:
+            print(f"[board-import] WARNING: card count {_n}/{_expected} after "
+                  f"{_deadline}s timeout — board may be incomplete; missing "
+                  f"forms will fail the publish-preflight.", flush=True)
+
     return board_url
 
 
