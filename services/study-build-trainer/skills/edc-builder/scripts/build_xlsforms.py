@@ -453,33 +453,32 @@ def _balance_begin_end_tags(rows, form_id, build_log=None):
                 'corrections': corrections,
             })
 
-    # Second pass: if ANY repeat row was dropped, OC wants a FLAT field
-    # structure — drop ALL remaining begin/end group wrappers too. The data
-    # fields already carry their bind::oc:itemgroup values, which define the
-    # repeating structure, so OC does not need the group wrappers (and a
-    # leftover wrapper trips "Unmatched end statement ... repeat ... group").
-    if _repeat_dropped:
-        _flat = []
-        _dropped_groups = 0
-        for row in out:
-            _u = (str(row.get('type', '') or '')
-                  .strip().lower().replace('_', ' '))
-            if _u in ('begin group', 'end group'):
-                _dropped_groups += 1
-                print(f"[edc-builder] {form_id}: dropped begin/end group "
-                      f"(repeat removed, flat field structure used)",
-                      flush=True)
-                continue
-            _flat.append(row)
-        out = _flat
-        if _dropped_groups and build_log is not None:
-            build_log.setdefault('tag_balance_corrections', []).append({
-                'form_id': form_id,
-                'corrections': [
-                    f"dropped {_dropped_groups} begin/end group row(s) "
-                    f"(repeat removed, flat field structure used)"
-                ],
-            })
+    # Second-pass group strip DISABLED pending form-design-team review of the
+    # correct OC-8 repeating structure (group wrapper + phantom repeat). The
+    # _repeat_dropped flag above is still set by the first pass and retained
+    # for when this is revisited — re-enable by uncommenting the block below.
+    # if _repeat_dropped:
+    #     _flat = []
+    #     _dropped_groups = 0
+    #     for row in out:
+    #         _u = (str(row.get('type', '') or '')
+    #               .strip().lower().replace('_', ' '))
+    #         if _u in ('begin group', 'end group'):
+    #             _dropped_groups += 1
+    #             print(f"[edc-builder] {form_id}: dropped begin/end group "
+    #                   f"(repeat removed, flat field structure used)",
+    #                   flush=True)
+    #             continue
+    #         _flat.append(row)
+    #     out = _flat
+    #     if _dropped_groups and build_log is not None:
+    #         build_log.setdefault('tag_balance_corrections', []).append({
+    #             'form_id': form_id,
+    #             'corrections': [
+    #                 f"dropped {_dropped_groups} begin/end group row(s) "
+    #                 f"(repeat removed, flat field structure used)"
+    #             ],
+    #         })
 
     return out
 
@@ -518,6 +517,13 @@ def build_single_xlsform(form_data, output_path, build_log):
     for k, default in OC_SETTINGS_DEFAULTS.items():
         if not settings.get(k):
             settings[k] = default
+
+    # Build-time version stamp: a unique 12-digit integer per build run, so OC
+    # always creates a NEW form version instead of returning a cached rejection
+    # (EX) or a deduplicated existing version (SLEEP).
+    build_version = int(datetime.datetime.now().strftime("%Y%m%d%H%M"))
+    settings['version'] = build_version
+    print(f"[edc-builder] {form_id}: version stamp={build_version}", flush=True)
 
     use_template = os.path.exists(TEMPLATE_PATH)
 

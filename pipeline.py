@@ -852,12 +852,19 @@ def _build_board_json(struct_json):
             # uniqueness even if some form/event combo somehow repeats.
             card_id  = _meteor_id(f"{form_id}|{event_oid}|{sort_idx}")
 
+            # Repeating flag for THIS card's event (same rule as the lists
+            # loop above) — drives the per-card required/SDV properties.
+            _card_repeating = ("UNSCH" in event_oid.upper()
+                               or "COMMON" in event_oid.upper())
             card = {
                 "_id":      card_id,
                 "title":    form_title,
                 "listId":   list_id,
                 "formOcoid": _form_ocoid(form_id),
                 "sort":     sort_idx,
+                "required": not _card_repeating,   # Visit-Based True; Common/Unsch False
+                "sdv":      "required_item_level",  # Item-Level SDV for all cards
+                "itemLevelSdv": True,               # boolean flag on all OC cards
             }
 
             # First occurrence is the original; subsequent ones reference it
@@ -1488,6 +1495,9 @@ async def create_oc_study(subdomain, struct_json, is_production=False,
     board_json = _build_board_json(struct_json)
     print(f"Board: {len(board_json['lists'])} events, "
           f"{len(board_json['cards'])} form cards", flush=True)
+    print(f"[board-json] card properties set: required=True for "
+          f"Visit-Based events, sdv=required_item_level for all cards",
+          flush=True)
 
     # ── Steps 3 + 4: Board import via design service ──────────────────────────
     # NOTE: /api/importStudy/{boardId} is a CLONE-INTO-EMPTY operation. It
