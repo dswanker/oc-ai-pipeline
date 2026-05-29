@@ -100,6 +100,19 @@ def _validate_one_rule(rule):
     except (ValueError, TypeError):
         errors.append(ERR_INVALID_JSON)
 
+    # Check 8 (OC-24343): RUN_ON_SCHEDULE rules must have non-null criteria with non-null offset
+    if rule.get("type") == "RUN_ON_SCHEDULE":
+        criteria = rule.get("criteria")
+        if criteria is None:
+            errors.append(
+                "RUN_ON_SCHEDULE rule has null criteria — offset cannot be null "
+                "(OC-24343). Add an EVENT_CRITERIA block."
+            )
+        elif criteria.get("offset") is None:
+            errors.append(
+                "RUN_ON_SCHEDULE criteria.offset is null (OC-24343)."
+            )
+
     return errors
 
 
