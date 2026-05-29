@@ -147,6 +147,17 @@ class FormPublisher:
     # selector.
     PER_FORM_TIMEOUT_MS = 30_000
 
+    # How long to wait for the upload-success signal — the form-version
+    # radio (input[type=radio]) appearing in the panel after an upload.
+    # Many forms on a fresh board take well over 30s to surface it; 90s
+    # avoids false timeouts that leave a version uncreated. Tunable.
+    UPLOAD_RADIO_TIMEOUT_MS = 90_000
+
+    # When the success signal still doesn't appear, OC's REST API often
+    # lags the UI — wait this long before the REST verify so a version
+    # that's mid-propagation isn't misread as "never created".
+    REST_VERIFY_PREWAIT_S = 12
+
     # How long to wait for a human to complete first-time Google SSO.
     # On a headless server (e.g. Railway), this WILL hit timeout — see
     # the SESSION_DIR docstring above.
@@ -1131,7 +1142,7 @@ class FormPublisher:
                                                 await page.wait_for_selector(
                                                     'input[type=radio]',
                                                     state='attached',
-                                                    timeout=30000)
+                                                    timeout=self.UPLOAD_RADIO_TIMEOUT_MS)
                                             except Exception as e:
                                                 # Stage 2 fallback for
                                                 # forms that don't ship
@@ -1152,6 +1163,20 @@ class FormPublisher:
                                                           f"for {form_name}: "
                                                           f"{e}",
                                                           flush=True)
+                                                    # OC's REST API lags the
+                                                    # UI — wait before the
+                                                    # verify so a version
+                                                    # that's still
+                                                    # propagating isn't read
+                                                    # as missing.
+                                                    print(f"[publisher] "
+                                                          f"waiting "
+                                                          f"{self.REST_VERIFY_PREWAIT_S}s "
+                                                          f"before REST verify "
+                                                          f"of {form_name}",
+                                                          flush=True)
+                                                    await asyncio.sleep(
+                                                        self.REST_VERIFY_PREWAIT_S)
                                                     # REST verify: did OC
                                                     # actually create the
                                                     # version despite the
