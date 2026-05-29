@@ -1863,7 +1863,7 @@ class FormPublisher:
                                             if (c && Array.isArray(c.versions)
                                                     && c.versions.length) {
                                                 const v = c.versions[0];
-                                                const vid = (v && (v.id || v._id)) || null;
+                                                const vid = (v && v.ocoid) || null;
                                                 if (vid !== null) out[cid] = vid;
                                             }
                                         }
@@ -1923,7 +1923,7 @@ class FormPublisher:
                                             for (const [cardId, versionId] of Object.entries(cardVersionMap)) {
                                                 try {
                                                     Cards.update(cardId,
-                                                        {$set: {_version: versionId}});
+                                                        {$set: {selected_form_version_ocoid: versionId}});
                                                     results[cardId] = {ok: true};
                                                 } catch(e) {
                                                     results[cardId] = {ok: false,
