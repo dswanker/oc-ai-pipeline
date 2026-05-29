@@ -138,6 +138,35 @@ async def _detect_error_banner(page) -> str:
     return ""
 
 
+async def _detect_success_banner(page) -> str:
+    """Return the text of a visible OC green success banner, or "" if none.
+
+    OC shows a green alert when an upload completes (text like "success",
+    "successful", "uploaded"). This is the PRIMARY upload-success signal —
+    when present the caller records success immediately and skips the
+    form-version radio wait. Requires a success-styled element AND
+    success-keyword text AND visibility, and EXCLUDES any text that also
+    carries a failure keyword: OC's ambiguous "Upload version is successful
+    while update the form is failed" must NOT read as a clean success — it
+    falls through to the radio / REST-verify path instead. Never raises."""
+    _OK_KEYWORDS = ("success", "successful", "uploaded")
+    _FAIL_KEYWORDS = ("error", "failed", "fail", "unable", "could not")
+    for _sel in ('.alert-success', '[class*="success"]',
+                 '[class*="toast"]', '[role="status"]'):
+        try:
+            for el in await page.query_selector_all(_sel):
+                if not await el.is_visible():
+                    continue
+                txt = ((await el.inner_text()) or "").strip()
+                low = txt.lower()
+                if (txt and any(k in low for k in _OK_KEYWORDS)
+                        and not any(b in low for b in _FAIL_KEYWORDS)):
+                    return " ".join(txt.split())[:300]
+        except Exception:
+            pass
+    return ""
+
+
 # ── Result shape ───────────────────────────────────────────────────────────
 
 @dataclass
@@ -178,11 +207,12 @@ class FormPublisher:
     # selector.
     PER_FORM_TIMEOUT_MS = 30_000
 
-    # How long to wait for the upload-success signal — the form-version
-    # radio (input[type=radio]) appearing in the panel after an upload.
-    # Many forms on a fresh board take well over 30s to surface it; 90s
-    # avoids false timeouts that leave a version uncreated. Tunable.
-    UPLOAD_RADIO_TIMEOUT_MS = 90_000
+    # Fallback wait for the form-version radio (input[type=radio]) — only
+    # reached when the green success banner is NOT detected (e.g. re-uploads
+    # that don't re-show the banner). The green banner is now the PRIMARY
+    # success signal, so this is short: a genuinely failed upload fails fast
+    # (~15s) instead of burning the old 90s. Tunable.
+    UPLOAD_RADIO_TIMEOUT_MS = 15_000
 
     # When the success signal still doesn't appear, OC's REST API often
     # lags the UI — wait this long before the REST verify so a version
@@ -590,9 +620,19 @@ class FormPublisher:
                     # console, which is the one channel that can still
                     # show an upload failure.
                     async def _capture_console(msg):
-                        if msg.type in ('error', 'warning'):
-                            print(f"[browser-console] {msg.type}: "
-                                  f"{msg.text}", flush=True)
+                        if msg.type not in ('error', 'warning'):
+                            return
+                        _txt = msg.text or ""
+                        # Drop the SSO postMessage heartbeat warning (fires
+                        # every ~2s all session) — pure noise that buries the
+                        # log. Errors are always kept; they can flag a real
+                        # upload failure.
+                        if msg.type != 'error' and (
+                                'postMessage' in _txt
+                                or 'The target origin provided' in _txt):
+                            return
+                        print(f"[browser-console] {msg.type}: "
+                              f"{_txt}", flush=True)
 
                     page.on(
                         'console',
@@ -1102,15 +1142,23 @@ class FormPublisher:
                                             # post-upload but not
                                             # instantly.
                                             await page.wait_for_timeout(2000)
-                                            # ── Error-banner detection
-                                            # (diagnostic). Read the banner
-                                            # text BEFORE the dismiss loop
-                                            # below closes it. A banner means
-                                            # OC rejected the upload server-
-                                            # side, so no version will ever
-                                            # appear — log it and short-
-                                            # circuit the radio wait below.
+                                            # ── Upload-result banner detection.
+                                            # Read BEFORE the dismiss loop
+                                            # below closes the banners. The
+                                            # GREEN success banner is the
+                                            # primary success signal — when
+                                            # present we record success and
+                                            # skip the radio wait. A RED error
+                                            # banner means a server-side
+                                            # rejection (no version) — short-
+                                            # circuit the radio wait.
+                                            _success_text = await _detect_success_banner(page)
                                             _banner_text = await _detect_error_banner(page)
+                                            if _success_text:
+                                                print(f'[publisher] SUCCESS BANNER '
+                                                      f'detected for {form_name}: '
+                                                      f'"{_success_text}"',
+                                                      flush=True)
                                             if _banner_text:
                                                 print(f'[publisher] ERROR BANNER '
                                                       f'detected for {form_name}: '
@@ -1184,16 +1232,19 @@ class FormPublisher:
                                             # longer drag a dying
                                             # session along.
                                             try:
-                                                # Short-circuit the long wait
-                                                # if an error banner was just
-                                                # detected — the radio will
-                                                # never appear for a rejected
-                                                # upload, so don't burn 90s.
-                                                await page.wait_for_selector(
-                                                    'input[type=radio]',
-                                                    state='attached',
-                                                    timeout=(3000 if _banner_text
-                                                             else self.UPLOAD_RADIO_TIMEOUT_MS))
+                                                # Green success banner already
+                                                # confirmed the upload — skip
+                                                # the radio wait entirely and
+                                                # fall through to success
+                                                # recording. Otherwise: error
+                                                # banner → short 3s; else the
+                                                # 15s re-upload fallback.
+                                                if not _success_text:
+                                                    await page.wait_for_selector(
+                                                        'input[type=radio]',
+                                                        state='attached',
+                                                        timeout=(3000 if _banner_text
+                                                                 else self.UPLOAD_RADIO_TIMEOUT_MS))
                                             except Exception as e:
                                                 # Stage 2 fallback for
                                                 # forms that don't ship
