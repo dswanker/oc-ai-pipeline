@@ -596,7 +596,7 @@ def run_protocol_summary_pdf(pricing_json, struct_json=None):
 def run_edc_build(struct_json):
     """Build EDC ZIP locally. Returns (zip_bytes, build_log, forms_json)."""
     _add_scripts("edc-builder")
-    from build_xlsforms  import build_all_xlsforms, write_timepoint_csv, write_labranges_csv
+    from build_xlsforms  import build_all_xlsforms, write_timepoint_csv, write_labranges_csv, write_calendar_artifacts
     from build_checklist import build_checklist_pdf, build_checklist_xlsx
     from build_package   import build_package
 
@@ -626,6 +626,7 @@ def run_edc_build(struct_json):
         write_labranges_csv(struct_json.get('labranges_csv', {}),
                             os.path.join(csv_dir, f'{protocol}_labranges.csv'),
                             build_log)
+        write_calendar_artifacts(struct_json, csv_dir, build_log)
         build_checklist_pdf(struct_json, build_log,
                             os.path.join(checklist_dir,
                                          f'{protocol}_Build_Checklist.pdf'))

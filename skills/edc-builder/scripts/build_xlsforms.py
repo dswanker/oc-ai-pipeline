@@ -1224,6 +1224,49 @@ def write_labranges_csv(lr_data, output_path, build_log):
         })
 
 
+def write_calendar_artifacts(spec_data, csv_dir, build_log):
+    """Write per-arm calendar CSVs if study_calendars data is present.
+
+    Emits into csv_dir (auto-included in zip by build_package):
+      study_calendars.csv        — one row per arm x event_oid
+      form_event_placements.csv  — one row per form placement entry
+
+    Skips silently (with a build_log warning) if study_calendars is absent
+    (single-arm study or pre-B-model spec). Fully backward-compatible.
+    """
+    calendars  = spec_data.get('study_calendars', [])
+    placements = spec_data.get('schedule_of_events', {}).get('form_placements', [])
+    build_log.setdefault('build_warnings', [])
+
+    if not calendars:
+        build_log['build_warnings'].append(
+            'study_calendars absent — calendar artifacts skipped (single-arm or pre-B-model spec)')
+        return
+
+    # study_calendars.csv — one row per arm × event_oid
+    cal_path = os.path.join(csv_dir, 'study_calendars.csv')
+    with open(cal_path, 'w', newline='') as f:
+        f.write('arm_code,arm_name,event_oid\r\n')
+        for arm in calendars:
+            arm_code = arm.get('arm_code', '')
+            arm_name = arm.get('arm_name', '').replace(',', '')
+            for oid in arm.get('event_oids', []):
+                f.write(f'{arm_code},{arm_name},{oid}\r\n')
+
+    # form_event_placements.csv — one row per form_placements entry
+    if placements:
+        fp_path = os.path.join(csv_dir, 'form_event_placements.csv')
+        with open(fp_path, 'w', newline='') as f:
+            f.write('target_visit_oid,form_id,required,repeating,arm\r\n')
+            for p in placements:
+                visit = p.get('target_visit_oid', '')
+                form  = p.get('form_id', '')
+                req   = str(p.get('required', True)).lower()
+                rep   = str(p.get('repeating', False)).lower()
+                arm   = p.get('arm', 'BOTH')
+                f.write(f'{visit},{form},{req},{rep},{arm}\r\n')
+
+
 if __name__ == '__main__':
     import sys, json
     if len(sys.argv) < 3:

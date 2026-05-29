@@ -211,6 +211,14 @@ The script:
 # Apply best-guess for any remaining PLACEHOLDERs
 ```
 
+### 5c: Calendar Artifacts (multi-arm studies)
+If the study spec JSON carries a `study_calendars` array (emitted by protocol-analysis Step 1d for multi-arm studies), emit two additional CSVs into the `csv/` output directory. Both are automatically included in the build zip by Step 7.
+
+- `study_calendars.csv` — one row per arm × event OID (columns: `arm_code`, `arm_name`, `event_oid`). Lists every event that belongs to each arm's schedule. Shared events (arm: BOTH) appear on a row for each arm. Consumed by `calendaring-rules` skill for per-arm event routing and by OC4 study configuration.
+- `form_event_placements.csv` — one row per form placement (columns: `target_visit_oid`, `form_id`, `required`, `repeating`, `arm`). The arm-aware form placement contract consumed by the study build team for OC4 event definition configuration.
+
+If `study_calendars` is absent (single-arm study or pre-B-model spec), both files are skipped and a warning is added to the build log. No error is raised — the rest of the build proceeds normally.
+
 ---
 
 ## Step 6: Generate Study Build Checklist
