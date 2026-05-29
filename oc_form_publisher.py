@@ -1257,7 +1257,7 @@ class FormPublisher:
                                                         print(f"[publisher] DDP method "
                                                               f"sent for {form_name}: "
                                                               f"method={_name} "
-                                                              f"params={_ps[:300]}",
+                                                              f"params={_ps[:1200]}",
                                                               flush=True)
 
                                             def _on_frame_recv(payload):
@@ -1268,13 +1268,13 @@ class FormPublisher:
                                                         _ddp_log["errors"] += 1
                                                         print(f"[publisher] DDP error "
                                                               f"result for {form_name}: "
-                                                              f"{json.dumps(m.get('error'), default=str)[:300]}",
+                                                              f"{json.dumps(m.get('error'), default=str)[:1200]}",
                                                               flush=True)
                                                     elif m.get("id", "") in _ddp_methods:
                                                         _ddp_log["results"] += 1
                                                         print(f"[publisher] DDP result "
                                                               f"for {form_name}: "
-                                                              f"{json.dumps(m.get('result'), default=str)[:300]}",
+                                                              f"{json.dumps(m.get('result'), default=str)[:1200]}",
                                                               flush=True)
                                                     # The uploadVersion result
                                                     # (success OR error) ends
@@ -1553,6 +1553,34 @@ class FormPublisher:
                                                     except Exception as _ve:
                                                         print(f"[publisher] REST verify "
                                                               f"error: {_ve}", flush=True)
+                                                    # Reset the hung panel. On a
+                                                    # failed upload OC leaves the
+                                                    # panel in a "processing"
+                                                    # state (form accepted but no
+                                                    # radio activated), so the
+                                                    # NEXT form's set_input_files
+                                                    # fires on a stale panel with
+                                                    # no DDP. Navigate back to the
+                                                    # board so the next form opens
+                                                    # a clean panel.
+                                                    if not _version_created:
+                                                        print(f"[publisher] reset "
+                                                              f"panel state — "
+                                                              f"navigating back to "
+                                                              f"board after failed "
+                                                              f"upload of {form_name}",
+                                                              flush=True)
+                                                        try:
+                                                            await page.goto(study_url)
+                                                            await page.wait_for_selector(
+                                                                '.js-list',
+                                                                timeout=30000)
+                                                            await page.wait_for_timeout(1000)
+                                                        except Exception as _ne:
+                                                            print(f"[publisher] board "
+                                                                  f"reload after panel "
+                                                                  f"reset failed: {_ne}",
+                                                                  flush=True)
                                             # set-default for this card
                                             # happens in the post-loop
                                             # batch phase — no per-card
