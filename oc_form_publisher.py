@@ -107,6 +107,37 @@ async def _session_expired(page) -> bool:
             or "openid-connect/auth" in url)
 
 
+async def _detect_error_banner(page) -> str:
+    """Return the text of a visible OC error banner/alert, or "" if none.
+
+    DIAGNOSTIC ONLY. OC raises a red alert when it rejects an upload
+    server-side (observed: "Upload version is successful while update the
+    form is failed"; hypothesised: "An error occurred, please contact your
+    system administrator") — that form never gets a version. Callers log
+    the text and short-circuit the success-signal wait instead of burning
+    the full timeout.
+
+    Scans alert/toast/notification markup and requires an error keyword in
+    the visible text, so benign info alerts don't false-trigger (a false
+    positive would wrongly short-circuit a healthy upload). Returns the
+    first matching banner's text, whitespace-collapsed and capped at 300
+    chars. Never raises."""
+    _ERR_KEYWORDS = ("error", "administrator", "failed", "fail",
+                     "could not", "unable")
+    for _sel in ('.alert-danger', '[role="alert"]', '.alert',
+                 '.notification', '[class*="toast"]'):
+        try:
+            for el in await page.query_selector_all(_sel):
+                if not await el.is_visible():
+                    continue
+                txt = ((await el.inner_text()) or "").strip()
+                if txt and any(k in txt.lower() for k in _ERR_KEYWORDS):
+                    return " ".join(txt.split())[:300]
+        except Exception:
+            pass
+    return ""
+
+
 # ── Result shape ───────────────────────────────────────────────────────────
 
 @dataclass
@@ -1071,6 +1102,20 @@ class FormPublisher:
                                             # post-upload but not
                                             # instantly.
                                             await page.wait_for_timeout(2000)
+                                            # ── Error-banner detection
+                                            # (diagnostic). Read the banner
+                                            # text BEFORE the dismiss loop
+                                            # below closes it. A banner means
+                                            # OC rejected the upload server-
+                                            # side, so no version will ever
+                                            # appear — log it and short-
+                                            # circuit the radio wait below.
+                                            _banner_text = await _detect_error_banner(page)
+                                            if _banner_text:
+                                                print(f'[publisher] ERROR BANNER '
+                                                      f'detected for {form_name}: '
+                                                      f'"{_banner_text}"',
+                                                      flush=True)
                                             # Dismiss any OC error
                                             # banner. Observed text is
                                             # "Upload version is
@@ -1139,10 +1184,16 @@ class FormPublisher:
                                             # longer drag a dying
                                             # session along.
                                             try:
+                                                # Short-circuit the long wait
+                                                # if an error banner was just
+                                                # detected — the radio will
+                                                # never appear for a rejected
+                                                # upload, so don't burn 90s.
                                                 await page.wait_for_selector(
                                                     'input[type=radio]',
                                                     state='attached',
-                                                    timeout=self.UPLOAD_RADIO_TIMEOUT_MS)
+                                                    timeout=(3000 if _banner_text
+                                                             else self.UPLOAD_RADIO_TIMEOUT_MS))
                                             except Exception as e:
                                                 # Stage 2 fallback for
                                                 # forms that don't ship
