@@ -505,6 +505,7 @@ def _balance_begin_end_tags(rows, form_id, build_log=None):
     stack: list[str] = []   # only ever holds 'group' now
     corrections: list[str] = []
     out: list[dict] = []
+    _repeat_dropped = False
 
     for idx, row in enumerate(rows):
         t = str(row.get('type', '') or '')
@@ -512,6 +513,7 @@ def _balance_begin_end_tags(rows, form_id, build_log=None):
 
         # Repeats are not an XLSForm construct in OC — strip both ends.
         if kind == 'repeat':
+            _repeat_dropped = True
             corrections.append(
                 f"row {idx + 2}: dropped {t!r} — OC defines repeating "
                 f"groups via bind::oc:itemgroup, not begin/end repeat"
@@ -554,6 +556,37 @@ def _balance_begin_end_tags(rows, form_id, build_log=None):
             build_log.setdefault('tag_balance_corrections', []).append({
                 'form_id': form_id,
                 'corrections': corrections,
+            })
+
+    # Second pass: if ANY repeat row was dropped, OC wants a FLAT field
+    # structure — drop ALL remaining begin/end group wrappers too. A
+    # begin/end group left behind after a removed repeat makes OC's
+    # server-side pyxform see an unmatched repeat context and reject the
+    # form with "Unmatched end statement. Previous control type: repeat,
+    # Control type: group". The data fields already carry their
+    # bind::oc:itemgroup values, which define the repeating structure, so
+    # OC does not need the group wrappers.
+    if _repeat_dropped:
+        _flat: list[dict] = []
+        _dropped_groups = 0
+        for row in out:
+            _u = (str(row.get('type', '') or '')
+                  .strip().lower().replace('_', ' '))
+            if _u in ('begin group', 'end group'):
+                _dropped_groups += 1
+                print(f"[edc-builder] {form_id}: dropped begin/end group "
+                      f"(repeat removed, flat field structure used)",
+                      flush=True)
+                continue
+            _flat.append(row)
+        out = _flat
+        if _dropped_groups and build_log is not None:
+            build_log.setdefault('tag_balance_corrections', []).append({
+                'form_id': form_id,
+                'corrections': [
+                    f"dropped {_dropped_groups} begin/end group row(s) "
+                    f"(repeat removed, flat field structure used)"
+                ],
             })
 
     return out

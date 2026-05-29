@@ -377,6 +377,113 @@ def _normalize_survey_rows(rows):
     return normalized
 
 
+# ── Begin/end tag pairing balancer ────────────────────────────────────────────
+def _balance_begin_end_tags(rows, form_id, build_log=None):
+    """Normalize survey block tags for OpenClinica.
+
+    OC does NOT use XLSForm begin_repeat/end_repeat to define repeating
+    groups — it derives repetition from `bind::oc:itemgroup` on the data
+    fields, and rejects XLSForm repeat syntax with "Unmatched end
+    statement". This balancer DROPS every begin/end repeat row, and — if
+    any repeat was dropped — also drops ALL remaining begin/end group rows
+    so OC gets the flat field structure it expects (a leftover group after
+    a removed repeat trips "Unmatched end statement. Previous control type:
+    repeat, Control type: group"). Otherwise begin/end group pairs are kept
+    and balanced.
+    """
+    def _classify(t):
+        u = (t or '').strip().lower().replace('_', ' ')
+        if u == 'begin group':  return ('begin', 'group')
+        if u == 'begin repeat': return ('begin', 'repeat')
+        if u == 'end group':    return ('end',   'group')
+        if u == 'end repeat':   return ('end',   'repeat')
+        return (None, None)
+
+    stack = []
+    corrections = []
+    out = []
+    _repeat_dropped = False
+
+    for idx, row in enumerate(rows):
+        t = str(row.get('type', '') or '')
+        action, kind = _classify(t)
+
+        # Repeats are not an XLSForm construct in OC — strip both ends.
+        if kind == 'repeat':
+            _repeat_dropped = True
+            corrections.append(
+                f"row {idx + 2}: dropped {t!r} — OC defines repeating "
+                f"groups via bind::oc:itemgroup, not begin/end repeat"
+            )
+            continue
+
+        if action == 'begin':   # begin group
+            stack.append('group')
+            out.append(dict(row))
+
+        elif action == 'end':   # end group
+            if not stack:
+                corrections.append(
+                    f"row {idx + 2}: dropped orphan {t!r} — no matching "
+                    f"begin group on the stack"
+                )
+                continue
+            stack.pop()
+            out.append(dict(row))
+
+        else:
+            out.append(dict(row))
+
+    # Auto-close any unclosed groups at the tail.
+    while stack:
+        stack.pop()
+        out.append({'type': 'end group', 'name': ''})
+        corrections.append(
+            "tail: appended 'end group' to close an unclosed begin group"
+        )
+
+    if corrections:
+        print(f"[edc-builder] balanced begin/end tags for {form_id}:",
+              flush=True)
+        for c in corrections:
+            print(f"  {c}", flush=True)
+        if build_log is not None:
+            build_log.setdefault('tag_balance_corrections', []).append({
+                'form_id': form_id,
+                'corrections': corrections,
+            })
+
+    # Second pass: if ANY repeat row was dropped, OC wants a FLAT field
+    # structure — drop ALL remaining begin/end group wrappers too. The data
+    # fields already carry their bind::oc:itemgroup values, which define the
+    # repeating structure, so OC does not need the group wrappers (and a
+    # leftover wrapper trips "Unmatched end statement ... repeat ... group").
+    if _repeat_dropped:
+        _flat = []
+        _dropped_groups = 0
+        for row in out:
+            _u = (str(row.get('type', '') or '')
+                  .strip().lower().replace('_', ' '))
+            if _u in ('begin group', 'end group'):
+                _dropped_groups += 1
+                print(f"[edc-builder] {form_id}: dropped begin/end group "
+                      f"(repeat removed, flat field structure used)",
+                      flush=True)
+                continue
+            _flat.append(row)
+        out = _flat
+        if _dropped_groups and build_log is not None:
+            build_log.setdefault('tag_balance_corrections', []).append({
+                'form_id': form_id,
+                'corrections': [
+                    f"dropped {_dropped_groups} begin/end group row(s) "
+                    f"(repeat removed, flat field structure used)"
+                ],
+            })
+
+    return out
+
+
 # ── Build a single XLSForm .xlsx ───────────────────────────────────────────────
 def build_single_xlsform(form_data, output_path, build_log):
     """Build one XLSForm .xlsx file from form_data dict.
@@ -527,6 +634,9 @@ def build_single_xlsform(form_data, output_path, build_log):
         ws_sv.column_dimensions[get_column_letter(col_i)].width = \
             SURVEY_WIDTHS.get(col, 16)
 
+    # Strip XLSForm repeat syntax (OC uses bind::oc:itemgroup) and, when a
+    # repeat is removed, flatten away the begin/end group wrappers too.
+    survey = _balance_begin_end_tags(survey, form_id, build_log)
     survey = _normalize_survey_rows(survey)
 
     placeholders_in_form = []

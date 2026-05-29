@@ -1198,6 +1198,14 @@ class FormPublisher:
                                             _ddp_log = {"methods": 0,
                                                         "results": 0,
                                                         "errors": 0}
+                                            # Track the uploadVersion method
+                                            # call id(s) so we can wait for the
+                                            # matching DDP result — the 7 simple
+                                            # failing forms' results arrive
+                                            # AFTER the 2s settle, so the fixed
+                                            # window was missing them.
+                                            _uploadver_ids = set()
+                                            _upload_result_event = asyncio.Event()
 
                                             def _ddp_frames(payload):
                                                 out = []
@@ -1237,6 +1245,14 @@ class FormPublisher:
                                                         _mid = m.get("id", "")
                                                         if _mid:
                                                             _ddp_methods[_mid] = _name
+                                                        # uploadVersion is the
+                                                        # call whose result we
+                                                        # wait for below.
+                                                        _nl = _name.lower()
+                                                        if _mid and ("uploadversion" in _nl
+                                                                or ("upload" in _nl
+                                                                    and "version" in _nl)):
+                                                            _uploadver_ids.add(_mid)
                                                         _ddp_log["methods"] += 1
                                                         print(f"[publisher] DDP method "
                                                               f"sent for {form_name}: "
@@ -1260,6 +1276,11 @@ class FormPublisher:
                                                               f"for {form_name}: "
                                                               f"{json.dumps(m.get('result'), default=str)[:300]}",
                                                               flush=True)
+                                                    # The uploadVersion result
+                                                    # (success OR error) ends
+                                                    # the capture wait below.
+                                                    if m.get("id", "") in _uploadver_ids:
+                                                        _upload_result_event.set()
 
                                             for _ws in _ddp_sockets:
                                                 try:
@@ -1278,6 +1299,25 @@ class FormPublisher:
                                             # post-upload but not
                                             # instantly.
                                             await page.wait_for_timeout(2000)
+                                            # (1) Extend the DDP capture window:
+                                            # if an uploadVersion method was
+                                            # seen, keep the listeners attached
+                                            # until its result frame arrives OR
+                                            # ~20s total elapses (2s settle +
+                                            # up to 18s). This captures the
+                                            # error/result frames for the slow
+                                            # failing forms that land after 2s.
+                                            if (_uploadver_ids
+                                                    and not _upload_result_event.is_set()):
+                                                try:
+                                                    await asyncio.wait_for(
+                                                        _upload_result_event.wait(),
+                                                        timeout=18)
+                                                except asyncio.TimeoutError:
+                                                    print(f"[publisher] DDP "
+                                                          f"uploadVersion result not "
+                                                          f"seen within ~20s for "
+                                                          f"{form_name}", flush=True)
                                             # (1) Detach the DDP frame listeners
                                             # and log a capture summary (keeps a
                                             # "none captured" path when no
