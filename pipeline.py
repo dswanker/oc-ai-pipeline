@@ -1109,7 +1109,13 @@ async def _reconcile_board_cards(subdomain, board_id, board_json,
     # of the same form share an OID; existing_structure keys by OID too).
     existing_cards = (existing_structure or {}).get("cards", {}) or {}
     updates, missing, seen = {}, [], set()
-    for card in board_json.get("cards", []):
+    # _build_board_json emits cards at the top level; some board payloads
+    # nest them under lists[].cards. Support both: prefer the nested form,
+    # fall back to the top-level "cards" key so reconcile never iterates an
+    # empty list against the current builder output.
+    all_cards = [c for lst in board_json.get("lists", []) for c in lst.get("cards", [])]
+    all_cards = all_cards or board_json.get("cards", [])
+    for card in all_cards:
         foid = card.get("formOcoid")
         if not foid or foid in seen:
             continue
