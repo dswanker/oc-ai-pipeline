@@ -29,6 +29,30 @@ Every rule has: metadata (name, description), a "when" (triggerType + triggerOID
 }
 ```
 
+## Production-Verified Rule Patterns (from live OC4 study)
+
+**Index event (schedule on participant creation):**
+- triggerType: ["PARTICIPANT_CREATED"], triggerOID: null
+- type/schedule/time/criteria: null
+- action targetEventStatus: "SCHEDULED", eventStatusesToTriggerOn: null
+
+**Relative event (schedule N days after anchor):**
+- triggerType: ["EVENT_START_DATE_CHANGED"], triggerOID: {anchor_event_oid}
+- type: "RUN_ON_SCHEDULE", schedule: "DAILY", time: "00:00:00"
+- criteria: {type: "EVENT_CRITERIA", eventOid: anchor, eventStatuses: ["SCHEDULED","DATA_ENTRY_STARTED","COMPLETED"], offset: N, when: "after", range: 0}
+- action targetEventStatus: "SCHEDULED", eventStatusesToTriggerOn: ["NOT_SCHEDULED"]
+
+**Auto-close (close event after window upper bound):**
+- triggerType: null, triggerOID: null
+- type: "RUN_ON_SCHEDULE", schedule: "DAILY", time: "23:00:00"
+- criteria: {type: "EVENT_CRITERIA", eventOid: target_event, eventStatuses: ["SCHEDULED","DATA_ENTRY_STARTED"], offset: window_upper_days, when: "after", range: -1}
+- action eventStatusesToTriggerOn: ["SCHEDULED","DATA_ENTRY_STARTED"], closeEvent: true
+
+**`criteria` field semantics:**
+- offset: number of days after the reference event's start date
+- range: 0 = exactly on that day; -1 = rolling (any day after offset)
+- eventStatuses: which statuses of the reference event qualify the participant
+
 ## Two Event Action Styles (mutually exclusive — never mix):
 
 **Helper style (preferred for Tier 1):** relativeEventOid + startDateRelativeDays
@@ -72,6 +96,7 @@ Always include idempotency guards: use eventStatusesToTriggerOn: ["NOT_SCHEDULED
 11. Rule event status has invalid value, accepted values are NOT_SCHEDULED, SCHEDULED, DATA_ENTRY_STARTED, COMPLETED, STOPPED, SKIPPED
 12. Rule form status has invalid value, accepted values are NOT_STARTED, INITIAL_DATA_ENTRY, COMPLETED
 13. Rule JSON is invalid (any JSON error not covered above)
+14. (OC-24343) RUN_ON_SCHEDULE rules must have a non-null criteria block with a non-null offset value.
 
 ## Valid eventStatusesToTriggerOn values
 NOT_SCHEDULED, SCHEDULED, DATA_ENTRY_STARTED, COMPLETED, STOPPED, SKIPPED
