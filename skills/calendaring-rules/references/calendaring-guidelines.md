@@ -53,6 +53,41 @@ Every rule has: metadata (name, description), a "when" (triggerType + triggerOID
 - range: 0 = exactly on that day; -1 = rolling (any day after offset)
 - eventStatuses: which statuses of the reference event qualify the participant
 
+## Form Action Pattern (Tier 3a arm visibility)
+
+```json
+{
+  "type": "FORM_ACTION",
+  "ruleResultToTriggerOn": true,
+  "condition": null,
+  "targetEventOid": "SE_SCREENING",
+  "targetFormOid": "F_AE",
+  "requiredExpression": null,
+  "visibleExpression": "${SE_SCREENING}/F_EN/I_EN_ARMCD = 'TRT'",
+  "editableExpression": null,
+  "targetFormStatus": null
+}
+```
+
+triggerType: ["FORM_STATUS_CHANGE"], triggerOID: {armcd_form_oid}
+⚠ Validate visibleExpression against XPath evaluator before deploying — item-value XPath syntax must be confirmed.
+
+## Participant Action Pattern (Tier 3c routing)
+
+```json
+{
+  "type": "PARTICIPANT_ACTION",
+  "ruleResultToTriggerOn": true,
+  "condition": null,
+  "setStudyCalendar": "Treatment Group",
+  "setEpoch": null
+}
+```
+
+triggerType: ["PARTICIPANT_CREATED"], triggerOID: null
+condition (rule-level): "${SE_SCREENING}/F_EN/I_EN_ARMCD = 'TRT'"
+⚠ Validate condition XPath against evaluator before deploying.
+
 ## Two Event Action Styles (mutually exclusive — never mix):
 
 **Helper style (preferred for Tier 1):** relativeEventOid + startDateRelativeDays
