@@ -1303,31 +1303,36 @@ class FormPublisher:
                                             await page.set_input_files(
                                                 'input.js-design-form-input',
                                                 str(xlsx_path))
-                                            # 500ms settle: just enough for the
+                                            # 1500ms settle: enough for the
                                             # browser to begin processing the
-                                            # upload. The DDP listener captures
-                                            # results as they arrive, so a long
-                                            # fixed settle is no longer needed.
-                                            await page.wait_for_timeout(500)
-                                            # (1) Extend the DDP capture window:
-                                            # if an uploadVersion method was
-                                            # seen, keep the listeners attached
-                                            # until its result frame arrives OR
-                                            # ~20s total elapses (2s settle +
-                                            # up to 18s). This captures the
-                                            # error/result frames for the slow
-                                            # failing forms that land after 2s.
-                                            if (_uploadver_ids
-                                                    and not _upload_result_event.is_set()):
-                                                try:
-                                                    await asyncio.wait_for(
-                                                        _upload_result_event.wait(),
-                                                        timeout=18)
-                                                except asyncio.TimeoutError:
-                                                    print(f"[publisher] DDP "
-                                                          f"uploadVersion result not "
-                                                          f"seen within ~20s for "
-                                                          f"{form_name}", flush=True)
+                                            # upload and for most uploadVersion
+                                            # results to arrive. The DDP listener
+                                            # captures results as they arrive;
+                                            # the unconditional extended wait
+                                            # below catches any that land just
+                                            # after this window closes.
+                                            await page.wait_for_timeout(1500)
+                                            # (1) Extend the DDP capture window
+                                            # unconditionally: always wait up to
+                                            # 3s for the uploadVersion result
+                                            # after the settle — even if no
+                                            # uploadVersion method was seen yet —
+                                            # so a result that fires just after
+                                            # the settle is still captured. Only
+                                            # proceed to the radio wait once the
+                                            # 3s lapses without it.
+                                            try:
+                                                await asyncio.wait_for(
+                                                    _upload_result_event.wait(),
+                                                    timeout=3)
+                                                print("[publisher] DDP extended "
+                                                      "wait: uploadVersion "
+                                                      "captured", flush=True)
+                                            except asyncio.TimeoutError:
+                                                print("[publisher] DDP extended "
+                                                      "wait: timed out (3s), "
+                                                      "proceeding to radio wait.",
+                                                      flush=True)
                                             # (1) Detach the DDP frame listeners
                                             # and log a capture summary (keeps a
                                             # "none captured" path when no
