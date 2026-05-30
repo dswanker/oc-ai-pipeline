@@ -2336,6 +2336,28 @@ async def publish_to_test(item_id, uploaded_oids=None):
                           f"(REST API propagation delay)",
                           flush=True)
 
+            # Same trust principle for missing-from-board: getForm rewrites
+            # the card's formOcoid to the form-service OID (e.g. F_SLEEP →
+            # F_SLEEPQUALITY) when registering the form definition, so the
+            # board API now reports the long OID while the spec still has
+            # the short stem. session_uploaded_oids carries whatever OID
+            # uploadVersion actually used, so a prefix match against
+            # F_{short} reliably identifies these renames.
+            if uploaded_oids and _missing_from_board:
+                _trusted_upload = {oid.upper() for oid in uploaded_oids}
+                _before = len(_missing_from_board)
+                _missing_from_board = [
+                    _foid for _foid in _missing_from_board
+                    if not any(_u.startswith(f"F_{_foid}")
+                               for _u in _trusted_upload)
+                ]
+                _suppressed = _before - len(_missing_from_board)
+                if _suppressed:
+                    print(f"[publish-preflight] Suppressed "
+                          f"{_suppressed} missing-from-board report(s) "
+                          f"for OIDs uploaded this session "
+                          f"(form-service OID rewrite)", flush=True)
+
             # Emit per-form log lines for each category.
             for _foid in _missing_from_board:
                 _fname = _expected_oid_to_name.get(_foid, _foid)
