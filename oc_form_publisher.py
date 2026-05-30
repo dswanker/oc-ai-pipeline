@@ -1300,6 +1300,78 @@ class FormPublisher:
                                                     _ws.on("framereceived", _on_frame_recv)
                                                 except Exception:
                                                     pass
+                                            # If this card has no existing version, the form-service may
+                                            # have no definition for it (e.g. the source board card was
+                                            # never uploaded). Call getForm via Meteor DDP before
+                                            # uploadVersion — this is what the OC Designer UI does when
+                                            # creating a new card, and it registers the definition so
+                                            # uploadVersion has something to attach the version to.
+                                            # Without this, uploadVersion silently discards the upload.
+                                            if not existing_version:
+                                                _gf_result = await page.evaluate("""
+                                                    () => new Promise((resolve) => {
+                                                        const board = Boards.findOne(
+                                                            window.location.pathname.split('/')[2]);
+                                                        const token = localStorage.getItem(
+                                                            'jhi_access_token');
+                                                        if (!board || !token) {
+                                                            resolve({ok: false,
+                                                                     err: 'no board or token'});
+                                                            return;
+                                                        }
+                                                        // Find the card currently open in the panel
+                                                        // by reading formOcOidValue input
+                                                        const oidInput = document.querySelector(
+                                                            'input#formOcOidValue');
+                                                        const oid = oidInput
+                                                            ? oidInput.value.trim() : '';
+                                                        // Get the card title from the panel header
+                                                        const titleEl = document.querySelector(
+                                                            '.js-card-title') ||
+                                                            document.querySelector(
+                                                                '.card-detail-title');
+                                                        const title = titleEl
+                                                            ? titleEl.innerText.trim() : '';
+                                                        if (!title) {
+                                                            resolve({ok: false,
+                                                                     err: 'no title found'});
+                                                            return;
+                                                        }
+                                                        Meteor.call(
+                                                            'getForm',
+                                                            board.bucketUuid,
+                                                            title,
+                                                            token,
+                                                            (err, result) => {
+                                                                if (err) {
+                                                                    resolve({ok: false,
+                                                                             err: String(err)});
+                                                                } else if (!result || !result.ocoid) {
+                                                                    resolve({ok: false,
+                                                                             err: 'no ocoid returned'});
+                                                                } else {
+                                                                    resolve({ok: true,
+                                                                             ocoid: result.ocoid,
+                                                                             id: result.id});
+                                                                }
+                                                            }
+                                                        );
+                                                    })
+                                                """)
+                                                if _gf_result.get('ok'):
+                                                    print(
+                                                        f"[publisher] getForm OK for {form_name}: "
+                                                        f"ocoid={_gf_result.get('ocoid')} "
+                                                        f"id={_gf_result.get('id')}",
+                                                        flush=True)
+                                                else:
+                                                    print(
+                                                        f"[publisher] getForm FAILED for "
+                                                        f"{form_name}: "
+                                                        f"{_gf_result.get('err')} — "
+                                                        f"proceeding anyway; uploadVersion "
+                                                        f"may fail",
+                                                        flush=True)
                                             await page.set_input_files(
                                                 'input.js-design-form-input',
                                                 str(xlsx_path))
