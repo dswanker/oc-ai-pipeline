@@ -1131,7 +1131,7 @@ class FormPublisher:
                                         # stored OID); xlsx filenames are
                                         # bare — strip F_ to match the stem.
                                         xlsx_path = xlsx_map.get(
-                                            _strip_form_oid_prefix(oid))
+                                            _strip_form_oid_prefix(pre_oid or oid))
                                         if not xlsx_path:
                                             print(f"[publisher] Skipping "
                                                   f"{form_name} "
@@ -1364,6 +1364,42 @@ class FormPublisher:
                                                         f"ocoid={_gf_result.get('ocoid')} "
                                                         f"id={_gf_result.get('id')}",
                                                         flush=True)
+                                                    # If getForm returned a different OID than
+                                                    # what the card has (common — form-service
+                                                    # derives OID from title, e.g. F_SLEEPQUALITY
+                                                    # for a card with formOcoid F_SLEEP), update
+                                                    # the card's formOcoid in minimongo and update
+                                                    # the local `oid` variable so uploadVersion
+                                                    # uses the correct OID.
+                                                    _gf_ocoid = _gf_result.get('ocoid', '')
+                                                    if _gf_ocoid and _gf_ocoid != oid:
+                                                        print(
+                                                            f"[publisher] getForm OID mismatch "
+                                                            f"for {form_name}: card has {oid!r} "
+                                                            f"but form-service has {_gf_ocoid!r} "
+                                                            f"— updating card and using "
+                                                            f"form-service OID",
+                                                            flush=True)
+                                                        try:
+                                                            await page.evaluate(
+                                                                """(cardId, newOcoid) => {
+                                                                    const c = Cards.findOne(cardId);
+                                                                    if (c) {
+                                                                        Cards.update(cardId, {
+                                                                            $set: {formOcoid: newOcoid}
+                                                                        });
+                                                                    }
+                                                                }""",
+                                                                card_meteor_id,
+                                                                _gf_ocoid,
+                                                            )
+                                                        except Exception as _upd_e:
+                                                            print(
+                                                                f"[publisher] minimongo OID "
+                                                                f"update failed for {form_name}: "
+                                                                f"{_upd_e}",
+                                                                flush=True)
+                                                        oid = _gf_ocoid
                                                 else:
                                                     print(
                                                         f"[publisher] getForm FAILED for "
