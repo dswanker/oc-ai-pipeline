@@ -664,6 +664,12 @@ class FormPublisher:
                     # radio button may not appear on the next card for the
                     # same form within 60 seconds of the first upload.
                     session_uploaded_oids: set = set()
+                    # Track OIDs we've already called getForm for this session.
+                    # getForm registers a form-service definition keyed by title;
+                    # calling it twice for the same OID creates suffixed clones
+                    # (F_SLEEPQUALITY_7732, etc.). One call per OID per session
+                    # is sufficient — clones and later cards reuse the result.
+                    _getform_called_oids: set = set()
                     # Track OIDs confirmed to have a version this session
                     # (either pre-existing OR just uploaded). When a card's
                     # OID is in this set, the publisher takes a FAST PATH:
@@ -1307,7 +1313,9 @@ class FormPublisher:
                                             # creating a new card, and it registers the definition so
                                             # uploadVersion has something to attach the version to.
                                             # Without this, uploadVersion silently discards the upload.
-                                            if not existing_version:
+                                            if (not existing_version
+                                                    and not (_cdiag and _cdiag.get("parentId"))
+                                                    and oid not in _getform_called_oids):
                                                 _gf_result = await page.evaluate("""
                                                     () => new Promise((resolve) => {
                                                         const board = Boards.findOne(
@@ -1364,6 +1372,7 @@ class FormPublisher:
                                                         f"ocoid={_gf_result.get('ocoid')} "
                                                         f"id={_gf_result.get('id')}",
                                                         flush=True)
+                                                    _getform_called_oids.add(oid)
                                                     # If getForm returned a different OID than
                                                     # what the card has (common — form-service
                                                     # derives OID from title, e.g. F_SLEEPQUALITY
