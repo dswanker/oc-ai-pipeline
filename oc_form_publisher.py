@@ -1382,7 +1382,7 @@ class FormPublisher:
                                                             flush=True)
                                                         try:
                                                             await page.evaluate(
-                                                                """(cardId, newOcoid) => {
+                                                                """([cardId, newOcoid]) => {
                                                                     const c = Cards.findOne(cardId);
                                                                     if (c) {
                                                                         Cards.update(cardId, {
@@ -1390,8 +1390,7 @@ class FormPublisher:
                                                                         });
                                                                     }
                                                                 }""",
-                                                                card_meteor_id,
-                                                                _gf_ocoid,
+                                                                [card_meteor_id, _gf_ocoid],
                                                             )
                                                         except Exception as _upd_e:
                                                             print(
