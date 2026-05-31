@@ -2315,34 +2315,107 @@ class FormPublisher:
         return tmpdir, xlsx_paths
 
     async def _authenticate_via_sso(self, page, study_url: str) -> bool:
-        """Navigate to study_url and verify the OC board actually rendered.
+        """Establish a designer session by navigating via the build app.
 
-        Strategy: go directly to the board URL. If the saved
-        storage_state is valid, OC's SSO redirect chain settles silently
-        and the designer paints — exposing AUTH_SUCCESS_SELECTOR (the
-        "Return To My Studies" header link) in the DOM. Two failure
-        modes both cleanly return False:
+        The designer (cust1.design.openclinica.io) redirects immediately
+        to Keycloak when navigated to directly — even with a valid build
+        app session. The only reliable path into the designer is to load
+        the build app's My Studies page and click the "Design" button on
+        the target study card. That redirect chain establishes the OIDC
+        designer session automatically, exactly as a human would do it.
 
-          - Stale session: OC redirects to Keycloak login, the board
-            never paints, the selector never appears.
-          - Wrong study identifier (e.g. raw UUID instead of the
-            board-id+slug form OC expects): OC redirects to the studies
-            list, which also does NOT have AUTH_SUCCESS_SELECTOR.
+        Strategy:
+          1. Navigate to build app My Studies (cust1.build.openclinica.io)
+             using the captured session — this works because the extension
+             captures the build app session.
+          2. Wait for study cards to load (a.btn-design selector appears).
+          3. Find the card matching the study name (extracted from study_url
+             slug, e.g. "crs-135" → "CRS-135"). Fall back to first card
+             (top-left = most recently created) if no match found.
+          4. Click its "Design" button — browser follows the SSO redirect
+             chain and lands in the designer board with a live session.
+          5. Wait for AUTH_SUCCESS_SELECTOR (.js-back-to-sm) to appear —
+             confirms the designer board rendered successfully.
 
-        Returns True if AUTH_SUCCESS_SELECTOR appears within 20s of
-        navigation; False otherwise.
+        Returns True if AUTH_SUCCESS_SELECTOR appears within 30s of
+        clicking Design; False otherwise.
         """
-        await page.goto(study_url, wait_until="networkidle", timeout=30000)
-        # Short settle buffer past networkidle; the 20s wait_for_selector
-        # below is the real readiness gate.
-        await page.wait_for_timeout(1500)
+        from urllib.parse import urlparse
+
+        # Extract subdomain and study name slug from study_url.
+        # study_url is like: https://cust1.design.openclinica.io/b/BOARDID/crs-135
+        parsed = urlparse(study_url)
+        host_parts = parsed.hostname.split(".")  # ['cust1', 'design', 'openclinica', 'io']
+        subdomain = host_parts[0]  # 'cust1'
+        slug_parts = [p for p in parsed.path.split("/") if p]
+        # path is ['b', 'BOARDID', 'crs-135'] — last part is the slug
+        study_slug = slug_parts[-1] if slug_parts else ""
+        # Convert slug to study ID format: 'crs-135' → 'CRS-135'
+        study_name = study_slug.replace("-", "-").upper()
+
+        my_studies_url = f"https://{subdomain}.build.openclinica.io/#/account-study"
+        print(f"[auth-sso] navigating to My Studies via build app: {my_studies_url}",
+              flush=True)
+        print(f"[auth-sso] looking for study card matching: {study_name!r}",
+              flush=True)
+
         try:
-            await page.wait_for_selector(
-                self.AUTH_SUCCESS_SELECTOR, timeout=20000)
-            print(f"oc_form_publisher: authenticated as {self.user_email}",
+            await page.goto(my_studies_url, wait_until="networkidle", timeout=30000)
+            await page.wait_for_timeout(2000)
+
+            # Wait for study cards (Design buttons) to appear
+            await page.wait_for_selector("a.btn-design", timeout=20000)
+            print("[auth-sso] My Studies page loaded — study cards visible",
                   flush=True)
+
+            # Find the Design button for the matching study.
+            # Each card has div.ngx-ellipsis-inner containing the study ID text.
+            # We walk up from each a.btn-design to its card container and check
+            # if any ngx-ellipsis-inner text matches our study name.
+            design_btn = await page.evaluate_handle("""(studyName) => {
+                const btns = Array.from(document.querySelectorAll('a.btn-design'));
+                // Try to find matching study card
+                for (const btn of btns) {
+                    // Walk up to card container (typically 5-6 levels)
+                    let el = btn;
+                    for (let i = 0; i < 8; i++) {
+                        el = el.parentElement;
+                        if (!el) break;
+                        const names = el.querySelectorAll('div.ngx-ellipsis-inner');
+                        for (const n of names) {
+                            if (n.textContent.trim() === studyName) {
+                                return btn;
+                            }
+                        }
+                    }
+                }
+                // Fallback: first Design button (top-left = most recent study)
+                return btns.length > 0 ? btns[0] : null;
+            }""", study_name)
+
+            # Check we got a valid element handle
+            is_null = await page.evaluate("el => el === null", design_btn)
+            if is_null:
+                print("[auth-sso] no Design buttons found on My Studies page",
+                      flush=True)
+                return False
+
+            # Log which study we're clicking into
+            btn_href = await page.evaluate("el => el.href || ''", design_btn)
+            print(f"[auth-sso] clicking Design button: {btn_href}", flush=True)
+
+            # Click Design — this triggers the SSO redirect chain into designer
+            await design_btn.click()
+
+            # Wait for designer board to fully load
+            await page.wait_for_selector(
+                self.AUTH_SUCCESS_SELECTOR, timeout=30000)
+            print(f"oc_form_publisher: authenticated as {self.user_email} "
+                  f"via build app → designer redirect chain", flush=True)
             return True
-        except Exception:
+
+        except Exception as e:
+            print(f"[auth-sso] failed: {e}", flush=True)
             return False
 
 
