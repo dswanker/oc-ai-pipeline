@@ -595,7 +595,14 @@ RULE OC-10 — CHOICES SHEET COMPLETE FOR EVERY REFERENCED LIST
   reference to an undefined list halts the build with the error
   `[row:N] List name not in choices sheet: X`.
   Common boilerplate lists must be present whenever referenced:
-    yn   — `Y/Yes`, `N/No` (the standard YN gate from OC-8)
+    yn      — `Y/Yes`, `N/No` (the standard YN gate from OC-8)
+    saecrit — CDASH SAE seriousness criteria; ALWAYS include in AESAE forms:
+                DEATH      / Death
+                LIFE       / Life-threatening
+                HOSP       / Hospitalization or prolonged hospitalization
+                DISABILITY / Persistent or significant disability/incapacity
+                CONGENITAL / Congenital anomaly or birth defect
+                MEDIMPT    / Medically significant or important medical event
   Study-specific lists (e.g. `dvcat`, `peres`, `sev`, `rel`) must
   be defined alongside the survey rows that reference them, in the
   same form. Choice lists are NOT shared across forms; pyxform reads

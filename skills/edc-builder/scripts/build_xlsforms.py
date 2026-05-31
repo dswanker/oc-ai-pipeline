@@ -711,16 +711,6 @@ def _ensure_referenced_choice_lists(survey, choices):
         {'list_name': 'yn', 'name': 'Y', 'label': 'Yes', 'image': ''},
         {'list_name': 'yn', 'name': 'N', 'label': 'No',  'image': ''},
     ]
-    # CDASH standard SAE seriousness criteria list — auto-injected when
-    # AESAE (or any form) references "saecrit" without defining it.
-    SAECRIT_ROWS = [
-        {'list_name': 'saecrit', 'name': 'DEATH',     'label': 'Death',                                              'image': ''},
-        {'list_name': 'saecrit', 'name': 'LIFE',      'label': 'Life-threatening',                                   'image': ''},
-        {'list_name': 'saecrit', 'name': 'HOSP',      'label': 'Hospitalization / prolonged hospitalization',        'image': ''},
-        {'list_name': 'saecrit', 'name': 'DISABILITY','label': 'Persistent or significant disability/incapacity',    'image': ''},
-        {'list_name': 'saecrit', 'name': 'CONGENITAL','label': 'Congenital anomaly / birth defect',                  'image': ''},
-        {'list_name': 'saecrit', 'name': 'MEDIMPT',   'label': 'Medically significant / important medical event',    'image': ''},
-    ]
 
     referenced = []
     seen_ref = set()
@@ -744,8 +734,6 @@ def _ensure_referenced_choice_lists(survey, choices):
             continue
         if list_name == 'yn':
             augmented.extend(YN_ROWS)
-        elif list_name == 'saecrit':
-            augmented.extend(SAECRIT_ROWS)
         else:
             missing_non_yn.append(list_name)
 
