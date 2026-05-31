@@ -74,6 +74,20 @@ with the RAG/Trainer project.
 **Priority:** Phase 1 is high (catches errors before forms ship to OC).
 Phase 2 deferred until real error data accumulated.
 
+### TODO-edc-builder-choices-validation.md
+**Status:** Not started.
+**Summary:** Add a pre-validate step in `build_xlsforms.py` that scans every
+form's survey sheet for `select_one`/`select_multiple` references and
+cross-checks against the choices sheet. Known boilerplate lists (`yn`,
+`saecrit`, `prepost`, etc.) are auto-injected if missing (soft recovery).
+Unknown study-specific lists hard-fail with a clear message. Eliminates
+build failures caused by Claude intermittently omitting known choices lists,
+without requiring a full re-run to fix. Generalizes the existing `yn`
+auto-inject pattern.
+**Estimated effort:** 2-4 hours.
+**Priority:** Medium. Current workaround (add list to OC-10 in prompts.py)
+works but wastes a full Claude run each time a new list is discovered.
+
 ---
 
 ## Smaller items not yet documented (reminder list)
@@ -92,30 +106,28 @@ These are tracked here pending dedicated docs:
   (commit ffd97b2). Auth + URL fixes also landed. Pending: confirm upload
   succeeds end-to-end on a real pipeline run; set-default-version step is
   best-effort in v1 (goes to warnings, not errors).
-- **Instructions page: show study-specific URL.** auth_manager.py
-  render_instructions_page currently tells the user to sign in at
-  `https://{subdomain}.design.openclinica.io` (generic root). Should show
-  the specific study board URL so the user lands in the right place. Problem:
-  board URL isn't known at auth-gate time (import runs later). Short-term fix:
-  change to `{subdomain}.build.openclinica.io/#/account-study` (My Studies
-  page — always loads, cookies captured there are identical). Longer-term:
-  store board URL after successful import, include in re-auth link.
-- **Trigger column reset on auth pause.** When the pipeline pauses for
-  authentication, single_select5ogcb0g should be reset to "Do not Send To AI
-  Yet" so the user can re-trigger with one click. A fix was attempted (May 2026)
-  but did not take effect — confirm the commit landed in pipeline.py and that
-  the label text matches exactly ("Do not Send To AI Yet", capital S/T/AI/Y).
+- **Instructions page: show study-specific URL.** ✅ DONE (commit b48ceca,
+  May 2026). Now points to {subdomain}.build.openclinica.io/#/account-study.
+- **Trigger column reset on auth pause.** ✅ DONE (commit b48ceca, May 2026).
+  Uses COL["ai_trigger"] + set_status("Do not Send To AI Yet").
 - **Session lifetime and single-session-slot.** OC/Keycloak issues one session
   per user. The headless publisher session and the user's own Chrome session
   compete — a new login invalidates the captured one. Pre-flight check (shipped
   May 2026) detects stale sessions fast. Long-term: ask OC engineering to
   enable service-account or multi-session support so sessions don't compete.
-- **Cleanup after Playwright debugging.** Three items once form upload is
-  confirmed working: (1) remove GET /debug/dom endpoint from main.py, (2)
-  re-enable session-file deletion in oc_form_publisher.py (os.remove block
-  currently commented out with "TEMP: disabled during auth diagnosis"), (3)
-  rotate DEBUG_KEY Railway env var (current value typed in plaintext in chat
-  on 2026-05-22).
+- **Board card accumulation on full runs.** Each full pipeline run calls
+  _import_board which appends to existing board content (CLONE-INTO-EMPTY
+  only works on a truly empty board). After several full runs: 69 → 131 →
+  194 cards. Fast-reruns skip the import so this only affects full runs.
+  Fix: discover the OC designer delete API by inspecting Chrome DevTools
+  Network tab while manually deleting a card/list on the designer board —
+  look for DELETE or PUT /1/lists/{id} or /1/cards/{id} calls. Then add
+  a _clear_board() helper in pipeline.py that runs before _import_board.
+  Investigation is safe to do anytime via the designer UI. Low priority
+  until full runs become frequent (e.g. new customer protocols).
+- **Cleanup after Playwright debugging.** ✅ DONE (commit b48ceca, May 2026).
+  /debug/dom removed, session delete re-enabled, DEBUG_KEY should still be
+  rotated in Railway dashboard (low priority since endpoint is gone).
 - **Pre-existing duplicate "REQUIRED TOP-LEVEL KEYS" sections in prompts.py.**
   Pre-dates current session. Cosmetic cleanup. Low priority.
 - **CRF library XLSX format support.** Pipeline expects PDF on `crf_library`
