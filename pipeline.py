@@ -2794,7 +2794,7 @@ async def _validate_oc_session(subdomain: str, session_path: str) -> bool:
                 context = await browser.new_context(
                     storage_state=session_path)
                 page = await context.new_page()
-                url = f"https://{subdomain}.build.openclinica.io"
+                url = f"https://{subdomain}.design.openclinica.io"
                 await page.goto(url, wait_until="networkidle",
                                 timeout=20000)
                 await page.wait_for_timeout(3000)
