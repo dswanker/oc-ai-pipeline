@@ -1987,6 +1987,16 @@ async def create_oc_study(subdomain, struct_json, is_production=False,
 
             print(f"Uploading XLSForm files to {study_url} via Playwright "
                   f"(SSO as {oc_email})...", flush=True)
+            if item_id:
+                try:
+                    await set_status(item_id, COL["pipeline_status"],
+                                     "Uploading Forms")
+                    await append_log(item_id,
+                        f"Form upload starting — "
+                        f"{len(_allowed_card_ids)} cards / "
+                        f"{len(set(_conflict_oids))} conflicts skipped")
+                except Exception:
+                    pass
             forms_publish = await publish_forms_to_openclinica(
                 study_url=study_url,
                 edc_zip_url=edc_zip_url,
@@ -2004,6 +2014,23 @@ async def create_oc_study(subdomain, struct_json, is_production=False,
                 print(f"  form-upload error: {err}", flush=True)
             for _conf in forms_publish.conflicts[:5]:
                 print(f"  conflict: {_conf}", flush=True)
+            # Log upload result to Monday
+            if item_id:
+                try:
+                    _up = forms_publish.forms_uploaded
+                    _tot = forms_publish.forms_total
+                    _errs = len(forms_publish.errors)
+                    _confs = len(forms_publish.conflicts)
+                    _msg = (f"Form-version upload: {_up}/{_tot} succeeded"
+                            + (f"; {_confs} conflict(s) skipped" if _confs else "")
+                            + (f"; {_errs} error(s)" if _errs else ""))
+                    await append_log(item_id, _msg)
+                    if _errs > 0 and _up == 0:
+                        await append_log(item_id,
+                            f"Form upload FAILED: "
+                            + "; ".join(forms_publish.errors[:3]))
+                except Exception:
+                    pass
 
             # ── Post-publish: update stored upload record ────────────────
             # For each OID the publisher uploaded, OVERWRITE the stored
@@ -2385,7 +2412,9 @@ async def publish_to_test(item_id, uploaded_oids=None):
                 _missing_from_board = [
                     _foid for _foid in _missing_from_board
                     if not any(
-                        _tb == _foid or _tb.startswith(_foid)
+                        _tb == _foid
+                        or _tb.startswith(_foid)
+                        or _foid.startswith(_tb)
                         for _tb in _trusted_bare
                     )
                 ]
