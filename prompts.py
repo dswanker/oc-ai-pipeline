@@ -603,6 +603,10 @@ RULE OC-10 — CHOICES SHEET COMPLETE FOR EVERY REFERENCED LIST
                 DISABILITY / Persistent or significant disability/incapacity
                 CONGENITAL / Congenital anomaly or birth defect
                 MEDIMPT    / Medically significant or important medical event
+    prepost — Pre/post procedure timing; ALWAYS include in NRS forms that
+              capture both pre-treatment and post-treatment pain ratings:
+                pre  / Pre-procedure
+                post / Post-procedure
   Study-specific lists (e.g. `dvcat`, `peres`, `sev`, `rel`) must
   be defined alongside the survey rows that reference them, in the
   same form. Choice lists are NOT shared across forms; pyxform reads

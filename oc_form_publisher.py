@@ -1316,8 +1316,17 @@ class FormPublisher:
                                             if (not existing_version
                                                     and not (_cdiag and _cdiag.get("parentId"))
                                                     and oid not in _getform_called_oids):
+                                                # Pass the OID suffix (e.g. "SLEEP" for F_SLEEP)
+                                                # as the label to getForm instead of the
+                                                # human-readable card title. OC derives its
+                                                # form OID from this label — passing "SLEEP"
+                                                # registers F_SLEEP, matching the pipeline OID.
+                                                # Passing the title "Sleep Quality (NRS + PROMIS 8A)"
+                                                # would instead register F_SLEEPQUALITY, creating
+                                                # a duplicate form with a mismatched OID.
+                                                _oid_label = oid[2:] if oid.startswith('F_') else oid
                                                 _gf_result = await page.evaluate("""
-                                                    () => new Promise((resolve) => {
+                                                    (oidLabel) => new Promise((resolve) => {
                                                         const board = Boards.findOne(
                                                             window.location.pathname.split('/')[2]);
                                                         const token = localStorage.getItem(
@@ -1327,28 +1336,18 @@ class FormPublisher:
                                                                      err: 'no board or token'});
                                                             return;
                                                         }
-                                                        // Find the card currently open in the panel
-                                                        // by reading formOcOidValue input
-                                                        const oidInput = document.querySelector(
-                                                            'input#formOcOidValue');
-                                                        const oid = oidInput
-                                                            ? oidInput.value.trim() : '';
-                                                        // Get the card title from the panel header
-                                                        const titleEl = document.querySelector(
-                                                            '.js-card-title') ||
-                                                            document.querySelector(
-                                                                '.card-detail-title');
-                                                        const title = titleEl
-                                                            ? titleEl.innerText.trim() : '';
-                                                        if (!title) {
+                                                        // Use the OID suffix as the label so OC
+                                                        // registers F_<oidLabel> — matching the
+                                                        // pipeline-generated form OID exactly.
+                                                        if (!oidLabel) {
                                                             resolve({ok: false,
-                                                                     err: 'no title found'});
+                                                                     err: 'no oid label'});
                                                             return;
                                                         }
                                                         Meteor.call(
                                                             'getForm',
                                                             board.bucketUuid,
-                                                            title,
+                                                            oidLabel,
                                                             token,
                                                             (err, result) => {
                                                                 if (err) {
@@ -1365,7 +1364,7 @@ class FormPublisher:
                                                             }
                                                         );
                                                     })
-                                                """)
+                                                """, _oid_label)
                                                 if _gf_result.get('ok'):
                                                     print(
                                                         f"[publisher] getForm OK for {form_name}: "
