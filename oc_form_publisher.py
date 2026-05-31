@@ -1373,6 +1373,11 @@ class FormPublisher:
                                                         f"id={_gf_result.get('id')}",
                                                         flush=True)
                                                     _getform_called_oids.add(oid)
+                                                    # Also register pre_oid so clone cards
+                                                    # (which still carry the short OID) never
+                                                    # trigger a second getForm call.
+                                                    if pre_oid and pre_oid != oid:
+                                                        _getform_called_oids.add(pre_oid)
                                                     # If getForm returned a different OID than
                                                     # what the card has (common — form-service
                                                     # derives OID from title, e.g. F_SLEEPQUALITY
@@ -1758,6 +1763,12 @@ class FormPublisher:
                                             # cards still fires.
                                             session_uploaded_oids.add(
                                                 oid if oid else pre_oid)
+                                            # Also register pre_oid (short OID before getForm
+                                            # rewrite) so clone cards carrying the short OID
+                                            # hit the dedup check and skip re-upload,
+                                            # preventing duplicate versions.
+                                            if pre_oid and pre_oid != oid:
+                                                session_uploaded_oids.add(pre_oid)
                                             print(f"[publisher] Uploaded "
                                                   f"{xlsx_path.name} → "
                                                   f"{form_name} "
@@ -1978,7 +1989,7 @@ class FormPublisher:
                                             const c = Cards.findOne(cid);
                                             if (c && Array.isArray(c.versions)
                                                     && c.versions.length) {
-                                                const v = c.versions[0];
+                                                const v = c.versions[c.versions.length - 1];  // use most-recent version
                                                 const vid = (v && v.ocoid) || null;
                                                 if (vid !== null) out[cid] = vid;
                                             }
