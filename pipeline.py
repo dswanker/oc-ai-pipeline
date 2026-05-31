@@ -2798,6 +2798,34 @@ async def _validate_oc_session(subdomain: str, session_path: str) -> bool:
 
 # ── Main pipeline ──────────────────────────────────────────────────────────────
 
+async def _session_keepalive(session_path: str, subdomain: str, interval_s: int = 60):
+    """Background task: pings OC designer every interval_s seconds using the saved
+    session cookies to prevent Keycloak from expiring the token mid-run.
+    Runs until cancelled. Failure-open: errors are logged but never raised."""
+    import httpx
+    while True:
+        await asyncio.sleep(interval_s)
+        try:
+            cookies = {}
+            try:
+                import json as _json
+                with open(session_path) as _f:
+                    _state = _json.load(_f)
+                for c in _state.get("cookies", []):
+                    cookies[c["name"]] = c["value"]
+            except Exception:
+                pass
+            url = f"https://{subdomain}.design.openclinica.io/api/boards"
+            async with httpx.AsyncClient(timeout=10, follow_redirects=False) as client:
+                await client.get(url, cookies=cookies)
+            print(f"[session-keepalive] ping sent to {subdomain}.design.openclinica.io",
+                  flush=True)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            print(f"[session-keepalive] ping error (non-fatal): {e}", flush=True)
+
+
 async def run_pipeline(item_id):
     try:
         # ── 0. Fetch item from monday.com ─────────────────────────────────────
@@ -3549,6 +3577,15 @@ async def run_pipeline(item_id):
                           flush=True)
 
             print("Step 1: Claude extracting Study Spec JSON...", flush=True)
+            # Start session keepalive — pings OC designer every 60s while Claude
+            # works (7-10 min) so the Keycloak token doesn't expire before upload.
+            _keepalive_task = None
+            _session_file = str(AuthManager().get_session_path(oc_email)) if (
+                create_study and oc_email) else None
+            if _session_file and os.path.exists(_session_file):
+                _keepalive_task = asyncio.create_task(
+                    _session_keepalive(_session_file, oc_subdomain, interval_s=60))
+                print(f"[session-keepalive] started for {oc_subdomain}", flush=True)
             # Handle DOCX-as-text fallback: protocol arrived as text, not PDF
             _docx_text_marker = b"%%DOCX_TEXT%%"
             if protocol_bytes and protocol_bytes.startswith(_docx_text_marker):
@@ -3583,6 +3620,10 @@ async def run_pipeline(item_id):
                 print(f"Study Spec JSON extracted — "
                       f"{len(struct_json.get('forms', []))} forms, "
                       f"keys: {list(struct_json.keys())}", flush=True)
+                if _keepalive_task and not _keepalive_task.done():
+                    _keepalive_task.cancel()
+                    print("[session-keepalive] cancelled after spec extraction",
+                          flush=True)
             except ValueError:
                 struct_json = {"study_meta": {"protocol_number": protocol_num},
                                "forms": [], "review_flags": {}}
