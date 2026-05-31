@@ -1632,8 +1632,31 @@ async def create_oc_study(subdomain, struct_json, is_production=False,
     protocol_num = meta.get("protocol_number", "STUDY")
 
     # ── Step 1: Create or find the study ──────────────────────────────────────
-    existing_uuid = await _check_study_exists(subdomain, token, protocol_num,
-                                               is_production=is_production)
+    # Only reuse an existing study if the Monday UUID column is populated —
+    # a blank UUID column means the operator intentionally reset for a fresh
+    # run (cleanup procedure). Skipping _check_study_exists in that case
+    # prevents reuse of a study created by a previously-killed pipeline run
+    # whose UUID was never written back to Monday before the kill.
+    _monday_uuid = ""
+    if item_id:
+        try:
+            _item_check = await get_item(item_id)
+            _cols_check = {c["id"]: c for c in (_item_check.get("column_values") or [])}
+            _monday_uuid = (_cols_check.get(COL["study_uuid"], {}).get("text") or "").strip()
+        except Exception as _ue:
+            print(f"[study-create] could not read Monday UUID column ({_ue}); "
+                  f"will check OC for existing study", flush=True)
+
+    if _monday_uuid:
+        # Monday has a UUID from a prior run — check OC to confirm it still exists
+        existing_uuid = await _check_study_exists(subdomain, token, protocol_num,
+                                                   is_production=is_production)
+    else:
+        # Monday UUID is blank — operator reset for a fresh run, always create new
+        print("[study-create] Monday UUID column is blank — creating fresh study "
+              "(skipping existence check)", flush=True)
+        existing_uuid = None
+
     if existing_uuid:
         print(f"Study already exists (uuid: {existing_uuid}) — skipping creation.", flush=True)
         study_uuid = existing_uuid
