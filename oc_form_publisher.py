@@ -1960,8 +1960,8 @@ class FormPublisher:
                                   f"batch phase will likely fall "
                                   f"through to URL nav fallback",
                                   flush=True)
-                        print("[publisher] Batch set-default starting...",
-                              flush=True)
+                        print("[publisher] Set-default phase starting "
+                              f"(Meteor.call per card)...", flush=True)
 
                         import time as _bt_time
                         _batch_start_t = _bt_time.time()
@@ -1970,15 +1970,9 @@ class FormPublisher:
                             c for c in minicard_cards if c.get('card_id')
                         ]
                         _eligible_ids = [c['card_id'] for c in _eligible]
-                        print(f"[publisher] Batch set-default: looking up "
-                              f"versions for {len(_eligible_ids)} cards in "
-                              f"minimongo", flush=True)
 
-                        # Step 1: bulk version lookup (30s ceiling via
-                        # asyncio.wait_for — page.evaluate itself has
-                        # no native timeout argument, so without this
-                        # wrapper a hung JS execution would block the
-                        # whole publish indefinitely).
+                        # Step 1: look up each card's most-recent version
+                        # from minimongo (fast JS lookup).
                         try:
                             _versions_by_card = await asyncio.wait_for(
                                 page.evaluate(
@@ -1989,7 +1983,7 @@ class FormPublisher:
                                             const c = Cards.findOne(cid);
                                             if (c && Array.isArray(c.versions)
                                                     && c.versions.length) {
-                                                const v = c.versions[c.versions.length - 1];  // use most-recent version
+                                                const v = c.versions[c.versions.length - 1];
                                                 const vid = (v && v.ocoid) || null;
                                                 if (vid !== null) out[cid] = vid;
                                             }
@@ -2001,16 +1995,9 @@ class FormPublisher:
                                 ),
                                 timeout=30,
                             )
-                        except asyncio.TimeoutError:
-                            print(f"[publisher] Batch version lookup "
-                                  f"timed out after 30s — falling back "
-                                  f"to per-card URL nav for everything",
-                                  flush=True)
-                            _versions_by_card = {}
                         except Exception as _be:
-                            print(f"[publisher] Batch version lookup "
-                                  f"failed ({_be}) — falling back to "
-                                  f"per-card URL nav for everything",
+                            print(f"[publisher] Version lookup failed "
+                                  f"({_be}) — no cards will be defaulted",
                                   flush=True)
                             _versions_by_card = {}
 
@@ -2019,261 +2006,115 @@ class FormPublisher:
                             for cid, vid in _versions_by_card.items()
                             if vid is not None
                         }
-                        # Cards with NO version in minimongo are skipped
-                        # entirely: they're absent from _card_version_map (so
-                        # no Meteor write) AND excluded from the URL-nav
-                        # fallback below. There is no version object to set as
-                        # default, and the per-card Playwright nav has been
-                        # observed to CORRUPT manually-created cards — leaving
-                        # them unable to accept future uploads. Leave them
-                        # untouched.
                         _no_version_ids = [
                             cid for cid in _eligible_ids
                             if cid not in _card_version_map
                         ]
-                        if _no_version_ids:
-                            print(f"[publisher] {len(_no_version_ids)} "
-                                  f"cards have no version — skipping fallback, "
-                                  f"left untouched", flush=True)
 
-                        # Step 2: batch Cards.update (same 30s ceiling
-                        # as Step 1 — single hung Cards.update inside
-                        # the JS loop would otherwise block forever).
-                        _batch_results: dict = {}
-                        if _card_version_map:
-                            try:
-                                _batch_results = await asyncio.wait_for(
-                                    page.evaluate(
-                                        """
-                                        async (cardVersionMap) => {
-                                            const results = {};
-                                            for (const [cardId, versionId] of Object.entries(cardVersionMap)) {
-                                                try {
-                                                    Cards.update(cardId,
-                                                        {$set: {selected_form_version_ocoid: versionId}});
-                                                    results[cardId] = {ok: true};
-                                                } catch(e) {
-                                                    results[cardId] = {ok: false,
-                                                                        error: e.toString()};
-                                                }
-                                            }
-                                            return results;
-                                        }
-                                        """,
-                                        _card_version_map,
-                                    ),
-                                    timeout=30,
-                                )
-                            except asyncio.TimeoutError:
-                                print(f"[publisher] Batch Cards.update "
-                                      f"timed out after 30s — every "
-                                      f"card will retry via URL nav",
-                                      flush=True)
-                                _batch_results = {
-                                    cid: {"ok": False,
-                                          "error": "batch update timed out"}
-                                    for cid in _card_version_map
-                                }
-                            except Exception as _ue:
-                                print(f"[publisher] Batch Cards.update "
-                                      f"failed ({_ue}) — every card "
-                                      f"will retry via URL nav",
-                                      flush=True)
-                                _batch_results = {
-                                    cid: {"ok": False, "error": str(_ue)}
-                                    for cid in _card_version_map
-                                }
-
-                        _batch_ok = [
-                            cid for cid, r in _batch_results.items()
-                            if r.get("ok")
-                        ]
-                        _batch_failed = [
-                            cid for cid, r in _batch_results.items()
-                            if not r.get("ok")
-                        ]
-                        _elapsed = _bt_time.time() - _batch_start_t
-                        print(f"[publisher] FAST(JS) batch set-default: "
-                              f"{len(_batch_ok)} cards updated in "
-                              f"~{_elapsed:.1f}s "
-                              f"({len(_batch_failed)} batch failures, "
-                              f"{len(_no_version_ids)} no-version)",
-                              flush=True)
-                        result.forms_uploaded += len(_batch_ok)
-
-                        # Step 3: URL-nav fallback for batch failures ONLY —
-                        # i.e. cards that HAD a version but whose Meteor
-                        # Cards.update didn't take. No-version cards are
-                        # NOT included: there's nothing to set as default,
-                        # so they're skipped entirely (see above). This is
-                        # the ONLY place per-card URL nav happens; on a
-                        # clean run the list is empty and we skip it.
-                        _fallback_ids = _batch_failed
-                        if _fallback_ids:
-                            print(f"[publisher] URL-nav fallback for "
-                                  f"{len(_fallback_ids)} cards",
-                                  flush=True)
+                        # Log which cards have no version for diagnostics.
                         _card_by_id = {
                             c['card_id']: c for c in minicard_cards
                             if c.get('card_id')
                         }
-                        for _cid in _fallback_ids:
-                            _card = _card_by_id.get(_cid)
-                            if _card is None:
-                                continue
-                            _fn = _card.get('name', _cid)
-                            _href = _card.get('href', '')
+                        if _no_version_ids:
+                            _no_ver_names = [
+                                (_card_by_id.get(cid, {}).get('form_name')
+                                 or _card_by_id.get(cid, {}).get('form_oid')
+                                 or cid)
+                                for cid in _no_version_ids
+                            ]
+                            print(f"[publisher] {len(_no_version_ids)} cards "
+                                  f"have no version (upload failed or not yet "
+                                  f"propagated): {_no_ver_names}", flush=True)
 
-                            # Inner helper: full nav-and-set-default
-                            # sequence as one unit, so we can retry it
-                            # cleanly after an SSO recovery without
-                            # duplicating the body. Raises on any
-                            # failure; caller decides whether to retry.
-                            #
-                            # Minicard CLICK navigation only — never
-                            # page.goto a card URL. Direct URL nav
-                            # triggers the Keycloak callback redirect
-                            # chain (oidc/auth → /callback → board),
-                            # and Meteor's client router doesn't re-
-                            # mount the form panel after the bounce,
-                            # so no radio ever renders regardless of
-                            # state='attached'. The board is already
-                            # loaded at this point (batch prep
-                            # navigated to it), so clicking the
-                            # minicard opens the panel inline the
-                            # same way the upload loop does.
-                            async def _nav_and_set_default():
-                                # Whole body wrapped in try/finally so
-                                # the panel ALWAYS closes after each
-                                # card whether the radio click
-                                # succeeded, the wait_for_selector
-                                # timed out, or any earlier step raised.
-                                # Without the finally, a failure mid-
-                                # sequence left the panel open and its
-                                # board overlay then blocked the next
-                                # card's minicard click — the very
-                                # cascade we hit in b1364b4.
-                                try:
-                                    # Dismiss any panel left open from
-                                    # the previous card up front too —
-                                    # the finally below guarantees
-                                    # cleanup on the happy path, but
-                                    # the first iteration after the
-                                    # upload loop may still inherit a
-                                    # stale panel.
-                                    try:
-                                        await page.keyboard.press('Escape')
-                                        await page.wait_for_timeout(500)
-                                    except Exception:
-                                        pass
-                                    _mcl = (
-                                        page.locator(
-                                            f'.js-minicard[href="{_href}"]')
-                                        if _href
-                                        else page.locator(
-                                            '.js-minicard').filter(
-                                            has_text=_fn).first
-                                    )
-                                    await _mcl.scroll_into_view_if_needed(
-                                        timeout=5000)
-                                    await _mcl.click()
-                                    # Brief settle so the panel has a
-                                    # chance to mount before we probe
-                                    # for the radio. Matches the
-                                    # timing the upload loop uses
-                                    # after a minicard click.
-                                    await page.wait_for_timeout(3000)
-                                    # state='attached' (not the default
-                                    # 'visible'): for SLEEP/SF12/EX/AE/
-                                    # AESAE/CM/DV the radio renders
-                                    # hidden in the DOM until
-                                    # minimongo processes the version
-                                    # — visible state would time out
-                                    # the full 15s. Same fix as the
-                                    # upload-loop wait in commit
-                                    # 6e7b213; needed here too
-                                    # because this fallback is what
-                                    # makes publish-to-test succeed
-                                    # for those forms when the batch
-                                    # missed them.
-                                    await page.wait_for_selector(
-                                        'input[type=radio]',
-                                        state='attached',
-                                        timeout=15_000)
-                                    await page.locator(
-                                        'input[type=radio]'
-                                    ).first.click(timeout=5000)
-                                finally:
-                                    # Always close the panel before the
-                                    # next card's _nav_and_set_default
-                                    # call. Best-effort — no panel open
-                                    # means Escape is a no-op.
-                                    try:
-                                        await page.keyboard.press('Escape')
-                                        await page.wait_for_timeout(300)
-                                    except Exception:
-                                        pass
+                        # Step 2: For each card WITH a version, call
+                        # Meteor.call('/cards/update', ...) via page.evaluate.
+                        # This sends a REAL DDP method over the WebSocket to
+                        # the OC server — unlike Cards.update() which is
+                        # client-side minimongo only and never reaches the
+                        # server. The ! warning in the designer UI clears
+                        # when this call succeeds server-side.
+                        _meteor_ok = []
+                        _meteor_failed = []
+                        for _cid, _vid in _card_version_map.items():
+                            _crd = _card_by_id.get(_cid, {})
+                            _fn = (_crd.get('form_name')
+                                   or _crd.get('form_oid') or _cid)
+                            try:
+                                _mresult = await asyncio.wait_for(
+                                    page.evaluate(
+                                        """
+                                        ([cardId, versionOcoid]) => new Promise((resolve) => {
+                                            Meteor.call(
+                                                '/cards/update',
+                                                {_id: cardId},
+                                                {$set: {
+                                                    selected_form_version_ocoid: versionOcoid,
+                                                    dateLastActivity: {$date: Date.now()}
+                                                }},
+                                                {},
+                                                (err, result) => {
+                                                    if (err) {
+                                                        resolve({ok: false,
+                                                                 err: String(err)});
+                                                    } else {
+                                                        resolve({ok: true,
+                                                                 result: result});
+                                                    }
+                                                }
+                                            );
+                                        })
+                                        """,
+                                        [_cid, _vid],
+                                    ),
+                                    timeout=10,
+                                )
+                                if _mresult.get('ok'):
+                                    _meteor_ok.append(_cid)
+                                else:
+                                    _err_msg = _mresult.get('err', 'unknown')
+                                    _meteor_failed.append((_cid, _fn, _err_msg))
+                                    print(f"[publisher] set-default "
+                                          f"Meteor.call failed for {_fn}: "
+                                          f"{_err_msg}", flush=True)
+                            except asyncio.TimeoutError:
+                                _meteor_failed.append((_cid, _fn, 'timeout'))
+                                print(f"[publisher] set-default "
+                                      f"Meteor.call timed out for {_fn}",
+                                      flush=True)
+                            except Exception as _me:
+                                _meteor_failed.append((_cid, _fn, str(_me)))
+                                print(f"[publisher] set-default "
+                                      f"Meteor.call error for {_fn}: {_me}",
+                                      flush=True)
 
+                        _elapsed = _bt_time.time() - _batch_start_t
+                        print(f"[publisher] set-default complete: "
+                              f"{len(_meteor_ok)}/{len(_card_version_map)} "
+                              f"succeeded in ~{_elapsed:.1f}s "
+                              f"({len(_meteor_failed)} failed, "
+                              f"{len(_no_version_ids)} no-version)",
+                              flush=True)
+                        result.forms_uploaded += len(_meteor_ok)
+
+                        # Step 3: URL-nav fallback for Meteor.call failures.
+                        # Cards that had a version but the DDP call failed
+                        # get a direct radio-button click via page navigation.
+                        if _meteor_failed:
+                            print(f"[publisher] URL-nav fallback for "
+                                  f"{len(_meteor_failed)} failed cards",
+                                  flush=True)
+                        for _cid, _fn, _err in _meteor_failed:
                             try:
                                 await _nav_and_set_default()
-                                result.forms_uploaded += 1
-                                print(f"[publisher] Fallback set-default "
-                                      f"OK: {_fn}", flush=True)
                             except Exception as _rfe:
-                                # SSO can expire during the long-running
-                                # batch-fallback phase (the URL navs
-                                # trigger Keycloak redirects). If the
-                                # current URL shows we're in the auth
-                                # flow, run the existing recovery (silent
-                                # navigate-back → re-auth prompt → cookie
-                                # reload) and retry the nav once. Same
-                                # mechanism the upload loop uses; we just
-                                # invoke it from this phase too.
-                                _url_now = page.url or ''
-                                _sso_lost = (
-                                    await _session_expired(page)
-                                    or '/callback' in _url_now
+                                result.warnings.append(
+                                    f"Fallback set-default failed "
+                                    f"for {_fn}: {_rfe}"
                                 )
-                                _retried_ok = False
-                                if _sso_lost:
-                                    print(f"[publisher] Fallback SSO "
-                                          f"expiry for {_fn} "
-                                          f"(url={_url_now!r}) — "
-                                          f"recovering + retrying once",
-                                          flush=True)
-                                    try:
-                                        recovered = await self._recover_session(
-                                            page, context, study_url,
-                                            _fn,
-                                        )
-                                    except Exception as _rec_e:
-                                        recovered = False
-                                        print(f"[publisher] Fallback "
-                                              f"SSO recovery crashed: "
-                                              f"{type(_rec_e).__name__}"
-                                              f": {_rec_e}", flush=True)
-                                    if recovered:
-                                        try:
-                                            await _nav_and_set_default()
-                                            result.forms_uploaded += 1
-                                            print(f"[publisher] Fallback "
-                                                  f"set-default OK "
-                                                  f"after SSO recovery: "
-                                                  f"{_fn}", flush=True)
-                                            _retried_ok = True
-                                        except Exception as _rfe2:
-                                            # Retry failed — fall
-                                            # through to the failure
-                                            # path with the new error.
-                                            _rfe = _rfe2
-                                if not _retried_ok:
-                                    result.warnings.append(
-                                        f"Fallback set-default failed "
-                                        f"for {_fn}: {_rfe}"
-                                    )
-                                    print(f"[publisher] Fallback set-"
-                                          f"default FAILED: {_fn}: "
-                                          f"{_rfe}", flush=True)
+                                print(f"[publisher] Fallback set-"
+                                      f"default FAILED: {_fn}: "
+                                      f"{_rfe}", flush=True)
 
                 finally:
                     await browser.close()
