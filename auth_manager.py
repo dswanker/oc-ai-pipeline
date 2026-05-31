@@ -149,7 +149,7 @@ def render_instructions_page(token: str, email: str) -> str:
     subdomain = os.environ.get("OC_DEFAULT_SUBDOMAIN", "cust1")
     # Build app's My Studies list — extension captures session here,
     # not the designer host. Hash route is required by the SPA.
-    designer_url = f"https://{subdomain}.build.openclinica.io/#/account-study"
+    designer_url = f"https://{subdomain}.design.openclinica.io"
     email_esc = _esc(email)
     token_esc = _esc(token)
     designer_esc = _esc(designer_url)
