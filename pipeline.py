@@ -2341,15 +2341,30 @@ async def publish_to_test(item_id, uploaded_oids=None):
             # F_SLEEPQUALITY) when registering the form definition, so the
             # board API now reports the long OID while the spec still has
             # the short stem. session_uploaded_oids carries whatever OID
-            # uploadVersion actually used, so a prefix match against
-            # F_{short} reliably identifies these renames.
+            # uploadVersion actually used (long form like F_ADVERSEEVENT).
+            #
+            # The old approach used startswith(f"F_{short}") which FAILS
+            # when the long OID doesn't start with F_+short (e.g. short=AE,
+            # long=F_ADVERSEEVENT — "F_ADVERSEEVENT".startswith("F_AE")
+            # is False). Fix: strip F_ prefix from BOTH the trusted long OID
+            # and the expected short OID, then compare bare stems. A bare
+            # trusted stem that equals the bare short OID is a match, AND
+            # a bare trusted stem that STARTS WITH the bare short OID covers
+            # partial-rewrite cases (e.g. SLEEP → SLEEPQUALITY).
             if uploaded_oids and _missing_from_board:
                 _trusted_upload = {oid.upper() for oid in uploaded_oids}
+                # Build bare trusted stems (strip leading F_ once)
+                _trusted_bare = {
+                    (_u[2:] if _u.startswith("F_") else _u)
+                    for _u in _trusted_upload
+                }
                 _before = len(_missing_from_board)
                 _missing_from_board = [
                     _foid for _foid in _missing_from_board
-                    if not any(_u.startswith(f"F_{_foid}")
-                               for _u in _trusted_upload)
+                    if not any(
+                        _tb == _foid or _tb.startswith(_foid)
+                        for _tb in _trusted_bare
+                    )
                 ]
                 _suppressed = _before - len(_missing_from_board)
                 if _suppressed:

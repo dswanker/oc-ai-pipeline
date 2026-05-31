@@ -964,6 +964,68 @@ def build_single_xlsform(form_data, output_path, build_log):
     if _repeat_group_name:
         survey = _wrap_repeat_group(survey, _repeat_group_name, form_id, build_log)
     survey = _normalize_survey_rows(survey)
+
+    # ── Auto-assign bind::oc:itemgroup for repeating forms ────────────────
+    # OC's form-service requires EVERY data field in a repeating form to
+    # have a bind::oc:itemgroup value. Claude sometimes omits this on
+    # auto-generated sequence ID fields (AEID, CMID, DVID, SAEID, etc.),
+    # producing "XLS_group_name_missing_for_this_item" on upload.
+    #
+    # Strategy: if this form is repeating (repeat_group_name or the form
+    # metadata says so) AND any data row is missing bind::oc:itemgroup,
+    # infer the group name from: (a) repeat_group_name if set, or (b)
+    # the most-common non-empty itemgroup value in other rows, or (c)
+    # the form_id as a last resort. Block-type rows (begin/end) are skipped.
+    _BLOCK_TYPES = {
+        'begin group', 'begin repeat', 'end group', 'end repeat',
+        'begin_group', 'begin_repeat', 'end_group', 'end_repeat',
+        'note',
+    }
+    _form_is_repeating = bool(
+        _repeat_group_name
+        or str(form_data.get('repeating', '') or '').strip().lower()
+        not in ('no', 'false', '0', '')
+    )
+    if _form_is_repeating:
+        # Find most-common non-empty itemgroup value already in survey
+        from collections import Counter as _Counter
+        _ig_counts = _Counter(
+            str(r.get('bind::oc:itemgroup') or '').strip()
+            for r in survey
+            if str(r.get('type', '') or '').strip().lower()
+            not in _BLOCK_TYPES
+            and str(r.get('bind::oc:itemgroup') or '').strip()
+        )
+        _fallback_ig = (
+            _ig_counts.most_common(1)[0][0] if _ig_counts
+            else (_repeat_group_name or form_id)
+        )
+        _n_filled = 0
+        _patched_survey = []
+        for _row in survey:
+            _rtype = str(_row.get('type', '') or '').strip().lower()
+            if (
+                _rtype not in _BLOCK_TYPES
+                and not str(_row.get('bind::oc:itemgroup') or '').strip()
+            ):
+                _row = dict(_row)
+                _row['bind::oc:itemgroup'] = _fallback_ig
+                _n_filled += 1
+            _patched_survey.append(_row)
+        survey = _patched_survey
+        if _n_filled:
+            print(
+                f"[edc-builder] {form_id}: auto-filled bind::oc:itemgroup="
+                f"{_fallback_ig!r} on {_n_filled} row(s) missing it "
+                f"(repeating form — OC requires itemgroup on all data fields)",
+                flush=True,
+            )
+            if build_log is not None:
+                build_log.setdefault('itemgroup_patches', []).append({
+                    'form_id': form_id,
+                    'itemgroup': _fallback_ig,
+                    'rows_filled': _n_filled,
+                })
     # OC rejects XLSForm `time`/`dateTime`; represent them as text+constraint.
     survey = _coerce_unsupported_types(survey, form_id, build_log)
 
