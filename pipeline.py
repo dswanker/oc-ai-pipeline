@@ -2786,28 +2786,14 @@ async def _validate_oc_session(subdomain: str, session_path: str) -> bool:
     glitch), return True so the pipeline proceeds and falls back to its
     pre-existing "fail at publish time" behavior.
     """
-    try:
-        from playwright.async_api import async_playwright
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
-            try:
-                context = await browser.new_context(
-                    storage_state=session_path)
-                page = await context.new_page()
-                url = f"https://{subdomain}.design.openclinica.io"
-                await page.goto(url, wait_until="networkidle",
-                                timeout=20000)
-                await page.wait_for_timeout(3000)
-                is_valid = "auth.openclinica.io" not in page.url
-                print(f"[session-preflight] final_url={page.url} "
-                      f"→ valid={is_valid}", flush=True)
-                return is_valid
-            finally:
-                await browser.close()
-    except Exception as e:
-        print(f"[session-preflight] check failed ({e}); "
-              f"assuming session is valid", flush=True)
-        return True
+    # Session validation via Playwright is unreliable — the designer
+    # root redirects to Keycloak even on valid sessions depending on
+    # the subdomain/path. We validate implicitly at publish time instead.
+    # If the session is truly stale, the publisher will fail and the
+    # pipeline will surface the error then.
+    print(f"[session-preflight] skipping Playwright check — "
+          f"trusting saved session for {subdomain}", flush=True)
+    return True
 
 
 # ── Main pipeline ──────────────────────────────────────────────────────────────
