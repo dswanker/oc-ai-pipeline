@@ -2424,24 +2424,91 @@ class FormPublisher:
                               flush=True)
                         result.forms_uploaded += len(_meteor_ok)
 
-                        # Step 3: URL-nav fallback for Meteor.call failures.
-                        # Cards that had a version but the DDP call failed
-                        # get a direct radio-button click via page navigation.
+                        # Step 3: DDP retry fallback for Meteor.call failures.
+                        # Cards that had a version but whose /cards/update DDP
+                        # call failed (typically a transient OC server 500,
+                        # seen for forms that took the panel-reset detour
+                        # during upload) get the SAME /cards/update call
+                        # re-issued after a short server-settle delay. We
+                        # mirror the primary Step-2 call exactly (same
+                        # version ocoid + Layer-1 formOcoid repoint) rather
+                        # than any UI navigation — the DDP method is the
+                        # mechanism that actually clears the missing-version
+                        # state, and a retry is the right response to a 500.
+                        _still_failed = []
                         if _meteor_failed:
-                            print(f"[publisher] URL-nav fallback for "
+                            print(f"[publisher] DDP retry fallback for "
                                   f"{len(_meteor_failed)} failed cards",
                                   flush=True)
-                        for _cid, _fn, _err in _meteor_failed:
-                            try:
-                                await _nav_and_set_default()
-                            except Exception as _rfe:
-                                result.warnings.append(
-                                    f"Fallback set-default failed "
-                                    f"for {_fn}: {_rfe}"
-                                )
-                                print(f"[publisher] Fallback set-"
-                                      f"default FAILED: {_fn}: "
-                                      f"{_rfe}", flush=True)
+                            for _cid, _fn, _err in _meteor_failed:
+                                _vid = _card_version_map.get(_cid)
+                                if not _vid:
+                                    _still_failed.append((_cid, _fn))
+                                    print(f"[publisher] Fallback set-"
+                                          f"default SKIPPED (no version) "
+                                          f"for {_fn}", flush=True)
+                                    continue
+                                _target_oid = _card_target_oid.get(_cid, "")
+                                _ok = False
+                                for _attempt in (1, 2):
+                                    # Let OC's server settle before retrying
+                                    # a 500 (longer on the second attempt).
+                                    await asyncio.sleep(3 * _attempt)
+                                    try:
+                                        _r = await asyncio.wait_for(
+                                            page.evaluate(
+                                                """
+                                                ([cardId, versionOcoid, formOcoid]) => new Promise((resolve) => {
+                                                    const setDoc = {
+                                                        selected_form_version_ocoid: versionOcoid,
+                                                        dateLastActivity: {$date: Date.now()}
+                                                    };
+                                                    if (formOcoid) { setDoc.formOcoid = formOcoid; }
+                                                    Meteor.call(
+                                                        '/cards/update',
+                                                        {_id: cardId},
+                                                        {$set: setDoc},
+                                                        {},
+                                                        (err, result) => {
+                                                            if (err) {
+                                                                resolve({ok: false,
+                                                                         err: String(err)});
+                                                            } else {
+                                                                resolve({ok: true,
+                                                                         result: result});
+                                                            }
+                                                        }
+                                                    );
+                                                })
+                                                """,
+                                                [_cid, _vid, _target_oid],
+                                            ),
+                                            timeout=10,
+                                        )
+                                        if _r.get('ok'):
+                                            _ok = True
+                                            _meteor_ok.append(_cid)
+                                            result.forms_uploaded += 1
+                                            print(f"[publisher] Fallback set-"
+                                                  f"default OK for {_fn} "
+                                                  f"(attempt {_attempt})",
+                                                  flush=True)
+                                            break
+                                        _err = _r.get('err', 'unknown')
+                                    except Exception as _rfe:
+                                        _err = str(_rfe)
+                                    print(f"[publisher] Fallback set-default "
+                                          f"attempt {_attempt} failed for "
+                                          f"{_fn}: {_err}", flush=True)
+                                if not _ok:
+                                    _still_failed.append((_cid, _fn))
+                                    result.warnings.append(
+                                        f"Fallback set-default failed "
+                                        f"for {_fn}: {_err}"
+                                    )
+                                    print(f"[publisher] Fallback set-"
+                                          f"default FAILED after retries: "
+                                          f"{_fn}: {_err}", flush=True)
 
                 finally:
                     await browser.close()
