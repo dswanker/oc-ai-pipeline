@@ -1380,6 +1380,25 @@ class FormPublisher:
                                                               f"result for {form_name}: "
                                                               f"{json.dumps(m.get('error'), default=str)[:1200]}",
                                                               flush=True)
+                                                        # TODO(item-type-conflict): On a FAST RERUN into an
+                                                        # existing study (new form version uploaded on top of
+                                                        # an existing one), OC can reject this uploadVersion
+                                                        # with an item-type-conflict error. OC's rule (per
+                                                        # product team): once an item appears on 2+ form
+                                                        # versions, its type cannot be changed — Study Runner
+                                                        # requires a single type per item across all versions.
+                                                        # You can only overwrite v1's item type if NO other
+                                                        # version has that item. If AI regenerates a form and
+                                                        # an item's type drifts (e.g. Time -> Text), the new
+                                                        # version upload fails here. Confirmed hit in practice
+                                                        # on the EX form (Time->Text change) — required
+                                                        # creating a brand-new study to get past it.
+                                                        # When we build handling: detect this specific error
+                                                        # signature, surface it to the human with the offending
+                                                        # form + item, and decide the resolution (overwrite v1
+                                                        # only if single-version, else rename item / new study).
+                                                        # Do NOT auto-resolve blindly — it's a data-integrity
+                                                        # decision. For now we just log the raw DDP error above.
                                                         if _ours:
                                                             _ddp_log["failed"] = True
                                                     elif _mid in _ddp_methods:
