@@ -721,8 +721,16 @@ class FormPublisher:
                         _bucket_uuid = _page_info.get('bucketUuid') or ''
                         _page_token = _page_info.get('token') or ''
                         if _bucket_uuid and _page_token:
+                            # Extract subdomain from study_url — 'subdomain'
+                            # var is defined in the outer publish_all_forms
+                            # function but is not in scope inside this async
+                            # playwright block, so derive it here directly.
+                            _subdomain_for_bucket = (
+                                urlparse(study_url).hostname.split('.')[0]
+                            )
                             _forms_url = (
-                                f"https://{subdomain}.build.openclinica.io"
+                                f"https://{_subdomain_for_bucket}"
+                                f".build.openclinica.io"
                                 f"/form-service/api/buckets"
                                 f"/{_bucket_uuid}/forms"
                             )
