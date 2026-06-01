@@ -2590,6 +2590,76 @@ class FormPublisher:
 
 # ── Module-level convenience wrapper ───────────────────────────────────────
 
+async def probe_sso_session(subdomain: str, session_path: str,
+                            headless: bool = True) -> bool:
+    """Authoritative SSO session preflight — runs the SAME check the
+    publisher does, headless and up front.
+
+    The publisher authenticates by loading the build app's My Studies
+    page (/#/account-study) and waiting for study cards (a.btn-design).
+    A dead Keycloak session redirects to auth.openclinica.io instead, so
+    the selector never appears. REST proxies (design cookie, Keycloak
+    userinfo) disagree with this real check — the cookie can 200 while
+    the SSO session is dead (false-valid), and userinfo 401s even on a
+    live session because the studymanager token isn't client-attached
+    there (false-stale). Replaying the publisher's own navigation is the
+    only check guaranteed to agree with the publisher.
+
+    Returns:
+      True  -> study cards visible (session live) OR an ambiguous/
+               transient failure (fail-OPEN, so we never block a legit
+               run; the publisher remains the backstop).
+      False -> redirected to Keycloak login (session genuinely stale) ->
+               caller deletes the session file and re-requests auth.
+    """
+    from playwright.async_api import async_playwright
+
+    my_studies_url = (f"https://{subdomain}.build.openclinica.io"
+                      f"/#/account-study")
+    try:
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=headless)
+            try:
+                context = await browser.new_context(
+                    storage_state=session_path)
+                page = await context.new_page()
+                await page.goto(my_studies_url,
+                                wait_until="networkidle", timeout=30000)
+                await page.wait_for_timeout(2000)
+                # Live session: study cards render.
+                try:
+                    await page.wait_for_selector("a.btn-design",
+                                                 timeout=20000)
+                    print(f"[session-preflight] SSO session live for "
+                          f"{subdomain} (study cards visible)", flush=True)
+                    return True
+                except Exception:
+                    # No cards. If we were bounced to Keycloak, the
+                    # session is genuinely stale -> re-auth.
+                    if await _session_expired(page):
+                        print(f"[session-preflight] SSO session STALE "
+                              f"for {subdomain} (redirected to Keycloak "
+                              f"login) — will re-request auth", flush=True)
+                        return False
+                    # Cards missing but not on the auth page: ambiguous
+                    # (slow render, no studies, transient). Fail open so
+                    # we don't force needless re-auth; the publisher is
+                    # the backstop.
+                    print(f"[session-preflight] inconclusive for "
+                          f"{subdomain} (no study cards, not on auth "
+                          f"page) — proceeding (fail-open)", flush=True)
+                    return True
+            finally:
+                try:
+                    await browser.close()
+                except Exception:
+                    pass
+    except Exception as e:
+        print(f"[session-preflight] probe error for {subdomain}: {e} "
+              f"— proceeding (fail-open)", flush=True)
+        return True
+
+
 async def publish_forms_to_openclinica(
     study_url: str,
     edc_zip_url: str,

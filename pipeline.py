@@ -2775,128 +2775,32 @@ def _backfill_migration_fields(spec):
 # ── Session pre-flight (validates a saved Playwright session in ~15s) ──────────
 
 async def _validate_oc_session(subdomain: str, session_path: str) -> bool:
-    """Quick REST check: is the saved OC session still valid?
+    """Authoritative SSO session preflight.
 
-    Hits the same designer API endpoint the keepalive uses, with the
-    saved cookies and follow_redirects=False. A live session returns
-    200; an expired one redirects to Keycloak (3xx) or returns 401/403.
-    Runs in ~1-2s, vs. ~12 min of chains-then-fail-at-publish.
+    Delegates to oc_form_publisher.probe_sso_session, which replays the
+    EXACT check the publisher performs: load the build app's My Studies
+    page headless with the saved storage_state and look for study cards
+    (a.btn-design); a dead Keycloak session redirects to the login page
+    instead. This is the only check guaranteed to agree with the
+    publisher.
 
-    Decision rule:
-      - 200                  -> valid, return True
-      - 3xx / 401 / 403      -> stale (auth signal), return False
-      - anything else / error -> failure-OPEN: log and return True so a
-                                 transient network / 5xx blip doesn't
-                                 block a legit run (falls back to the
-                                 pre-existing fail-at-publish behavior).
+    Why not a cheap REST proxy: the .design /api/boards cookie can return
+    200 while the SSO session is already dead (false-valid — burned a
+    9-min build then failed at publish), and the Keycloak userinfo
+    endpoint 401s even on a live session because the studymanager token
+    isn't client-attached there (false-stale — would force needless
+    re-auth every run). Both were verified wrong against a live session.
 
-    Only an explicit 200 means "proceed because valid"; only an explicit
-    auth signal means "stop". Everything else fails open by design so we
-    never block a real run on an ambiguous response — but we also never
-    treat an auth failure as "probably fine".
+    Returns True (valid or ambiguous/fail-open) or False (genuinely
+    stale -> caller deletes the session and re-requests auth).
     """
-    import httpx
-    import json as _json
     try:
-        cookies = {}
-        with open(session_path) as _f:
-            _state = _json.load(_f)
-        for c in _state.get("cookies", []):
-            cookies[c["name"]] = c["value"]
-
-        # ── PRIMARY signal: SSO access-token expiry ────────────────────
-        # The Playwright publisher authenticates via Keycloak SSO against
-        # the .build app and depends on the SSO JWT saved in
-        # storage_state localStorage (jhi-authenticationtoken) — NOT on
-        # the .design cookies the
-        # /api/boards check below uses. These two credentials expire
-        # independently: the design cookie can still return 200 while the
-        # SSO token is already dead, which makes the publisher's SSO step
-        # time out AFTER the ~9-min build phase ("auth-success selector
-        # not found"). To catch that up front we decode the token's JWT
-        # `exp` claim and treat a missing/expired/soon-to-expire token as
-        # stale. The margin must exceed the build phase so the token can't
-        # expire mid-run between this check and the publish step.
-        import base64 as _b64
-        import time as _time
-        _SSO_MARGIN_S = 20 * 60   # token must be valid >=20 min from now
-        # OC stores the SSO JWT in storage_state localStorage under
-        # `jhi-authenticationtoken` (Keycloak access token, ~24h life),
-        # with `jhi-idtoken` as a same-expiry fallback. NB the stored
-        # value is JSON-quoted (a literal leading/trailing "), so strip
-        # quotes before splitting the JWT on ".".
-        _TOKEN_KEYS = ("jhi-authenticationtoken", "jhi-idtoken")
-        _token = ""
-        for _origin in _state.get("origins", []):
-            if "build.openclinica" in (_origin.get("origin") or ""):
-                for _ls in _origin.get("localStorage", []):
-                    if _ls.get("name") in _TOKEN_KEYS and not _token:
-                        _token = _ls.get("value") or ""
-            if _token:
-                break
-        if not _token:
-            # Fall back to scanning every origin (origin host naming may
-            # vary) before giving up.
-            for _origin in _state.get("origins", []):
-                for _ls in _origin.get("localStorage", []):
-                    if _ls.get("name") in _TOKEN_KEYS and not _token:
-                        _token = _ls.get("value") or ""
-                if _token:
-                    break
-        # Strip surrounding whitespace and JSON quotes.
-        _token = _token.strip().strip('"')
-        if not _token:
-            print(f"[session-preflight] no SSO token "
-                  f"(jhi-authenticationtoken/jhi-idtoken) in saved "
-                  f"session for {subdomain} — treating as STALE "
-                  f"(will re-request auth)", flush=True)
-            return False
-        try:
-            _parts = _token.split(".")
-            if len(_parts) >= 2:
-                _pad = _parts[1] + "=" * (-len(_parts[1]) % 4)
-                _claims = _json.loads(_b64.urlsafe_b64decode(_pad))
-                _exp = int(_claims.get("exp", 0))
-                _now = int(_time.time())
-                _secs_left = _exp - _now
-                if _secs_left <= _SSO_MARGIN_S:
-                    print(f"[session-preflight] SSO token for {subdomain} "
-                          f"expires in {_secs_left}s (< {_SSO_MARGIN_S}s "
-                          f"margin) — treating as STALE", flush=True)
-                    return False
-                print(f"[session-preflight] SSO token for {subdomain} "
-                      f"valid for ~{_secs_left // 60} more min", flush=True)
-            else:
-                print(f"[session-preflight] SSO token for "
-                      f"{subdomain} is not a decodable JWT — falling back "
-                      f"to cookie check", flush=True)
-        except Exception as _je:
-            print(f"[session-preflight] could not decode SSO token exp "
-                  f"for {subdomain} ({_je}) — falling back to cookie "
-                  f"check", flush=True)
-
-        # ── SECONDARY signal: design-app cookie check ──────────────────
-        url = f"https://{subdomain}.design.openclinica.io/api/boards"
-        async with httpx.AsyncClient(
-                timeout=10, follow_redirects=False) as client:
-            r = await client.get(url, cookies=cookies)
-        if r.status_code == 200:
-            print(f"[session-preflight] session valid for {subdomain} "
-                  f"(200)", flush=True)
-            return True
-        if r.status_code in (301, 302, 303, 307, 308, 401, 403):
-            print(f"[session-preflight] session STALE for {subdomain} "
-                  f"(status={r.status_code}) — will re-request auth",
-                  flush=True)
-            return False
-        print(f"[session-preflight] inconclusive check for {subdomain} "
-              f"(status={r.status_code}) — proceeding (fail-open)",
-              flush=True)
+        from oc_form_publisher import probe_sso_session
+    except Exception as _ie:
+        print(f"[session-preflight] could not import probe "
+              f"({_ie}) — proceeding (fail-open)", flush=True)
         return True
-    except Exception as e:
-        print(f"[session-preflight] check error for {subdomain}: {e} "
-              f"— proceeding (fail-open)", flush=True)
-        return True
+    return await probe_sso_session(subdomain, session_path, headless=True)
 
 
 # ── Main pipeline ──────────────────────────────────────────────────────────────
