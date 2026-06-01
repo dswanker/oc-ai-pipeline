@@ -2775,32 +2775,25 @@ def _backfill_migration_fields(spec):
 # ── Session pre-flight (validates a saved Playwright session in ~15s) ──────────
 
 async def _validate_oc_session(subdomain: str, session_path: str) -> bool:
-    """Authoritative SSO session preflight.
+    """SSO session preflight — temporarily disabled (always returns True).
 
-    Delegates to oc_form_publisher.probe_sso_session, which replays the
-    EXACT check the publisher performs: load the build app's My Studies
-    page headless with the saved storage_state and look for study cards
-    (a.btn-design); a dead Keycloak session redirects to the login page
-    instead. This is the only check guaranteed to agree with the
-    publisher.
+    Previous approaches failed: the .design cookie check was false-valid;
+    the Keycloak userinfo check was false-stale; the Playwright probe
+    correctly detects a dead session but also rejects freshly-captured
+    sessions on Railway because the headless browser can't replay a
+    storage_state captured on a different machine/IP through OC's SSO.
 
-    Why not a cheap REST proxy: the .design /api/boards cookie can return
-    200 while the SSO session is already dead (false-valid — burned a
-    9-min build then failed at publish), and the Keycloak userinfo
-    endpoint 401s even on a live session because the studymanager token
-    isn't client-attached there (false-stale — would force needless
-    re-auth every run). Both were verified wrong against a live session.
+    The publisher's own _authenticate_via_sso already handles a dead
+    session correctly (deletes the stale file, errors out). The missing
+    piece is re-prompting the user for auth when the publisher fails —
+    that fix belongs in the publisher's failure path, not here.
 
-    Returns True (valid or ambiguous/fail-open) or False (genuinely
-    stale -> caller deletes the session and re-requests auth).
+    TODO: implement re-auth prompt in publisher's SSO failure handler,
+    then re-enable a meaningful preflight check.
     """
-    try:
-        from oc_form_publisher import probe_sso_session
-    except Exception as _ie:
-        print(f"[session-preflight] could not import probe "
-              f"({_ie}) — proceeding (fail-open)", flush=True)
-        return True
-    return await probe_sso_session(subdomain, session_path, headless=True)
+    print(f"[session-preflight] check skipped (fail-open) — "
+          f"publisher will validate SSO directly", flush=True)
+    return True
 
 
 # ── Main pipeline ──────────────────────────────────────────────────────────────
