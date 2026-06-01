@@ -2775,25 +2775,55 @@ def _backfill_migration_fields(spec):
 # ── Session pre-flight (validates a saved Playwright session in ~15s) ──────────
 
 async def _validate_oc_session(subdomain: str, session_path: str) -> bool:
-    """Quick Playwright check: is the saved OC session still valid?
+    """Quick REST check: is the saved OC session still valid?
 
-    Navigates to the build-app root with the saved storage_state. If
-    SSO is still valid, the URL stays on {subdomain}.build.openclinica.io;
-    if stale, OC redirects to auth.openclinica.io (Keycloak). Total
-    runtime is ~10–15s, vs. ~8 min for chains-then-fail-at-publish.
+    Hits the same designer API endpoint the keepalive uses, with the
+    saved cookies and follow_redirects=False. A live session returns
+    200; an expired one redirects to Keycloak (3xx) or returns 401/403.
+    Runs in ~1-2s, vs. ~12 min of chains-then-fail-at-publish.
 
-    Failure-open: if Playwright itself errors (install issue, network
-    glitch), return True so the pipeline proceeds and falls back to its
-    pre-existing "fail at publish time" behavior.
+    Decision rule:
+      - 200                  -> valid, return True
+      - 3xx / 401 / 403      -> stale (auth signal), return False
+      - anything else / error -> failure-OPEN: log and return True so a
+                                 transient network / 5xx blip doesn't
+                                 block a legit run (falls back to the
+                                 pre-existing fail-at-publish behavior).
+
+    Only an explicit 200 means "proceed because valid"; only an explicit
+    auth signal means "stop". Everything else fails open by design so we
+    never block a real run on an ambiguous response — but we also never
+    treat an auth failure as "probably fine".
     """
-    # Session validation via Playwright is unreliable — the designer
-    # root redirects to Keycloak even on valid sessions depending on
-    # the subdomain/path. We validate implicitly at publish time instead.
-    # If the session is truly stale, the publisher will fail and the
-    # pipeline will surface the error then.
-    print(f"[session-preflight] skipping Playwright check — "
-          f"trusting saved session for {subdomain}", flush=True)
-    return True
+    import httpx
+    import json as _json
+    try:
+        cookies = {}
+        with open(session_path) as _f:
+            _state = _json.load(_f)
+        for c in _state.get("cookies", []):
+            cookies[c["name"]] = c["value"]
+        url = f"https://{subdomain}.design.openclinica.io/api/boards"
+        async with httpx.AsyncClient(
+                timeout=10, follow_redirects=False) as client:
+            r = await client.get(url, cookies=cookies)
+        if r.status_code == 200:
+            print(f"[session-preflight] session valid for {subdomain} "
+                  f"(200)", flush=True)
+            return True
+        if r.status_code in (301, 302, 303, 307, 308, 401, 403):
+            print(f"[session-preflight] session STALE for {subdomain} "
+                  f"(status={r.status_code}) — will re-request auth",
+                  flush=True)
+            return False
+        print(f"[session-preflight] inconclusive check for {subdomain} "
+              f"(status={r.status_code}) — proceeding (fail-open)",
+              flush=True)
+        return True
+    except Exception as e:
+        print(f"[session-preflight] check error for {subdomain}: {e} "
+              f"— proceeding (fail-open)", flush=True)
+        return True
 
 
 # ── Main pipeline ──────────────────────────────────────────────────────────────
@@ -4307,6 +4337,30 @@ async def run_pipeline(item_id):
                 await asyncio.gather(
                     set_status(item_id, COL["pipeline_status"], final_status),
                     append_log(item_id, final_log),
+                )
+            elif (forms_publish_holder[0]
+                  and isinstance(forms_publish_holder[0], dict)
+                  and forms_publish_holder[0].get("errors")
+                  and forms_publish_holder[0].get("forms_uploaded", 0) == 0
+                  and forms_publish_holder[0].get("forms_total", 0) > 0):
+                # Form upload was attempted but EVERY form failed (e.g.
+                # the SSO session died mid-run). The build chains
+                # "succeeded" but the study is not usable — do NOT report
+                # "Build Complete", which falsely implies success. Mark
+                # Failed so the row reflects the real outcome.
+                _fp = forms_publish_holder[0]
+                final_status = STATUS["failed"]
+                print(f"[pipeline] Form upload failed "
+                      f"({_fp.get('forms_uploaded')}/"
+                      f"{_fp.get('forms_total')} uploaded, "
+                      f"{len(_fp.get('errors') or [])} error(s)) — "
+                      f"setting Failed, not Build Complete", flush=True)
+                await asyncio.gather(
+                    set_status(item_id, COL["pipeline_status"],
+                               final_status),
+                    append_log(item_id,
+                        "Pipeline FAILED: form upload to OpenClinica did "
+                        "not succeed (0 forms uploaded). See logs above."),
                 )
             elif publish_checked:
                 # Chains succeeded but publish-to-test is queued.
