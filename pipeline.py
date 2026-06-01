@@ -2807,19 +2807,80 @@ async def _session_keepalive(session_path: str, subdomain: str, interval_s: int 
         await asyncio.sleep(interval_s)
         try:
             cookies = {}
+            _iss = ""
             try:
                 import json as _json
+                import base64 as _b64
                 with open(session_path) as _f:
                     _state = _json.load(_f)
                 for c in _state.get("cookies", []):
                     cookies[c["name"]] = c["value"]
+                # Pull the SSO token's issuer (realm base) so we can hit the
+                # right Keycloak silent-auth endpoint. Token lives in
+                # storage_state localStorage under jhi-authenticationtoken
+                # (JSON-quoted). Decode its `iss` claim.
+                _tok = ""
+                for _o in _state.get("origins", []):
+                    for _ls in _o.get("localStorage", []):
+                        if _ls.get("name") in ("jhi-authenticationtoken",
+                                               "jhi-idtoken") and not _tok:
+                            _tok = (_ls.get("value") or "").strip().strip('"')
+                if _tok and _tok.count(".") >= 2:
+                    _pl = _tok.split(".")[1]
+                    _pl += "=" * (-len(_pl) % 4)
+                    _claims = _json.loads(_b64.urlsafe_b64decode(_pl))
+                    _iss = (_claims.get("iss") or "").rstrip("/")
             except Exception:
                 pass
+
+            # Ping 1 — design app. Keeps the .design cookie warm (used by the
+            # REST preflight / board reads). Does NOT touch Keycloak.
             url = f"https://{subdomain}.design.openclinica.io/api/boards"
             async with httpx.AsyncClient(timeout=10, follow_redirects=False) as client:
                 await client.get(url, cookies=cookies)
             print(f"[session-keepalive] ping sent to {subdomain}.design.openclinica.io",
                   flush=True)
+
+            # Ping 2 — Keycloak silent-auth (prompt=none). THIS is what keeps
+            # the SSO session alive: the Playwright publisher renews via
+            # implicit-flow silent re-auth, which depends on the Keycloak SSO
+            # session cookie. That session has a short idle timeout (~20 min)
+            # independent of the 24h token exp; the ~9-min build was idling it
+            # out, so the publisher landed on the Keycloak login page. Hitting
+            # /auth?prompt=none with the saved cookies resets the idle timer.
+            # We follow redirects and log the landing so the run log SHOWS
+            # whether the session is alive (lands on signin-callback) or dead
+            # (lands on the login page) — self-validating, not blind.
+            if _iss:
+                try:
+                    import time as _t
+                    _sa = (f"{_iss}/protocol/openid-connect/auth"
+                           f"?client_id=studymanager"
+                           f"&redirect_uri=https://{subdomain}.build.openclinica.io"
+                           f"/signin-callback.html"
+                           f"&response_type=id_token%20token"
+                           f"&scope=openid%20profile"
+                           f"&prompt=none"
+                           f"&state=ka{int(_t.time())}"
+                           f"&nonce=ka{int(_t.time())}")
+                    async with httpx.AsyncClient(
+                            timeout=10, follow_redirects=True) as _kc:
+                        _r = await _kc.get(_sa, cookies=cookies)
+                    _final = str(_r.url)
+                    if "signin-callback" in _final or "access_token" in _final:
+                        _state_word = "ALIVE (renewed)"
+                    elif "openid-connect/auth" in _final or "login" in _final.lower():
+                        _state_word = "DEAD (would need re-auth)"
+                    else:
+                        _state_word = f"unknown (landed {_final[:80]})"
+                    print(f"[session-keepalive] keycloak silent-auth: "
+                          f"{_state_word} status={_r.status_code}", flush=True)
+                except Exception as _kce:
+                    print(f"[session-keepalive] keycloak ping error "
+                          f"(non-fatal): {_kce}", flush=True)
+            else:
+                print("[session-keepalive] keycloak ping skipped — no token "
+                      "issuer found in session", flush=True)
         except asyncio.CancelledError:
             raise
         except Exception as e:
