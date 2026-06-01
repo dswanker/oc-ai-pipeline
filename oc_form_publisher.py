@@ -50,6 +50,7 @@ import asyncio
 import io
 import json
 import os
+import re
 import shutil
 import tempfile
 import zipfile
@@ -677,6 +678,20 @@ class FormPublisher:
                     # of the full open-check-upload cycle (~25s). Knowing
                     # the OID upfront comes from cardOidMap built above.
                     confirmed_versioned_oids: set = set()
+                    # LAYER 1 FIX — sibling-card OID propagation.
+                    # A form may sit on N visit cards. The publisher
+                    # uploads its version ONCE (to the OC-suffixed OID,
+                    # e.g. F_DOV_4137) and rewrites only the FIRST card's
+                    # formOcoid. The other N-1 cards keep the bare OID
+                    # (F_DOV), which has no version -> publish fails with
+                    # "No form version defined for Form X". This map lets
+                    # the batch phase repoint EVERY sibling card to the
+                    # real uploaded OID + version, mirroring the manual
+                    # "reuse the same form on every visit" behavior.
+                    # Key = base form code (uppercase, no F_ prefix, no
+                    # _NNNN suffix, e.g. "DOV"). Value = dict with the
+                    # final form OID and its version ocoid.
+                    _uploaded_form_by_base: dict = {}
                     # Track OIDs that have had their per-session FAST(JS)
                     # propagation poll completed. Just-uploaded forms
                     # (OID in session_uploaded_oids) need the Meteor
@@ -1413,7 +1428,28 @@ class FormPublisher:
                                                                     and isinstance(_res.get("container"), dict)
                                                                     and _res["container"].get("id")):
                                                                 _ddp_log["version_confirmed"] = True
-                                                    # The uploadVersion result
+                                                            # LAYER 1 — capture the form OID and
+                                                            # its newest version ocoid from the
+                                                            # uploadVersion result so the batch
+                                                            # phase can repoint every sibling card.
+                                                            if isinstance(_res, dict) and isinstance(
+                                                                    _res.get("form"), dict):
+                                                                _rf = _res["form"]
+                                                                _r_ocoid = _rf.get("ocoid") or ""
+                                                                _r_versions = (_rf.get("versions")
+                                                                               if isinstance(
+                                                                                   _rf.get("versions"),
+                                                                                   list) else [])
+                                                                _r_ver_ocoid = ""
+                                                                if _r_versions:
+                                                                    _r_ver_ocoid = (
+                                                                        _r_versions[-1].get("ocoid")
+                                                                        or "")
+                                                                if _r_ocoid:
+                                                                    _ddp_log["form_ocoid"] = _r_ocoid
+                                                                if _r_ver_ocoid:
+                                                                    _ddp_log["version_ocoid"] = (
+                                                                        _r_ver_ocoid)
                                                     # (success OR error) ends
                                                     # the capture wait below.
                                                     if _ours:
@@ -1974,7 +2010,30 @@ class FormPublisher:
                                                   f"{form_name} "
                                                   f"(OID={oid})",
                                                   flush=True)
-                                    # Mark this OID as confirmed
+                                            # LAYER 1 — record the final form OID +
+                                            # version ocoid keyed by base form code so
+                                            # the batch phase can repoint every sibling
+                                            # card of this form (not just the first).
+                                            # Prefer the OID/version captured from the
+                                            # uploadVersion DDP result; fall back to the
+                                            # local `oid` when the result didn't carry it.
+                                            _final_oid = (_ddp_log.get("form_ocoid")
+                                                          or oid or pre_oid or "")
+                                            _final_ver = _ddp_log.get("version_ocoid") or ""
+                                            if _final_oid:
+                                                _base = _final_oid
+                                                if _base.upper().startswith("F_"):
+                                                    _base = _base[2:]
+                                                _base = re.sub(r"_\d+$", "", _base).upper()
+                                                if _base:
+                                                    _uploaded_form_by_base[_base] = {
+                                                        "oid": _final_oid,
+                                                        "version_ocoid": _final_ver,
+                                                    }
+                                                    print(f"[publisher] sibling-map: "
+                                                          f"{_base} -> oid={_final_oid} "
+                                                          f"ver={_final_ver or '(none)'}",
+                                                          flush=True)
                                     # versioned so subsequent cards for
                                     # the same form take the FAST PATH.
                                     # Same pre_oid fallback as above.
@@ -2227,6 +2286,47 @@ class FormPublisher:
                             for cid, vid in _versions_by_card.items()
                             if vid is not None
                         }
+
+                        # ── LAYER 1: sibling-card propagation ──────────
+                        # A form sitting on N cards only has its version on
+                        # the ONE card the upload loop processed. The other
+                        # N-1 sibling cards still point at the bare OID and
+                        # have no version of their own, so they're absent
+                        # from _card_version_map above and would be left
+                        # stranded -> publish fails ("No form version
+                        # defined"). Here we fill them in from
+                        # _uploaded_form_by_base: for every eligible card
+                        # whose base form code was uploaded this session,
+                        # target the uploaded form's OID + version. The
+                        # Step-2 Meteor.call (below) sets BOTH formOcoid and
+                        # selected_form_version_ocoid so each sibling is
+                        # repointed at the form that actually has the
+                        # version — mirroring the manual "reuse the same
+                        # form on every visit" behavior.
+                        _card_target_oid = {}   # cid -> formOcoid to set
+                        if _uploaded_form_by_base:
+                            for _c in _eligible:
+                                _cid = _c['card_id']
+                                _coid = (_c.get('form_oid') or '')
+                                _cbase = _coid
+                                if _cbase.upper().startswith('F_'):
+                                    _cbase = _cbase[2:]
+                                _cbase = re.sub(r'_\d+$', '', _cbase).upper()
+                                _hit = _uploaded_form_by_base.get(_cbase)
+                                if not _hit:
+                                    continue
+                                _hit_oid = _hit.get('oid') or ''
+                                _hit_ver = _hit.get('version_ocoid') or ''
+                                # Repoint formOcoid whenever the card's OID
+                                # differs from the uploaded one (the suffix
+                                # case: card F_DOV vs uploaded F_DOV_4137).
+                                if _hit_oid and _hit_oid != _coid:
+                                    _card_target_oid[_cid] = _hit_oid
+                                # Ensure the card gets the uploaded version,
+                                # whether or not it had one of its own.
+                                if _hit_ver:
+                                    _card_version_map[_cid] = _hit_ver
+
                         _no_version_ids = [
                             cid for cid in _eligible_ids
                             if cid not in _card_version_map
@@ -2262,17 +2362,23 @@ class FormPublisher:
                             _fn = (_crd.get('form_name')
                                    or _crd.get('form_oid') or _cid)
                             try:
+                                _target_oid = _card_target_oid.get(_cid, "")
                                 _mresult = await asyncio.wait_for(
                                     page.evaluate(
                                         """
-                                        ([cardId, versionOcoid]) => new Promise((resolve) => {
+                                        ([cardId, versionOcoid, formOcoid]) => new Promise((resolve) => {
+                                            const setDoc = {
+                                                selected_form_version_ocoid: versionOcoid,
+                                                dateLastActivity: {$date: Date.now()}
+                                            };
+                                            // LAYER 1: repoint sibling cards that
+                                            // still carry the bare OID to the form
+                                            // that actually holds the version.
+                                            if (formOcoid) { setDoc.formOcoid = formOcoid; }
                                             Meteor.call(
                                                 '/cards/update',
                                                 {_id: cardId},
-                                                {$set: {
-                                                    selected_form_version_ocoid: versionOcoid,
-                                                    dateLastActivity: {$date: Date.now()}
-                                                }},
+                                                {$set: setDoc},
                                                 {},
                                                 (err, result) => {
                                                     if (err) {
@@ -2286,7 +2392,7 @@ class FormPublisher:
                                             );
                                         })
                                         """,
-                                        [_cid, _vid],
+                                        [_cid, _vid, _target_oid],
                                     ),
                                     timeout=10,
                                 )
