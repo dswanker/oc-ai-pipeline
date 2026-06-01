@@ -476,11 +476,59 @@ are extraction-time fields that do not flow into the timepoint CSV. Note:
 `arm` and `visit_number` DO appear in the timepoint CSV rows.
 
 ### 1c: Compile the Scheduling Block
-From the per-event timing data extracted in 1a, emit a top-level `scheduling`
-array in the JSON output — one entry per event OID, in the same order as the
-timepoint CSV. This is the machine-readable timing specification that
-downstream calendaring automation consumes. Every event must have an entry;
-use `null` for any field the protocol does not specify.
+
+**REQUIRED OUTPUT — do not skip.** Every protocol analysis run must emit a top-level `scheduling` array. This is not optional. If timing data is ambiguous or unavailable for a visit, emit the entry with `null` fields rather than omitting it. Downstream calendaring automation cannot function without this array.
+
+From the per-event timing data extracted in 1a, emit a top-level `scheduling` array in the JSON output — one entry per event OID, in the same order as the timepoint CSV. Every event must have an entry; use `null` for any field the protocol does not specify.
+
+**Example for a typical study with a baseline and two follow-up visits:**
+
+```json
+"scheduling": [
+  {
+    "event_oid": "SE_SCREENING",
+    "anchor_event_oid": null,
+    "offset_target_days": 0,
+    "window_lower_days": null,
+    "window_upper_days": null,
+    "repeating": false,
+    "arm": "BOTH",
+    "conditional_trigger": null
+  },
+  {
+    "event_oid": "SE_DAY_30",
+    "anchor_event_oid": "SE_SCREENING",
+    "offset_target_days": 30,
+    "window_lower_days": -3,
+    "window_upper_days": 3,
+    "repeating": false,
+    "arm": "BOTH",
+    "conditional_trigger": null
+  },
+  {
+    "event_oid": "SE_DAY_60",
+    "anchor_event_oid": "SE_SCREENING",
+    "offset_target_days": 60,
+    "window_lower_days": -7,
+    "window_upper_days": 7,
+    "repeating": false,
+    "arm": "BOTH",
+    "conditional_trigger": null
+  },
+  {
+    "event_oid": "SE_UNSCHEDULED",
+    "anchor_event_oid": null,
+    "offset_target_days": null,
+    "window_lower_days": null,
+    "window_upper_days": null,
+    "repeating": true,
+    "arm": "BOTH",
+    "conditional_trigger": "Triggered on AE or safety concern"
+  }
+]
+```
+
+Rules: SE_SCREENING has `anchor_event_oid: null` (it is the index event). SE_DAY_30 anchors to SE_SCREENING at +30 days. SE_UNSCHEDULED has null timing fields because it is event-triggered, not calendar-scheduled.
 
 ### 1d: Determine Per-Arm Event Splits and Compile Study Calendars
 
@@ -503,6 +551,12 @@ use `null` for any field the protocol does not specify.
 ```
 
 Note: shared events (arm: BOTH) appear in both arms' `event_oids` lists. SE_CTL* events appear only in the CTRL list.
+
+**Step 1 self-check before proceeding to Step 2:**
+- [ ] `timepoint_csv.rows` — one row per event OID ✓
+- [ ] `scheduling` array — one entry per event OID, same count as timepoint_csv.rows ✓
+- [ ] Every scheduling entry has `event_oid`, `anchor_event_oid` (null for the index event only), and `arm` ✓
+- [ ] `scheduling` array is present in the JSON even if all timing fields are null ✓
 
 ---
 
@@ -972,6 +1026,7 @@ directly by the `edc-builder` skill.
   },
   "scheduling": [
     {
+      "REQUIRED": "One entry per event OID — same count as timepoint_csv.rows. Never omit this array.",
       "event_oid": "SE_BASELINE",
       "anchor_event_oid": null,
       "offset_target_days": 0,
