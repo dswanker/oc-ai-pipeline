@@ -2248,7 +2248,7 @@ async def _publish_study_version(
         )
 
 
-async def publish_to_test(item_id, uploaded_oids=None):
+async def publish_to_test(item_id, uploaded_oids=None, no_xlsx_oids=None):
     """Entry point invoked by main.py's safe_run_publish background task.
 
     See the section comment above for the full flow. This function never
@@ -2384,6 +2384,25 @@ async def publish_to_test(item_id, uploaded_oids=None):
                           f"{_suppressed} missing-version report(s) "
                           f"for OIDs uploaded this session "
                           f"(REST API propagation delay)",
+                          flush=True)
+
+            # Suppress no-xlsx forms: board cards for forms with no
+            # XLSForm in the EDC zip will never have versions — they are
+            # placeholder cards (e.g. F_LWD, F_PHQ, F_DIS). Excluding
+            # them from the missing-version check lets publish proceed.
+            if no_xlsx_oids:
+                _no_xlsx = {oid.upper() for oid in no_xlsx_oids}
+                _before = len(_missing_versions)
+                _missing_versions = [
+                    (fn, foid) for fn, foid in _missing_versions
+                    if (foid or "").upper() not in _no_xlsx
+                ]
+                _suppressed_nx = _before - len(_missing_versions)
+                if _suppressed_nx:
+                    print(f"[publish-preflight] Suppressed "
+                          f"{_suppressed_nx} missing-version report(s) "
+                          f"for forms with no XLSForm in EDC zip "
+                          f"({', '.join(sorted(_no_xlsx))})",
                           flush=True)
 
             # Trust just-uploaded OIDs for missing-from-board check:
@@ -4386,12 +4405,20 @@ async def run_pipeline(item_id):
                         set(_fp.get("uploaded_oids") or [])
                         if isinstance(_fp, dict) else None
                     )
+                    _no_xlsx_oids = (
+                        set(_fp.get("no_xlsx_oids") or [])
+                        if isinstance(_fp, dict) else None
+                    )
                     print(f"[auto-publish] Publish to Test checkbox is "
                           f"checked — starting publish "
                           f"(trusting {len(_uploaded_oids or [])} "
-                          f"just-uploaded OIDs)", flush=True)
+                          f"just-uploaded OIDs, "
+                          f"excluding {len(_no_xlsx_oids or [])} "
+                          f"no-xlsx OIDs)", flush=True)
                     await publish_to_test(
-                        item_id, uploaded_oids=_uploaded_oids)
+                        item_id,
+                        uploaded_oids=_uploaded_oids,
+                        no_xlsx_oids=_no_xlsx_oids)
 
                     # publish_to_test never raises — it writes its
                     # outcome to COL["published_status"]. Read that
