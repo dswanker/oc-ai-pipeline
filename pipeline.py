@@ -693,6 +693,94 @@ def run_dvs_xlsx(struct_json, forms_json):
         build_dvs(dvs_data, xlsx_path)
         return open(xlsx_path, "rb").read()
 
+def _extract_scheduling_block(struct_json):
+    """Second-pass targeted extraction of the scheduling block.
+
+    Called when protocol-analysis produces a struct_json without a scheduling
+    array. Uses the already-extracted timepoint_csv rows as the sole input —
+    no protocol PDF needed. Much cheaper and more reliable than including
+    scheduling in the main protocol-analysis call.
+
+    Returns struct_json with scheduling populated (mutates in place and returns).
+    Fails silently — calendaring falls back gracefully if this doesn't fire.
+    """
+    import anthropic as _anthropic
+
+    existing = struct_json.get("scheduling")
+    if existing:
+        print("[scheduling-pass] scheduling block already present — skipping second pass", flush=True)
+        return struct_json
+
+    tpt_rows = struct_json.get("timepoint_csv", {}).get("rows", [])
+    if not tpt_rows:
+        print("[scheduling-pass] no timepoint rows — cannot extract scheduling", flush=True)
+        return struct_json
+
+    protocol_number = struct_json.get("study_meta", {}).get("protocol_number", "STUDY")
+    event_list = [
+        {
+            "event_oid":       r.get("event", ""),
+            "timepoint_label": r.get("timepoint", ""),
+            "arm":             r.get("arm", "BOTH"),
+        }
+        for r in tpt_rows if r.get("event")
+    ]
+
+    prompt = f"""You are extracting scheduling data for a clinical trial study.
+
+Study: {protocol_number}
+
+These events were already extracted from the protocol Schedule of Events:
+{json.dumps(event_list, indent=2)}
+
+For each event return a JSON array entry with:
+- event_oid: (copy from input, unchanged)
+- anchor_event_oid: the event OID this visit anchors to. null for the index event (first scheduled visit, typically SE_SCREENING or SE_BASELINE). For all other events, set to whichever event they are measured from.
+- offset_target_days: integer days from the anchor. "Day 30" → 30. "Week 4" → 28. "Day 2-6" → 4 (midpoint). null if unclear.
+- window_lower_days: lower window bound in days (negative = before target). null if not specified.
+- window_upper_days: upper window bound in days. null if not specified.
+- repeating: true if this event recurs within the study, false otherwise.
+- arm: copy from input exactly.
+- conditional_trigger: free text if event is triggered by a clinical event, null if purely calendar-scheduled.
+
+Rules:
+1. The first event (lowest visit number) is the index event: anchor_event_oid null, offset_target_days 0.
+2. SE_UNSCHEDULED / SE_UNSCH: anchor null, offset null, repeating true, conditional_trigger "Unscheduled visit — triggered by clinical need".
+3. SE_COMMON, SE_EOT, SE_EOS, SE_FOLLOWUP: anchor null unless the protocol explicitly links them to another event.
+4. Day N labels anchor to the index event unless the protocol specifies otherwise.
+5. Use null for any field you cannot determine. Never guess.
+
+Respond with ONLY a valid JSON array — no markdown, no explanation, no preamble.
+
+Example:
+[
+  {{"event_oid":"SE_SCREENING","anchor_event_oid":null,"offset_target_days":0,"window_lower_days":null,"window_upper_days":null,"repeating":false,"arm":"BOTH","conditional_trigger":null}},
+  {{"event_oid":"SE_DAY_30","anchor_event_oid":"SE_SCREENING","offset_target_days":30,"window_lower_days":-3,"window_upper_days":3,"repeating":false,"arm":"BOTH","conditional_trigger":null}}
+]"""
+
+    try:
+        client = _anthropic.Anthropic()
+        response = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=4000,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        text = response.content[0].text.strip()
+        # Strip markdown fences if present
+        if text.startswith("```"):
+            parts = text.split("```")
+            text = parts[1] if len(parts) > 1 else text
+            if text.startswith("json"):
+                text = text[4:].strip()
+        scheduling = json.loads(text)
+        struct_json["scheduling"] = scheduling
+        print(f"[scheduling-pass] Extracted {len(scheduling)} scheduling entries for {protocol_number}", flush=True)
+    except Exception as _exc:
+        print(f"[scheduling-pass] Failed ({type(_exc).__name__}: {_exc}) — calendaring will use fallback", flush=True)
+
+    return struct_json
+
+
 def run_calendaring_rules(struct_json, forms_json):
     """Generate calendaring rules zip. Returns bytes or None if skill not available.
 
@@ -3781,6 +3869,13 @@ async def run_pipeline(item_id):
                 except Exception as _link_exc:  # noqa: BLE001
                     print(f"mapping_review_url write failed (non-fatal): "
                           f"{_link_exc}", flush=True)
+
+        # Scheduling-block second pass: if protocol-analysis did not emit a
+        # scheduling array (common when the main call is large), extract it
+        # now from the already-resolved timepoint_csv rows. Cheap, focused,
+        # and mutates struct_json in place before any chain consumes it.
+        if struct_json and not struct_json.get("scheduling"):
+            struct_json = _extract_scheduling_block(struct_json)
 
         # ── Launch parallel chains if struct_json is available ────────────────
         if struct_json and needs_analysis:
