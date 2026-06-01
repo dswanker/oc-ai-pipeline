@@ -2806,8 +2806,9 @@ async def _validate_oc_session(subdomain: str, session_path: str) -> bool:
 
         # ── PRIMARY signal: SSO access-token expiry ────────────────────
         # The Playwright publisher authenticates via Keycloak SSO against
-        # the .build app and depends on the `jhi_access_token` saved in
-        # storage_state localStorage — NOT on the .design cookies the
+        # the .build app and depends on the SSO JWT saved in
+        # storage_state localStorage (jhi-authenticationtoken) — NOT on
+        # the .design cookies the
         # /api/boards check below uses. These two credentials expire
         # independently: the design cookie can still return 200 while the
         # SSO token is already dead, which makes the publisher's SSO step
@@ -2819,13 +2820,18 @@ async def _validate_oc_session(subdomain: str, session_path: str) -> bool:
         import base64 as _b64
         import time as _time
         _SSO_MARGIN_S = 20 * 60   # token must be valid >=20 min from now
+        # OC stores the SSO JWT in storage_state localStorage under
+        # `jhi-authenticationtoken` (Keycloak access token, ~24h life),
+        # with `jhi-idtoken` as a same-expiry fallback. NB the stored
+        # value is JSON-quoted (a literal leading/trailing "), so strip
+        # quotes before splitting the JWT on ".".
+        _TOKEN_KEYS = ("jhi-authenticationtoken", "jhi-idtoken")
         _token = ""
         for _origin in _state.get("origins", []):
             if "build.openclinica" in (_origin.get("origin") or ""):
                 for _ls in _origin.get("localStorage", []):
-                    if _ls.get("name") == "jhi_access_token":
+                    if _ls.get("name") in _TOKEN_KEYS and not _token:
                         _token = _ls.get("value") or ""
-                        break
             if _token:
                 break
         if not _token:
@@ -2833,13 +2839,15 @@ async def _validate_oc_session(subdomain: str, session_path: str) -> bool:
             # vary) before giving up.
             for _origin in _state.get("origins", []):
                 for _ls in _origin.get("localStorage", []):
-                    if _ls.get("name") == "jhi_access_token":
+                    if _ls.get("name") in _TOKEN_KEYS and not _token:
                         _token = _ls.get("value") or ""
-                        break
                 if _token:
                     break
+        # Strip surrounding whitespace and JSON quotes.
+        _token = _token.strip().strip('"')
         if not _token:
-            print(f"[session-preflight] no jhi_access_token in saved "
+            print(f"[session-preflight] no SSO token "
+                  f"(jhi-authenticationtoken/jhi-idtoken) in saved "
                   f"session for {subdomain} — treating as STALE "
                   f"(will re-request auth)", flush=True)
             return False
@@ -2859,7 +2867,7 @@ async def _validate_oc_session(subdomain: str, session_path: str) -> bool:
                 print(f"[session-preflight] SSO token for {subdomain} "
                       f"valid for ~{_secs_left // 60} more min", flush=True)
             else:
-                print(f"[session-preflight] jhi_access_token for "
+                print(f"[session-preflight] SSO token for "
                       f"{subdomain} is not a decodable JWT — falling back "
                       f"to cookie check", flush=True)
         except Exception as _je:
