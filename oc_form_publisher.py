@@ -696,6 +696,98 @@ class FormPublisher:
                     # of cascading through the same expired session.
                     _session_lost: bool = False
 
+                    # ── BUCKET FORMS LOOKUP ────────────────────────────────
+                    # Fetch all forms already registered in this bucket from
+                    # the form-service REST API. Used to skip getForm when
+                    # F_SLEEP etc. already exist — calling getForm on an
+                    # existing name creates a suffixed clone (F_SLEEP_1793)
+                    # instead of reusing F_SLEEP, which breaks publish.
+                    _bucket_forms_by_name: dict = {}
+                    _bucket_uuid: str = ""
+                    _page_token: str = ""
+                    try:
+                        _page_info = await page.evaluate("""
+                            () => {
+                                const board = Boards.findOne(
+                                    window.location.pathname.split('/')[2]);
+                                const token = localStorage.getItem(
+                                    'jhi_access_token');
+                                return {
+                                    bucketUuid: board ? board.bucketUuid : null,
+                                    token: token
+                                };
+                            }
+                        """)
+                        _bucket_uuid = _page_info.get('bucketUuid') or ''
+                        _page_token = _page_info.get('token') or ''
+                        if _bucket_uuid and _page_token:
+                            _forms_url = (
+                                f"https://{subdomain}.build.openclinica.io"
+                                f"/form-service/api/buckets"
+                                f"/{_bucket_uuid}/forms"
+                            )
+                            async with httpx.AsyncClient(timeout=15) as _fc:
+                                _fr = await _fc.get(
+                                    _forms_url,
+                                    headers={
+                                        "Authorization":
+                                            f"Bearer {_page_token}"
+                                    }
+                                )
+                            if _fr.status_code == 200:
+                                for _f in _fr.json():
+                                    _fname = _f.get('name', '')
+                                    if _fname:
+                                        _bucket_forms_by_name[_fname] = _f
+                                print(
+                                    f"[publisher] bucket-forms: "
+                                    f"{len(_bucket_forms_by_name)} forms "
+                                    f"already registered in bucket "
+                                    f"{_bucket_uuid}",
+                                    flush=True)
+                            else:
+                                print(
+                                    f"[publisher] bucket-forms lookup "
+                                    f"failed: {_fr.status_code} — will "
+                                    f"call getForm normally",
+                                    flush=True)
+                        else:
+                            print(
+                                "[publisher] bucket-forms: no bucketUuid "
+                                "or token available — will call getForm "
+                                "normally",
+                                flush=True)
+                    except Exception as _bfe:
+                        print(
+                            f"[publisher] bucket-forms lookup error: "
+                            f"{_bfe} — will call getForm normally",
+                            flush=True)
+
+                    # ── XLSForm hash store (fast-rerun skip) ──────────────
+                    # Load hashes from previous run. If hash matches AND
+                    # form already has a version → skip upload entirely.
+                    import hashlib as _hashlib
+                    import json as _json
+                    _hash_store_path = (
+                        f"/data/pipeline_upload_records/"
+                        f"{self.item_id or 'unknown'}_hashes.json"
+                    )
+                    _hash_store: dict = {}
+                    _hash_store_updated: dict = {}
+                    try:
+                        if os.path.exists(_hash_store_path):
+                            with open(_hash_store_path) as _hf:
+                                _hash_store = _json.load(_hf)
+                            print(
+                                f"[publisher] hash store loaded: "
+                                f"{len(_hash_store)} entries",
+                                flush=True)
+                    except Exception as _hse:
+                        print(
+                            f"[publisher] hash store load error: {_hse}",
+                            flush=True)
+                    # ──────────────────────────────────────────────────────
+
                     # Board cards render asynchronously after networkidle.
                     # Wait up to 30s for at least one minicard to appear
                     # before evaluating the full set.
@@ -1316,16 +1408,68 @@ class FormPublisher:
                                             if (not existing_version
                                                     and not (_cdiag and _cdiag.get("parentId"))
                                                     and oid not in _getform_called_oids):
-                                                # Pass the OID suffix (e.g. "SLEEP" for F_SLEEP)
-                                                # as the label to getForm instead of the
-                                                # human-readable card title. OC derives its
-                                                # form OID from this label — passing "SLEEP"
-                                                # registers F_SLEEP, matching the pipeline OID.
-                                                # Passing the title "Sleep Quality (NRS + PROMIS 8A)"
-                                                # would instead register F_SLEEPQUALITY, creating
-                                                # a duplicate form with a mismatched OID.
                                                 _oid_label = oid[2:] if oid.startswith('F_') else oid
-                                                _gf_result = await page.evaluate("""
+
+                                                # ── Bucket-hit check ──────────────────────────
+                                                # If this OID name already exists in the form
+                                                # service bucket, skip getForm entirely and use
+                                                # the existing registration. Calling getForm on
+                                                # an already-registered name creates a suffixed
+                                                # clone (F_SLEEP_1793) instead of returning the
+                                                # existing F_SLEEP — which breaks publish.
+                                                if _oid_label in _bucket_forms_by_name:
+                                                    _existing_bf = (
+                                                        _bucket_forms_by_name[_oid_label])
+                                                    _gf_ocoid = (
+                                                        _existing_bf.get('ocoid', ''))
+                                                    print(
+                                                        f"[publisher] bucket-hit for "
+                                                        f"{form_name}: reusing existing "
+                                                        f"{_gf_ocoid!r} (skipped getForm)",
+                                                        flush=True)
+                                                    _getform_called_oids.add(oid)
+                                                    if pre_oid and pre_oid != oid:
+                                                        _getform_called_oids.add(pre_oid)
+                                                    if _gf_ocoid and _gf_ocoid != oid:
+                                                        print(
+                                                            f"[publisher] bucket-hit OID "
+                                                            f"mismatch for {form_name}: "
+                                                            f"card has {oid!r} but bucket "
+                                                            f"has {_gf_ocoid!r} — updating "
+                                                            f"card and using bucket OID",
+                                                            flush=True)
+                                                        try:
+                                                            await page.evaluate(
+                                                                """([cardId, newOcoid]) => {
+                                                                    Meteor.call(
+                                                                        '/cards/update',
+                                                                        {_id: cardId},
+                                                                        {$set: {
+                                                                            formOcoid: newOcoid,
+                                                                            dateLastActivity: {
+                                                                                $date: Date.now()
+                                                                            }
+                                                                        }},
+                                                                        {}
+                                                                    );
+                                                                }""",
+                                                                [card_meteor_id,
+                                                                 _gf_ocoid],
+                                                            )
+                                                        except Exception as _upd_e:
+                                                            print(
+                                                                f"[publisher] card OID "
+                                                                f"update failed for "
+                                                                f"{form_name}: {_upd_e}",
+                                                                flush=True)
+                                                        oid = _gf_ocoid
+                                                elif _oid_label not in _bucket_forms_by_name:
+                                                # ── getForm (fresh registration) ──────────────
+                                                # OID not in bucket — call getForm to register
+                                                # it fresh. No conflict, no suffix appended.
+                                                # Pass the OID suffix (e.g. "SLEEP" for F_SLEEP)
+                                                # as the label so OC registers F_SLEEP exactly.
+                                                    _gf_result = await page.evaluate("""
                                                     (oidLabel) => new Promise((resolve) => {
                                                         const board = Boards.findOne(
                                                             window.location.pathname.split('/')[2]);
@@ -1365,61 +1509,91 @@ class FormPublisher:
                                                         );
                                                     })
                                                 """, _oid_label)
-                                                if _gf_result.get('ok'):
-                                                    print(
-                                                        f"[publisher] getForm OK for {form_name}: "
-                                                        f"ocoid={_gf_result.get('ocoid')} "
-                                                        f"id={_gf_result.get('id')}",
-                                                        flush=True)
-                                                    _getform_called_oids.add(oid)
-                                                    # Also register pre_oid so clone cards
-                                                    # (which still carry the short OID) never
-                                                    # trigger a second getForm call.
-                                                    if pre_oid and pre_oid != oid:
-                                                        _getform_called_oids.add(pre_oid)
-                                                    # If getForm returned a different OID than
-                                                    # what the card has (common — form-service
-                                                    # derives OID from title, e.g. F_SLEEPQUALITY
-                                                    # for a card with formOcoid F_SLEEP), update
-                                                    # the card's formOcoid in minimongo and update
-                                                    # the local `oid` variable so uploadVersion
-                                                    # uses the correct OID.
-                                                    _gf_ocoid = _gf_result.get('ocoid', '')
-                                                    if _gf_ocoid and _gf_ocoid != oid:
+                                                    if _gf_result.get('ok'):
                                                         print(
-                                                            f"[publisher] getForm OID mismatch "
-                                                            f"for {form_name}: card has {oid!r} "
-                                                            f"but form-service has {_gf_ocoid!r} "
-                                                            f"— updating card and using "
-                                                            f"form-service OID",
+                                                            f"[publisher] getForm OK for {form_name}: "
+                                                            f"ocoid={_gf_result.get('ocoid')} "
+                                                            f"id={_gf_result.get('id')}",
                                                             flush=True)
-                                                        try:
-                                                            await page.evaluate(
-                                                                """([cardId, newOcoid]) => {
-                                                                    const c = Cards.findOne(cardId);
-                                                                    if (c) {
-                                                                        Cards.update(cardId, {
-                                                                            $set: {formOcoid: newOcoid}
-                                                                        });
-                                                                    }
-                                                                }""",
-                                                                [card_meteor_id, _gf_ocoid],
-                                                            )
-                                                        except Exception as _upd_e:
+                                                        _getform_called_oids.add(oid)
+                                                        # Also register pre_oid so clone cards
+                                                        # (which still carry the short OID) never
+                                                        # trigger a second getForm call.
+                                                        if pre_oid and pre_oid != oid:
+                                                            _getform_called_oids.add(pre_oid)
+                                                        # If getForm returned a different OID than
+                                                        # what the card has (common — form-service
+                                                        # derives OID from title, e.g. F_SLEEPQUALITY
+                                                        # for a card with formOcoid F_SLEEP), update
+                                                        # the card's formOcoid in minimongo and update
+                                                        # the local `oid` variable so uploadVersion
+                                                        # uses the correct OID.
+                                                        _gf_ocoid = _gf_result.get('ocoid', '')
+                                                        if _gf_ocoid and _gf_ocoid != oid:
                                                             print(
-                                                                f"[publisher] minimongo OID "
-                                                                f"update failed for {form_name}: "
-                                                                f"{_upd_e}",
+                                                                f"[publisher] getForm OID mismatch "
+                                                                f"for {form_name}: card has {oid!r} "
+                                                                f"but form-service has {_gf_ocoid!r} "
+                                                                f"— updating card and using "
+                                                                f"form-service OID",
                                                                 flush=True)
-                                                        oid = _gf_ocoid
-                                                else:
-                                                    print(
-                                                        f"[publisher] getForm FAILED for "
-                                                        f"{form_name}: "
-                                                        f"{_gf_result.get('err')} — "
-                                                        f"proceeding anyway; uploadVersion "
-                                                        f"may fail",
-                                                        flush=True)
+                                                            try:
+                                                                await page.evaluate(
+                                                                    """([cardId, newOcoid]) => {
+                                                                        const c = Cards.findOne(cardId);
+                                                                        if (c) {
+                                                                            Cards.update(cardId, {
+                                                                                $set: {formOcoid: newOcoid}
+                                                                            });
+                                                                        }
+                                                                    }""",
+                                                                    [card_meteor_id, _gf_ocoid],
+                                                                )
+                                                            except Exception as _upd_e:
+                                                                print(
+                                                                    f"[publisher] minimongo OID "
+                                                                    f"update failed for {form_name}: "
+                                                                    f"{_upd_e}",
+                                                                    flush=True)
+                                                            oid = _gf_ocoid
+                                                    else:
+                                                        print(
+                                                            f"[publisher] getForm FAILED for "
+                                                            f"{form_name}: "
+                                                            f"{_gf_result.get('err')} — "
+                                                            f"proceeding anyway; uploadVersion "
+                                                            f"may fail",
+                                                            flush=True)
+                                            # ── Hash-based fast skip ──────────────────────
+                                            # Compute MD5 of the XLSForm file. If the hash
+                                            # matches the previous run AND the form already
+                                            # has a version in the bucket, skip upload
+                                            # entirely — the existing version is still valid.
+                                            _oid_label_for_hash = (
+                                                oid[2:] if oid.startswith('F_') else oid)
+                                            _form_bytes = xlsx_path.read_bytes()
+                                            _form_hash = _hashlib.md5(
+                                                _form_bytes).hexdigest()
+                                            _hash_store_updated[
+                                                _oid_label_for_hash] = _form_hash
+                                            _bf_entry = _bucket_forms_by_name.get(
+                                                _oid_label_for_hash, {})
+                                            _has_existing_version = bool(
+                                                _bf_entry.get('versions'))
+                                            if (_form_hash == _hash_store.get(
+                                                    _oid_label_for_hash)
+                                                    and _has_existing_version):
+                                                print(
+                                                    f"[publisher] hash-skip {form_name}: "
+                                                    f"content unchanged, existing version "
+                                                    f"present — skipping upload",
+                                                    flush=True)
+                                                confirmed_versioned_oids.add(oid)
+                                                session_uploaded_oids.add(oid)
+                                                if pre_oid and pre_oid != oid:
+                                                    session_uploaded_oids.add(pre_oid)
+                                                continue
+                                            # ─────────────────────────────────────────────
                                             await page.set_input_files(
                                                 'input.js-design-form-input',
                                                 str(xlsx_path))
@@ -1875,6 +2049,27 @@ class FormPublisher:
                           "batch phase check", flush=True)
                     print(f"[publisher] _session_lost={_session_lost}",
                           flush=True)
+
+                    # ── Write updated hash store ───────────────────────
+                    # Persist MD5 hashes for all forms processed this run
+                    # so the next fast rerun can skip unchanged forms.
+                    if _hash_store_updated:
+                        try:
+                            os.makedirs(
+                                os.path.dirname(_hash_store_path),
+                                exist_ok=True)
+                            with open(_hash_store_path, 'w') as _hf:
+                                _json.dump(_hash_store_updated, _hf)
+                            print(
+                                f"[publisher] hash store written: "
+                                f"{len(_hash_store_updated)} entries",
+                                flush=True)
+                        except Exception as _hwe:
+                            print(
+                                f"[publisher] hash store write error: "
+                                f"{_hwe}",
+                                flush=True)
+                    # ──────────────────────────────────────────────────
 
                     # ── Batch set-default phase ────────────────────────
                     # The upload loop above did NOT click any radios.
