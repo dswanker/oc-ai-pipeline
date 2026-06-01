@@ -192,11 +192,6 @@ class FormPublishResult:
     # The form's existing version is left intact; the caller should
     # surface this list on the monday row for human review.
     conflicts: List[str] = field(default_factory=list)
-    # Form OID labels intentionally skipped because no XLSForm exists
-    # in the EDC zip. These cards will never have versions — the publish
-    # preflight must exclude them from missing-version checks so they
-    # don't block publish for legitimately absent forms.
-    no_xlsx_oids: List[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -1249,8 +1244,6 @@ class FormPublisher:
                                                   f"(OID={oid!r}): no "
                                                   f"xlsx in EDC zip",
                                                   flush=True)
-                                            if oid and oid not in result.no_xlsx_oids:
-                                                result.no_xlsx_oids.append(oid)
                                         else:
                                             # If we already uploaded this
                                             # OID this session, OC backend
