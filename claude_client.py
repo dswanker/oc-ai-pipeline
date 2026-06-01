@@ -13,6 +13,7 @@ Two modes:
 """
 
 import anthropic, base64, json, os, asyncio, re
+import httpx
 
 MODEL       = "claude-opus-4-7"
 MAX_TOKENS  = 64000         # for call_claude (JSON extraction). Opus 4.7
@@ -121,6 +122,33 @@ async def call_claude(prompt, pdf_bytes=None, extra_text=None, max_tokens=MAX_TO
                 await asyncio.sleep(wait)
             else:
                 print("Anthropic 5xx — max retries exceeded", flush=True)
+                raise
+
+        except (anthropic.APIConnectionError, anthropic.APITimeoutError,
+                httpx.TransportError) as e:
+            # Transient connection/transport failures during a (possibly
+            # long) streaming call: dropped sockets, incomplete chunked
+            # reads, read timeouts. Two layers:
+            #  - The SDK wraps errors at request-send time as
+            #    APIConnectionError / APITimeoutError.
+            #  - But a transport failure DURING stream consumption
+            #    (stream.get_final_message → aiter_bytes) is raised RAW as
+            #    httpx.RemoteProtocolError ("peer closed connection without
+            #    sending complete message body") — the SDK does not wrap
+            #    mid-stream errors. httpx.TransportError is the common base
+            #    (RemoteProtocolError, ReadError, ConnectError, etc.), so we
+            #    catch it directly here. This is exactly the crash we hit.
+            # None of these are client errors — the request was valid — so
+            # retry with exponential backoff rather than killing the run.
+            if attempt < MAX_RETRIES - 1:
+                wait = 15 * (2 ** attempt)  # 15s, 30s, 60s, 120s
+                print(f"Anthropic connection/transport error "
+                      f"({type(e).__name__}: {e}) — waiting {wait}s "
+                      f"(attempt {attempt+1}/{MAX_RETRIES})", flush=True)
+                await asyncio.sleep(wait)
+            else:
+                print("Anthropic connection/transport error — max retries "
+                      "exceeded", flush=True)
                 raise
 
         except (anthropic.BadRequestError,
@@ -406,6 +434,24 @@ async def run_skill(prompt, skill_ids,
                 print(f"Skill 5xx ({e}) — waiting {wait}s", flush=True)
                 await asyncio.sleep(wait)
             else:
+                raise
+
+        except (anthropic.APIConnectionError, anthropic.APITimeoutError,
+                httpx.TransportError) as e:
+            # Transient connection/transport failures (dropped socket,
+            # incomplete chunked read, read timeout) during the streaming
+            # skill call. The SDK wraps send-time errors as
+            # APIConnectionError, but a mid-stream drop surfaces as raw
+            # httpx.RemoteProtocolError (base: httpx.TransportError), so we
+            # catch that too. Retry rather than crash; same backoff.
+            if attempt < MAX_RETRIES - 1:
+                wait = 15 * (2 ** attempt)
+                print(f"Skill connection/transport error "
+                      f"({type(e).__name__}: {e}) — waiting {wait}s", flush=True)
+                await asyncio.sleep(wait)
+            else:
+                print("Skill connection/transport error — max retries "
+                      "exceeded", flush=True)
                 raise
 
         except (anthropic.BadRequestError,
