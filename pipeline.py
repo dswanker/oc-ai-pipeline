@@ -955,6 +955,17 @@ def _build_board_json(struct_json):
 
     for form in forms:
         form_id      = form.get("form_id", "")
+        # TEMP DIAGNOSTIC (Q3): suppress SLEEP entirely so no SLEEP card is
+        # created on the board this run. Lets us manually add a SLEEP form
+        # card afterward into a study the pipeline never touched SLEEP in,
+        # and observe whether getForm returns F_SLEEP (clean bucket) or
+        # F_SLEEP_XXXX (suffix appears with zero pipeline involvement).
+        # Remove after diagnosis.
+        if form_id.upper().replace("F_", "").strip() == "SLEEP":
+            print(f"[board-build] TEMP-Q3: skipping SLEEP card creation "
+                  f"(form_id={form_id!r}) for clean manual-add test.",
+                  flush=True)
+            continue
         if form_id.upper().startswith("F_"):
             print(f"[board-build] WARNING: form_id {form_id!r} has F_ "
                   f"prefix — skipping this form card. Fix the form_id "
