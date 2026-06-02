@@ -2354,6 +2354,11 @@ async def publish_to_test(item_id, uploaded_oids=None):
             later) — propagation delay is irrelevant by then.
     """
     item_id = str(item_id)
+    # Safe defaults — may be overwritten inside the try block. Used in the
+    # except block's ReadTimeout verify path; if they were never set the
+    # verify attempt is skipped and we fall through to marking Failed.
+    oc_subdomain = ""
+    study_uuid   = ""
 
     try:
         # 1. Show we're working on it
@@ -2550,8 +2555,44 @@ async def publish_to_test(item_id, uploaded_oids=None):
         print(traceback.format_exc(), flush=True)
         # Best-effort error reporting; do NOT raise — webhook must return.
         try:
-            await set_status(item_id, COL["published_status"], "Failed")
-            await append_log(item_id, f"Publish to Test FAILED: {err}")
+            # ReadTimeout means OC accepted the request but didn't respond
+            # in time — it may have published successfully in the background.
+            # Wait 30s then verify OC's actual study status before marking
+            # Failed, so a slow-but-successful publish isn't mis-reported.
+            import httpx as _httpx
+            _verified_failed = True
+            if isinstance(e, _httpx.ReadTimeout) and oc_subdomain and study_uuid:
+                print("[publish] ReadTimeout — waiting 30s then verifying "
+                      "OC study status before marking Failed...", flush=True)
+                await asyncio.sleep(30)
+                try:
+                    _token = await _get_oc_token(oc_subdomain)
+                    _ver_url = (f"https://{oc_subdomain}.build.openclinica.io"
+                                f"/study-service/api/studies/{study_uuid}")
+                    async with _httpx.AsyncClient(timeout=30) as _c:
+                        _r = await _c.get(_ver_url, headers={
+                            "Authorization": f"Bearer {_token}"})
+                    if _r.status_code == 200:
+                        _sdata = _r.json()
+                        _penv = (_sdata.get("publishedEnvironmentType") or
+                                 _sdata.get("publishedEnvType") or "")
+                        if _penv and _penv != "NOT_PUBLISHED":
+                            print(f"[publish] OC confirms study IS published "
+                                  f"({_penv}) — overriding ReadTimeout failure",
+                                  flush=True)
+                            _verified_failed = False
+                            await set_status(item_id,
+                                             COL["published_status"],
+                                             "Published")
+                            await append_log(item_id,
+                                "Publish to Test: succeeded (confirmed via "
+                                "OC study API after ReadTimeout).")
+                except Exception as _ve:
+                    print(f"[publish] OC verify-after-timeout failed: "
+                          f"{_ve} — marking Failed", flush=True)
+            if _verified_failed:
+                await set_status(item_id, COL["published_status"], "Failed")
+                await append_log(item_id, f"Publish to Test FAILED: {err}")
         except Exception as inner:
             print(f"PUBLISH_TO_TEST status-update fallback also failed: "
                   f"{inner}", flush=True)
