@@ -945,7 +945,9 @@ def _qt_row(qt_id, check_id, message, check_type):
     }
 
 
-def _uat_row(uat_id, check_id, form_id, field_name, field_label, case):
+def _uat_row(uat_id, check_id, form_id, field_name, field_label, case,
+             form_event_map=None):
+    event_oid = (form_event_map or {}).get(form_id.upper(), "")
     return {
         "UAT Case ID":       uat_id,
         "Status":            "Not Run",
@@ -963,10 +965,39 @@ def _uat_row(uat_id, check_id, form_id, field_name, field_label, case):
         "Retest Needed?":    "",
         "Priority":          "",
         "Notes":             "",
+        # ODM load coordinate columns (17–25) — populated here so the
+        # UAT loader can create participants and load data without blanks.
+        "Site_OID":          "",        # stamped at runtime by uat_loader
+        "Participant_Key":   "",        # stamped at runtime by uat_loader
+        "Study_Event_OID":   event_oid,
+        "Event_Repeat_Key":  "1",
+        "Form_OID":          form_id,
+        "Item_Group_OID":    f"IG_{form_id}_1",
+        "Participant_ID":    "UAT-P001",
+        "Load_Order":        "",        # set below by caller if needed
+        "Load_Value":        case.get("input_data", ""),
     }
 
 
 # ── Main extraction function ──────────────────────────────────────────────────
+
+def _build_form_event_map(struct_json):
+    """Return {form_id_upper: first_event_oid} from Study Spec JSON.
+
+    Uses each form's visits_assigned list (first entry = primary event).
+    Common forms (AE, CM, DV, etc.) typically have a single Common event.
+    Falls back to empty string when no mapping is found.
+    """
+    mapping = {}
+    if not isinstance(struct_json, dict):
+        return mapping
+    for form in struct_json.get("forms", []):
+        fid = (form.get("form_id") or "").upper()
+        visits = form.get("visits_assigned") or []
+        if fid and visits:
+            mapping[fid] = visits[0]
+    return mapping
+
 
 def extract_dvs_data(struct_json, forms_json):
     """Walk forms_json and emit a dvs_data dict ready for build_dvs()."""
@@ -986,6 +1017,10 @@ def extract_dvs_data(struct_json, forms_json):
     # Cross-form world state — accumulates date/numeric values for referenced
     # fields so the same field gets the same value across all UAT cases.
     cross_form_world = {}
+
+    # Build form→event mapping from Study Spec so UAT_Cases ODM columns
+    # (Study_Event_OID, Form_OID) are populated for the UAT loader.
+    form_event_map = _build_form_event_map(struct_json)
 
     forms = forms_json.get("forms", {}) if isinstance(forms_json, dict) else {}
     for form_filename in sorted(forms.keys()):
@@ -1033,8 +1068,11 @@ def extract_dvs_data(struct_json, forms_json):
                     uat_counter += 1
                     uat_id = f"UAT-{uat_counter:03d}"
                     uat_ids_for_this_check.append(uat_id)
-                    uat_cases.append(_uat_row(
-                        uat_id, check_id, form_id, field_name, field_label, case))
+                    _row = _uat_row(
+                        uat_id, check_id, form_id, field_name, field_label,
+                        case, form_event_map)
+                    _row["Load_Order"] = str(uat_counter)
+                    uat_cases.append(_row)
 
                 dvs_oc4.append(_dvs_row(
                     check_id, qt_id, uat_ids_for_this_check,
