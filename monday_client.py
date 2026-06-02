@@ -79,7 +79,7 @@ def get_headers():
     return {"Authorization": get_token(), "Content-Type": "application/json", "API-Version": "2024-01"}
 
 def make_mutation():
-    return "mutation($i:ID!,$b:ID!,$c:String!,$v:JSON!){change_column_value(item_id:$i,board_id:$b,column_id:$c,value:$v){id}}"
+    return "mutation($i:ID!,$b:ID!,$c:String!,$v:JSON!){change_column_value(item_id:$i,board_id:$b,column_id:$c,value:$v,create_labels_if_missing:true){id}}"
 
 
 def _check_monday_response(r, op_name):
