@@ -2314,7 +2314,7 @@ async def _publish_study_version(
     max_retries = 3
     retries_used = 0
     while True:
-        async with httpx.AsyncClient(timeout=60) as c:
+        async with httpx.AsyncClient(timeout=180) as c:
             r = await c.post(url, headers={
                 "Authorization": f"Bearer {token}",
                 "Content-Type":  "application/json",
