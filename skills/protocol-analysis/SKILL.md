@@ -851,6 +851,49 @@ Produce a consolidated list of all items requiring human review:
 
 ---
 
+## Step 8a: Calendaring Rule Extraction
+
+After completing the EDC flag summary, scan the full protocol for any
+logic that implies automated scheduling, conditional form requirements,
+notifications, or participant lifecycle transitions in OC4. Extract each
+as one entry in the `calendaring_rules` array.
+
+**What to look for:**
+
+| Protocol language | Likely OC4 rule type |
+|---|---|
+| "Next visit scheduled N days after [event]" | EVENT_ACTION — schedule visit |
+| "Visit window: ±N days" | EVENT_ACTION — window constraint |
+| "Site notified if [condition] within N days" | NOTIFICATION_ACTION |
+| "SAE form required when AE grade ≥ 3" | FORM_ACTION — set required |
+| "Pregnancy form required if positive test" | FORM_ACTION — set required |
+| "Participant advances to next epoch on [condition]" | PARTICIPANT_ACTION |
+| "Unscheduled visit triggered by AE or safety concern" | EVENT_ACTION — create event |
+
+**How to populate each field:**
+
+| Field | How to derive |
+|---|---|
+| `rule_id` | `CAL-001`, `CAL-002`, ... sequential |
+| `rule_name` | Short plain-English label (≤60 chars) |
+| `description` | What the rule does and why |
+| `trigger_type` | `FORM_CHANGE` / `USER_CLOSES_FORM` / `EVENT_STATUS_CHANGE` / `EVENT_START_DATE_CHANGED` / `PARTICIPANT_CREATED` / `PARTICIPANT_STATUS_CHANGED` / `PARTICIPANT_EPOCH_CHANGED` / `RUN_ON_SCHEDULE`. Use `USER_CLOSES_FORM` for rules triggered by completing a form. |
+| `trigger_oid` | Event OID or Form OID that scopes the trigger (null = wildcard) |
+| `condition_xpath` | Best-effort XPath using OC4 tokens `${SE_OID}`, `${F_OID}`, `${IG_OID}`, `${I_OID}`. Use `$TRUE` for unconditional rules. Mark `FLAGGED` if OIDs not yet finalised. |
+| `condition_plain_english` | Plain-English restatement of the condition |
+| `actions` | Array — one object per action. Most rules have one action. Multi-action rules (e.g. schedule a visit AND send a notification) get multiple entries. |
+| `epoch` / `study_calendar` | From `study_calendars` array (Step 1d). Use `null` for global rules. |
+| `confidence` | `HIGH` if protocol is explicit; `MEDIUM` if inferred; `LOW` if speculative |
+| `protocol_reference` | Section/table number |
+| `completion_status` | `COMPLETE` if all OIDs are resolved; `FLAGGED` if XPath uses placeholder OIDs; `PLACEHOLDER` if rule structure is unknown |
+
+**If the protocol has no automated scheduling or notification language:**
+Write an empty `calendaring_rules: []` array and add one `PROTOCOL_AMBIGUOUS`
+flag: "No calendaring rules detected — verify whether automated scheduling
+or notifications are required for this study."
+
+---
+
 ## Step 9: Protocol Summary — CRF Count and Unique/Re-use Split
 
 Using the CRF Master Table from Step 2b:
@@ -979,6 +1022,14 @@ Name: `{PROTOCOL_NUMBER}_Study_Specification.xlsx`
   `references/conventions.md`. See conventions.md §"Surfacing in the
   Study Specification" → D for the required sheet content.
 - `TIMEPOINTS` — editable timepoint CSV content
+- `CALENDARING` — one row per calendaring rule extracted in Step 8a.
+  Columns: Rule ID, Rule Name, Trigger Type, Trigger OID,
+  Condition (Plain English), Action Type, Target Event OID,
+  Target Form OID, Action Parameters (JSON), Confidence,
+  Protocol Reference, Completion Status, Flag Reason.
+  Write one row per action when a rule has multiple actions.
+  If `calendaring_rules` is empty, write headers only with a note row:
+  "[No calendaring rules detected — populate manually if required]"
 - `LAB_RANGES` — lab ranges placeholder with highlighted empty cells
 - `REVIEW_FLAGS` — all items requiring human review grouped by category
 - Per form: `[FORMID]_survey`, `[FORMID]_choices`, `[FORMID]_settings`
@@ -1133,6 +1184,34 @@ directly by the `edc-builder` skill.
       "mode": "passthrough", "template": "", "pattern": "", "replacement": ""
     }
   },
+  "calendaring_rules": [
+    {
+      "rule_id": "CAL-001",
+      "rule_name": "",
+      "description": "",
+      "trigger_type": "FORM_CHANGE | USER_CLOSES_FORM | EVENT_STATUS_CHANGE | EVENT_START_DATE_CHANGED | PARTICIPANT_CREATED | PARTICIPANT_STATUS_CHANGED | PARTICIPANT_EPOCH_CHANGED | RUN_ON_SCHEDULE",
+      "trigger_oid": null,
+      "schedule": null,
+      "schedule_time": null,
+      "condition_xpath": "$TRUE",
+      "condition_plain_english": "",
+      "actions": [
+        {
+          "action_type": "EVENT_ACTION | FORM_ACTION | NOTIFICATION_ACTION | PARTICIPANT_ACTION",
+          "target_event_oid": "",
+          "target_form_oid": "",
+          "parameters": {},
+          "plain_english": ""
+        }
+      ],
+      "epoch": null,
+      "study_calendar": null,
+      "confidence": "HIGH | MEDIUM | LOW",
+      "protocol_reference": "",
+      "completion_status": "COMPLETE | FLAGGED | PLACEHOLDER",
+      "flag_reason": ""
+    }
+  ],
   "review_flags": {
     "site_specific": [],
     "oid_confirmation": [],
@@ -1350,6 +1429,10 @@ EDC STRUCTURE REVIEW REQUIRED — DO NOT BUILD UNTIL COMPLETE
 6. VERIFY choice lists — especially PDF-derived ones
 7. REVIEW name deviation list — keep customer names or align to CDASH?
 8. ADD any custom business rules not derivable from protocol or library
+9. REVIEW CALENDARING tab — confirm trigger types, XPath conditions,
+   and action parameters for every extracted rule. If calendaring_rules
+   is empty, confirm whether automated scheduling or notifications are
+   needed and populate manually if so.
 
 Once review is complete, pass the Study Specification JSON to the
 edc-builder skill to generate the XLSForm .xlsx files.
