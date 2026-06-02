@@ -4699,17 +4699,30 @@ async def run_pipeline(item_id):
                         print(f"[auto-publish] post-publish status "
                               f"read failed: {_pe}", flush=True)
                     if _published_status == "Published":
-                        await asyncio.gather(
-                            set_status(item_id,
-                                       COL["pipeline_status"],
-                                       STATUS["all_complete"]),
-                            append_log(item_id,
-                                       "Pipeline complete. Publish to "
-                                       "test succeeded."),
-                        )
-                        print(f"[auto-publish] publish-to-test "
-                              f"succeeded → pipeline_status="
-                              f"'All Complete'", flush=True)
+                        if load_uat_checked:
+                            # UAT load is also queued — don't jump to
+                            # "All Complete" yet or the UAT loader will
+                            # immediately overwrite it with "Loading UAT
+                            # Data", creating a confusing flash. Let the
+                            # UAT loader set the final pipeline status.
+                            print(f"[auto-publish] publish-to-test "
+                                  f"succeeded — deferring 'All Complete' "
+                                  f"until UAT load finishes", flush=True)
+                            await append_log(item_id,
+                                             "Publish to test succeeded. "
+                                             "Starting UAT data load...")
+                        else:
+                            await asyncio.gather(
+                                set_status(item_id,
+                                           COL["pipeline_status"],
+                                           STATUS["all_complete"]),
+                                append_log(item_id,
+                                           "Pipeline complete. Publish to "
+                                           "test succeeded."),
+                            )
+                            print(f"[auto-publish] publish-to-test "
+                                  f"succeeded → pipeline_status="
+                                  f"'All Complete'", flush=True)
                     else:
                         print(f"[auto-publish] publish-to-test "
                               f"published_status={_published_status!r}"
@@ -4732,19 +4745,26 @@ async def run_pipeline(item_id):
                         _uat_result = await run_uat_loader(item_id)
 
                         if _uat_result["success"]:
-                            await set_status(
-                                item_id, COL["pipeline_status"],
-                                UAT_STATUS["complete"]
-                            )
-                            await append_log(
-                                item_id,
-                                f"UAT Load succeeded. "
-                                f"Site: {_uat_result['site_oid']}. "
-                                f"Participants: "
-                                f"{len(_uat_result['participants_created'])}."
+                            # UAT load is the last step — promote to
+                            # "All Complete" so the row shows a clean
+                            # terminal success state.
+                            await asyncio.gather(
+                                set_status(
+                                    item_id, COL["pipeline_status"],
+                                    STATUS["all_complete"]
+                                ),
+                                append_log(
+                                    item_id,
+                                    f"Pipeline complete. UAT load "
+                                    f"succeeded. "
+                                    f"Site: {_uat_result['site_oid']}. "
+                                    f"Participants: "
+                                    f"{len(_uat_result['participants_created'])}."
+                                ),
                             )
                             print(
                                 f"[auto-uat] UAT load succeeded → "
+                                f"pipeline_status='All Complete' "
                                 f"site={_uat_result['site_oid']}",
                                 flush=True
                             )
