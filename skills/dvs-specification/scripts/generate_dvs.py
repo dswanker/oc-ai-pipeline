@@ -163,10 +163,17 @@ QT_WIDTHS = {
 }
 
 UAT_COLS = [
+    # ── Human-authored test spec (cols 1–16) ───────────────────────────
     "UAT Case ID", "Status", "Related Check ID", "Scenario",
     "Preconditions", "Test Steps", "Input Data", "Expected Result",
     "Actual Result", "Test Result", "Tester", "Execution Date",
-    "Defect / Ticket", "Retest Needed?", "Priority", "Notes"
+    "Defect / Ticket", "Retest Needed?", "Priority", "Notes",
+    # ── ODM load coordinates (cols 17–25) ─────────────────────────────
+    # Cols 17-18 are RUNTIME POPULATED (blank in DVS, stamped by uat_loader)
+    "Site_OID", "Participant_Key",
+    # Cols 19-25 are populated by DVS skill from XLSForm metadata
+    "Study_Event_OID", "Event_Repeat_Key", "Form_OID",
+    "Item_Group_OID", "Participant_ID", "Load_Order", "Load_Value",
 ]
 UAT_WIDTHS = {
     "UAT Case ID": 12, "Status": 12, "Related Check ID": 14, "Scenario": 32,
@@ -174,7 +181,156 @@ UAT_WIDTHS = {
     "Expected Result": 36, "Actual Result": 28, "Test Result": 14,
     "Tester": 14, "Execution Date": 16, "Defect / Ticket": 16,
     "Retest Needed?": 14, "Priority": 12, "Notes": 28,
+    # ODM columns
+    "Site_OID": 28, "Participant_Key": 30,
+    "Study_Event_OID": 22, "Event_Repeat_Key": 16, "Form_OID": 16,
+    "Item_Group_OID": 22, "Participant_ID": 14, "Load_Order": 12,
+    "Load_Value": 22,
 }
+
+# ── Calendaring_Rules columns ─────────────────────────────────────────
+CAL_RULES_COLS = [
+    "Rule ID", "Status", "Rule Name", "Business Purpose",
+    "Protocol Reference", "Trigger Type", "Trigger OID",
+    "Schedule", "Schedule Time",
+    "Condition (XPath)", "Condition (Plain English)",
+    "Action Type", "Target Event OID", "Target Form OID",
+    "Action Parameters", "Rule Result To Trigger On",
+    "JSON Output", "Build Owner", "Priority", "UAT Case ID(s)",
+]
+CAL_RULES_WIDTHS = {
+    "Rule ID": 12, "Status": 12, "Rule Name": 36, "Business Purpose": 40,
+    "Protocol Reference": 16, "Trigger Type": 26, "Trigger OID": 20,
+    "Schedule": 12, "Schedule Time": 14,
+    "Condition (XPath)": 50, "Condition (Plain English)": 40,
+    "Action Type": 22, "Target Event OID": 22, "Target Form OID": 18,
+    "Action Parameters": 40, "Rule Result To Trigger On": 22,
+    "JSON Output": 60, "Build Owner": 14, "Priority": 12,
+    "UAT Case ID(s)": 16,
+}
+
+# ── Calendaring_UAT columns ───────────────────────────────────────────
+CAL_UAT_COLS = [
+    "UAT Case ID", "Status", "Related Rule ID", "Scenario",
+    "Preconditions", "Setup Steps", "Trigger Action",
+    "Expected Outcome", "Verification Steps",
+    "Actual Result", "Test Result", "Tester", "Execution Date",
+    "Defect / Ticket", "Notes",
+]
+CAL_UAT_WIDTHS = {
+    "UAT Case ID": 12, "Status": 12, "Related Rule ID": 14, "Scenario": 36,
+    "Preconditions": 36, "Setup Steps": 40, "Trigger Action": 36,
+    "Expected Outcome": 40, "Verification Steps": 40,
+    "Actual Result": 28, "Test Result": 14, "Tester": 14,
+    "Execution Date": 16, "Defect / Ticket": 16, "Notes": 28,
+}
+
+
+# ── Info-tab / special sheet writers ─────────────────────────────────────────
+
+# Fixed UAT_Setup topic/description rows (written identically on every run)
+_UAT_SETUP_ROWS = [
+    ("Purpose",
+     "This tab documents how the automated UAT data loader works. "
+     "It is a reference for anyone running or troubleshooting UAT."),
+    ("Site Naming",
+     "A new site is created in the OC4 Test environment on every UAT run. "
+     "Site Name: UAT Automation Site - YYYY-MM-DD HH:MM  |  "
+     "Site ID (OID): UAT-YYYYMMDD-HHMMSS. "
+     "This timestamp is derived from the moment the pipeline triggers. "
+     "Creating a new site per run prevents data contamination between test runs "
+     "and provides a visible audit trail in OC4's site list."),
+    ("Finding a Test Run",
+     "In OC4, navigate to the study in the Test environment and open the Sites list. "
+     "Each UAT run appears as a dated site. "
+     "The most recent run is the site with the latest timestamp in its name."),
+    ("Participant Naming",
+     "Logical participant IDs in this DVS are UAT-P001, UAT-P002, etc. "
+     "At runtime the loader maps these to run-scoped keys: "
+     "UAT-YYYYMMDD-HHMMSS-P001. "
+     "This ensures participants from different runs never collide."),
+    ("Cross-Form Test Cases",
+     "All data for a single test case — including baseline data from prerequisite "
+     "forms — must load into the same participant. For example, if an AE form checks "
+     "consent date from DM, the DM data and AE data for that test both load for "
+     "UAT-P001. A second participant (UAT-P002) is only used when the test scenario "
+     "requires a genuinely different baseline state (e.g. different sex)."),
+    ("Load Order",
+     "Data loads in the order defined by the Load_Order column in UAT_Cases. "
+     "DM and ICF always load first to establish the baseline participant record. "
+     "Clinical forms follow in visit order. The loader respects cross-form "
+     "dependencies: source form data always loads before forms that reference it."),
+    ("Runtime Columns",
+     "Two columns in UAT_Cases are blank in this DVS and are stamped by the loader "
+     "at runtime: Site_OID (the OID of the dated site created for this run) and "
+     "Participant_Key (the run-scoped full participant key). These are written back "
+     "to the DVS Results file uploaded to monday.com after the run completes."),
+    ("If a Run Fails",
+     "If the loader fails partway through, a partial site and participants may exist "
+     "in OC4 Test. These can be left in place — they are harmless, clearly dated, "
+     "and do not affect subsequent runs. The next run creates a new dated site. "
+     "Do not attempt to delete partial sites manually unless storage is a concern."),
+    ("Calendaring Tests",
+     "Calendaring rule tests (on the Calendaring_UAT tab) are MANUAL STEPS ONLY. "
+     "The loader does not execute calendaring UAT. "
+     "See the Calendaring_UAT tab for step-by-step instructions to verify each rule."),
+]
+
+
+def _write_uat_setup_sheet(ws):
+    """Write the fixed UAT_Setup information tab (2-column topic/description table)."""
+    n_cols = 2
+    # Title row
+    _title(ws, "UAT Data Loading — Setup Reference", n_cols)
+    ws.row_dimensions[1].height = 22
+    # Sub-title
+    _sub_title(ws, "Read-only reference. Describes how the automated UAT loader works.", n_cols, row=2)
+    ws.row_dimensions[2].height = 14
+    # Column headers (row 3)
+    _hdr(ws.cell(row=3, column=1), "Topic")
+    _hdr(ws.cell(row=3, column=2), "Description")
+    ws.row_dimensions[3].height = 16
+    ws.column_dimensions["A"].width = 24
+    ws.column_dimensions["B"].width = 100
+    # Data rows
+    for i, (topic, desc) in enumerate(_UAT_SETUP_ROWS):
+        row_num = 4 + i
+        tc = ws.cell(row=row_num, column=1, value=topic)
+        tc.font = _font(bold=True, size=9)
+        tc.fill = _fill(LIGHT_BLUE)
+        tc.border = _border()
+        tc.alignment = _align(h="left", v="top")
+        dc = ws.cell(row=row_num, column=2, value=desc)
+        dc.font = _font(size=8)
+        dc.fill = _fill(GREY_LIGHT if i % 2 == 0 else WHITE)
+        dc.border = _border()
+        dc.alignment = Alignment(wrap_text=True, horizontal="left", vertical="top")
+        ws.row_dimensions[row_num].height = 48
+    ws.freeze_panes = ws.cell(row=4, column=1)
+
+
+def _write_cal_rules_sheet(ws, rows, meta, today):
+    """Write the Calendaring_Rules sheet."""
+    _write_sheet(
+        ws,
+        CAL_RULES_COLS,
+        rows,
+        CAL_RULES_WIDTHS,
+        title_text=f"Calendaring Rules  |  {meta.get('protocol_number', '')}  |  {today}",
+        start_data_row=4,
+    )
+
+
+def _write_cal_uat_sheet(ws, rows, meta, today):
+    """Write the Calendaring_UAT sheet."""
+    _write_sheet(
+        ws,
+        CAL_UAT_COLS,
+        rows,
+        CAL_UAT_WIDTHS,
+        title_text=f"Calendaring UAT Cases (Manual)  |  {meta.get('protocol_number', '')}  |  {today}",
+        start_data_row=4,
+    )
 
 
 # ── Main build function ───────────────────────────────────────────────────────
@@ -187,31 +343,13 @@ def build_dvs(dvs_data, output_path):
         'protocol_extraction': [ {col: val, ...}, ... ],
         'dvs_oc4': [ {col: val, ...}, ... ],
         'query_text_library': [ {col: val, ...}, ... ],
-        'uat_cases': [ {col: val, ...}, ... ],
+        'uat_cases': [ {col: val, ...}, ... ],  # 25 cols; ODM cols 17-25 populated by DVS skill
+        'calendaring_rules': [ {col: val, ...}, ... ],  # optional; from Study Spec JSON
+        'calendaring_uat': [ {col: val, ...}, ... ],    # optional; one per CAL rule
     }
     """
     # Load template to preserve reference sheets
     wb = load_workbook(TEMPLATE_PATH)
-
-    # Clean up LibreOffice conversion artefacts that cause Excel to show a
-    # "repaired content" warning on every open. Applied to every sheet so
-    # nothing slips through regardless of which sheets the template contains.
-    #
-    #  1. Trim extra <selection> pane elements — LO writes up to 4 for a
-    #     simple freeze; Excel only accepts 1 for a row-only freeze.
-    #  2. Remove type=None DataValidations — internal LO markers.
-    #  3. Clear formula2='0' and operator='between' on list validations —
-    #     invalid for list type and trigger Excel's repair dialog.
-    for _ws in wb.worksheets:
-        _ws.sheet_view.selection = _ws.sheet_view.selection[:1]
-        _bad = [_dv for _dv in _ws.data_validations.dataValidation
-                if _dv.type is None]
-        for _dv in _bad:
-            _ws.data_validations.dataValidation.remove(_dv)
-        for _dv in _ws.data_validations.dataValidation:
-            if _dv.type == 'list':
-                _dv.formula2 = None
-                _dv.operator = None
     today = datetime.date.today().isoformat()
     meta  = dvs_data.get("study_meta", {})
 
@@ -286,11 +424,38 @@ def build_dvs(dvs_data, output_path):
         start_data_row=4,
     )
 
-    # Ensure sheet order: README, Lookups, Protocol_Extraction, DVS_OC4,
-    # Query_Text_Library, UAT_Cases, OC4_Syntax_Guide, Examples
+    # ── UAT_Setup (info tab — fixed content, no dvs_data input) ──────────
+    ws_setup = wb["UAT_Setup"] if "UAT_Setup" in wb.sheetnames \
+               else wb.create_sheet("UAT_Setup")
+    # Clear and rewrite on every run
+    ws_setup.delete_rows(1, ws_setup.max_row + 1)
+    _write_uat_setup_sheet(ws_setup)
+
+    # ── Calendaring_Rules ─────────────────────────────────────────────────
+    ws_cal = wb["Calendaring_Rules"] if "Calendaring_Rules" in wb.sheetnames \
+             else wb.create_sheet("Calendaring_Rules")
+    for row in ws_cal.iter_rows(min_row=4):
+        for cell in row:
+            cell.value = None
+    _write_cal_rules_sheet(ws_cal, dvs_data.get("calendaring_rules", []), meta, today)
+
+    # ── Calendaring_UAT ───────────────────────────────────────────────────
+    ws_cuat = wb["Calendaring_UAT"] if "Calendaring_UAT" in wb.sheetnames \
+              else wb.create_sheet("Calendaring_UAT")
+    for row in ws_cuat.iter_rows(min_row=4):
+        for cell in row:
+            cell.value = None
+    _write_cal_uat_sheet(ws_cuat, dvs_data.get("calendaring_uat", []), meta, today)
+
+    # Ensure sheet order:
+    # README, Lookups, Protocol_Extraction, DVS_OC4, Query_Text_Library,
+    # UAT_Cases, UAT_Setup, Calendaring_Rules, Calendaring_UAT,
+    # OC4_Syntax_Guide, Examples
     desired_order = [
         "README", "Lookups", "Protocol_Extraction", "DVS_OC4",
-        "Query_Text_Library", "UAT_Cases", "OC4_Syntax_Guide", "Examples"
+        "Query_Text_Library", "UAT_Cases", "UAT_Setup",
+        "Calendaring_Rules", "Calendaring_UAT",
+        "OC4_Syntax_Guide", "Examples",
     ]
     # Move sheets to correct positions
     for i, name in enumerate(desired_order):

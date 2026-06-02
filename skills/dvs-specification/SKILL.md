@@ -291,6 +291,8 @@ For every check that has a `Constraint / Required / Relevant Message`:
 For every DVS check, generate at least one UAT case. Generate two cases
 for Hard checks (a pass scenario and a fail scenario).
 
+**Columns 1–16 (human test spec):**
+
 | Col | Value |
 |-----|-------|
 | UAT Case ID | UAT-001, UAT-002, ... |
@@ -323,6 +325,107 @@ for Hard checks (a pass scenario and a fail scenario).
 | `. = 'N'` | N | Y |
 | `regex(., 'HH:MM pattern')` | `09:30` | `9:30` or `25:00` |
 | `not(selected(.,'X') and count-selected(.)>1)` | single selection | X + another |
+
+**Columns 17–25 (ODM load coordinates):**
+
+Cols 17–18 (`Site_OID`, `Participant_Key`) are **always left blank** in the
+DVS — they are stamped at runtime by `uat_loader.py`.
+
+Cols 19–25 are populated by this skill from XLSForm metadata:
+
+| Col | How to populate |
+|-----|----------------|
+| Study_Event_OID (19) | From `forms[].visits_assigned[0]` in Study Spec JSON, or `crossform_references` in XLSForm settings. Use the first event. If form is multi-event and item is a data field, write `[PLACEHOLDER — multi-event form, confirm target visit]`. Leave blank for calculate/readonly/structural rows. |
+| Event_Repeat_Key (20) | Default `1`. Write `2`, `3`, ... only for UAT cases that explicitly test repeating event instances. Leave blank for calculate/readonly/structural rows. |
+| Form_OID (21) | `form_id` from XLSForm settings sheet for the form containing this item. Leave blank for structural rows. |
+| Item_Group_OID (22) | `bind::oc:itemgroup` value from the survey row. Leave blank for begin/end group, calculate, and note rows. |
+| Participant_ID (23) | Default `UAT-P001`. Assign `UAT-P002` only when the Preconditions column explicitly requires a different baseline state (e.g. female participant). All rows in a cross-form dependency chain share the same Participant_ID. |
+| Load_Order (24) | Integer sequence by form group: DM/ICF = 1–10, IE/MH = 11–20, VS/PE/LB = 21–50, AE/CM/EX = 51–80, DS/safety = 81–99. Within a form, rows load in survey row order. Cross-form source rows must have lower Load_Order than dependent rows. Leave blank for non-loadable rows. |
+| Load_Value (25) | Pass-scenario value from Input Data (col 7), normalised: dates as ISO `YYYY-MM-DD`, select_one as choice `name` (not label), numbers as plain numeric strings. Leave blank for calculate, readonly, and fail-scenario rows. |
+
+**Rows where all ODM columns (17–25) must be blank:**
+- `begin group`, `end group`, `begin repeat`, `end repeat`
+- `calculate` rows (any)
+- `note` rows
+- `readonly` rows
+- `EVENT_CF` row
+
+---
+
+## Step 6a: Write UAT_Setup Tab
+
+After populating UAT_Cases, write the `UAT_Setup` information tab.
+This tab has **fixed content** — it does not vary by protocol.
+No extraction or inference is needed; the `generate_dvs.py` script
+writes it automatically from the `_UAT_SETUP_ROWS` constant.
+
+When calling `build_dvs()`, you do not need to supply a
+`calendaring_rules` or `calendaring_uat` key if no calendaring rules
+were extracted — the script defaults to empty lists and still writes
+the tab headers.
+
+---
+
+## Step 6b: Populate Calendaring_Rules
+
+If the Study Spec JSON contains a `calendaring_rules` array (added by
+the `protocol-analysis` skill, Step 8a), convert each entry to a
+Calendaring_Rules row.
+
+| DVS Column | Source |
+|------------|--------|
+| Rule ID | `calendaring_rules[i].rule_id` |
+| Status | `Draft` |
+| Rule Name | `rule_name` |
+| Business Purpose | `description` |
+| Protocol Reference | `protocol_reference` |
+| Trigger Type | `trigger_type` |
+| Trigger OID | `trigger_oid` (blank if null) |
+| Schedule | `schedule` (blank if null) |
+| Schedule Time | `schedule_time` (blank if null) |
+| Condition (XPath) | `condition_xpath` (`$TRUE` if unconditional) |
+| Condition (Plain English) | `condition_plain_english` |
+| Action Type | `actions[0].action_type` (one row per action; repeat Rule ID for multi-action rules) |
+| Target Event OID | `actions[0].target_event_oid` |
+| Target Form OID | `actions[0].target_form_oid` |
+| Action Parameters | `actions[0].parameters` serialised as compact JSON |
+| Rule Result To Trigger On | `true` (default unless spec says false) |
+| JSON Output | Assemble from all fields — see OC4_Syntax_Guide sheet for the full JSON schema |
+| Build Owner | Leave blank |
+| Priority | `priority` from spec (default `High`) |
+| UAT Case ID(s) | Leave blank — linked in Step 6c |
+
+If no `calendaring_rules` key is present in dvs_data (e.g. because the
+Study Spec was generated before the protocol-analysis skill was updated),
+write an empty Calendaring_Rules sheet with headers only and a single
+placeholder row noting `[No calendaring rules extracted — populate manually]`.
+
+---
+
+## Step 6c: Populate Calendaring_UAT
+
+For each row in Calendaring_Rules, generate one `CUAT-NNN` test case.
+
+| Col | Value |
+|-----|-------|
+| UAT Case ID | CUAT-001, CUAT-002, ... |
+| Status | `Not Run` |
+| Related Rule ID | CAL-NNN |
+| Scenario | Generate from Rule Name (e.g. "Verify: [Rule Name] fires correctly") |
+| Preconditions | Generate from trigger type and condition (e.g. "UAT participant with DM data loaded. Baseline event in Data Entry Started status.") |
+| Setup Steps | Generate numbered steps to reach the precondition state using the dated UAT site from the most recent data load run |
+| Trigger Action | Generate from Trigger Type (e.g. "Click Close on the [form] form for the [event] event") |
+| Expected Outcome | Generate from Action Type and parameters (e.g. "Visit 2 event appears in participant timeline scheduled 28 days after Baseline start date") |
+| Verification Steps | Generate numbered steps to confirm the outcome in OC4 UI |
+| Actual Result | Leave blank |
+| Test Result | `Not Run` |
+| Tester | Leave blank |
+| Execution Date | Leave blank |
+| Defect / Ticket | Leave blank |
+| Notes | Leave blank |
+
+After writing Calendaring_UAT, go back and fill `UAT Case ID(s)` in the
+corresponding Calendaring_Rules rows.
 
 ---
 
@@ -388,26 +491,64 @@ and outside DVS scope.
 
 ---
 
-## Step 10: Generate the DVS Output File
+## Step 10: Generate DVS Output Files
 
-Use the script at `scripts/generate_dvs.py`:
+Produce **two output files** on every Mode A run: the XLSX workbook
+(the complete working document) and the PDF (the curated audit artifact).
+
+### XLSX
 
 ```python
 import sys
 sys.path.insert(0, '/mnt/skills/user/dvs-specification/scripts')
 from generate_dvs import build_dvs
 
-output_path = '/mnt/user-data/outputs/{PROTOCOL_NUMBER}_DVS.xlsx'
-build_dvs(dvs_data, output_path)
+xlsx_path = '/mnt/user-data/outputs/{PROTOCOL_NUMBER}_DVS.xlsx'
+build_dvs(dvs_data, xlsx_path)
 ```
 
-The script:
+The XLSX script:
 1. Opens the template at `references/DVS_Template.xlsx`
 2. Preserves README, Lookups, OC4_Syntax_Guide, Examples unchanged
-3. Writes Protocol_Extraction, DVS_OC4, Query_Text_Library, UAT_Cases
-4. Applies consistent formatting (header rows blue, data rows
-   alternating white/light grey, PLACEHOLDER cells highlighted amber)
-5. Saves as `{PROTOCOL_NUMBER}_DVS.xlsx`
+3. Writes Protocol_Extraction, DVS_OC4, Query_Text_Library
+4. Writes UAT_Cases (25 columns — 16 test spec + 9 ODM load coordinates)
+5. Writes UAT_Setup (fixed info tab — no dvs_data input required)
+6. Writes Calendaring_Rules (from `dvs_data['calendaring_rules']`; empty headers if key absent)
+7. Writes Calendaring_UAT (from `dvs_data['calendaring_uat']`; empty headers if key absent)
+8. Enforces sheet order: README → Lookups → Protocol_Extraction → DVS_OC4 →
+   Query_Text_Library → UAT_Cases → UAT_Setup → Calendaring_Rules →
+   Calendaring_UAT → OC4_Syntax_Guide → Examples
+9. Applies consistent formatting; PLACEHOLDER cells highlighted amber
+10. Saves as `{PROTOCOL_NUMBER}_DVS.xlsx`
+
+### PDF
+
+```python
+from generate_dvs_pdf import build_dvs_pdf
+
+pdf_path = '/mnt/user-data/outputs/{PROTOCOL_NUMBER}_DVS.pdf'
+build_dvs_pdf(dvs_data, pdf_path)
+```
+
+The PDF is a **sign-off and audit artifact** — curated, not a full column
+dump. It contains:
+
+| Section | Contents |
+|---------|----------|
+| Cover | Protocol number, study ID, generated date, review status |
+| Section 1 — DVS Summary | Check counts by type / severity / priority / status; UAT and calendaring totals |
+| Section 2 — Protocol Extraction | Source requirements traceability table (Category, Requirement, Protocol Ref, Check ID, Priority) |
+| Section 3 — DVS Checks | Curated 9-column view: Check ID, Check Name, Type, Severity, Target Form, Target Item, Expression, Expected Site Action, Status. Row shading: Red = Hard, Amber = Soft, Green = Informational |
+| Section 4 — Query Text Library | QT ID, Standard Message, Audience, Related Check IDs, Status |
+| Section 5 — UAT Summary | Pass/Fail/Not Run counts, pass rate, case list with result shading |
+| Section 6 — Calendaring Rules Summary | Rule ID, Name, Trigger Type, Condition, Action Type, Priority, Status |
+| Section 7 — Approval Block | Signature table for Data Manager, CPM, Sponsor Representative |
+
+The PDF omits the ODM load coordinate columns (UAT_Cases cols 17–25),
+write-back expressions, full XPath detail, and the UAT_Setup tab — these
+belong in the XLSX working document.
+
+Present both files to the user after generation.
 
 ---
 
@@ -438,7 +579,8 @@ dvs_log = {
 
 | Output | Filename |
 |--------|----------|
-| DVS workbook | `{PROTOCOL_NUMBER}_DVS.xlsx` |
+| DVS workbook (XLSX) | `{PROTOCOL_NUMBER}_DVS.xlsx` |
+| DVS audit PDF | `{PROTOCOL_NUMBER}_DVS.pdf` |
 | Write-back zip | `{PROTOCOL_NUMBER}_EDC_Build_{DATE}_updated.zip` |
 | Write-back report | `{PROTOCOL_NUMBER}_DVS_Writeback_Report.xlsx` |
 
@@ -465,12 +607,23 @@ Before marking any check as Approved:
 4. REVIEW all Query Text messages — wording must be plain-language
    and suitable for site data entry staff
 
-5. REVIEW UAT_Cases — confirm Pass/Fail input data is representative
-   and Expected Results are accurate
+5. REVIEW UAT_Cases — confirm Pass/Fail input data is representative,
+   Expected Results are accurate, and Load_Value (col 25) contains
+   the correct machine-readable value for each pass-scenario row
 
-6. CHANGE Status from Draft → In Review → Approved as review progresses
+6. REVIEW UAT_Setup tab — fixed content; confirm it accurately
+   describes your environment (no edits normally needed)
 
-7. When ready to write approved changes back to XLSForms, provide
-   this DVS xlsx alongside the XLSForm files or build zip.
+7. REVIEW Calendaring_Rules — confirm Trigger Type, Condition (XPath),
+   Action Parameters, and JSON Output for every rule; the JSON Output
+   column is what gets pasted into OC4 Rules Management
+
+8. REVIEW Calendaring_UAT — confirm Setup Steps and Verification Steps
+   reference the correct events, forms, and expected outcomes
+
+9. CHANGE Status from Draft → In Review → Approved as review progresses
+
+10. When ready to write approved changes back to XLSForms, provide
+    this DVS xlsx alongside the XLSForm files or build zip.
 ─────────────────────────────────────────────────────
 ```
