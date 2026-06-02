@@ -3122,10 +3122,22 @@ async def run_pipeline(item_id):
             # works before spending ~8 min on chains. A stale session
             # gets deleted here so the existing "no session" branch
             # below re-prompts the user via the same code path.
+            #
+            # Uses probe_sso_session (oc_form_publisher) — the AUTHORITATIVE
+            # check: it replays the publisher's exact My-Studies navigation
+            # headless and only reports stale when genuinely redirected to
+            # Keycloak login, failing OPEN on anything ambiguous (slow
+            # render / no studies / transient). This is what lets us fail
+            # fast at minute 0 instead of wasting ~8 min of analysis to
+            # discover a dead session at the publish step, WITHOUT the
+            # false-stale regressions that got the old REST/cookie/userinfo
+            # checks disabled (the _validate_oc_session stub).
             if auth_manager.session_exists(oc_email):
                 session_path = str(auth_manager.get_session_path(oc_email))
-                if not await _validate_oc_session(
-                        oc_subdomain, session_path):
+                from oc_form_publisher import probe_sso_session
+                _session_live = await probe_sso_session(
+                    oc_subdomain, session_path)
+                if not _session_live:
                     print(f"[session-preflight] session for {oc_email} "
                           f"is stale — deleting and re-requesting auth",
                           flush=True)

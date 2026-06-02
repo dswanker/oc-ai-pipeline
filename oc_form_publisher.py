@@ -84,6 +84,51 @@ def _strip_form_oid_prefix(oid: str) -> str:
     return o
 
 
+# ── Hostile-character detection for form titles ───────────────────────────
+#
+# PROVEN (CRS-135, 2026-06-02): a '+' anywhere in a form's display title
+# silently DEADLOCKS OC's form-service version-attach — the upload spins
+# forever, no version is created, and the version-less record then poisons
+# every later add/upload/publish in that study. The spec-creation
+# sanitizer (_sanitize_form_titles in pipeline.py) strips the '+' we know
+# about, but OC may have OTHER hostile characters we haven't discovered.
+#
+# This detector is the breadcrumb: when a version-attach fails, we scan the
+# title for anything outside a conservative known-safe set and log it
+# loudly with the form name + the exact offending character(s) and their
+# unicode code points. That converts a future silent deadlock into an
+# actionable "this character is probably the culprit" log line, so a new
+# bad character can be diagnosed in one run instead of days.
+#
+# KNOWN-BAD: characters we have positively confirmed break OC.
+# SAFE: characters we are confident are fine (alphanumerics handled
+# separately via str.isalnum() to stay unicode-aware for accented names).
+_KNOWN_BAD_TITLE_CHARS = {"+"}
+_SAFE_TITLE_PUNCT = set(" -_.,()/:;'&%#@[]")  # benign in practice
+
+
+def detect_suspect_title_chars(title: str):
+    """Return a list of (char, codepoint, known_bad) for suspect characters.
+
+    A character is 'suspect' if it is neither alphanumeric nor in the
+    conservative safe-punctuation set. Known-bad characters (e.g. '+') are
+    flagged with known_bad=True so the caller can phrase the log line as a
+    confirmed culprit vs. a candidate. Returns [] when the title is clean.
+    """
+    if not isinstance(title, str):
+        return []
+    suspects = []
+    seen = set()
+    for ch in title:
+        if ch in seen:
+            continue
+        seen.add(ch)
+        if ch.isalnum() or ch in _SAFE_TITLE_PUNCT:
+            continue
+        suspects.append((ch, f"U+{ord(ch):04X}", ch in _KNOWN_BAD_TITLE_CHARS))
+    return suspects
+
+
 # ── SSO redirect detection ────────────────────────────────────────────────
 #
 # When a Keycloak SSO session expires mid-run, OC silently redirects the
@@ -1983,6 +2028,67 @@ class FormPublisher:
                                                                   f"reload after panel "
                                                                   f"reset failed: {_ne}",
                                                                   flush=True)
+                                                    # DEFENSIVE GUARD (CRS-135 fix):
+                                                    # the upload did NOT attach a
+                                                    # version. Do NOT mark this form
+                                                    # uploaded and do NOT let it fall
+                                                    # through to set-default/publish —
+                                                    # a version-less form silently
+                                                    # poisons the whole study (this is
+                                                    # the failure mode that hid the
+                                                    # '+' bug for 10 days). Instead:
+                                                    # run the hostile-character
+                                                    # detector on the title, log a
+                                                    # loud structured warning naming
+                                                    # the form + offending char(s),
+                                                    # record a hard error, and skip
+                                                    # the success tail via `continue`.
+                                                    if not _version_created:
+                                                        _suspects = detect_suspect_title_chars(
+                                                            form_name)
+                                                        if _suspects:
+                                                            _bad = ", ".join(
+                                                                f"{c!r} ({cp}"
+                                                                + (", KNOWN-BAD" if kb
+                                                                   else ", candidate")
+                                                                + ")"
+                                                                for c, cp, kb in _suspects)
+                                                            print(f"[publisher] "
+                                                                  f"SUSPECTED-BAD-CHAR: form "
+                                                                  f"{form_name!r} (OID="
+                                                                  f"{oid or pre_oid}) failed "
+                                                                  f"version-attach AND its "
+                                                                  f"title contains suspect "
+                                                                  f"character(s): {_bad}. OC's "
+                                                                  f"form-service is known to "
+                                                                  f"deadlock on '+'; this "
+                                                                  f"character is the likely "
+                                                                  f"culprit. Sanitize it in "
+                                                                  f"spec creation "
+                                                                  f"(_sanitize_form_titles).",
+                                                                  flush=True)
+                                                        else:
+                                                            print(f"[publisher] "
+                                                                  f"VERSION-ATTACH-FAILED: "
+                                                                  f"form {form_name!r} (OID="
+                                                                  f"{oid or pre_oid}) got no "
+                                                                  f"version, but its title "
+                                                                  f"has no suspect characters "
+                                                                  f"— cause is elsewhere "
+                                                                  f"(content/session/OC). "
+                                                                  f"Not marking uploaded.",
+                                                                  flush=True)
+                                                        result.errors.append(
+                                                            f"{form_name} (OID="
+                                                            f"{oid or pre_oid}): version-attach "
+                                                            f"failed — no version created"
+                                                            + (f"; suspect title char(s): "
+                                                               + ", ".join(
+                                                                   f"{c!r} {cp}"
+                                                                   for c, cp, _ in _suspects)
+                                                               if _suspects else ""))
+                                                        # Skip the success-tail below.
+                                                        continue
                                             # set-default for this card
                                             # happens in the post-loop
                                             # batch phase — no per-card
