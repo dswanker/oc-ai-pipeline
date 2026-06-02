@@ -51,6 +51,7 @@ from prompts        import (
     EDC_STRUCTURE_PROMPT, PRICING_SUMMARY_PROMPT,
     DVS_TRANSLATE_PROMPT,
 )
+from uat_loader import run_uat_loader, UAT_STATUS
 
 SKILLS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'skills')
 
@@ -4717,7 +4718,83 @@ async def run_pipeline(item_id):
 
                 if load_uat_checked:
                     print(f"[auto-uat] Load UAT checkbox is checked — "
-                          f"(stub, not yet implemented)", flush=True)
+                          f"launching uat_loader...", flush=True)
+                    try:
+                        # Re-use the auth_manager that form upload already
+                        # initialised. get_cookies() returns the saved
+                        # session dict for the OC admin account.
+                        _uat_item = await get_item(item_id)
+                        _uat_cols = {c["id"]: c for c in
+                                     _uat_item.get("column_values", [])}
+                        _uat_subdomain = (
+                            _uat_cols.get(COL["oc_subdomain"], {})
+                            .get("text") or ""
+                        ).strip()
+                        try:
+                            _uat_cookies = auth_manager.get_cookies(
+                                _uat_subdomain
+                            )
+                        except Exception:
+                            _uat_cookies = {}
+
+                        await set_status(
+                            item_id, COL["pipeline_status"],
+                            UAT_STATUS["loading"]
+                        )
+                        await append_log(
+                            item_id,
+                            "UAT Loader: starting UAT data load..."
+                        )
+
+                        _uat_result = await run_uat_loader(
+                            item_id, _uat_cookies
+                        )
+
+                        if _uat_result["success"]:
+                            await set_status(
+                                item_id, COL["pipeline_status"],
+                                UAT_STATUS["complete"]
+                            )
+                            await append_log(
+                                item_id,
+                                f"UAT Load succeeded. "
+                                f"Site: {_uat_result['site_oid']}. "
+                                f"Participants: "
+                                f"{len(_uat_result['participants_created'])}."
+                            )
+                            print(
+                                f"[auto-uat] UAT load succeeded → "
+                                f"site={_uat_result['site_oid']}",
+                                flush=True
+                            )
+                        else:
+                            _uat_errs = "; ".join(_uat_result["errors"])
+                            await set_status(
+                                item_id, COL["pipeline_status"],
+                                UAT_STATUS["failed"]
+                            )
+                            await append_log(
+                                item_id,
+                                f"UAT Load FAILED: {_uat_errs}"
+                            )
+                            print(
+                                f"[auto-uat] UAT load failed: {_uat_errs}",
+                                flush=True
+                            )
+                    except Exception as _uat_exc:
+                        print(
+                            f"[auto-uat] UAT loader crashed: {_uat_exc}",
+                            flush=True
+                        )
+                        print(traceback.format_exc(), flush=True)
+                        await append_log(
+                            item_id,
+                            f"UAT Loader ERROR: {_uat_exc}"
+                        )
+                        await set_status(
+                            item_id, COL["pipeline_status"],
+                            UAT_STATUS["failed"]
+                        )
             except Exception as e:
                 print(f"[auto-publish] Error checking post-completion "
                       f"flags: {e}", flush=True)
