@@ -14,7 +14,7 @@ is insufficient. Protocol-specific requirements override these defaults.
 
 | name | label | type | required | constraint | notes |
 |------|-------|------|----------|------------|-------|
-| AGE | Age: | integer | yes | `. >= 18 and . <= 100` | Adjust range per protocol |
+| AGE | Age: | integer | yes | `. >= 18 and . <= 100` | Adjust range per protocol. **NEVER generate AGE as a `calculate` field. AGE is always a directly entered integer with a constraint. If a protocol asks to derive age from birthdate, add a separate `AGE_CALC` calculate field with `readonly: yes` — but the primary AGE item remains a plain integer entry field.** |
 | SEX | Sex: | select_one SEX | yes | | Default: M (readonly calculate) |
 | ETHNIC | Ethnicity: | select_one ETHNIC | yes | | |
 | RACE | Race: | select_multiple RACE | yes | not(selected AND others) | Cannot select Not Reported with others |

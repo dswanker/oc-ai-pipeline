@@ -1153,6 +1153,57 @@ constraint); carry forward as-authored.
 
 ---
 
+## §29. calculate Fields Must Always Have readonly: yes
+
+**Rule.** Every survey row with type `calculate` — whether it computes a
+derived value, pulls a cross-form reference, or assembles a display string —
+**must** have `readonly: yes` in the survey row. OpenClinica's form validator
+rejects any `calculate` field that does not carry `readonly: yes`, producing
+the error:
+
+> *"Element '[name]' cannot have a value in column 'calculation' unless it is
+> read-only."*
+
+This failure is silent at build time but fatal at upload time — the form
+upload returns success but no version object is created, causing the
+publisher to retry indefinitely.
+
+**Apply to every calculate row without exception:**
+
+```
+type:     calculate
+name:     [field_name]
+readonly: yes
+calculation: [expression]
+```
+
+**Common violation to prevent — derived integers or dates.** If a protocol
+asks to compute a value (e.g. age from birthdate, BMI from height/weight,
+a date arithmetic result), the derived field must be:
+- type `calculate` with `readonly: yes`, OR
+- type `text` with `readonly: yes` and `calculation: [expression]`
+
+Never leave `readonly` blank on a calculate row. Never generate AGE or
+similar clinically meaningful items as `calculate` without `readonly: yes` —
+instead keep AGE as a directly entered `integer` (with constraint) and add a
+separate `AGE_CALC calculate readonly: yes` row only if derivation is also
+needed.
+
+**Scope.** Applies to all calculate rows in all survey sheets across all
+forms: infrastructure forms (ICF, DOV), CDASH clinical forms, and custom
+forms.
+
+**Override.** None — this is an OC platform requirement, not a stylistic
+default. It cannot be overridden by customer library or protocol instruction.
+
+When applied, surface in `conventions_applied` as:
+```json
+{ "convention": "29", "calculate_readonly_enforced": true,
+  "calculate_rows_audited": N, "violations_corrected": N }
+```
+
+---
+
 ## Open Items (Tracked for Future Convention Decisions)
 
 These are deferred decisions noted but not yet codified as defaults:
