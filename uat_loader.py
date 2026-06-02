@@ -34,15 +34,37 @@ import io
 import json
 import os
 import traceback
+from pathlib import Path
 
 import httpx
 from openpyxl import load_workbook
-from openpyxl.utils import get_column_letter
 
 from monday_client import (
     get_item, download_column_file, upload_file,
-    append_log, set_status, set_text, COL, BOARD_ID,
+    append_log, set_status, COL,
 )
+
+# Playwright storage_state JSONs live here (same path as auth_manager.py)
+_SESSIONS_DIR = Path("/data/browser_sessions")
+
+
+def _load_cookies(email: str) -> dict:
+    """
+    Load Playwright storage_state JSON for email and return a flat
+    {name: value} dict of cookies suitable for httpx.
+    Returns empty dict if no session file exists.
+    """
+    session_path = _SESSIONS_DIR / f"{email}.json"
+    if not session_path.exists():
+        return {}
+    try:
+        with open(session_path) as f:
+            state = json.load(f)
+        cookies = state.get("cookies") or []
+        return {c["name"]: c["value"] for c in cookies if c.get("name")}
+    except Exception as e:
+        print(f"[uat_loader] cookie load failed for {email}: {e}", flush=True)
+        return {}
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -325,9 +347,10 @@ def _stamp_dvs(dvs_bytes: bytes, stamp_map: dict) -> bytes:
 
 # ── Main entry point ──────────────────────────────────────────────────────────
 
-async def run_uat_loader(item_id: str, auth_cookies: dict) -> dict:
+async def run_uat_loader(item_id: str) -> dict:
     """
     Execute the full UAT data loading workflow for one monday.com item.
+    Loads OC session cookies from the saved Playwright storage_state file.
     Returns dict: success, site_oid, participants_created, odm_imports, errors.
     """
     result = {
@@ -346,6 +369,7 @@ async def run_uat_loader(item_id: str, auth_cookies: dict) -> dict:
     subdomain  = (cols.get(COL["oc_subdomain"], {}).get("text") or "").strip()
     study_uuid = (cols.get(COL["study_uuid"],   {}).get("text") or "").strip()
     study_oid  = (cols.get(COL["study_oid"],    {}).get("text") or "").strip()
+    oc_email   = (cols.get(COL["oc_email"],     {}).get("text") or "").strip()
 
     if not subdomain:
         result["errors"].append("OC Subdomain is blank.")
@@ -355,6 +379,15 @@ async def run_uat_loader(item_id: str, auth_cookies: dict) -> dict:
         return result
     if not study_oid:
         result["errors"].append("Study OID is blank — publish to Test first.")
+        return result
+
+    # ── Load auth cookies from saved session ──────────────────────────────
+    auth_cookies = _load_cookies(oc_email)
+    if not auth_cookies:
+        result["errors"].append(
+            f"No saved OC session found for {oc_email}. "
+            f"Complete the OC auth flow first (use the OC Auth Link column)."
+        )
         return result
 
     # ── Step 2: Download DVS ───────────────────────────────────────────────

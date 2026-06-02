@@ -4720,23 +4720,6 @@ async def run_pipeline(item_id):
                     print(f"[auto-uat] Load UAT checkbox is checked — "
                           f"launching uat_loader...", flush=True)
                     try:
-                        # Re-use the auth_manager that form upload already
-                        # initialised. get_cookies() returns the saved
-                        # session dict for the OC admin account.
-                        _uat_item = await get_item(item_id)
-                        _uat_cols = {c["id"]: c for c in
-                                     _uat_item.get("column_values", [])}
-                        _uat_subdomain = (
-                            _uat_cols.get(COL["oc_subdomain"], {})
-                            .get("text") or ""
-                        ).strip()
-                        try:
-                            _uat_cookies = auth_manager.get_cookies(
-                                _uat_subdomain
-                            )
-                        except Exception:
-                            _uat_cookies = {}
-
                         await set_status(
                             item_id, COL["pipeline_status"],
                             UAT_STATUS["loading"]
@@ -4746,9 +4729,7 @@ async def run_pipeline(item_id):
                             "UAT Loader: starting UAT data load..."
                         )
 
-                        _uat_result = await run_uat_loader(
-                            item_id, _uat_cookies
-                        )
+                        _uat_result = await run_uat_loader(item_id)
 
                         if _uat_result["success"]:
                             await set_status(
