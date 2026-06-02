@@ -768,32 +768,6 @@ class FormPublisher:
                                     f"already registered in bucket "
                                     f"{_bucket_uuid}",
                                     flush=True)
-                                # TEMP DIAGNOSTIC (Q2/Q3): dump full bucket
-                                # contents at publish-start so we can see
-                                # whether a freshly-created study's bucket is
-                                # truly empty, and whether any F_SLEEP* /
-                                # suffixed OIDs are present before SLEEP is
-                                # touched. Remove after diagnosis.
-                                try:
-                                    _bucket_dump = [
-                                        {
-                                            "name": _f.get("name"),
-                                            "ocoid": _f.get("ocoid"),
-                                            "versions": len(
-                                                _f.get("versions") or []),
-                                        }
-                                        for _f in _bucket_forms_by_name.values()
-                                    ]
-                                    print(
-                                        f"[publisher] BUCKET-DUMP "
-                                        f"({len(_bucket_dump)} forms): "
-                                        f"{json.dumps(_bucket_dump)}",
-                                        flush=True)
-                                except Exception as _bde:
-                                    print(
-                                        f"[publisher] BUCKET-DUMP error: "
-                                        f"{_bde}",
-                                        flush=True)
                             else:
                                 print(
                                     f"[publisher] bucket-forms lookup "

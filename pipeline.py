@@ -955,17 +955,6 @@ def _build_board_json(struct_json):
 
     for form in forms:
         form_id      = form.get("form_id", "")
-        # TEMP DIAGNOSTIC (Q3): suppress SLEEP entirely so no SLEEP card is
-        # created on the board this run. Lets us manually add a SLEEP form
-        # card afterward into a study the pipeline never touched SLEEP in,
-        # and observe whether getForm returns F_SLEEP (clean bucket) or
-        # F_SLEEP_XXXX (suffix appears with zero pipeline involvement).
-        # Remove after diagnosis.
-        if form_id.upper().replace("F_", "").strip() == "SLEEP":
-            print(f"[board-build] TEMP-Q3: skipping SLEEP card creation "
-                  f"(form_id={form_id!r}) for clean manual-add test.",
-                  flush=True)
-            continue
         if form_id.upper().startswith("F_"):
             print(f"[board-build] WARNING: form_id {form_id!r} has F_ "
                   f"prefix — skipping this form card. Fix the form_id "
@@ -2871,6 +2860,52 @@ def _backfill_migration_fields(spec):
     return spec
 
 
+def _sanitize_form_titles(spec):
+    """Strip characters from form_title that break OC's form-service.
+
+    Idempotent — safe to call on every spec load.
+
+    Root cause (proven CRS-135, 2026-06-02): a '+' anywhere in a form's
+    display title silently DEADLOCKS OC's version-attach (the upload spins
+    forever, no version is created, and the version-less form record then
+    poisons every subsequent add/upload/publish in the study). This is the
+    sole reason SLEEP ("Sleep Quality (NRS + PROMIS 8a)") failed for weeks
+    while every other form built cleanly. Controlled test: same form/file
+    with the '+' removed attaches a version on the first try.
+
+    Fix at the SOURCE (spec creation), not the edc-builder: the builder
+    renders whatever form_title the spec provides, so the spec must never
+    emit a hostile character. We replace '+' with ' and ' (preserving
+    meaning, e.g. "NRS + PROMIS" -> "NRS and PROMIS"), collapse the
+    resulting double-spaces, and trim. Other URL/grammar-hostile chars can
+    be added here later if OC reveals more offenders.
+    """
+    if not isinstance(spec, dict):
+        return spec
+
+    def _clean(title: str) -> str:
+        if not isinstance(title, str) or "+" not in title:
+            return title
+        # "A + B" -> "A and B"; bare "A+B" -> "A and B" too.
+        cleaned = title.replace("+", " and ")
+        # Collapse any double spaces introduced by the replacement.
+        while "  " in cleaned:
+            cleaned = cleaned.replace("  ", " ")
+        return cleaned.strip()
+
+    for f in spec.get("forms") or []:
+        if isinstance(f, dict) and "form_title" in f:
+            orig = f.get("form_title")
+            new = _clean(orig)
+            if new != orig:
+                print(f"[spec-sanitize] form_title contained '+', rewrote: "
+                      f"{orig!r} -> {new!r} (OC form-service deadlocks on '+')",
+                      flush=True)
+                f["form_title"] = new
+
+    return spec
+
+
 # ── Session pre-flight (validates a saved Playwright session in ~15s) ──────────
 
 async def _validate_oc_session(subdomain: str, session_path: str) -> bool:
@@ -3362,6 +3397,7 @@ async def run_pipeline(item_id):
                         # OC-9 backstop: apply to edited-XLSX path as well
                         struct_json = _enforce_common_visit(struct_json)
                         struct_json = _backfill_migration_fields(struct_json)
+                        struct_json = _sanitize_form_titles(struct_json)
                         # ── Conventions engine pass + three-way conflict detection (Phase C.4) ──
                         # Path X.1 is the edited-XLSX path. Three snapshots make TRUE
                         # conflict detection possible:
@@ -3502,6 +3538,7 @@ async def run_pipeline(item_id):
             struct_json = json.loads(spec_bytes.decode("utf-8"))
             struct_json = _enforce_common_visit(struct_json)
             struct_json = _backfill_migration_fields(struct_json)
+            struct_json = _sanitize_form_titles(struct_json)
             # ── Conventions engine pass (no-op until conventions/ store is populated) ─
             try:
                 from conventions_engine import apply_conventions
@@ -3618,6 +3655,7 @@ async def run_pipeline(item_id):
                     struct_json = json.loads(_existing_spec.decode("utf-8"))
                     struct_json = _enforce_common_visit(struct_json)
                     struct_json = _backfill_migration_fields(struct_json)
+                    struct_json = _sanitize_form_titles(struct_json)
                     fast_rerun = True
                     print(f"[fast-rerun] Using existing Study Spec JSON "
                           f"from monday ({len(_existing_spec)} bytes) — "
@@ -3793,6 +3831,7 @@ async def run_pipeline(item_id):
             # forms live only there. Deterministic fix-up if Claude missed it.
             struct_json = _enforce_common_visit(struct_json)
             struct_json = _backfill_migration_fields(struct_json)
+            struct_json = _sanitize_form_titles(struct_json)
             # ── Conventions engine pass (no-op until conventions/ store is populated) ─
             try:
                 from conventions_engine import apply_conventions
