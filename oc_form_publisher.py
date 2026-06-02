@@ -2087,8 +2087,12 @@ class FormPublisher:
                                                                    f"{c!r} {cp}"
                                                                    for c, cp, _ in _suspects)
                                                                if _suspects else ""))
-                                                        # Skip the success-tail below.
-                                                        continue
+                                                        # VERSION-ATTACH-FAILED is a content
+                                                        # or OC validation error — retrying
+                                                        # the identical XLSForm will never
+                                                        # succeed. Break out of the while-True
+                                                        # retry loop and move to the next card.
+                                                        break
                                             # set-default for this card
                                             # happens in the post-loop
                                             # batch phase — no per-card
