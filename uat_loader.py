@@ -372,12 +372,20 @@ async def _import_odm(subdomain: str, study_oid: str,
     Uses cookie session auth (same as participant creation).
     """
     url = f"{_pages_base(subdomain)}/rest2/clinicaldata/import"
-    async with httpx.AsyncClient(timeout=60, cookies=cookies) as client:
+    async with httpx.AsyncClient(timeout=60, cookies=cookies,
+                                 follow_redirects=False) as client:
         resp = await client.post(
             url,
             content=odm_xml.encode("utf-8"),
             headers={"Content-Type": "text/xml; charset=UTF-8"},
         )
+        if resp.status_code == 302:
+            location = resp.headers.get("location", "n/a")
+            raise RuntimeError(
+                f"ODM import redirected to login — Location: {location} — "
+                f"cookies may not be valid on eu host. "
+                f"Try: /ws/data/import endpoint instead."
+            )
         if not resp.is_success:
             raise RuntimeError(
                 f"ODM import HTTP {resp.status_code} at {url} — "
