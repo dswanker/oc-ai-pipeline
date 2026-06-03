@@ -311,6 +311,55 @@ async def check_session(request: Request, email: str = "dswanker@openclinica.com
                 "age_seconds": round(time.time() - stat.st_mtime)}
 
 
+@app.get("/admin/sample-odm")
+async def sample_odm(
+    request: Request,
+    item_id: str = "11894915699",
+):
+    """Generate and return the ODM XML that would be sent for a given item.
+    Useful for sharing with OC engineering for debugging.
+    Gated by X-Admin-Secret header.
+    """
+    admin_secret = os.environ.get("ADMIN_SECRET", "oc-admin-2026")
+    if request.headers.get("X-Admin-Secret", "") != admin_secret:
+        raise HTTPException(status_code=403, detail="unauthorized")
+    from uat_loader import (
+        get_item, download_column_file, _parse_uat_cases,
+        _build_odm_xml, COL
+    )
+    # Get item metadata
+    item = await get_item(int(item_id))
+    subdomain = item.get("oc_subdomain", "cust1")
+    dvs_col   = COL.get("dvs_output", "file_mm2hhwmk")
+    study_oid = item.get("study_oid", "S_CRS135_4530(TEST)")
+
+    # Download DVS
+    dvs_bytes = await download_column_file(int(item_id), dvs_col)
+    if not dvs_bytes:
+        raise HTTPException(status_code=404, detail="No DVS file found")
+
+    # Parse UAT cases
+    rows = _parse_uat_cases(dvs_bytes)
+    groups = {}
+    for row in rows:
+        pid = row.get("Participant_ID", "UAT-P001")
+        groups.setdefault(pid, []).append(row)
+
+    # Build ODM for first participant only
+    first_pid = next(iter(groups))
+    first_rows = groups[first_pid]
+    sample_site_oid  = "S_UAT_SAMPLE(TEST)"
+    sample_p_key     = "UAT-SAMPLE-P001"
+    odm_xml = _build_odm_xml(study_oid, sample_site_oid, sample_p_key, first_rows)
+
+    from fastapi.responses import Response
+    return Response(
+        content=odm_xml,
+        media_type="text/xml",
+        headers={"Content-Disposition": "attachment; filename=sample_odm.xml"}
+    )
+
+
 @app.get("/admin/probe-oc-apis")
 async def probe_oc_apis(
     request: Request,
