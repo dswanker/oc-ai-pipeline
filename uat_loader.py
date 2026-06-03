@@ -66,6 +66,40 @@ def _load_cookies(email: str) -> dict:
         print(f"[uat_loader] cookie load failed for {email}: {e}", flush=True)
         return {}
 
+
+def _session_has_clinical_cookies(email: str, clinical_host: str) -> bool:
+    """
+    Check whether the saved session contains cookies for the clinical host.
+    e.g. clinical_host = 'cust1.eu.openclinica.io'
+    Returns True if at least one cookie domain matches.
+    """
+    session_path = _SESSIONS_DIR / f"{email}.json"
+    if not session_path.exists():
+        return False
+    try:
+        with open(session_path) as f:
+            state = json.load(f)
+        cookies = state.get("cookies") or []
+        return any(
+            clinical_host in (c.get("domain") or "")
+            for c in cookies
+        )
+    except Exception:
+        return False
+
+
+def _generate_auth_link(email: str) -> str:
+    """Generate a fresh OC auth link using AuthManager."""
+    import os as _os
+    from auth_manager import AuthManager
+    base_url = _os.environ.get(
+        "RAILWAY_PUBLIC_DOMAIN",
+        "oc-ai-pipeline-production.up.railway.app"
+    )
+    if not base_url.startswith("http"):
+        base_url = f"https://{base_url}"
+    return AuthManager().generate_auth_link(email, base_url)
+
 # ── Constants ─────────────────────────────────────────────────────────────────
 
 UAT_STATUS = {
@@ -478,11 +512,41 @@ async def run_uat_loader(item_id: str) -> dict:
 
     # ── Load auth cookies from saved session ──────────────────────────────
     auth_cookies = _load_cookies(oc_email)
-    if not auth_cookies:
-        result["errors"].append(
-            f"No saved OC session found for {oc_email}. "
-            f"Complete the OC auth flow first (use the OC Auth Link column)."
+
+    # ── Session preflight: check for clinical host cookies ────────────────
+    # Derive the clinical host from bridge_url in customer_uuids.csv.
+    # e.g. https://cust1.eu.openclinica.io/OpenClinica -> cust1.eu.openclinica.io
+    from urllib.parse import urlparse as _urlparse
+    _bridge = _pages_base(subdomain)  # e.g. https://cust1.eu.openclinica.io/OpenClinica
+    _clinical_host = _urlparse(_bridge).hostname or ""  # e.g. cust1.eu.openclinica.io
+
+    _needs_auth = (
+        not auth_cookies
+        or (_clinical_host and not _session_has_clinical_cookies(oc_email, _clinical_host))
+    )
+
+    if _needs_auth:
+        auth_link = _generate_auth_link(oc_email)
+        await set_status(item_id, "color_mm2h9g3m", "Authentication Required")
+        # Write fresh auth link to the OC Auth Link column
+        import json as _json
+        _link_val = _json.dumps({"url": auth_link, "text": "Authenticate OpenClinica"})
+        from monday_client import make_mutation, BOARD_ID, get_headers, MONDAY_API_URL
+        import httpx as _httpx
+        async with _httpx.AsyncClient(timeout=15) as _c:
+            await _c.post(MONDAY_API_URL, headers=get_headers(), json={
+                "query": make_mutation(),
+                "variables": {"i": item_id, "b": BOARD_ID,
+                              "c": COL["oc_auth_link"], "v": _link_val},
+            })
+        await append_log(
+            item_id,
+            f"UAT Loader: session missing clinical host cookies for "
+            f"{_clinical_host}. Click the OC Auth Link to re-authenticate — "
+            f"make sure {_clinical_host} is open in your browser first so "
+            f"the EU cookies are captured in the same session."
         )
+        result["errors"].append("Authentication required — see OC Auth Link column.")
         return result
 
     # ── Step 2: Download DVS ───────────────────────────────────────────────
