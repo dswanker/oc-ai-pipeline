@@ -384,53 +384,85 @@ def _build_odm_xml(study_oid: str, site_oid: str,
 async def _import_odm(subdomain: str, study_oid: str,
                        odm_xml: str, cookies: dict) -> dict:
     """POST ODM XML as multipart form to /OpenClinica/ImportCRFData.
-    This is the same endpoint used by the OC4 UI import screen.
-    Sends as multipart/form-data with 'uploadFile' field + runLogic checkbox.
+    OC import is a two-step flow:
+      Step 1: POST uploadFile only → OC parses and shows preview page
+      Step 2: POST action=confirm → OC queues the actual import job
     """
     url = f"{_pages_base(subdomain)}/ImportCRFData"
-    files = {
-        "uploadFile": ("import.xml", odm_xml.encode("utf-8"), "text/xml"),
-    }
-    data = {
-        "action":   "confirm",
-        "runLogic": "true",
-    }
+
     async with httpx.AsyncClient(timeout=60, cookies=cookies,
                                  follow_redirects=True) as client:
-        resp = await client.post(url, files=files, data=data)
-        if not resp.is_success:
-            raise RuntimeError(
-                f"ODM import HTTP {resp.status_code} at {url} — "
-                f"body: {resp.text[:400]}"
-            )
-        # Log the final URL after redirect following — if it's SSO login,
-        # the cookies aren't working for this endpoint
-        final_url = str(resp.url)
+        # ── Step 1: Upload file ───────────────────────────────────────────
+        resp1 = await client.post(url, files={
+            "uploadFile": ("import.xml", odm_xml.encode("utf-8"), "text/xml"),
+        }, data={"runLogic": "true"})
+
+        final_url = str(resp1.url)
         if "sso/login" in final_url or "login" in final_url.lower():
             raise RuntimeError(
-                f"ODM import redirected to login page ({final_url}) — "
-                f"EU session cookies not valid for ImportCRFData. "
-                f"Need Option A extension fix."
+                f"ODM import step 1 redirected to login ({final_url}) — "
+                f"EU session cookies not valid for ImportCRFData."
             )
-        # (not JS comments which also contain "error")
-        body = resp.text
-        body_lower = body.lower()
-        error_phrases = [
-            "import failed",
-            "validation error",
-            "invalid odm",
-            "study not found",
-            "subject not found",
-            "please correct",
-            "class=\"alert-danger\"",
-            "class=\"error\"",
-        ]
-        matched = next((p for p in error_phrases if p in body_lower), None)
-        if matched:
-            idx = body_lower.find(matched)
-            snippet = body[max(0, idx-50):idx+300]
-            raise RuntimeError(f"ODM import error ({matched}): {snippet}")
-        return {"status": "submitted", "url": str(resp.url), "body_length": len(body)}
+        if not resp1.is_success:
+            raise RuntimeError(
+                f"ODM import step 1 HTTP {resp1.status_code} — "
+                f"body: {resp1.text[:300]}"
+            )
+
+        # Log step 1 response for diagnosis
+        body1 = resp1.text
+        body1_lower = body1.lower()
+        # Check if step 1 returned an error
+        for phrase in ["import failed", "validation error", "invalid odm",
+                       "class=\"alert-danger\"", "class=\"error\""]:
+            if phrase in body1_lower:
+                idx = body1_lower.find(phrase)
+                raise RuntimeError(
+                    f"ODM import step 1 error ({phrase}): "
+                    f"{body1[max(0,idx-50):idx+300]}"
+                )
+
+        # Check if we got a preview/confirm page (success of step 1)
+        has_confirm = "confirm" in body1_lower or "action" in body1_lower
+        import_queued = "bulk actions" in body1_lower or "job" in body1_lower
+
+        if import_queued:
+            # Single-step — already queued
+            return {"status": "queued_single_step", "url": final_url}
+
+        if not has_confirm:
+            # Log snippet to help diagnose
+            return {"status": "step1_unexpected_response",
+                    "url": final_url,
+                    "body_snippet": body1[1000:1500]}
+
+        # ── Step 2: Confirm import ────────────────────────────────────────
+        resp2 = await client.post(url, data={
+            "action":   "confirm",
+            "runLogic": "true",
+        })
+
+        final_url2 = str(resp2.url)
+        if "sso/login" in final_url2 or "login" in final_url2.lower():
+            raise RuntimeError(
+                f"ODM import step 2 redirected to login ({final_url2})"
+            )
+
+        body2 = resp2.text
+        body2_lower = body2.lower()
+        for phrase in ["import failed", "validation error", "invalid odm",
+                       "class=\"alert-danger\"", "class=\"error\""]:
+            if phrase in body2_lower:
+                idx = body2_lower.find(phrase)
+                raise RuntimeError(
+                    f"ODM import step 2 error ({phrase}): "
+                    f"{body2[max(0,idx-50):idx+300]}"
+                )
+
+        return {"status": "submitted",
+                "url": final_url2,
+                "body_length": len(body2),
+                "body_snippet": body2[1000:1500]}
 
 
 # ── DVS stamping ──────────────────────────────────────────────────────────────
@@ -663,8 +695,13 @@ async def run_uat_loader(item_id: str) -> dict:
                 "rows":        len(rows),
                 "result":      import_result,
             })
-            await append_log(item_id,
-                             f"UAT Loader: ODM imported for {run_key}")
+            await append_log(
+                item_id,
+                f"UAT Loader: ODM import for {run_key} — "
+                f"status={import_result.get('status')} "
+                f"url={import_result.get('url','?')} "
+                f"snippet={str(import_result.get('body_snippet',''))[:200]}"
+            )
         except Exception as e:
             err = f"ODM import failed for {run_key}: {e}"
             result["errors"].append(err)
