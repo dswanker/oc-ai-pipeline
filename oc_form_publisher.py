@@ -656,18 +656,32 @@ class FormPublisher:
                                 f"locally and copy the resulting "
                                 f"{self._session_path} to the volume."
                             ) from e
-                        # Navigate to the EU clinical host so SSO handoff
+                        # Navigate to the clinical host so SSO handoff
                         # cookies are included in the saved session.
                         # These are needed by uat_loader for ODM import.
-                        eu_url = (f"https://{self.subdomain}.eu.openclinica.io"
-                                  f"/OpenClinica/ImportCRFData")
+                        # Look up the bridge_url from customer_uuids.csv.
                         try:
-                            await page.goto(eu_url, timeout=15000,
-                                            wait_until="domcontentloaded")
-                            print(f"oc_form_publisher: EU host visited for "
-                                  f"cookie capture: {eu_url}", flush=True)
-                        except Exception:
-                            pass  # non-fatal — session still useful without EU cookies
+                            import csv as _csv
+                            from pathlib import Path as _Path
+                            _csv_path = (_Path(__file__).parent
+                                         / "references" / "customer_uuids.csv")
+                            _bridge = None
+                            if _csv_path.exists():
+                                with open(_csv_path, newline="") as _f:
+                                    for _row in _csv.DictReader(_f):
+                                        if (_row.get("subdomain","").lower()
+                                                == self.subdomain.lower()):
+                                            _bridge = _row.get("bridge_url","").rstrip("/")
+                                            break
+                            if _bridge:
+                                eu_url = f"{_bridge}/ImportCRFData"
+                                await page.goto(eu_url, timeout=15000,
+                                                wait_until="domcontentloaded")
+                                print(f"oc_form_publisher: clinical host visited "
+                                      f"for cookie capture: {eu_url}", flush=True)
+                        except Exception as _e:
+                            print(f"oc_form_publisher: clinical host visit skipped: {_e}",
+                                  flush=True)  # non-fatal
                         await context.storage_state(path=self._session_path)
                         print(f"oc_form_publisher: session saved to "
                               f"{self._session_path} — future runs auto-"
