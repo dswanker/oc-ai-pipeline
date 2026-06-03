@@ -330,6 +330,30 @@ async def probe_oc_apis(
             url = f"{base}/{svc}/v3/api-docs"
             r = await client.get(url, headers={"Authorization": f"Bearer {token}"})
             results[svc] = {"status": r.status_code, "body": r.text[:8000]}
+        # Test Option B: does the EU clinical host accept the same Bearer token?
+        import csv as _csv
+        from pathlib import Path as _Path
+        _csv_path = _Path(__file__).parent / "references" / "customer_uuids.csv"
+        if _csv_path.exists():
+            with open(_csv_path, newline="") as _f:
+                for _row in _csv.DictReader(_f):
+                    if _row.get("subdomain","").lower() == subdomain.lower():
+                        bridge = _row.get("bridge_url","").rstrip("/")
+                        if bridge:
+                            # Try GET on ImportCRFData with Bearer token
+                            eu_url = f"{bridge}/ImportCRFData"
+                            r2 = await client.get(
+                                eu_url,
+                                headers={"Authorization": f"Bearer {token}"},
+                                follow_redirects=False,
+                            )
+                            results["eu_bearer_test"] = {
+                                "url": eu_url,
+                                "status": r2.status_code,
+                                "location": r2.headers.get("location", "n/a"),
+                                "body_preview": r2.text[:200],
+                            }
+                        break
     return results
 
 
