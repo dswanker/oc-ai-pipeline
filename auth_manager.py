@@ -159,23 +159,16 @@ def render_instructions_page(token: str, email: str,
     is_uat = (context == "uat")
     heading = "OpenClinica Session Setup — UAT Data Load" if is_uat else "OpenClinica Session Setup"
     lead = (
-        f"Hi <strong>{email_esc}</strong> — the UAT loader needs your session "
-        f"for <strong>both</strong> the build app and the clinical host. "
-        f"Follow the steps below (~2 minutes)."
+        f"Hi <strong>{email_esc}</strong> — the UAT loader needs your OpenClinica "
+        f"session. Make sure you have at least one OpenClinica tab open, then follow "
+        f"the steps below (~2 minutes). The extension captures all sessions automatically."
         if is_uat else
         f"Hi <strong>{email_esc}</strong> — the pipeline needs your "
         f"OpenClinica session before it can publish forms. Steps below take ~90 seconds."
     )
 
-    # Extra step shown only for UAT context
+    # No extra step needed for UAT — extension v1.0.1 sweeps all tabs
     clinical_step = ""
-    if is_uat and clinical_host:
-        clinical_step = f"""
-  <li><strong>Also open the clinical host in a tab:</strong>
-      <a class="designer" href="{clinical_esc}" target="_blank">{_esc(clinical_host)}</a>
-      — you should see the OC study. If it asks you to log in, do so.
-      <br><em>This ensures the extension captures clinical host cookies
-      needed for data import.</em></li>"""
 
     return f"""<!DOCTYPE html>
 <html>
@@ -213,7 +206,7 @@ def render_instructions_page(token: str, email: str,
 </head>
 <body>
 <h1>{_esc(heading)}</h1>
-{'<div class="uat-banner">⚠️ UAT mode — you must have <strong>both</strong> the build app and the clinical host open before capturing.</div>' if is_uat else ''}
+{'<div class="uat-banner">ℹ️ UAT mode — make sure you have at least one OpenClinica tab open in this browser. The extension will automatically capture all OpenClinica sessions.</div>' if is_uat else ''}
 <p class="lead">{lead}</p>
 
 <p><strong>1. Your one-time code:</strong></p>
