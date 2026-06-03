@@ -478,50 +478,41 @@ async def run_uat_loader(item_id: str) -> dict:
     stamp_map = {}
 
     for logical_pid, rows in groups.items():
-        # ── Step 6: Create participant ─────────────────────────────────────
-        # e.g. UAT-20260602-143000-P001
+        # ── Step 6: Assign participant key ────────────────────────────────
+        # OC4 auto-enrolls the participant on first ODM import when the
+        # SubjectKey + SiteRef are present — no separate creation API needed.
         p_suffix = logical_pid.replace("UAT-P", "P")
         run_key  = f"{site_oid}-{p_suffix}"
 
-        await append_log(item_id, f"UAT Loader: creating participant {run_key}...")
-        try:
-            confirmed_key = await _create_participant(
-                subdomain, study_oid, created_site_oid,
-                run_key, auth_cookies
-            )
-            result["participants_created"].append(confirmed_key)
-            stamp_map[logical_pid] = {
-                "site_oid":        created_site_oid,
-                "participant_key": confirmed_key,
-            }
-        except Exception as e:
-            err = f"Participant creation failed for {logical_pid}: {e}"
-            result["errors"].append(err)
-            await append_log(item_id, f"UAT Loader: WARNING — {err}")
-            continue
+        result["participants_created"].append(run_key)
+        stamp_map[logical_pid] = {
+            "site_oid":        created_site_oid,
+            "participant_key": run_key,
+        }
+        await append_log(item_id, f"UAT Loader: assigned participant key {run_key}")
 
         # ── Steps 7+8: Build and import ODM ───────────────────────────────
         await append_log(
             item_id,
-            f"UAT Loader: importing ODM for {confirmed_key} "
+            f"UAT Loader: importing ODM for {run_key} "
             f"({len(rows)} rows)..."
         )
         try:
             odm_xml = _build_odm_xml(
-                study_oid, created_site_oid, confirmed_key, rows
+                study_oid, created_site_oid, run_key, rows
             )
             import_result = await _import_odm(
                 subdomain, study_oid, odm_xml, auth_cookies
             )
             result["odm_imports"].append({
-                "participant": confirmed_key,
+                "participant": run_key,
                 "rows":        len(rows),
                 "result":      import_result,
             })
             await append_log(item_id,
-                             f"UAT Loader: ODM imported for {confirmed_key}")
+                             f"UAT Loader: ODM imported for {run_key}")
         except Exception as e:
-            err = f"ODM import failed for {confirmed_key}: {e}"
+            err = f"ODM import failed for {run_key}: {e}"
             result["errors"].append(err)
             await append_log(item_id, f"UAT Loader: ERROR — {err}")
 
@@ -545,7 +536,7 @@ async def run_uat_loader(item_id: str) -> dict:
     await append_log(item_id, "UAT Loader: uploading UAT DVS Results...")
     try:
         await upload_file(item_id, UAT_DVS_RESULTS_COL,
-                          stamped_bytes, dvs_filename)
+                          dvs_filename, stamped_bytes)
     except Exception as e:
         await append_log(item_id, f"UAT Loader: results upload failed: {e}")
 
