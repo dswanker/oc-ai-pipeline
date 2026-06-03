@@ -328,15 +328,18 @@ def _build_odm_xml(study_oid: str, site_oid: str,
 
 
 async def _import_odm(subdomain: str, study_oid: str,
-                       odm_xml: str, cookies: dict) -> dict:
-    """POST ODM XML to /pages/auth/api/clinicaldata/studies/{studyOid}/import"""
-    url = (f"{_pages_base(subdomain)}/pages/auth/api/clinicaldata"
+                       odm_xml: str, token: str) -> dict:
+    """POST ODM XML to /OpenClinica/pages/auth/api/clinicaldata/studies/{studyOid}/import"""
+    url = (f"{_pages_base(subdomain)}/OpenClinica/pages/auth/api/clinicaldata"
            f"/studies/{study_oid}/import")
-    async with httpx.AsyncClient(cookies=cookies, timeout=60) as client:
+    async with httpx.AsyncClient(timeout=60) as client:
         resp = await client.post(
             url,
             content=odm_xml.encode("utf-8"),
-            headers={"Content-Type": "text/xml; charset=UTF-8"},
+            headers={
+                "Content-Type":  "text/xml; charset=UTF-8",
+                "Authorization": f"Bearer {token}",
+            },
         )
         resp.raise_for_status()
         try:
@@ -529,7 +532,7 @@ async def run_uat_loader(item_id: str) -> dict:
                 study_oid, created_site_oid, run_key, rows
             )
             import_result = await _import_odm(
-                subdomain, study_oid, odm_xml, auth_cookies
+                subdomain, study_oid, odm_xml, token
             )
             result["odm_imports"].append({
                 "participant": run_key,
