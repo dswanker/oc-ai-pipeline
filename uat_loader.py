@@ -203,8 +203,10 @@ async def _create_participant(subdomain: str, study_oid: str,
     Returns the confirmed subject key.
     """
     import json as _json
+    from urllib.parse import quote as _quote
     url = (f"{_pages_base(subdomain)}/pages/auth/api/clinicaldata"
-           f"/studies/{study_oid}/sites/{site_oid}/participants")
+           f"/studies/{_quote(study_oid, safe='')}"
+           f"/sites/{_quote(site_oid, safe='')}/participants")
     async with httpx.AsyncClient(timeout=30) as client:
         resp = await client.post(
             url,
@@ -214,7 +216,10 @@ async def _create_participant(subdomain: str, study_oid: str,
                 "Content-Type":  "application/json",
             },
         )
-        resp.raise_for_status()
+        if not resp.is_success:
+            raise RuntimeError(
+                f"HTTP {resp.status_code} — body: {resp.text[:300]}"
+            )
     try:
         return resp.json().get("subjectKey") or subject_key
     except Exception:
@@ -346,8 +351,10 @@ def _build_odm_xml(study_oid: str, site_oid: str,
 async def _import_odm(subdomain: str, study_oid: str,
                        odm_xml: str, token: str) -> dict:
     """POST ODM XML to /OpenClinica/pages/auth/api/clinicaldata/studies/{studyOid}/import"""
+    from urllib.parse import quote as _quote
+    encoded_oid = _quote(study_oid, safe="")
     url = (f"{_pages_base(subdomain)}/pages/auth/api/clinicaldata"
-           f"/studies/{study_oid}/import")
+           f"/studies/{encoded_oid}/import")
     async with httpx.AsyncClient(timeout=60) as client:
         resp = await client.post(
             url,
