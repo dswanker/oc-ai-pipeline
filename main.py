@@ -228,10 +228,10 @@ async def full_reset(request: Request, body: dict):
         for key in file_col_keys:
             col_id = COL.get(key)
             if col_id:
-                results[key] = await _set(col_id, "{}")
+                results[key] = await _set(col_id, "{\"files\": []}")
 
         # UAT DVS Results — not in COL dict
-        results["dvs_uat_results"] = await _set("file_mm3h5s3h", "{}")
+        results["dvs_uat_results"] = await _set("file_mm3h5s3h", "{\"files\": []}")
 
         # ── Reset pipeline status columns ────────────────────────────────
         results["pipeline_status"] = await _set(
