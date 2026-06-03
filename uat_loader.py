@@ -609,14 +609,9 @@ async def run_uat_loader(item_id: str) -> dict:
         result["errors"].append(f"Site creation failed: {e}")
         return result
 
-    # ── Step 4b: Set TEST environment to AVAILABLE ─────────────────────────
-    await append_log(item_id, "UAT Loader: setting TEST environment to AVAILABLE...")
-    try:
-        env_token = await _get_oc_token(subdomain)
-        await _set_env_available(subdomain, test_env_uuid, test_env_oid, env_token)
-        await append_log(item_id, "UAT Loader: TEST environment set to AVAILABLE")
-    except Exception as e:
-        await append_log(item_id, f"UAT Loader: WARNING — set env AVAILABLE failed (continuing): {e}")
+    # ── Step 4b: Set TEST environment to AVAILABLE (skipped — returns 500) ──
+    # PUT /api/study-environments returns 500 for this operation.
+    # Participant creation works regardless, so this step is omitted.
 
     # ── Step 5: Parse UAT_Cases ────────────────────────────────────────────
     await append_log(item_id, "UAT Loader: parsing UAT_Cases sheet...")
