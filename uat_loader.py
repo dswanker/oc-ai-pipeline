@@ -368,34 +368,34 @@ def _build_odm_xml(study_oid: str, site_oid: str,
 
 async def _import_odm(subdomain: str, study_oid: str,
                        odm_xml: str, cookies: dict) -> dict:
-    """POST ODM XML to /rest2/clinicaldata/import — confirmed valid path on eu host.
-    Uses cookie session auth (same as participant creation).
+    """POST ODM XML as multipart form to /OpenClinica/ImportCRFData.
+    This is the same endpoint used by the OC4 UI import screen.
+    Sends as multipart/form-data with 'uploadFile' field + runLogic checkbox.
     """
-    url = f"{_pages_base(subdomain)}/rest2/clinicaldata/import"
+    url = f"{_pages_base(subdomain)}/ImportCRFData"
+    files = {
+        "uploadFile": ("import.xml", odm_xml.encode("utf-8"), "text/xml"),
+    }
+    data = {
+        "action":   "confirm",
+        "runLogic": "true",
+    }
     async with httpx.AsyncClient(timeout=60, cookies=cookies,
-                                 follow_redirects=False) as client:
-        resp = await client.post(
-            url,
-            content=odm_xml.encode("utf-8"),
-            headers={"Content-Type": "text/xml; charset=UTF-8"},
-        )
-        if resp.status_code == 302:
-            location = resp.headers.get("location", "n/a")
-            raise RuntimeError(
-                f"ODM import redirected to login — Location: {location} — "
-                f"cookies may not be valid on eu host. "
-                f"Try: /ws/data/import endpoint instead."
-            )
+                                 follow_redirects=True) as client:
+        resp = await client.post(url, files=files, data=data)
         if not resp.is_success:
             raise RuntimeError(
                 f"ODM import HTTP {resp.status_code} at {url} — "
-                f"Allow: {resp.headers.get('allow', 'n/a')} — "
                 f"body: {resp.text[:400]}"
             )
-        try:
-            return resp.json()
-        except Exception:
-            return {"raw": resp.text[:500]}
+        # Response is HTML — check for error indicators
+        body = resp.text
+        if "error" in body.lower() or "exception" in body.lower():
+            # Extract relevant snippet
+            idx = body.lower().find("error")
+            snippet = body[max(0, idx-50):idx+200]
+            raise RuntimeError(f"ODM import page contains error: {snippet}")
+        return {"status": "submitted", "url": str(resp.url), "body_length": len(body)}
 
 
 # ── DVS stamping ──────────────────────────────────────────────────────────────
