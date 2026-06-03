@@ -4940,7 +4940,14 @@ async def run_pipeline(item_id):
                 # ── Publish Calendaring Rules (optional, gated on checkbox) ─────────
                 _publish_cal = (cols.get(COL["publish_cal_rules"], {})
                                 .get("text") or "").strip() == "v"
-                if _publish_cal and oc_subdomain and study_uuid:
+                # study_uuid is written to Monday by Chain D — read it fresh here
+                _post_cal_item = await get_item(item_id)
+                _post_cal_cols = {c["id"]: c for c in
+                                  _post_cal_item.get("column_values", [])}
+                _study_uuid_for_cal = (
+                    _post_cal_cols.get(COL["study_uuid"], {}).get("text") or ""
+                ).strip()
+                if _publish_cal and oc_subdomain and _study_uuid_for_cal:
                     print("[cal-publish] Publish Calendaring Rules checkbox is checked — starting upload", flush=True)
                     await set_status(item_id, COL["pipeline_status"], "Publishing Calendaring Rules")
                     try:
@@ -4950,7 +4957,7 @@ async def run_pipeline(item_id):
                             await append_log(item_id, "Calendaring publish skipped — no calendaring output found on board.")
                         else:
                             _cal_summary = await publish_calendaring_rules(
-                                oc_subdomain, study_uuid, _cal_zip
+                                oc_subdomain, _study_uuid_for_cal, _cal_zip
                             )
                             _msg = (
                                 f"Calendaring rules published: "
