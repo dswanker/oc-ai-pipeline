@@ -547,7 +547,12 @@ async def run_uat_loader(item_id: str) -> dict:
 
     if _needs_auth:
         auth_link = _generate_auth_link(oc_email, context="uat")
-        await set_status(item_id, "color_mm2h9g3m", "Authentication Required")
+        # Use existing "Paused for Authentication" status (not a new label)
+        # and reset the AI trigger so it doesn't re-fire immediately
+        await asyncio.gather(
+            set_status(item_id, "color_mm2h9g3m", "Paused for Authentication"),
+            set_status(item_id, COL["ai_trigger"],  "Do not Send To AI Yet"),
+        )
         # Write fresh auth link to the OC Auth Link column
         import json as _json
         _link_val = _json.dumps({"url": auth_link, "text": "Authenticate OpenClinica"})
@@ -561,10 +566,10 @@ async def run_uat_loader(item_id: str) -> dict:
             })
         await append_log(
             item_id,
-            f"UAT Loader: session missing clinical host cookies for "
-            f"{_clinical_host}. Click the OC Auth Link to re-authenticate — "
-            f"make sure {_clinical_host} is open in your browser first so "
-            f"the EU cookies are captured in the same session."
+            f"UAT Loader: session missing or expired for {_clinical_host}. "
+            f"Click the OC Auth Link to re-authenticate. "
+            f"The extension will automatically capture all OpenClinica tabs. "
+            f"Then set AI Trigger back to 'Send to AI'."
         )
         result["errors"].append("Authentication required — see OC Auth Link column.")
         return result
