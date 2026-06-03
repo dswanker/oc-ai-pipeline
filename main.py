@@ -359,12 +359,8 @@ async def test_slow_forms_endpoint(
 # ─────────────────────────────────────────────────────────────────────────────
 
 @app.get("/auth")
-async def auth_page(token: str = ""):
-    """Render the bootstrap instructions page for a one-time auth link.
-
-    Validates the token (signature + 1-hour max-age) but does NOT
-    consume it — the same token is reused by /api/session/upload below.
-    """
+async def auth_page(token: str = "", context: str = "pipeline"):
+    """Render the bootstrap instructions page for a one-time auth link."""
     if not token:
         return HTMLResponse("<h1>Missing token</h1>", status_code=400)
     am = AuthManager()
@@ -374,7 +370,23 @@ async def auth_page(token: str = ""):
             f"<h1>Auth link problem</h1><p>{error}</p>",
             status_code=400,
         )
-    return HTMLResponse(render_instructions_page(token, email))
+    # Derive clinical_host from customer_uuids.csv for UAT context
+    clinical_host = ""
+    if context == "uat":
+        import csv as _csv
+        from pathlib import Path as _Path
+        from urllib.parse import urlparse as _up
+        _csv_path = _Path(__file__).parent / "references" / "customer_uuids.csv"
+        _subdomain = os.environ.get("OC_DEFAULT_SUBDOMAIN", "cust1")
+        if _csv_path.exists():
+            with open(_csv_path, newline="") as _f:
+                for _row in _csv.DictReader(_f):
+                    if _row.get("subdomain","").lower() == _subdomain.lower():
+                        _bridge = _row.get("bridge_url","").strip()
+                        if _bridge:
+                            clinical_host = _up(_bridge).hostname or ""
+                        break
+    return HTMLResponse(render_instructions_page(token, email, context, clinical_host))
 
 
 @app.post("/api/session/upload")

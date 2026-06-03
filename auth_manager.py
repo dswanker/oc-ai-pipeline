@@ -50,20 +50,21 @@ TOKEN_MAX_AGE_SECONDS = 3600
 class AuthManager:
     """Manages one-time tokens and per-user browser session files."""
 
-    def generate_auth_link(self, email: str, base_url: str) -> str:
+    def generate_auth_link(self, email: str, base_url: str,
+                           context: str = "pipeline") -> str:
         """
         Generate a one-time auth link for the given email.
 
         Args:
             email:    User's OC SSO email (e.g. user@openclinica.com)
             base_url: Railway public URL with no trailing slash
-                      (e.g. https://oc-ai-pipeline-production.up.railway.app)
+            context:  'pipeline' (default) or 'uat' — controls instructions page
 
         Returns:
             Full /auth URL with a signed token query parameter.
         """
         token = serializer.dumps(email, salt="auth-token")
-        params = urlencode({"token": token})
+        params = urlencode({"token": token, "context": context})
         return f"{base_url}/auth?{params}"
 
     def validate_token(self, token: str) -> tuple[str | None, str | None]:
@@ -138,21 +139,44 @@ async def handle_session_upload(token: str, storage_state) -> dict:
 # Instructions page (rendered by main.py's /auth route)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def render_instructions_page(token: str, email: str) -> str:
+def render_instructions_page(token: str, email: str,
+                             context: str = "pipeline",
+                             clinical_host: str = "") -> str:
     """Self-contained HTML page for the bootstrap instructions.
 
-    The page is shown when a user clicks the one-time auth link posted
-    to their monday.com row. It displays the token, an extension-zip
-    download button, and the install/use steps.
+    context: 'pipeline' — standard auth (build host only)
+             'uat'      — UAT auth (must also have clinical host open)
+    clinical_host: e.g. 'cust1.eu.openclinica.io' — shown in UAT instructions
     """
     from html import escape as _esc
     subdomain = os.environ.get("OC_DEFAULT_SUBDOMAIN", "cust1")
-    # Build app's My Studies list — extension captures session here,
-    # not the designer host. Hash route is required by the SPA.
     designer_url = f"https://{subdomain}.design.openclinica.io"
-    email_esc = _esc(email)
-    token_esc = _esc(token)
-    designer_esc = _esc(designer_url)
+    email_esc       = _esc(email)
+    token_esc       = _esc(token)
+    designer_esc    = _esc(designer_url)
+    clinical_esc    = _esc(f"https://{clinical_host}/OpenClinica" if clinical_host else "")
+
+    is_uat = (context == "uat")
+    heading = "OpenClinica Session Setup — UAT Data Load" if is_uat else "OpenClinica Session Setup"
+    lead = (
+        f"Hi <strong>{email_esc}</strong> — the UAT loader needs your session "
+        f"for <strong>both</strong> the build app and the clinical host. "
+        f"Follow the steps below (~2 minutes)."
+        if is_uat else
+        f"Hi <strong>{email_esc}</strong> — the pipeline needs your "
+        f"OpenClinica session before it can publish forms. Steps below take ~90 seconds."
+    )
+
+    # Extra step shown only for UAT context
+    clinical_step = ""
+    if is_uat and clinical_host:
+        clinical_step = f"""
+  <li><strong>Also open the clinical host in a tab:</strong>
+      <a class="designer" href="{clinical_esc}" target="_blank">{_esc(clinical_host)}</a>
+      — you should see the OC study. If it asks you to log in, do so.
+      <br><em>This ensures the extension captures clinical host cookies
+      needed for data import.</em></li>"""
+
     return f"""<!DOCTYPE html>
 <html>
 <head>
@@ -177,18 +201,20 @@ def render_instructions_page(token: str, email: str) -> str:
                border-radius: 4px; font-weight: 500; }}
   .btn-link:hover {{ background: #006fdb; }}
   ol {{ padding-left: 22px; }}
-  ol li {{ margin: 6px 0; }}
+  ol li {{ margin: 8px 0; }}
   .designer {{ font-family: ui-monospace, monospace; background: #f6f8fa;
                padding: 1px 6px; border-radius: 3px; color: #0050a0;
                text-decoration: none; }}
   .toast {{ display: none; margin-left: 8px; color: #1c6e3d; font-size: 12px; }}
   .toast.show {{ display: inline; }}
+  .uat-banner {{ background: #fff8e1; border: 1px solid #f9a825; border-radius: 6px;
+                 padding: 10px 14px; margin-bottom: 16px; font-size: 14px; }}
 </style>
 </head>
 <body>
-<h1>OpenClinica Session Setup</h1>
-<p class="lead">Hi <strong>{email_esc}</strong> — the pipeline needs your
-OpenClinica session before it can publish forms. Steps below take ~90 seconds.</p>
+<h1>{_esc(heading)}</h1>
+{'<div class="uat-banner">⚠️ UAT mode — you must have <strong>both</strong> the build app and the clinical host open before capturing.</div>' if is_uat else ''}
+<p class="lead">{lead}</p>
 
 <p><strong>1. Your one-time code:</strong></p>
 <div class="code-box">
@@ -207,8 +233,8 @@ OpenClinica session before it can publish forms. Steps below take ~90 seconds.</
       <em>Developer mode</em>, click <em>Load unpacked</em>, and select
       the unzipped folder.</li>
   <li>In a new tab,
-      <a class="designer" href="{designer_esc}">sign in to OpenClinica</a>
-      (you will see your My Studies list).</li>
+      <a class="designer" href="{designer_esc}" target="_blank">sign in to OpenClinica</a>
+      (you will see your My Studies list).</li>{clinical_step}
   <li>Click the extension icon, paste the code above, click
       <em>Capture &amp; Send</em>.</li>
   <li>Return to monday and re-trigger your pipeline (set the trigger

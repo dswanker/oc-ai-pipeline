@@ -88,7 +88,7 @@ def _session_has_clinical_cookies(email: str, clinical_host: str) -> bool:
         return False
 
 
-def _generate_auth_link(email: str) -> str:
+def _generate_auth_link(email: str, context: str = "pipeline") -> str:
     """Generate a fresh OC auth link using AuthManager."""
     import os as _os
     from auth_manager import AuthManager
@@ -98,7 +98,7 @@ def _generate_auth_link(email: str) -> str:
     )
     if not base_url.startswith("http"):
         base_url = f"https://{base_url}"
-    return AuthManager().generate_auth_link(email, base_url)
+    return AuthManager().generate_auth_link(email, base_url, context)
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -526,7 +526,7 @@ async def run_uat_loader(item_id: str) -> dict:
     )
 
     if _needs_auth:
-        auth_link = _generate_auth_link(oc_email)
+        auth_link = _generate_auth_link(oc_email, context="uat")
         await set_status(item_id, "color_mm2h9g3m", "Authentication Required")
         # Write fresh auth link to the OC Auth Link column
         import json as _json
