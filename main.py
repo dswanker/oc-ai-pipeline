@@ -257,6 +257,65 @@ async def reset_upload_record(request: Request):
 # DELETE THIS ROUTE once the slow-form upload timing is resolved.
 # ─────────────────────────────────────────────────────────────────────────────
 
+@app.get("/admin/check-session")
+async def check_session(request: Request, email: str = "dswanker@openclinica.com"):
+    """Return metadata about the stored browser session file (no cookie values)."""
+    admin_secret = os.environ.get("ADMIN_SECRET", "")
+    if not admin_secret:
+        raise HTTPException(status_code=503, detail="ADMIN_SECRET not set")
+    if request.headers.get("X-Admin-Secret", "") != admin_secret:
+        raise HTTPException(status_code=403, detail="unauthorized")
+    from pathlib import Path
+    path = Path(f"/data/browser_sessions/{email}.json")
+    if not path.exists():
+        return {"exists": False, "path": str(path)}
+    stat = path.stat()
+    try:
+        data = json.loads(path.read_text())
+        cookies = data.get("cookies", [])
+        origins = data.get("origins", [])
+        ls_items = origins[0].get("localStorage", []) if origins else []
+        ls_keys = [i.get("name") for i in ls_items]
+        return {
+            "exists": True,
+            "path": str(path),
+            "age_seconds": round(time.time() - stat.st_mtime),
+            "cookie_count": len(cookies),
+            "origin": origins[0].get("origin") if origins else None,
+            "ls_key_count": len(ls_items),
+            "ls_keys": ls_keys,
+            "has_auth_token": any(
+                i.get("name") in ("jhi-authenticationtoken", "jhi-idtoken")
+                for i in ls_items
+            ),
+        }
+    except Exception as e:
+        return {"exists": True, "parse_error": str(e),
+                "age_seconds": round(time.time() - stat.st_mtime)}
+
+
+@app.get("/admin/probe-oc-apis")
+async def probe_oc_apis(
+    request: Request,
+    subdomain: str = "cust1",
+):
+    """Fetch OpenAPI docs for participant-service and data-service using a live token."""
+    admin_secret = os.environ.get("ADMIN_SECRET", "oc-admin-2026")
+    if request.headers.get("X-Admin-Secret", "") != admin_secret:
+        raise HTTPException(status_code=403, detail="unauthorized")
+    from pipeline import _get_oc_token
+    import httpx as _httpx
+    token = await _get_oc_token(subdomain)
+    base = f"https://{subdomain}.build.openclinica.io"
+    results = {}
+    async with _httpx.AsyncClient(timeout=15) as client:
+        for svc in ["participant-service", "data-service"]:
+            url = f"{base}/{svc}/v3/api-docs"
+            r = await client.get(url, headers={"Authorization": f"Bearer {token}"})
+            results[svc] = {"status": r.status_code, "body": r.text[:3000]}
+    return results
+
+
 @app.post("/test/slow-forms")
 async def test_slow_forms_endpoint(
     x_admin_secret: str = Header(None, alias="X-Admin-Secret"),
