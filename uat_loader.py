@@ -422,7 +422,15 @@ async def _import_odm(subdomain: str, study_oid: str,
                 f"ODM import HTTP {resp.status_code} at {url} — "
                 f"body: {resp.text[:400]}"
             )
-        # Response is HTML — check for OC-specific error indicators
+        # Log the final URL after redirect following — if it's SSO login,
+        # the cookies aren't working for this endpoint
+        final_url = str(resp.url)
+        if "sso/login" in final_url or "login" in final_url.lower():
+            raise RuntimeError(
+                f"ODM import redirected to login page ({final_url}) — "
+                f"EU session cookies not valid for ImportCRFData. "
+                f"Need Option A extension fix."
+            )
         # (not JS comments which also contain "error")
         body = resp.text
         body_lower = body.lower()
