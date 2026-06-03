@@ -2156,6 +2156,14 @@ async def create_oc_study(subdomain, struct_json, is_production=False,
                         }
                     _upload_record["last_updated"] = _now
                     _upload_record["item_id"] = str(item_id)
+                    # Save a hash of the Study Spec JSON so future runs can
+                    # detect whether the spec changed and skip re-upload if not.
+                    if struct_json:
+                        import hashlib as _hashlib
+                        _spec_bytes = json.dumps(struct_json, sort_keys=True,
+                                                 ensure_ascii=False).encode()
+                        _upload_record["spec_hash"] = (
+                            _hashlib.sha256(_spec_bytes).hexdigest()[:16])
                     _write_upload_record(item_id, _upload_record)
                 except Exception as _ue:
                     print(f"[upload-record] post-publish update failed: "
@@ -3091,6 +3099,57 @@ async def run_pipeline(item_id):
         _now    = _dt.datetime.utcnow()
         version = f"V{_now.strftime('%m%d')}.{_now.strftime('%H%M')}"
         print(f"Protocol: {protocol_num} | Version: {version}", flush=True)
+
+        # ── UAT-only shortcut ────────────────────────────────────────────────
+        # If Study UUID is already populated AND Load UAT checkbox is checked
+        # AND Publish to Test checkbox is NOT checked → skip all build stages
+        # and run the UAT loader directly against the existing published study.
+        # This is useful when only test data needs to be reloaded (e.g. DVS
+        # was regenerated) without rebuilding or republishing the study.
+        _existing_uuid_early = (cols.get(COL["study_uuid"], {})
+                                .get("text") or "").strip()
+        _load_uat_early = (cols.get(COL["load_dvs_uat_data"], {})
+                           .get("text") or "").strip() == "v"
+        _publish_early  = (cols.get(COL["publish_to_test"], {})
+                           .get("text") or "").strip() == "v"
+        if _existing_uuid_early and _load_uat_early and not _publish_early:
+            print(f"[uat-only] Study UUID={_existing_uuid_early!r} already "
+                  f"exists and Publish is not checked — running UAT loader "
+                  f"directly, skipping all build stages.", flush=True)
+            await set_status(item_id, COL["pipeline_status"],
+                             UAT_STATUS["loading"])
+            try:
+                _uat_result = await run_uat_loader(item_id)
+                if _uat_result["success"]:
+                    await asyncio.gather(
+                        set_status(item_id, COL["pipeline_status"],
+                                   STATUS["all_complete"]),
+                        append_log(item_id,
+                                   f"[UAT-only] UAT load succeeded. "
+                                   f"Site: {_uat_result['site_oid']}. "
+                                   f"Participants: "
+                                   f"{len(_uat_result['participants_created'])}."),
+                    )
+                    print(f"[uat-only] UAT load succeeded → All Complete",
+                          flush=True)
+                else:
+                    _errs = "; ".join(_uat_result["errors"])
+                    await asyncio.gather(
+                        set_status(item_id, COL["pipeline_status"],
+                                   UAT_STATUS["failed"]),
+                        append_log(item_id,
+                                   f"[UAT-only] UAT load FAILED: {_errs}"),
+                    )
+                    print(f"[uat-only] UAT load failed: {_errs}", flush=True)
+            except Exception as _ue:
+                print(f"[uat-only] UAT loader crashed: {_ue}", flush=True)
+                await asyncio.gather(
+                    set_status(item_id, COL["pipeline_status"],
+                               UAT_STATUS["failed"]),
+                    append_log(item_id,
+                               f"[UAT-only] UAT loader ERROR: {_ue}"),
+                )
+            return  # ← exit run_pipeline; nothing else to do
 
         def _pct(col_key):
             raw = cols.get(COL[col_key], {}).get("text", "").strip()
@@ -4354,6 +4413,39 @@ async def run_pipeline(item_id):
                         await append_log(item_id, "Create Study requested but no OC Subdomain — skipped.")
                     return
                 env_label = "production" if oc_production else "test"
+
+                # ── Spec-change detection ─────────────────────────────────
+                # If a study is already published (Study UUID column populated)
+                # and the spec JSON hasn't changed since the last upload, skip
+                # form re-upload and re-publish entirely — the study is current.
+                # Only re-upload if the spec actually changed.
+                _existing_uuid_d = (cols.get(COL["study_uuid"], {})
+                                    .get("text") or "").strip()
+                if _existing_uuid_d and struct_json:
+                    import hashlib as _hashlib
+                    _spec_bytes = json.dumps(struct_json, sort_keys=True,
+                                            ensure_ascii=False).encode()
+                    _spec_hash  = _hashlib.sha256(_spec_bytes).hexdigest()[:16]
+                    _saved_rec  = _read_upload_record(str(item_id))
+                    _saved_hash = _saved_rec.get("spec_hash", "")
+                    if _saved_hash and _saved_hash == _spec_hash:
+                        print(f"[chain-d] Spec hash unchanged ({_spec_hash}) "
+                              f"— skipping form upload and publish, study "
+                              f"is already current.", flush=True)
+                        await append_log(item_id,
+                            "Study Spec unchanged since last upload — "
+                            "form re-upload and publish skipped.")
+                        # Populate forms_publish_holder with a no-op result
+                        # so downstream status logic doesn't false-alarm.
+                        forms_publish_holder[0] = {
+                            "forms_uploaded": 0,
+                            "forms_total": 0,
+                            "errors": [],
+                            "uploaded_oids": [],
+                            "skipped_reason": "spec_unchanged",
+                        }
+                        return
+
                 await append_log(item_id, f"Creating study in OpenClinica {env_label} ({oc_subdomain})...")
                 try:
                     # Wait for Chain C (EDC Build) to complete before fetching
