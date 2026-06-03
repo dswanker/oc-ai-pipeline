@@ -193,21 +193,18 @@ async def _create_site(subdomain: str, test_env_uuid: str,
 
 async def _create_participant(subdomain: str, study_oid: str,
                                site_oid: str, subject_key: str,
-                               token: str) -> str:
+                               token: str, cookies: dict) -> str:
     """
-    POST /OpenClinica/pages/auth/api/clinicaldata/studies/{studyOid}/sites/{siteOid}/participants
-    Matches create_participants.py reference script exactly:
-      - /OpenClinica/ prefix in path
-      - Bearer token auth (not cookies)
-      - Body: json.dumps({"subjectKey": ...}) sent as raw content with Content-Type: application/json
-    Returns the confirmed subject key.
+    POST /pages/auth/api/clinicaldata/studies/{studyOid}/sites/{siteOid}/participants
+    Path confirmed 401 (auth required) on eu host — uses cookie session auth.
+    Bearer token kept as fallback header.
     """
     import json as _json
     from urllib.parse import quote as _quote
     url = (f"{_pages_base(subdomain)}/pages/auth/api/clinicaldata"
            f"/studies/{_quote(study_oid, safe='')}"
            f"/sites/{_quote(site_oid, safe='')}/participants")
-    async with httpx.AsyncClient(timeout=30) as client:
+    async with httpx.AsyncClient(timeout=30, cookies=cookies) as client:
         resp = await client.post(
             url,
             content=_json.dumps({"subjectKey": subject_key}).encode("utf-8"),
@@ -349,20 +346,16 @@ def _build_odm_xml(study_oid: str, site_oid: str,
 
 
 async def _import_odm(subdomain: str, study_oid: str,
-                       odm_xml: str, token: str) -> dict:
-    """POST ODM XML to /OpenClinica/pages/auth/api/clinicaldata/studies/{studyOid}/import"""
-    from urllib.parse import quote as _quote
-    encoded_oid = _quote(study_oid, safe="")
-    url = (f"{_pages_base(subdomain)}/pages/auth/api/clinicaldata"
-           f"/studies/{encoded_oid}/import")
-    async with httpx.AsyncClient(timeout=60) as client:
+                       odm_xml: str, cookies: dict) -> dict:
+    """POST ODM XML to /rest2/clinicaldata/import — confirmed valid path on eu host.
+    Uses cookie session auth (same as participant creation).
+    """
+    url = f"{_pages_base(subdomain)}/rest2/clinicaldata/import"
+    async with httpx.AsyncClient(timeout=60, cookies=cookies) as client:
         resp = await client.post(
             url,
             content=odm_xml.encode("utf-8"),
-            headers={
-                "Content-Type":  "text/xml; charset=UTF-8",
-                "Authorization": f"Bearer {token}",
-            },
+            headers={"Content-Type": "text/xml; charset=UTF-8"},
         )
         if not resp.is_success:
             raise RuntimeError(
@@ -531,7 +524,7 @@ async def run_uat_loader(item_id: str) -> dict:
         await append_log(item_id, f"UAT Loader: creating participant {run_key}...")
         try:
             confirmed_key = await _create_participant(
-                subdomain, study_oid, created_site_oid, run_key, token
+                subdomain, study_oid, created_site_oid, run_key, token, auth_cookies
             )
             result["participants_created"].append(confirmed_key)
             stamp_map[logical_pid] = {
@@ -560,7 +553,7 @@ async def run_uat_loader(item_id: str) -> dict:
                 study_oid, created_site_oid, run_key, rows
             )
             import_result = await _import_odm(
-                subdomain, study_oid, odm_xml, token
+                subdomain, study_oid, odm_xml, auth_cookies
             )
             result["odm_imports"].append({
                 "participant": run_key,
