@@ -196,6 +196,65 @@ async def clear_upload_record_oids(request: Request):
     }
 
 
+@app.post("/admin/full-reset")
+async def full_reset(request: Request, body: dict):
+    """Clear ALL output file columns + reset all status/text columns for a full re-run."""
+    admin_secret = os.environ.get("ADMIN_SECRET", "oc-admin-2026")
+    if request.headers.get("X-Admin-Secret", "") != admin_secret:
+        raise HTTPException(status_code=403, detail="unauthorized")
+    item_id = str(body.get("item_id", ""))
+    if not item_id:
+        raise HTTPException(status_code=400, detail="item_id required")
+
+    from monday_client import BOARD_ID, MONDAY_API_URL, get_headers, make_mutation, COL
+    import httpx as _httpx
+
+    results = {}
+    async with _httpx.AsyncClient(timeout=30) as client:
+
+        async def _set(col_id, val):
+            r = await client.post(MONDAY_API_URL, headers=get_headers(), json={
+                "query": make_mutation(),
+                "variables": {"i": item_id, "b": BOARD_ID, "c": col_id, "v": val},
+            })
+            return r.status_code
+
+        # ── Clear output file columns ────────────────────────────────────
+        file_col_keys = [
+            "spec_pdf", "spec_xlsx", "spec_json",
+            "pricing_summary", "pricing_quote",
+            "edc_build", "dvs_output", "calendaring_output", "build_preview",
+        ]
+        for key in file_col_keys:
+            col_id = COL.get(key)
+            if col_id:
+                results[key] = await _set(col_id, "{}")
+
+        # UAT DVS Results — not in COL dict
+        results["dvs_uat_results"] = await _set("file_mm3h5s3h", "{}")
+
+        # ── Reset pipeline status columns ────────────────────────────────
+        results["pipeline_status"] = await _set(
+            COL["pipeline_status"], '{"label": "Not Started"}')
+        results["ai_trigger"] = await _set(
+            COL["ai_trigger"], '{"label": "Do not Send To AI Yet"}')
+        results["published_status"] = await _set(
+            COL["published_status"], '{"label": "Not Published"}')
+
+        # ── Clear text columns ───────────────────────────────────────────
+        results["study_uuid"] = await _set(COL["study_uuid"], '""')
+        results["study_oid"]  = await _set(COL["study_oid"],  '""')
+
+    # ── Clear upload record on disk ──────────────────────────────────────
+    from pipeline import _upload_record_path
+    import json as _json
+    _upload_record_path(item_id).write_text(
+        _json.dumps({"study_uuid": "", "forms": {}, "uploaded_oids": []})
+    )
+    results["upload_record"] = "cleared"
+    return results
+
+
 @app.post("/admin/reset-upload-record")
 async def reset_upload_record(request: Request):
     """Overwrite an item's upload record with a fresh empty record so the
