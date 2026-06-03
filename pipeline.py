@@ -2345,6 +2345,82 @@ async def _publish_study_version(
         )
 
 
+async def publish_calendaring_rules(subdomain, study_uuid, cal_zip_bytes, is_production=False):
+    """POST validated calendaring rules to the OC4 rule-service.
+
+    Idempotent — GETs existing rules first and skips any whose name already
+    exists. Returns a summary dict with keys: uploaded, skipped, failed, errors.
+
+    Endpoint: https://{subdomain}.build.openclinica.io/rule-service/api/studies/{study_uuid}/rules
+    Auth:     Bearer token from _get_oc_token (same as publish_to_test)
+    Body:     Raw rule JSON (exactly what generate_rule_artifacts writes to rules/*.json)
+    """
+    import zipfile, io as _io
+    import httpx
+
+    base_url = (
+        f"https://{subdomain}.build.openclinica.io"
+        f"/rule-service/api/studies/{study_uuid}/rules"
+    )
+    token = await _get_oc_token(subdomain, is_production=is_production)
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type":  "application/json",
+    }
+
+    # Step 1: GET existing rules to build idempotency set
+    async with httpx.AsyncClient(timeout=30) as c:
+        r = await c.get(base_url, headers=headers)
+    if r.status_code != 200:
+        raise RuntimeError(
+            f"Failed to fetch existing rules: {r.status_code} {r.text[:200]}"
+        )
+    existing_names = {rule["name"] for rule in r.json()}
+    print(f"[cal-publish] {len(existing_names)} rules already on study", flush=True)
+
+    # Step 2: Extract rule JSONs from zip
+    try:
+        zf = zipfile.ZipFile(_io.BytesIO(cal_zip_bytes))
+        rule_files = [n for n in zf.namelist() if n.startswith("rules/") and n.endswith(".json")]
+    except Exception as exc:
+        raise RuntimeError(f"Could not read calendaring zip: {exc}")
+
+    uploaded, skipped, failed, errors = 0, 0, 0, []
+
+    for rule_file in sorted(rule_files):
+        rule_json = json.loads(zf.read(rule_file).decode("utf-8"))
+        rule_name = rule_json.get("name", rule_file)
+
+        if rule_name in existing_names:
+            print(f"[cal-publish] SKIP {rule_name} (already exists)", flush=True)
+            skipped += 1
+            continue
+
+        try:
+            async with httpx.AsyncClient(timeout=30) as c:
+                r = await c.post(
+                    base_url,
+                    params={"newEpochOrCalendar": "false"},
+                    headers=headers,
+                    json=rule_json,
+                )
+            if r.status_code in (200, 201):
+                rule_uuid = r.json().get("uuid", "?")
+                print(f"[cal-publish] OK {rule_name} uuid={rule_uuid}", flush=True)
+                uploaded += 1
+                existing_names.add(rule_name)
+            else:
+                print(f"[cal-publish] FAIL {rule_name}: {r.status_code} {r.text[:200]}", flush=True)
+                failed += 1
+                errors.append(f"{rule_name}: {r.status_code} {r.text[:200]}")
+        except Exception as exc:
+            print(f"[cal-publish] ERROR {rule_name}: {exc}", flush=True)
+            failed += 1
+            errors.append(f"{rule_name}: {exc}")
+
+    return {"uploaded": uploaded, "skipped": skipped, "failed": failed, "errors": errors}
+
+
 async def publish_to_test(item_id, uploaded_oids=None):
     """Entry point invoked by main.py's safe_run_publish background task.
 
@@ -4785,6 +4861,7 @@ async def run_pipeline(item_id):
             # status decision) so we'd know whether to defer 'All
             # Complete'; reuse those values here.
             try:
+                _cal_publish_already_complete = False
                 if publish_checked:
                     # Forward the just-uploaded OIDs to publish_to_test so
                     # its pre-flight doesn't false-positive on the OC REST
@@ -4838,6 +4915,7 @@ async def run_pipeline(item_id):
                                              "Publish to test succeeded. "
                                              "Starting UAT data load...")
                         else:
+                            _cal_publish_already_complete = True
                             await asyncio.gather(
                                 set_status(item_id,
                                            COL["pipeline_status"],
@@ -4854,6 +4932,39 @@ async def run_pipeline(item_id):
                               f"published_status={_published_status!r}"
                               f" — leaving pipeline_status as-is",
                               flush=True)
+
+                # ── Publish Calendaring Rules (optional, gated on checkbox) ─────────
+                _publish_cal = (cols.get(COL["publish_cal_rules"], {})
+                                .get("text") or "").strip() == "v"
+                if _publish_cal and oc_subdomain and study_uuid:
+                    print("[cal-publish] Publish Calendaring Rules checkbox is checked — starting upload", flush=True)
+                    await set_status(item_id, COL["pipeline_status"], "Publishing Calendaring Rules")
+                    try:
+                        # Download cal zip from Monday board output column
+                        _cal_zip = await download_column_file(item_id, COL["calendaring_output"])
+                        if not _cal_zip:
+                            await append_log(item_id, "Calendaring publish skipped — no calendaring output found on board.")
+                        else:
+                            _cal_summary = await publish_calendaring_rules(
+                                oc_subdomain, study_uuid, _cal_zip
+                            )
+                            _msg = (
+                                f"Calendaring rules published: "
+                                f"{_cal_summary['uploaded']} uploaded, "
+                                f"{_cal_summary['skipped']} skipped, "
+                                f"{_cal_summary['failed']} failed."
+                            )
+                            await append_log(item_id, _msg)
+                            if _cal_summary["errors"]:
+                                for _e in _cal_summary["errors"][:3]:
+                                    await append_log(item_id, f"  CAL ERROR: {_e}")
+                    except Exception as _cal_exc:
+                        print(f"[cal-publish] error: {_cal_exc}", flush=True)
+                        await append_log(item_id, f"Calendaring publish error: {_cal_exc}")
+                    finally:
+                        # Only reset if publish_to_test didn't already reach All Complete
+                        if not _cal_publish_already_complete:
+                            await set_status(item_id, COL["pipeline_status"], "Build Complete")
 
                 if load_uat_checked:
                     print(f"[auto-uat] Load UAT checkbox is checked — "
