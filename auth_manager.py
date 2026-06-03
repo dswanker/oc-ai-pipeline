@@ -216,20 +216,25 @@ def render_instructions_page(token: str, email: str,
   <span class="toast" id="toast">Copied!</span>
 </div>
 
-<p><strong>2. Download the Chrome extension:</strong></p>
+<p><strong>2. Download &amp; install the Chrome extension (first time only):</strong></p>
 <p><a class="btn-link" href="/extension.zip">Download extension</a></p>
-
-<p><strong>3. Install &amp; use:</strong></p>
 <ol>
-  <li>Unzip the downloaded file.</li>
+  <li>Unzip the downloaded file — you will get a folder called <code>oc-session-capture</code>.</li>
   <li>Open <span class="designer">chrome://extensions</span>, toggle
-      <em>Developer mode</em>, click <em>Load unpacked</em>, and select
-      the unzipped folder.</li>
-  <li>In a new tab,
-      <a class="designer" href="{designer_esc}" target="_blank">sign in to OpenClinica</a>
-      (you will see your My Studies list).</li>{clinical_step}
-  <li>Click the extension icon, paste the code above, click
-      <em>Capture &amp; Send</em>.</li>
+      <em>Developer mode</em> (top right), click <em>Load unpacked</em>,
+      and select the unzipped folder.</li>
+  <li>The extension will appear as <strong>OC Session Capture 1.0.1</strong>.
+      You only need to do this once — skip to step 3 on future runs.</li>
+</ol>
+
+<p><strong>3. Capture your session:</strong></p>
+<ol>
+  <li>Make sure you are signed into
+      <a class="designer" href="{designer_esc}" target="_blank">OpenClinica</a>
+      in this browser (any OpenClinica tab is fine).</li>{clinical_step}
+  <li>Click the <strong>OC Session Capture</strong> extension icon in your Chrome toolbar,
+      paste the one-time code above, and click <em>Capture &amp; Send</em>.</li>
+  <li>You will see a green ✅ confirmation with the number of cookies and tabs captured.</li>
   <li>Return to monday and re-trigger your pipeline (set the trigger
       column back to "Send to AI").</li>
 </ol>
