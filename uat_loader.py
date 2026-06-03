@@ -177,18 +177,32 @@ async def _create_site(subdomain: str, test_env_uuid: str,
 
 async def _create_participant(subdomain: str, study_oid: str,
                                site_oid: str, subject_key: str,
-                               cookies: dict) -> str:
+                               token: str) -> str:
     """
-    POST /pages/auth/api/clinicaldata/studies/{studyOid}/sites/{siteOid}/participants
+    POST /OpenClinica/pages/auth/api/clinicaldata/studies/{studyOid}/sites/{siteOid}/participants
+    Matches create_participants.py reference script exactly:
+      - /OpenClinica/ prefix in path
+      - Bearer token auth (not cookies)
+      - Body: json.dumps({"subjectKey": ...}) sent as raw content with Content-Type: application/json
     Returns the confirmed subject key.
     """
-    url = (f"{_pages_base(subdomain)}/pages/auth/api/clinicaldata"
+    import json as _json
+    url = (f"{_pages_base(subdomain)}/OpenClinica/pages/auth/api/clinicaldata"
            f"/studies/{study_oid}/sites/{site_oid}/participants")
-    async with httpx.AsyncClient(cookies=cookies, timeout=30) as client:
-        resp = await client.post(url, json={"subjectKey": subject_key})
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(
+            url,
+            content=_json.dumps({"subjectKey": subject_key}).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type":  "application/json",
+            },
+        )
         resp.raise_for_status()
-        data = resp.json()
-    return data.get("subjectKey") or subject_key
+    try:
+        return resp.json().get("subjectKey") or subject_key
+    except Exception:
+        return subject_key
 
 
 # ── DVS parsing ───────────────────────────────────────────────────────────────
@@ -475,21 +489,29 @@ async def run_uat_loader(item_id: str) -> dict:
         f"{len(groups)} participant(s): {list(groups.keys())}"
     )
 
+    token = await _get_oc_token(subdomain)
     stamp_map = {}
 
     for logical_pid, rows in groups.items():
-        # ── Step 6: Assign participant key ────────────────────────────────
-        # OC4 auto-enrolls the participant on first ODM import when the
-        # SubjectKey + SiteRef are present — no separate creation API needed.
+        # ── Step 6: Create participant ─────────────────────────────────────
         p_suffix = logical_pid.replace("UAT-P", "P")
         run_key  = f"{site_oid}-{p_suffix}"
 
-        result["participants_created"].append(run_key)
-        stamp_map[logical_pid] = {
-            "site_oid":        created_site_oid,
-            "participant_key": run_key,
-        }
-        await append_log(item_id, f"UAT Loader: assigned participant key {run_key}")
+        await append_log(item_id, f"UAT Loader: creating participant {run_key}...")
+        try:
+            confirmed_key = await _create_participant(
+                subdomain, study_oid, created_site_oid, run_key, token
+            )
+            result["participants_created"].append(confirmed_key)
+            stamp_map[logical_pid] = {
+                "site_oid":        created_site_oid,
+                "participant_key": confirmed_key,
+            }
+        except Exception as e:
+            err = f"Participant creation failed for {logical_pid}: {e}"
+            result["errors"].append(err)
+            await append_log(item_id, f"UAT Loader: WARNING — {err}")
+            continue
 
         # ── Steps 7+8: Build and import ODM ───────────────────────────────
         await append_log(
