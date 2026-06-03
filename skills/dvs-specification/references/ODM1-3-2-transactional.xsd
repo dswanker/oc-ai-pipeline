@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Minimal ODM 1.3.2 XSD for Transactional ClinicalData validation.
+     Covers the elements used by uat_loader._build_odm_xml.
+     Derived from the CDISC ODM 1.3.2 specification. -->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           xmlns:odm="http://www.cdisc.org/ns/odm/v1.3"
+           targetNamespace="http://www.cdisc.org/ns/odm/v1.3"
+           elementFormDefault="qualified">
+
+  <!-- Root element -->
+  <xs:element name="ODM">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element ref="odm:ClinicalData" minOccurs="0" maxOccurs="unbounded"/>
+      </xs:sequence>
+      <xs:attribute name="FileType" use="required">
+        <xs:simpleType>
+          <xs:restriction base="xs:string">
+            <xs:enumeration value="Snapshot"/>
+            <xs:enumeration value="Transactional"/>
+          </xs:restriction>
+        </xs:simpleType>
+      </xs:attribute>
+      <xs:attribute name="FileOID"          type="xs:string" use="required"/>
+      <xs:attribute name="CreationDateTime" type="xs:string" use="required"/>
+      <xs:anyAttribute namespace="##other" processContents="lax"/>
+    </xs:complexType>
+  </xs:element>
+
+  <!-- ClinicalData -->
+  <xs:element name="ClinicalData">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element ref="odm:SubjectData" minOccurs="0" maxOccurs="unbounded"/>
+      </xs:sequence>
+      <xs:attribute name="StudyOID"          type="xs:string" use="required"/>
+      <xs:attribute name="MetaDataVersionOID" type="xs:string" use="required"/>
+    </xs:complexType>
+  </xs:element>
+
+  <!-- SubjectData -->
+  <xs:element name="SubjectData">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element ref="odm:SiteRef"        minOccurs="0" maxOccurs="1"/>
+        <xs:element ref="odm:StudyEventData" minOccurs="0" maxOccurs="unbounded"/>
+      </xs:sequence>
+      <xs:attribute name="SubjectKey"       type="xs:string" use="required"/>
+      <xs:attribute name="TransactionType"  type="xs:string" use="optional"/>
+    </xs:complexType>
+  </xs:element>
+
+  <!-- SiteRef -->
+  <xs:element name="SiteRef">
+    <xs:complexType>
+      <xs:attribute name="LocationOID" type="xs:string" use="required"/>
+    </xs:complexType>
+  </xs:element>
+
+  <!-- StudyEventData -->
+  <xs:element name="StudyEventData">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element ref="odm:FormData" minOccurs="0" maxOccurs="unbounded"/>
+      </xs:sequence>
+      <xs:attribute name="StudyEventOID"       type="xs:string" use="required"/>
+      <xs:attribute name="StudyEventRepeatKey" type="xs:string" use="optional"/>
+      <xs:attribute name="TransactionType"     type="xs:string" use="optional"/>
+    </xs:complexType>
+  </xs:element>
+
+  <!-- FormData -->
+  <xs:element name="FormData">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element ref="odm:ItemGroupData" minOccurs="0" maxOccurs="unbounded"/>
+      </xs:sequence>
+      <xs:attribute name="FormOID"         type="xs:string" use="required"/>
+      <xs:attribute name="FormRepeatKey"   type="xs:string" use="optional"/>
+      <xs:attribute name="TransactionType" type="xs:string" use="optional"/>
+    </xs:complexType>
+  </xs:element>
+
+  <!-- ItemGroupData -->
+  <xs:element name="ItemGroupData">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element ref="odm:ItemData" minOccurs="0" maxOccurs="unbounded"/>
+      </xs:sequence>
+      <xs:attribute name="ItemGroupOID"    type="xs:string" use="required"/>
+      <xs:attribute name="ItemGroupRepeatKey" type="xs:string" use="optional"/>
+      <xs:attribute name="TransactionType" type="xs:string" use="optional"/>
+    </xs:complexType>
+  </xs:element>
+
+  <!-- ItemData -->
+  <xs:element name="ItemData">
+    <xs:complexType>
+      <xs:attribute name="ItemOID"         type="xs:string" use="required"/>
+      <xs:attribute name="Value"           type="xs:string" use="optional"/>
+      <xs:attribute name="IsNull"          type="xs:string" use="optional"/>
+      <xs:attribute name="TransactionType" type="xs:string" use="optional"/>
+    </xs:complexType>
+  </xs:element>
+
+</xs:schema>

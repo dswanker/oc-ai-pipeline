@@ -965,7 +965,7 @@ def _uat_row(uat_id, check_id, form_id, field_name, field_label, case,
         "Retest Needed?":    "",
         "Priority":          "",
         "Notes":             "",
-        # ODM load coordinate columns (17–25) — populated here so the
+        # ODM load coordinate columns — populated here so the
         # UAT loader can create participants and load data without blanks.
         "Site_OID":          "",        # stamped at runtime by uat_loader
         "Participant_Key":   "",        # stamped at runtime by uat_loader
@@ -973,6 +973,7 @@ def _uat_row(uat_id, check_id, form_id, field_name, field_label, case,
         "Event_Repeat_Key":  "1",
         "Form_OID":          form_id,
         "Item_Group_OID":    f"IG_{form_id}_1",
+        "Item_OID":          f"{form_id}.{field_name}" if field_name else f"IG_{form_id}_1",
         "Participant_ID":    "UAT-P001",
         "Load_Order":        "",        # set below by caller if needed
         "Load_Value":        case.get("input_data", ""),

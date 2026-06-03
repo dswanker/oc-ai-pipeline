@@ -322,6 +322,30 @@ def _xml_escape(val: str) -> str:
                .replace('"', "&quot;"))
 
 
+def _validate_odm_xml(odm_xml: str) -> list[str]:
+    """
+    Tier 1 — XSD structural validation of ODM XML.
+    Returns a list of error strings (empty = valid).
+    Uses the bundled minimal ODM 1.3.2 transactional XSD.
+    """
+    from lxml import etree
+    xsd_path = (Path(__file__).parent
+                / "skills" / "dvs-specification" / "references"
+                / "ODM1-3-2-transactional.xsd")
+    errors = []
+    try:
+        schema_doc = etree.parse(str(xsd_path))
+        schema     = etree.XMLSchema(schema_doc)
+        doc        = etree.fromstring(odm_xml.encode("utf-8"))
+        if not schema.validate(doc):
+            errors = [str(e) for e in schema.error_log]
+    except etree.XMLSyntaxError as e:
+        errors = [f"XML syntax error: {e}"]
+    except Exception as e:
+        errors = [f"Validation error: {e}"]
+    return errors
+
+
 def _build_odm_xml(study_oid: str, site_oid: str,
                    participant_key: str, rows: list) -> str:
     """Build ODM XML for one participant's data rows."""
@@ -330,12 +354,16 @@ def _build_odm_xml(study_oid: str, site_oid: str,
     # Tree: events[ev_oid][repeat_key][form_oid][ig_oid] = [(item_oid, val)]
     events = {}
     for row in rows:
-        ev  = row.get("Study_Event_OID", "").strip()
-        rk  = row.get("Event_Repeat_Key", "1").strip() or "1"
-        fo  = row.get("Form_OID", "").strip()
-        ig  = row.get("Item_Group_OID", "").strip()
+        ev       = row.get("Study_Event_OID", "").strip()
+        rk       = row.get("Event_Repeat_Key", "1").strip() or "1"
+        fo       = row.get("Form_OID", "").strip()
+        ig       = row.get("Item_Group_OID", "").strip()
+        item_oid = row.get("Item_OID", "").strip()
+        # Item_OID must differ from ItemGroup_OID — fallback derives it
+        if not item_oid or item_oid == ig:
+            field = row.get("field_name", "").strip()
+            item_oid = f"{fo}.{field}" if field else ig
         val = row.get("Load_Value", "").strip()
-        item_oid = ig  # item OID = itemgroup OID as best proxy until DVS adds dedicated column
         if not ev or not fo or not ig or not val:
             continue
         (events
@@ -687,6 +715,15 @@ async def run_uat_loader(item_id: str) -> dict:
             odm_xml = _build_odm_xml(
                 study_oid, created_site_oid, run_key, rows
             )
+            # ── Tier 1: XSD structural validation ────────────────────────
+            odm_errors = _validate_odm_xml(odm_xml)
+            if odm_errors:
+                err_summary = "; ".join(odm_errors[:3])
+                raise RuntimeError(
+                    f"ODM XML failed XSD validation ({len(odm_errors)} errors): "
+                    f"{err_summary}"
+                )
+            await append_log(item_id, f"UAT Loader: ODM XML valid (XSD passed)")
             import_result = await _import_odm(
                 subdomain, study_oid, odm_xml, auth_cookies
             )
