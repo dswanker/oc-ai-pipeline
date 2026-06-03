@@ -96,17 +96,25 @@ def _pages_base(subdomain: str) -> str:
 
 
 async def _get_oc_token(subdomain: str) -> str:
-    """Fetch a short-lived OC OAuth bearer token for study-service API calls."""
+    """Fetch a short-lived OC OAuth bearer token for study-service API calls.
+    Matches the pattern used by pipeline.py _get_oc_token exactly.
+    """
+    import os
+    username = os.environ.get("OC_API_USERNAME", "").strip()
+    password = os.environ.get("OC_API_PASSWORD", "").strip()
+    if not username or not password:
+        raise ValueError("OC_API_USERNAME or OC_API_PASSWORD not set in env")
     url = (f"https://{subdomain}.build.openclinica.io"
            f"/user-service/api/oauth/token")
     async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.post(url, data={
-            "grant_type":    "client_credentials",
-            "client_id":     "publicid",
-            "client_secret": "secret",
-        })
-        resp.raise_for_status()
-        return resp.json()["access_token"]
+        resp = await client.post(url,
+                                 headers={"Content-Type": "application/json"},
+                                 json={"username": username,
+                                       "password": password})
+    if resp.status_code != 200:
+        raise RuntimeError(
+            f"OC auth failed {resp.status_code}: {resp.text[:200]}")
+    return resp.text.strip()
 
 
 async def _get_test_env_uuid(subdomain: str, study_uuid: str,
