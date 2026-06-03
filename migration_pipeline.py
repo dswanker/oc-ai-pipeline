@@ -75,7 +75,34 @@ from odm_validator import validate_odm, format_report
 from odm_reader import parse_odm_metadata
 from odm_to_spec import transform, transform_with_ai
 from gap_analysis import run_gap_analysis
+from pathlib import Path as _Path
 from trainer_integration import create_pending_row, trainer_enabled
+
+
+def _load_migration_skill() -> str:
+    """Load the migration-analysis SKILL.md content for use in AI prompts.
+
+    The SKILL.md is the single source of truth for the ODM → OC4 mapping
+    rules. Loading it here ensures the AI-assisted transform path uses the
+    same rules as the documented skill — no drift between what the skill
+    says and what the pipeline does.
+
+    Returns empty string if the skill file is not found (falls back to
+    transform_with_ai's built-in prompts).
+    """
+    skill_path = (_Path(__file__).resolve().parent
+                  / "skills" / "user" / "migration-analysis" / "SKILL.md")
+    field_map_path = (skill_path.parent / "references"
+                      / "odm-to-oc4-field-mapping.md")
+    parts = []
+    for p in (skill_path, field_map_path):
+        try:
+            parts.append(p.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            pass
+    if parts:
+        return "\n\n---\n\n".join(parts)
+    return ""
 
 
 # ── Migrations AI Hub board — second-board target for gap report + Syndeo ────
@@ -652,6 +679,17 @@ async def run_migration(
                   flush=True)
             protocol_bytes = None
 
+    # Load the migration-analysis skill rules — single source of truth for
+    # the ODM → OC4 mapping logic. Passed to transform_with_ai so the AI
+    # uses the same rules as the documented skill (no drift).
+    _skill_content = _load_migration_skill()
+    if _skill_content:
+        print(f"[MIGRATION] migration-analysis skill loaded "
+              f"({len(_skill_content)} chars)", flush=True)
+    else:
+        print("[MIGRATION] migration-analysis skill not found — "
+              "using transform_with_ai built-in prompts", flush=True)
+
     use_enrichment = bool(protocol_bytes) or ai_assist
     if use_enrichment:
         mode_label = ("ODM+Protocol enrichment mode (AI-assisted)"
@@ -663,6 +701,7 @@ async def run_migration(
         spec_json = await transform_with_ai(
             odm_study, claude_client, protocol_bytes=protocol_bytes,
             source_system=source_system,
+            skill_content=_skill_content or None,
         )
     else:
         print(f"[MIGRATION] Path M: ODM-only mode", flush=True)

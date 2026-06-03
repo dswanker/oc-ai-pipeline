@@ -932,6 +932,7 @@ async def transform_with_ai(
     claude_client: Any,
     protocol_bytes: bytes | None = None,
     source_system: str | None = None,
+    skill_content: str | None = None,
 ) -> dict:
     """
     AI-assisted transform. Runs the deterministic `transform` first to obtain
@@ -971,6 +972,19 @@ async def transform_with_ai(
         source_system=source_system,
         vendor_conventions=vendor_conv,
     )
+
+    # Prepend the migration-analysis skill rules if available.
+    # This is the single source of truth for ODM → OC4 mapping rules.
+    if skill_content:
+        prompt = (
+            "## Migration Analysis Skill Rules\n\n"
+            "The following rules define how to map this ODM export to an "
+            "OpenClinica 4 Study Spec JSON. Follow them exactly.\n\n"
+            f"{skill_content}\n\n"
+            "---\n\n"
+            "## Task\n\n"
+            + prompt
+        )
 
     pdf_arg: bytes | None = None
     extra_text_arg: str | None = None
