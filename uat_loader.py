@@ -422,13 +422,25 @@ async def _import_odm(subdomain: str, study_oid: str,
                 f"ODM import HTTP {resp.status_code} at {url} — "
                 f"body: {resp.text[:400]}"
             )
-        # Response is HTML — check for error indicators
+        # Response is HTML — check for OC-specific error indicators
+        # (not JS comments which also contain "error")
         body = resp.text
-        if "error" in body.lower() or "exception" in body.lower():
-            # Extract relevant snippet
-            idx = body.lower().find("error")
-            snippet = body[max(0, idx-50):idx+200]
-            raise RuntimeError(f"ODM import page contains error: {snippet}")
+        body_lower = body.lower()
+        error_phrases = [
+            "import failed",
+            "validation error",
+            "invalid odm",
+            "study not found",
+            "subject not found",
+            "please correct",
+            "class=\"alert-danger\"",
+            "class=\"error\"",
+        ]
+        matched = next((p for p in error_phrases if p in body_lower), None)
+        if matched:
+            idx = body_lower.find(matched)
+            snippet = body[max(0, idx-50):idx+300]
+            raise RuntimeError(f"ODM import error ({matched}): {snippet}")
         return {"status": "submitted", "url": str(resp.url), "body_length": len(body)}
 
 
