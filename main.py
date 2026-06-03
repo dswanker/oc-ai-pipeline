@@ -312,7 +312,7 @@ async def probe_oc_apis(
         for svc in ["participant-service", "data-service"]:
             url = f"{base}/{svc}/v3/api-docs"
             r = await client.get(url, headers={"Authorization": f"Bearer {token}"})
-            results[svc] = {"status": r.status_code, "body": r.text[:3000]}
+            results[svc] = {"status": r.status_code, "body": r.text[:8000]}
     return results
 
 
