@@ -3065,6 +3065,32 @@ async def _session_keepalive(session_path: str, subdomain: str, interval_s: int 
             else:
                 print("[session-keepalive] keycloak ping skipped — no token "
                       "issuer found in session", flush=True)
+
+            # Ping 3 — EU clinical host. Keeps the session cookie warm on the
+            # customer's clinical instance (e.g. cust1.eu.openclinica.io).
+            # Required so UAT ODM import cookies are still valid at end of run.
+            try:
+                import csv as _csv
+                from pathlib import Path as _Path
+                _csv_path = (_Path(__file__).parent
+                             / "references" / "customer_uuids.csv")
+                _bridge = None
+                if _csv_path.exists():
+                    with open(_csv_path, newline="") as _csvf:
+                        for _row in _csv.DictReader(_csvf):
+                            if _row.get("subdomain","").lower() == subdomain.lower():
+                                _bridge = _row.get("bridge_url","").rstrip("/")
+                                break
+                if _bridge:
+                    _eu_ping_url = f"{_bridge}/MainMenu"
+                    async with httpx.AsyncClient(
+                            timeout=10, follow_redirects=False) as _eu:
+                        _eu_r = await _eu.get(_eu_ping_url, cookies=cookies)
+                    print(f"[session-keepalive] EU clinical ping: "
+                          f"{_eu_ping_url} status={_eu_r.status_code}", flush=True)
+            except Exception as _eue:
+                print(f"[session-keepalive] EU clinical ping error "
+                      f"(non-fatal): {_eue}", flush=True)
         except asyncio.CancelledError:
             raise
         except Exception as e:
