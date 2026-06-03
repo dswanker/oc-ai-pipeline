@@ -225,25 +225,6 @@ async def _create_site(subdomain: str, test_env_uuid: str,
     return data.get("oid") or data.get("uniqueIdentifier") or site_oid
 
 
-async def _set_env_available(subdomain: str, test_env_uuid: str,
-                              test_env_oid: str, token: str) -> None:
-    """
-    PUT /api/study-environments — set TEST environment status to AVAILABLE.
-    Required before participants can enroll on the EU OC instance.
-    """
-    url = f"{_study_service_base(subdomain)}/api/study-environments"
-    payload = {
-        "uuid":   test_env_uuid,
-        "status": "AVAILABLE",
-        "oid":    test_env_oid,
-    }
-    async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.put(url, json=payload,
-                                headers={"Authorization": f"Bearer {token}"})
-        if resp.status_code not in (200, 201):
-            raise RuntimeError(
-                f"Set env AVAILABLE failed {resp.status_code}: {resp.text[:200]}"
-            )
 
 
 async def _create_participant(subdomain: str, study_oid: str,
