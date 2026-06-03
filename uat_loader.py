@@ -95,17 +95,34 @@ def _pages_base(subdomain: str) -> str:
     return f"https://{subdomain}.build.openclinica.io"
 
 
+async def _get_oc_token(subdomain: str) -> str:
+    """Fetch a short-lived OC OAuth bearer token for study-service API calls."""
+    url = (f"https://{subdomain}.build.openclinica.io"
+           f"/user-service/api/oauth/token")
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(url, data={
+            "grant_type":    "client_credentials",
+            "client_id":     "publicid",
+            "client_secret": "secret",
+        })
+        resp.raise_for_status()
+        return resp.json()["access_token"]
+
+
 async def _get_test_env_uuid(subdomain: str, study_uuid: str,
                               cookies: dict) -> tuple:
     """
     GET /api/studies/{studyUuid}/study-environments
     Returns (test_env_uuid, test_study_oid) for environmentName == 'TEST'.
     Raises ValueError if TEST environment not found.
+    Uses Bearer token (not cookies) — study-service requires OAuth.
     """
     url = (f"{_study_service_base(subdomain)}/api/studies"
            f"/{study_uuid}/study-environments")
-    async with httpx.AsyncClient(cookies=cookies, timeout=30) as client:
-        resp = await client.get(url)
+    token = await _get_oc_token(subdomain)
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.get(url,
+                                headers={"Authorization": f"Bearer {token}"})
         resp.raise_for_status()
         envs = resp.json()
 
@@ -126,9 +143,11 @@ async def _create_site(subdomain: str, test_env_uuid: str,
     """
     POST /api/study-environments/{studyEnvironmentUuid}/sites
     Returns the created site OID.
+    Uses Bearer token (not cookies) — study-service requires OAuth.
     """
     url = (f"{_study_service_base(subdomain)}/api/study-environments"
            f"/{test_env_uuid}/sites")
+    token = await _get_oc_token(subdomain)
     today = datetime.date.today().isoformat()
     payload = {
         "name":                  site_name,
@@ -140,8 +159,9 @@ async def _create_site(subdomain: str, test_env_uuid: str,
         "timezone":              "America/New_York",
         "expectedStartDate":     today,
     }
-    async with httpx.AsyncClient(cookies=cookies, timeout=30) as client:
-        resp = await client.post(url, json=payload)
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(url, json=payload,
+                                 headers={"Authorization": f"Bearer {token}"})
         resp.raise_for_status()
         data = resp.json()
     return data.get("oid") or data.get("uniqueIdentifier") or site_oid
