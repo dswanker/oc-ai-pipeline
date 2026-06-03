@@ -656,6 +656,18 @@ class FormPublisher:
                                 f"locally and copy the resulting "
                                 f"{self._session_path} to the volume."
                             ) from e
+                        # Navigate to the EU clinical host so SSO handoff
+                        # cookies are included in the saved session.
+                        # These are needed by uat_loader for ODM import.
+                        eu_url = (f"https://{self.subdomain}.eu.openclinica.io"
+                                  f"/OpenClinica/ImportCRFData")
+                        try:
+                            await page.goto(eu_url, timeout=15000,
+                                            wait_until="domcontentloaded")
+                            print(f"oc_form_publisher: EU host visited for "
+                                  f"cookie capture: {eu_url}", flush=True)
+                        except Exception:
+                            pass  # non-fatal — session still useful without EU cookies
                         await context.storage_state(path=self._session_path)
                         print(f"oc_form_publisher: session saved to "
                               f"{self._session_path} — future runs auto-"

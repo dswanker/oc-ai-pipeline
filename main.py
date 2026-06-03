@@ -257,6 +257,23 @@ async def reset_upload_record(request: Request):
 # DELETE THIS ROUTE once the slow-form upload timing is resolved.
 # ─────────────────────────────────────────────────────────────────────────────
 
+@app.delete("/admin/clear-session")
+async def clear_session(
+    request: Request,
+    email: str = "dswanker@openclinica.com",
+):
+    """Delete the saved Playwright session so next run forces re-auth (captures EU cookies)."""
+    admin_secret = os.environ.get("ADMIN_SECRET", "oc-admin-2026")
+    if request.headers.get("X-Admin-Secret", "") != admin_secret:
+        raise HTTPException(status_code=403, detail="unauthorized")
+    from pathlib import Path
+    path = Path(f"/data/browser_sessions/{email}.json")
+    if path.exists():
+        path.unlink()
+        return {"deleted": True, "path": str(path)}
+    return {"deleted": False, "path": str(path), "reason": "file not found"}
+
+
 @app.get("/admin/check-session")
 async def check_session(request: Request, email: str = "dswanker@openclinica.com"):
     """Return metadata about the stored browser session file (no cookie values)."""
