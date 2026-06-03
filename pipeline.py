@@ -3160,9 +3160,15 @@ async def run_pipeline(item_id):
                           flush=True)
                 else:
                     _errs = "; ".join(_uat_result["errors"])
+                    # Preserve "Authentication Required" status if that's what
+                    # the loader set — don't overwrite it with "UAT Load Failed"
+                    _is_auth = any("Authentication required" in e
+                                   for e in _uat_result["errors"])
+                    _fail_status = ("Authentication Required"
+                                    if _is_auth else UAT_STATUS["failed"])
                     await asyncio.gather(
                         set_status(item_id, COL["pipeline_status"],
-                                   UAT_STATUS["failed"]),
+                                   _fail_status),
                         append_log(item_id,
                                    f"[UAT-only] UAT load FAILED: {_errs}"),
                     )
