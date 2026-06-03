@@ -44,62 +44,6 @@ from monday_client import (
     append_log, set_status, COL,
 )
 
-# Playwright storage_state JSONs live here (same path as auth_manager.py)
-_SESSIONS_DIR = Path("/data/browser_sessions")
-
-
-def _load_cookies(email: str) -> dict:
-    """
-    Load Playwright storage_state JSON for email and return a flat
-    {name: value} dict of cookies suitable for httpx.
-    Returns empty dict if no session file exists.
-    """
-    session_path = _SESSIONS_DIR / f"{email}.json"
-    if not session_path.exists():
-        return {}
-    try:
-        with open(session_path) as f:
-            state = json.load(f)
-        cookies = state.get("cookies") or []
-        return {c["name"]: c["value"] for c in cookies if c.get("name")}
-    except Exception as e:
-        print(f"[uat_loader] cookie load failed for {email}: {e}", flush=True)
-        return {}
-
-
-def _session_has_clinical_cookies(email: str, clinical_host: str) -> bool:
-    """
-    Check whether the saved session contains cookies for the clinical host.
-    e.g. clinical_host = 'cust1.eu.openclinica.io'
-    Returns True if at least one cookie domain matches.
-    """
-    session_path = _SESSIONS_DIR / f"{email}.json"
-    if not session_path.exists():
-        return False
-    try:
-        with open(session_path) as f:
-            state = json.load(f)
-        cookies = state.get("cookies") or []
-        return any(
-            clinical_host in (c.get("domain") or "")
-            for c in cookies
-        )
-    except Exception:
-        return False
-
-
-def _generate_auth_link(email: str, context: str = "pipeline") -> str:
-    """Generate a fresh OC auth link using AuthManager."""
-    import os as _os
-    from auth_manager import AuthManager
-    base_url = _os.environ.get(
-        "RAILWAY_PUBLIC_DOMAIN",
-        "oc-ai-pipeline-production.up.railway.app"
-    )
-    if not base_url.startswith("http"):
-        base_url = f"https://{base_url}"
-    return AuthManager().generate_auth_link(email, base_url, context)
-
 # ── Constants ─────────────────────────────────────────────────────────────────
 
 UAT_STATUS = {
@@ -167,13 +111,12 @@ async def _get_oc_token(subdomain: str) -> str:
     return resp.text.strip()
 
 
-async def _get_test_env_uuid(subdomain: str, study_uuid: str,
-                              cookies: dict) -> tuple:
+async def _get_test_env_uuid(subdomain: str, study_uuid: str) -> tuple:
     """
     GET /api/studies/{studyUuid}/study-environments
     Returns (test_env_uuid, test_study_oid) for environmentName == 'TEST'.
     Raises ValueError if TEST environment not found.
-    Uses Bearer token (not cookies) — study-service requires OAuth.
+    Uses Bearer token via _get_oc_token.
     """
     url = (f"{_study_service_base(subdomain)}/api/studies"
            f"/{study_uuid}/study-environments")
@@ -195,13 +138,57 @@ async def _get_test_env_uuid(subdomain: str, study_uuid: str,
     )
 
 
+async def _wait_for_test_available(
+    subdomain: str, study_uuid: str,
+    timeout_s: int = 60, interval_s: int = 5,
+) -> None:
+    """Poll study-environments until the TEST environment status == 'AVAILABLE'.
+
+    Per study-service.adoc / Study_Service_API.md the StudyEnvironmentDTO.status
+    is an enum (DESIGN, AVAILABLE, FROZEN, LOCKED, ARCHIVED). We only proceed
+    when the TEST env reaches AVAILABLE. Bearer token is fetched fresh per
+    poll because _get_oc_token returns a short-lived OAuth token.
+
+    Raises RuntimeError if TEST is never AVAILABLE within timeout_s.
+    """
+    url = (f"{_study_service_base(subdomain)}/api/studies"
+           f"/{study_uuid}/study-environments")
+    deadline = asyncio.get_event_loop().time() + timeout_s
+    last_status = "(not seen)"
+    while True:
+        token = await _get_oc_token(subdomain)
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.get(
+                url, headers={"Authorization": f"Bearer {token}"})
+        if resp.status_code == 200:
+            envs = resp.json() or []
+            for env in envs:
+                if (env.get("environmentName") or "").upper() == "TEST":
+                    last_status = (env.get("status") or "").upper()
+                    if last_status == "AVAILABLE":
+                        print(
+                            f"[uat_loader] TEST environment AVAILABLE "
+                            f"for study {study_uuid}", flush=True)
+                        return
+                    break
+        else:
+            last_status = f"HTTP {resp.status_code}"
+        if asyncio.get_event_loop().time() >= deadline:
+            raise RuntimeError(
+                f"TEST environment for study {study_uuid} never reached "
+                f"AVAILABLE within {timeout_s}s "
+                f"(last status: {last_status!r}). "
+                f"Verify the study is published to Test and try again."
+            )
+        await asyncio.sleep(interval_s)
+
+
 async def _create_site(subdomain: str, test_env_uuid: str,
-                        site_name: str, site_oid: str,
-                        cookies: dict) -> str:
+                        site_name: str, site_oid: str) -> str:
     """
     POST /api/study-environments/{studyEnvironmentUuid}/sites
     Returns the created site OID.
-    Uses Bearer token (not cookies) — study-service requires OAuth.
+    Uses Bearer token via _get_oc_token.
     """
     url = (f"{_study_service_base(subdomain)}/api/study-environments"
            f"/{test_env_uuid}/sites")
@@ -410,87 +397,99 @@ def _build_odm_xml(study_oid: str, site_oid: str,
 
 
 async def _import_odm(subdomain: str, study_oid: str,
-                       odm_xml: str, cookies: dict) -> dict:
-    """POST ODM XML as multipart form to /OpenClinica/ImportCRFData.
-    OC import is a two-step flow:
-      Step 1: POST uploadFile only → OC parses and shows preview page
-      Step 2: POST action=confirm → OC queues the actual import job
+                       odm_xml: str) -> dict:
+    """POST ODM XML to OC4 Clinical Data Import API and poll the async job.
+
+    Per How_and_When_to_Use_APIs.pdf (page 9):
+      POST {eu_base}/pages/auth/api/clinicaldata/import/xml
+        Headers: Authorization: Bearer {token}
+                 Content-Type: multipart/form-data; boundary=...
+        Body:    -F 'file=@<odm.xml>'
+        Returns plain text "job uuid: <uuid>" on success.
+
+    Then poll for completion:
+      GET {eu_base}/pages/auth/api/jobs/{job_uuid}/downloadFile
+        Headers: Authorization: Bearer {token}
+        While body contains "errorCode.jobInProgress" the job is still running.
+        On completion the body is the CSV log file with per-item Inserted /
+        Failed rows.
+
+    Bearer token only — no cookies, no Study Runner session. Token is fetched
+    fresh per HTTP call because _get_oc_token's token is short-lived and the
+    poll loop can outlive a single token's TTL.
     """
-    url = f"{_pages_base(subdomain)}/ImportCRFData"
+    base = _pages_base(subdomain)
+    submit_url = f"{base}/pages/auth/api/clinicaldata/import/xml"
 
-    async with httpx.AsyncClient(timeout=60, cookies=cookies,
-                                 follow_redirects=True) as client:
-        # ── Step 1: Upload file ───────────────────────────────────────────
-        resp1 = await client.post(url, files={
-            "uploadFile": ("import.xml", odm_xml.encode("utf-8"), "text/xml"),
-        }, data={"runLogic": "true"})
+    # ── Step 1: Submit the ODM XML and capture the job UUID ───────────────
+    submit_token = await _get_oc_token(subdomain)
+    async with httpx.AsyncClient(timeout=60) as client:
+        resp = await client.post(
+            submit_url,
+            files={"file": ("import.xml",
+                            odm_xml.encode("utf-8"),
+                            "text/xml")},
+            headers={"Authorization": f"Bearer {submit_token}"},
+        )
+    if not resp.is_success:
+        raise RuntimeError(
+            f"ODM import submit HTTP {resp.status_code} — "
+            f"body: {resp.text[:300]}"
+        )
 
-        final_url = str(resp1.url)
-        if "sso/login" in final_url or "login" in final_url.lower():
-            raise RuntimeError(
-                f"ODM import step 1 redirected to login ({final_url}) — "
-                f"EU session cookies not valid for ImportCRFData."
+    body = resp.text or ""
+    if "errorCode." in body:
+        raise RuntimeError(f"ODM import submit returned error: {body[:300]}")
+
+    import re as _re
+    m = _re.search(r"job\s*uuid\s*:\s*([0-9a-fA-F\-]+)", body)
+    if not m:
+        raise RuntimeError(
+            f"ODM import submit succeeded ({resp.status_code}) but no "
+            f"job uuid in response: {body[:300]}"
+        )
+    job_uuid = m.group(1)
+    print(f"[uat_loader] ODM import submitted, job_uuid={job_uuid}",
+          flush=True)
+
+    # ── Step 2: Poll the job until it completes (or 120s deadline) ───────
+    poll_url = f"{base}/pages/auth/api/jobs/{job_uuid}/downloadFile"
+    loop = asyncio.get_event_loop()
+    deadline = loop.time() + 120
+    interval = 5
+    last_status: int | None = None
+    last_body = ""
+    while True:
+        poll_token = await _get_oc_token(subdomain)
+        async with httpx.AsyncClient(timeout=30) as client:
+            poll_resp = await client.get(
+                poll_url,
+                headers={"Authorization": f"Bearer {poll_token}"},
             )
-        if not resp1.is_success:
+        last_status = poll_resp.status_code
+        last_body = poll_resp.text or ""
+
+        if "errorCode.invalidUuid" in last_body:
             raise RuntimeError(
-                f"ODM import step 1 HTTP {resp1.status_code} — "
-                f"body: {resp1.text[:300]}"
-            )
-
-        # Log step 1 response for diagnosis
-        body1 = resp1.text
-        body1_lower = body1.lower()
-        # Check if step 1 returned an error
-        for phrase in ["import failed", "validation error", "invalid odm",
-                       "class=\"alert-danger\"", "class=\"error\""]:
-            if phrase in body1_lower:
-                idx = body1_lower.find(phrase)
-                raise RuntimeError(
-                    f"ODM import step 1 error ({phrase}): "
-                    f"{body1[max(0,idx-50):idx+300]}"
-                )
-
-        # Check if we got a preview/confirm page (success of step 1)
-        has_confirm = "confirm" in body1_lower or "action" in body1_lower
-        import_queued = "bulk actions" in body1_lower or "job" in body1_lower
-
-        if import_queued:
-            # Single-step — already queued
-            return {"status": "queued_single_step", "url": final_url}
-
-        if not has_confirm:
-            # Log snippet to help diagnose
-            return {"status": "step1_unexpected_response",
-                    "url": final_url,
-                    "body_snippet": body1[1000:1500]}
-
-        # ── Step 2: Confirm import ────────────────────────────────────────
-        resp2 = await client.post(url, data={
-            "action":   "confirm",
-            "runLogic": "true",
-        })
-
-        final_url2 = str(resp2.url)
-        if "sso/login" in final_url2 or "login" in final_url2.lower():
-            raise RuntimeError(
-                f"ODM import step 2 redirected to login ({final_url2})"
+                f"ODM import job {job_uuid}: server reports invalid UUID "
+                f"({last_body[:300]})"
             )
 
-        body2 = resp2.text
-        body2_lower = body2.lower()
-        for phrase in ["import failed", "validation error", "invalid odm",
-                       "class=\"alert-danger\"", "class=\"error\""]:
-            if phrase in body2_lower:
-                idx = body2_lower.find(phrase)
-                raise RuntimeError(
-                    f"ODM import step 2 error ({phrase}): "
-                    f"{body2[max(0,idx-50):idx+300]}"
-                )
+        # jobInProgress is the OC4-defined "still running" signal.
+        if (poll_resp.is_success
+                and "errorCode.jobInProgress" not in last_body):
+            return {
+                "status":   "completed",
+                "job_uuid": job_uuid,
+                "log":      last_body[:4000],
+            }
 
-        return {"status": "submitted",
-                "url": final_url2,
-                "body_length": len(body2),
-                "body_snippet": body2[1000:1500]}
+        if loop.time() >= deadline:
+            raise RuntimeError(
+                f"ODM import job {job_uuid} did not complete within 120s "
+                f"(last HTTP {last_status}, body: {last_body[:300]})"
+            )
+        await asyncio.sleep(interval)
 
 
 # ── DVS stamping ──────────────────────────────────────────────────────────────
@@ -571,50 +570,6 @@ async def run_uat_loader(item_id: str) -> dict:
         result["errors"].append("Study OID is blank — publish to Test first.")
         return result
 
-    # ── Load auth cookies from saved session ──────────────────────────────
-    auth_cookies = _load_cookies(oc_email)
-
-    # ── Session preflight: check for clinical host cookies ────────────────
-    # Derive the clinical host from bridge_url in customer_uuids.csv.
-    # e.g. https://cust1.eu.openclinica.io/OpenClinica -> cust1.eu.openclinica.io
-    from urllib.parse import urlparse as _urlparse
-    _bridge = _pages_base(subdomain)  # e.g. https://cust1.eu.openclinica.io/OpenClinica
-    _clinical_host = _urlparse(_bridge).hostname or ""  # e.g. cust1.eu.openclinica.io
-
-    _needs_auth = (
-        not auth_cookies
-        or (_clinical_host and not _session_has_clinical_cookies(oc_email, _clinical_host))
-    )
-
-    if _needs_auth:
-        auth_link = _generate_auth_link(oc_email, context="uat")
-        # Use existing "Paused for Authentication" status (not a new label)
-        # and reset the AI trigger so it doesn't re-fire immediately
-        await asyncio.gather(
-            set_status(item_id, "color_mm2h9g3m", "Paused for Authentication"),
-            set_status(item_id, COL["ai_trigger"],  "Do not Send To AI Yet"),
-        )
-        # Write fresh auth link to the OC Auth Link column
-        import json as _json
-        _link_val = _json.dumps({"url": auth_link, "text": "Authenticate OpenClinica"})
-        from monday_client import make_mutation, BOARD_ID, get_headers, MONDAY_API_URL
-        import httpx as _httpx
-        async with _httpx.AsyncClient(timeout=15) as _c:
-            await _c.post(MONDAY_API_URL, headers=get_headers(), json={
-                "query": make_mutation(),
-                "variables": {"i": item_id, "b": BOARD_ID,
-                              "c": COL["oc_auth_link"], "v": _link_val},
-            })
-        await append_log(
-            item_id,
-            f"UAT Loader: session missing or expired for {_clinical_host}. "
-            f"Click the OC Auth Link to re-authenticate. "
-            f"The extension will automatically capture all OpenClinica tabs. "
-            f"Then set AI Trigger back to 'Send to AI'."
-        )
-        result["errors"].append("Authentication required — see OC Auth Link column.")
-        return result
-
     # ── Step 2: Download DVS ───────────────────────────────────────────────
     await append_log(item_id, "UAT Loader: downloading DVS...")
     dvs_bytes = await download_column_file(item_id, COL["dvs_output"])
@@ -628,7 +583,7 @@ async def run_uat_loader(item_id: str) -> dict:
     await append_log(item_id, "UAT Loader: locating TEST environment...")
     try:
         test_env_uuid, test_env_oid = await _get_test_env_uuid(
-            subdomain, study_uuid, auth_cookies
+            subdomain, study_uuid
         )
     except Exception as e:
         result["errors"].append(f"Could not find TEST environment: {e}")
@@ -642,7 +597,7 @@ async def run_uat_loader(item_id: str) -> dict:
     await append_log(item_id, f"UAT Loader: creating site '{site_name}'...")
     try:
         created_site_oid = await _create_site(
-            subdomain, test_env_uuid, site_name, site_oid, auth_cookies
+            subdomain, test_env_uuid, site_name, site_oid
         )
         result["site_oid"] = created_site_oid
         await append_log(item_id, f"UAT Loader: site created → {created_site_oid}")
@@ -676,6 +631,17 @@ async def run_uat_loader(item_id: str) -> dict:
         f"{len(groups)} participant(s): {list(groups.keys())}"
     )
 
+    # ── Study availability gate ───────────────────────────────────────────
+    # Per Study_Service_API.md StudyEnvironmentDTO.status enum, TEST must be
+    # AVAILABLE before participants can be created. Poll up to 60s.
+    await append_log(item_id, "UAT Loader: waiting for TEST environment to be AVAILABLE...")
+    try:
+        await _wait_for_test_available(subdomain, study_uuid,
+                                       timeout_s=60, interval_s=5)
+    except Exception as e:
+        result["errors"].append(f"TEST environment not AVAILABLE: {e}")
+        return result
+
     token = await _get_oc_token(subdomain)
     stamp_map = {}
 
@@ -687,7 +653,7 @@ async def run_uat_loader(item_id: str) -> dict:
         await append_log(item_id, f"UAT Loader: creating participant {run_key}...")
         try:
             confirmed_key = await _create_participant(
-                subdomain, study_oid, created_site_oid, run_key, token, auth_cookies
+                subdomain, study_oid, created_site_oid, run_key, token, {}
             )
             result["participants_created"].append(confirmed_key)
             stamp_map[logical_pid] = {
@@ -725,7 +691,7 @@ async def run_uat_loader(item_id: str) -> dict:
                 )
             await append_log(item_id, f"UAT Loader: ODM XML valid (XSD passed)")
             import_result = await _import_odm(
-                subdomain, study_oid, odm_xml, auth_cookies
+                subdomain, study_oid, odm_xml
             )
             result["odm_imports"].append({
                 "participant": run_key,
