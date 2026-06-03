@@ -92,6 +92,22 @@ def _study_service_base(subdomain: str) -> str:
 
 
 def _pages_base(subdomain: str) -> str:
+    """
+    Return the base URL for clinical data (participant + ODM) API calls.
+    Reads bridge_url from customer_uuids.csv keyed by subdomain.
+    e.g. cust1 -> https://cust1.eu.openclinica.io/OpenClinica
+    Falls back to build host if not found (will likely 405 but keeps old behavior).
+    """
+    csv_path = Path(__file__).parent / "references" / "customer_uuids.csv"
+    if csv_path.exists():
+        import csv as _csv
+        with open(csv_path, newline="") as f:
+            for row in _csv.DictReader(f):
+                if row.get("subdomain", "").lower() == subdomain.lower():
+                    bridge = row.get("bridge_url", "").rstrip("/")
+                    if bridge:
+                        return bridge  # e.g. https://cust1.eu.openclinica.io/OpenClinica
+    # Fallback
     return f"https://{subdomain}.build.openclinica.io"
 
 
@@ -187,7 +203,7 @@ async def _create_participant(subdomain: str, study_oid: str,
     Returns the confirmed subject key.
     """
     import json as _json
-    url = (f"{_pages_base(subdomain)}/OpenClinica/pages/auth/api/clinicaldata"
+    url = (f"{_pages_base(subdomain)}/pages/auth/api/clinicaldata"
            f"/studies/{study_oid}/sites/{site_oid}/participants")
     async with httpx.AsyncClient(timeout=30) as client:
         resp = await client.post(
@@ -330,7 +346,7 @@ def _build_odm_xml(study_oid: str, site_oid: str,
 async def _import_odm(subdomain: str, study_oid: str,
                        odm_xml: str, token: str) -> dict:
     """POST ODM XML to /OpenClinica/pages/auth/api/clinicaldata/studies/{studyOid}/import"""
-    url = (f"{_pages_base(subdomain)}/OpenClinica/pages/auth/api/clinicaldata"
+    url = (f"{_pages_base(subdomain)}/pages/auth/api/clinicaldata"
            f"/studies/{study_oid}/import")
     async with httpx.AsyncClient(timeout=60) as client:
         resp = await client.post(
