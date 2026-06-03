@@ -38,7 +38,7 @@ from monday_client import (get_item, download_file, upload_file, set_status,
                             append_log, set_text, set_link, download_column_file,
                             list_column_filenames, COL, BOARD_ID)
 from auth_manager import AuthManager
-from claude_client  import call_claude, extract_json
+from claude_client  import call_claude, extract_json, run_skill
 from migration_pipeline import run_migration as run_edc_migration
 from trainer_integration import (
     run_protocol_analysis_quick,
@@ -69,6 +69,10 @@ STATUS = {
     "all_complete":           "All Complete",
     "build_preview_running":  "Build Preview Running",
     "failed":                 "Failed",
+    # Design change intake statuses (added 2026-06-02)
+    "change_intake_running":  "Change Intake Running",
+    "change_intake_complete": "Change Intake Complete",
+    "change_intake_failed":   "Change Intake Failed",
 }
 # Trainer retrieval — number of similar past pairs to request.
 # Phase 1 starts at 3; raise after observing prompt length & quality.
@@ -5042,4 +5046,71 @@ async def run_pipeline(item_id):
         print(traceback.format_exc(), flush=True)
         await append_log(item_id, f"PIPELINE ERROR: {e}")
         await set_status(item_id, COL["pipeline_status"], STATUS["failed"])
+        raise
+
+
+async def run_design_change_intake(item_id, source_type, source_text,
+                                    protocol_hint=None):
+    """
+    Design Change Intake handler. Triggered automatically from main.py
+    when a [DESIGN_CHANGE] update is posted on an AI Hub board row.
+    Calls the design-change-intake skill to apply changes to the spec XLSX,
+    save the transcript, notify the assignee, and route convention proposals.
+    """
+    try:
+        await set_status(item_id, COL["pipeline_status"],
+                         STATUS["change_intake_running"])
+        await append_log(item_id, "Design change intake started.")
+
+        from prompts import DESIGN_CHANGE_PROMPT
+        import os as _os
+        skill_md_path = _os.path.join(
+            _os.path.dirname(_os.path.abspath(__file__)),
+            "skills", "design-change-intake", "SKILL.md"
+        )
+        ref_md_path = _os.path.join(
+            _os.path.dirname(_os.path.abspath(__file__)),
+            "skills", "design-change-intake", "references",
+            "spec-xls-format.md"
+        )
+        skill_instructions = ""
+        try:
+            skill_instructions = open(skill_md_path).read()
+            skill_instructions += "\n\n---\n\n" + open(ref_md_path).read()
+        except Exception as _e:
+            print(f"DESIGN_CHANGE_INTAKE: could not read skill files: {_e}",
+                  flush=True)
+
+        full_prompt = DESIGN_CHANGE_PROMPT.format(
+            source_type=source_type,
+            protocol_hint=protocol_hint or "",
+            source_text=source_text,
+        )
+        response = await run_skill(
+            full_prompt,
+            [],
+            extra_text=skill_instructions,
+        )
+        summary = extract_json(response)
+        if summary:
+            await append_log(item_id,
+                f"Design change intake complete. "
+                f"{summary.get('changes_applied', 0)} change(s) applied, "
+                f"{summary.get('changes_unresolved', 0)} unresolved, "
+                f"{summary.get('conventions_proposed', 0)} convention(s) proposed.")
+            await set_status(item_id, COL["pipeline_status"],
+                             STATUS["change_intake_complete"])
+        else:
+            await append_log(item_id,
+                "Design change intake: no summary returned from skill.")
+            await set_status(item_id, COL["pipeline_status"],
+                             STATUS["change_intake_failed"])
+
+    except Exception as e:
+        import traceback
+        print(f"DESIGN_CHANGE_INTAKE CRASHED: {e}", flush=True)
+        print(traceback.format_exc(), flush=True)
+        await append_log(item_id, f"DESIGN CHANGE INTAKE ERROR: {e}")
+        await set_status(item_id, COL["pipeline_status"],
+                         STATUS["change_intake_failed"])
         raise

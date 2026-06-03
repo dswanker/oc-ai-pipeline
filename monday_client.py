@@ -54,6 +54,9 @@ COL = {
     "services_discount":     "numeric_mm2n41x7",
     # Output selection
     "output_requested":  "dropdown_mm2nc7d4",
+    # Design change intake columns (added 2026-06-02)
+    "change_transcripts": "file_mm3tntz9",     # Change Request Transcripts — source text files
+    "assignee":           "dup__of_requester__1",  # Assigned PS team member (People column)
     # Build Preview file column (created by scripts/create_build_preview_column.py)
     "build_preview":     "file_mm2x1ey6",
     # Mapping review UI deep-link (populated after successful migration)

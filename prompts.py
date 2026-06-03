@@ -1308,3 +1308,31 @@ Then call:
 Input JSON follows this line:
 """
 
+
+
+DESIGN_CHANGE_PROMPT = """You are running the design-change-intake skill.
+Read skills/design-change-intake/SKILL.md and
+skills/design-change-intake/references/spec-xls-format.md before
+modifying any spec XLSX.
+
+Source type: {source_type}
+Protocol hint: {protocol_hint}
+
+Follow the skill instructions (Steps 1-9) to:
+1. Extract structured changes from the source text
+2. Find the correct AI Hub board row
+3. Download the current spec XLSX
+4. Apply all changes to the spec XLSX
+5. Upload the updated spec XLSX
+6. Save the source transcript
+7. Notify the assigned PS team member
+8. Route any convention proposals to the Convention Rulebook board
+
+Source text:
+{source_text}
+
+Return the result summary:
+===JSON_START===
+[base64 encoded JSON summary bytes]
+===JSON_END===
+"""

@@ -663,3 +663,65 @@ async def load_uat_webhook(request: Request, background_tasks: BackgroundTasks):
     # TODO: implement UAT data loading via OC participant/data API
     return {"status": "load_uat_acknowledged_not_implemented",
             "item_id": item_id}
+
+
+@app.post("/webhook/design-change")
+async def design_change_webhook(request: Request,
+                                 background_tasks: BackgroundTasks):
+    """
+    Receives Monday.com item update webhooks. Fires the design-change-intake
+    skill when an update body starts with [DESIGN_CHANGE].
+
+    Expected payload: Monday.com "When an update is created" event.
+      event.pulseId  — item ID
+      event.body     — update text (must start with [DESIGN_CHANGE])
+
+    Optional inline metadata tags after the prefix:
+      [SOURCE_TYPE:meeting_notes|email|transcript]
+      [PROTOCOL:CRS-136]
+    """
+    body    = await request.body()
+    payload = json.loads(body)
+
+    if "challenge" in payload:
+        return {"challenge": payload["challenge"]}
+
+    event       = payload.get("event", {})
+    item_id     = str(event.get("pulseId", ""))
+    update_body = event.get("body", "")
+
+    print(f"DESIGN_CHANGE_WEBHOOK: item={item_id} "
+          f"body_preview='{update_body[:80]}'", flush=True)
+
+    if not update_body.strip().startswith("[DESIGN_CHANGE]"):
+        print("IGNORED: update does not start with [DESIGN_CHANGE]", flush=True)
+        return {"status": "ignored"}
+
+    text = update_body.strip()[len("[DESIGN_CHANGE]"):].strip()
+
+    import re
+    source_type   = "meeting_notes"
+    protocol_hint = ""
+    st_match = re.search(r"\[SOURCE_TYPE:([^\]]+)\]", text)
+    ph_match = re.search(r"\[PROTOCOL:([^\]]+)\]", text)
+    if st_match:
+        source_type = st_match.group(1).strip()
+        text = text.replace(st_match.group(0), "").strip()
+    if ph_match:
+        protocol_hint = ph_match.group(1).strip()
+        text = text.replace(ph_match.group(0), "").strip()
+
+    if not text:
+        return {"status": "ignored - empty source text"}
+
+    async def safe_run(iid, stype, stext, phint):
+        try:
+            from pipeline import run_design_change_intake
+            await run_design_change_intake(iid, stype, stext, phint)
+        except Exception as e:
+            print(f"DESIGN_CHANGE_INTAKE CRASHED: {e}", flush=True)
+            print(traceback.format_exc(), flush=True)
+
+    background_tasks.add_task(safe_run, item_id, source_type, text,
+                               protocol_hint)
+    return {"status": "design_change_intake_started", "item_id": item_id}
