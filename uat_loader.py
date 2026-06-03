@@ -341,7 +341,12 @@ async def _import_odm(subdomain: str, study_oid: str,
                 "Authorization": f"Bearer {token}",
             },
         )
-        resp.raise_for_status()
+        if not resp.is_success:
+            raise RuntimeError(
+                f"ODM import HTTP {resp.status_code} at {url} — "
+                f"Allow: {resp.headers.get('allow', 'n/a')} — "
+                f"body: {resp.text[:400]}"
+            )
         try:
             return resp.json()
         except Exception:
