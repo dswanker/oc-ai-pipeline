@@ -217,12 +217,13 @@ def render_instructions_page(token: str, email: str,
 </div>
 
 <p><strong>2. Download &amp; install the Chrome extension (first time only):</strong></p>
-<p><a class="btn-link" href="/extension.zip">Download extension</a></p>
+<p><a class="btn-link" href="https://drive.google.com/uc?export=download&id=1QqHbD6_GqLw664-rwc3FEikZQo4dcJEs" target="_blank">Download extension from Google Drive</a></p>
 <ol>
   <li>Unzip the downloaded file — you will get a folder called <code>oc-session-capture</code>.</li>
+  <li><strong>Save this folder somewhere permanent</strong> (e.g. your Documents folder) — Chrome loads the extension from this folder every time, so don't delete it.</li>
   <li>Open <span class="designer">chrome://extensions</span>, toggle
       <em>Developer mode</em> (top right), click <em>Load unpacked</em>,
-      and select the unzipped folder.</li>
+      and select the saved folder.</li>
   <li>The extension will appear as <strong>OC Session Capture 1.0.1</strong>.
       You only need to do this once — skip to step 3 on future runs.</li>
 </ol>
