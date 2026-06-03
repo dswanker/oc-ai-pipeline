@@ -191,6 +191,27 @@ async def _create_site(subdomain: str, test_env_uuid: str,
     return data.get("oid") or data.get("uniqueIdentifier") or site_oid
 
 
+async def _set_env_available(subdomain: str, test_env_uuid: str,
+                              test_env_oid: str, token: str) -> None:
+    """
+    PUT /api/study-environments — set TEST environment status to AVAILABLE.
+    Required before participants can enroll on the EU OC instance.
+    """
+    url = f"{_study_service_base(subdomain)}/api/study-environments"
+    payload = {
+        "uuid":   test_env_uuid,
+        "status": "AVAILABLE",
+        "oid":    test_env_oid,
+    }
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.put(url, json=payload,
+                                headers={"Authorization": f"Bearer {token}"})
+        if resp.status_code not in (200, 201):
+            raise RuntimeError(
+                f"Set env AVAILABLE failed {resp.status_code}: {resp.text[:200]}"
+            )
+
+
 async def _create_participant(subdomain: str, study_oid: str,
                                site_oid: str, subject_key: str,
                                token: str, cookies: dict) -> str:
@@ -468,7 +489,7 @@ async def run_uat_loader(item_id: str) -> dict:
     # ── Step 3: Get TEST environment UUID (on-the-fly) ────────────────────
     await append_log(item_id, "UAT Loader: locating TEST environment...")
     try:
-        test_env_uuid, _ = await _get_test_env_uuid(
+        test_env_uuid, test_env_oid = await _get_test_env_uuid(
             subdomain, study_uuid, auth_cookies
         )
     except Exception as e:
@@ -490,6 +511,15 @@ async def run_uat_loader(item_id: str) -> dict:
     except Exception as e:
         result["errors"].append(f"Site creation failed: {e}")
         return result
+
+    # ── Step 4b: Set TEST environment to AVAILABLE ─────────────────────────
+    await append_log(item_id, "UAT Loader: setting TEST environment to AVAILABLE...")
+    try:
+        env_token = await _get_oc_token(subdomain)
+        await _set_env_available(subdomain, test_env_uuid, test_env_oid, env_token)
+        await append_log(item_id, "UAT Loader: TEST environment set to AVAILABLE")
+    except Exception as e:
+        await append_log(item_id, f"UAT Loader: WARNING — set env AVAILABLE failed (continuing): {e}")
 
     # ── Step 5: Parse UAT_Cases ────────────────────────────────────────────
     await append_log(item_id, "UAT Loader: parsing UAT_Cases sheet...")
