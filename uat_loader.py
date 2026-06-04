@@ -246,6 +246,79 @@ async def _create_participant(subdomain: str, study_oid: str,
         return subject_key
 
 
+async def _get_participant_oid(subdomain: str, study_oid: str,
+                                participant_id: str, token: str) -> str:
+    """GET /pages/auth/api/clinicaldata/studies/{studyOID}/participants and
+    look up the entry whose participantId or subjectKey matches participant_id.
+
+    Returns the internal OC OID assigned to that participant. The exact key
+    used by OC for this OID is logged on first call (entry shape varies by
+    OC version) so the operator can confirm which field is being returned.
+
+    Raises RuntimeError if the participant is not found or the GET fails.
+    """
+    from urllib.parse import quote as _quote
+    url = (f"{_pages_base(subdomain)}/pages/auth/api/clinicaldata"
+           f"/studies/{_quote(study_oid, safe='')}/participants")
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.get(
+            url,
+            headers={"Authorization": f"Bearer {token}"},
+        )
+    if not resp.is_success:
+        raise RuntimeError(
+            f"GET participants HTTP {resp.status_code} — "
+            f"body: {resp.text[:300]}"
+        )
+    try:
+        body = resp.json()
+    except Exception as e:
+        raise RuntimeError(f"GET participants returned non-JSON: {e}")
+
+    # The endpoint may return either a bare list or a wrapper object such as
+    # {"participants": [...]} / {"data": [...]} — be lenient.
+    entries = body
+    if isinstance(body, dict):
+        for k in ("participants", "data", "items", "results"):
+            v = body.get(k)
+            if isinstance(v, list):
+                entries = v
+                break
+    if not isinstance(entries, list):
+        raise RuntimeError(
+            f"GET participants: unexpected response shape "
+            f"({type(body).__name__}): {str(body)[:300]}"
+        )
+
+    if entries:
+        print(f"[uat_loader] participants first entry keys: "
+              f"{list(entries[0].keys()) if isinstance(entries[0], dict) else entries[0]}",
+              flush=True)
+        print(f"[uat_loader] participants first entry: "
+              f"{str(entries[0])[:500]}", flush=True)
+
+    needle = (participant_id or "").strip()
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        if (str(entry.get("participantId") or "").strip() == needle
+                or str(entry.get("subjectKey") or "").strip() == needle):
+            for k in ("oid", "participantOid", "subjectOid",
+                       "subjectKey", "studySubjectOid", "ssid"):
+                v = entry.get(k)
+                if v:
+                    return str(v)
+            raise RuntimeError(
+                f"Found participant '{participant_id}' but no recognised OID "
+                f"field. Entry: {str(entry)[:300]}"
+            )
+
+    raise RuntimeError(
+        f"Participant '{participant_id}' not found in study {study_oid} "
+        f"(searched {len(entries)} entries)."
+    )
+
+
 # ── DVS parsing ───────────────────────────────────────────────────────────────
 
 def _parse_uat_cases(dvs_bytes: bytes) -> list:
@@ -687,13 +760,26 @@ async def run_uat_loader(item_id: str) -> dict:
                 subdomain, study_oid, created_site_oid, run_key, token, {}
             )
             result["participants_created"].append(confirmed_key)
+
+            # Look up the internal OC OID for this participant — that is
+            # what _build_odm_xml must use as SubjectKey/StudySubjectID,
+            # not the ParticipantID we POSTed.
+            oc_oid = await _get_participant_oid(
+                subdomain, study_oid, confirmed_key, token
+            )
+
             stamp_map[logical_pid] = {
                 "site_oid":        created_site_oid,
                 "participant_key": confirmed_key,
+                "oc_oid":          oc_oid,
             }
             await append_log(
                 item_id,
                 f"UAT Loader: participant {run_key} → OC SubjectKey={confirmed_key}"
+            )
+            await append_log(
+                item_id,
+                f"UAT Loader: participant {run_key} → OC internal OID={oc_oid}"
             )
         except Exception as e:
             err = f"Participant creation failed for {run_key}: {e}"
@@ -711,7 +797,7 @@ async def run_uat_loader(item_id: str) -> dict:
     for logical_pid, rows in groups.items():
         if logical_pid not in stamp_map:
             continue  # creation failed in Pass 1 — skip ODM
-        confirmed_key = stamp_map[logical_pid]["participant_key"]
+        oc_oid = stamp_map[logical_pid]["oc_oid"]
         p_suffix = logical_pid.replace("UAT-P", "P")
         run_key  = f"{site_oid}-{p_suffix}"
 
@@ -722,7 +808,7 @@ async def run_uat_loader(item_id: str) -> dict:
         )
         try:
             odm_xml = _build_odm_xml(
-                study_oid, created_site_oid, confirmed_key, rows
+                study_oid, created_site_oid, oc_oid, rows
             )
             # ── Tier 1: XSD structural validation ────────────────────────
             odm_errors = _validate_odm_xml(odm_xml)
