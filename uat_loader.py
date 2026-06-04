@@ -279,7 +279,7 @@ async def _get_participant_oid(subdomain: str, study_oid: str,
     # {"participants": [...]} / {"data": [...]} — be lenient.
     entries = body
     if isinstance(body, dict):
-        for k in ("participants", "data", "items", "results"):
+        for k in ("participants", "data", "items", "results", "studyParticipants"):
             v = body.get(k)
             if isinstance(v, list):
                 entries = v
