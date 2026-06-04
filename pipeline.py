@@ -2443,8 +2443,8 @@ async def publish_calendaring_rules(subdomain, study_uuid, cal_zip_bytes, is_pro
         raise RuntimeError(
             f"Failed to fetch existing rules: {r.status_code} {r.text[:200]}"
         )
-    existing_names = {rule["name"] for rule in r.json()}
-    print(f"[cal-publish] {len(existing_names)} rules already on study", flush=True)
+    existing_rules = {rule["name"]: rule["uuid"] for rule in r.json()}
+    print(f"[cal-publish] {len(existing_rules)} rules already on study", flush=True)
 
     # Step 2: Extract rule JSONs from zip
     try:
@@ -2459,9 +2459,27 @@ async def publish_calendaring_rules(subdomain, study_uuid, cal_zip_bytes, is_pro
         rule_json = json.loads(zf.read(rule_file).decode("utf-8"))
         rule_name = rule_json.get("name", rule_file)
 
-        if rule_name in existing_names:
-            print(f"[cal-publish] SKIP {rule_name} (already exists)", flush=True)
-            skipped += 1
+        if rule_name in existing_rules:
+            # Rule exists — update it via PUT
+            rule_uuid = existing_rules[rule_name]
+            try:
+                async with httpx.AsyncClient(timeout=30) as c:
+                    r = await c.put(
+                        f"{base_url}/{rule_uuid}",
+                        headers=headers,
+                        json=rule_json,
+                    )
+                if r.status_code in (200, 201):
+                    print(f"[cal-publish] UPDATE {rule_name} uuid={rule_uuid}", flush=True)
+                    uploaded += 1
+                else:
+                    print(f"[cal-publish] FAIL UPDATE {rule_name}: {r.status_code} {r.text[:200]}", flush=True)
+                    failed += 1
+                    errors.append(f"{rule_name} (update): {r.status_code} {r.text[:200]}")
+            except Exception as exc:
+                print(f"[cal-publish] ERROR UPDATE {rule_name}: {exc}", flush=True)
+                failed += 1
+                errors.append(f"{rule_name} (update): {exc}")
             continue
 
         try:
@@ -2476,7 +2494,7 @@ async def publish_calendaring_rules(subdomain, study_uuid, cal_zip_bytes, is_pro
                 rule_uuid = r.json().get("uuid", "?")
                 print(f"[cal-publish] OK {rule_name} uuid={rule_uuid}", flush=True)
                 uploaded += 1
-                existing_names.add(rule_name)
+                existing_rules[rule_name] = r.json().get("uuid", "")
             else:
                 print(f"[cal-publish] FAIL {rule_name}: {r.status_code} {r.text[:200]}", flush=True)
                 failed += 1
