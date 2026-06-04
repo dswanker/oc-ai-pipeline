@@ -1161,7 +1161,11 @@ async def regenerate_dvs(request: Request):
             detail=f"DVS scripts unavailable: {e}",
         )
 
+    print(f"[regenerate-dvs] forms_json keys sample: {list(forms_json['forms'].keys())[:5]}", flush=True)
+    print(f"[regenerate-dvs] struct_json forms sample: {[(f.get('form_id'), f.get('visits_assigned')) for f in struct_json.get('forms', [])[:3]]}", flush=True)
     dvs_data = extract_dvs_data(struct_json, forms_json)
+    sample_uat = dvs_data.get('uat_cases', [])[:3]
+    print(f"[regenerate-dvs] UAT sample Study_Event_OID: {[r.get('Study_Event_OID') for r in sample_uat]}", flush=True)
     n_uat = len(dvs_data.get("uat_cases", []))
     print(f"[regenerate-dvs] {len(dvs_data.get('dvs_oc4', []))} checks, "
           f"{len(dvs_data.get('query_text_library', []))} unique messages, "
