@@ -364,8 +364,8 @@ def _build_odm_xml(study_oid: str, site_oid: str,
         '<?xml version="1.0" encoding="UTF-8"?>',
         f'<ODM {ODM_NAMESPACE}',
         f'    FileType="Transactional" FileOID="UAT-{now}" CreationDateTime="{now}">',
-        f'  <ClinicalData StudyOID="{site_oid}" MetaDataVersionOID="null">',
-        f'    <SubjectData SubjectKey="{participant_key}">',
+        f'  <ClinicalData StudyOID="{study_oid}" MetaDataVersionOID="null">',
+        f'    <SubjectData OpenClinica:StudySubjectID="{participant_key}">',
         f'      <SiteRef LocationOID="{site_oid}"/>',
     ]
     for ev_oid, repeats in events.items():
