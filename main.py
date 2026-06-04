@@ -1128,8 +1128,22 @@ async def regenerate_dvs(request: Request):
                                     if i < len(r) and r[i] is not None}
                         if row_dict:
                             survey_rows.append(row_dict)
+            choice_rows = []
+            if "choices" in wb.sheetnames:
+                ws = wb["choices"]
+                rows = list(ws.iter_rows(values_only=True))
+                if rows:
+                    headers = [str(h or "").strip() for h in rows[0]]
+                    for r in rows[1:]:
+                        row_dict = {headers[i]: r[i]
+                                    for i in range(len(headers))
+                                    if i < len(r) and r[i] is not None}
+                        if row_dict:
+                            choice_rows.append(row_dict)
             forms_json["forms"][os.path.basename(name)] = {
-                "survey": survey_rows}
+                "survey":  survey_rows,
+                "choices": choice_rows,
+            }
         except Exception as e:
             print(f"[regenerate-dvs] skipping {name}: {e}", flush=True)
 
@@ -1162,6 +1176,31 @@ async def regenerate_dvs(request: Request):
         build_dvs(dvs_data, xlsx_path)
         with open(xlsx_path, "rb") as f:
             dvs_bytes = f.read()
+
+    # ── Clear existing dvs_output column so the new file replaces ────────
+    # the old one rather than being appended alongside it.
+    from monday_client import (MONDAY_API_URL, BOARD_ID, get_headers)
+    import httpx as _httpx
+    _clear_mutation = (
+        "mutation($i: ID!, $b: ID!, $c: String!, $v: JSON!) {"
+        "  change_column_value(item_id: $i, board_id: $b, "
+        "                       column_id: $c, value: $v) { id }"
+        "}"
+    )
+    async with _httpx.AsyncClient(timeout=30) as _c:
+        await _c.post(
+            MONDAY_API_URL,
+            headers=get_headers(),
+            json={
+                "query": _clear_mutation,
+                "variables": {
+                    "i": item_id,
+                    "b": BOARD_ID,
+                    "c": COL["dvs_output"],
+                    "v": '{"files": []}',
+                },
+            },
+        )
 
     # ── Upload + log ──────────────────────────────────────────────────────
     await upload_file(item_id, COL["dvs_output"],
