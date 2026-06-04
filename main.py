@@ -1026,3 +1026,146 @@ async def gmail_auth_status(monday_user_id: str, request: Request):
         "expires_at":      obtained_at + expires_in,
         "has_refresh":     bool(token.get("refresh_token")),
     }
+
+
+@app.post("/admin/regenerate-dvs")
+async def regenerate_dvs(request: Request):
+    """Regenerate the DVS XLSX for an item without rerunning the full pipeline.
+
+    Reads the existing spec_json + edc_build zip from Monday, runs the DVS
+    extract + build (same path as Chain C's run_dvs_xlsx in pipeline.py),
+    uploads the result to dvs_output, and appends a Monday log line.
+
+    Body  : {"item_id": "<numeric>"}
+    Header: X-Admin-Secret must match the ADMIN_SECRET env var.
+
+    Errors:
+      503 — ADMIN_SECRET env var is not set.
+      403 — secret header missing or mismatched.
+      400 — item_id missing/non-numeric or spec_json not valid JSON.
+      404 — spec_json or edc_build column is empty on the item.
+      500 — DVS scripts not loadable.
+    """
+    admin_secret = os.environ.get("ADMIN_SECRET", "")
+    if not admin_secret:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "ADMIN_SECRET env var not set — endpoint disabled. "
+                "Set it on Railway before calling."
+            ),
+        )
+    if request.headers.get("X-Admin-Secret", "") != admin_secret:
+        raise HTTPException(status_code=403, detail="unauthorized")
+
+    body = await request.json()
+    item_id = str(body.get("item_id", "")).strip()
+    if not item_id or not item_id.isdigit():
+        raise HTTPException(
+            status_code=400,
+            detail="item_id is required and must be numeric",
+        )
+
+    from monday_client import upload_file, append_log
+
+    # ── Download spec JSON ────────────────────────────────────────────────
+    spec_bytes = await download_column_file(item_id, COL["spec_json"])
+    if not spec_bytes:
+        raise HTTPException(
+            status_code=404,
+            detail="spec_json (file_mm2gefht) is empty on this item — "
+                   "run the pipeline first to populate it",
+        )
+    try:
+        struct_json = json.loads(spec_bytes.decode("utf-8"))
+    except Exception as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"spec_json is not valid JSON: {e}",
+        )
+
+    # ── Download EDC build ZIP ────────────────────────────────────────────
+    edc_zip_bytes = await download_column_file(item_id, COL["edc_build"])
+    if not edc_zip_bytes:
+        raise HTTPException(
+            status_code=404,
+            detail="edc_build (file_mm2h51qw) is empty on this item — "
+                   "run the pipeline first to produce it",
+        )
+
+    # ── Build forms_json by reading 'survey' sheet of each xlsx in zip ───
+    # Mirrors run_edc_build's forms_json builder (pipeline.py:646-664).
+    import io as _io
+    import zipfile as _zipfile
+    import openpyxl as _openpyxl
+
+    try:
+        zf = _zipfile.ZipFile(_io.BytesIO(edc_zip_bytes))
+    except Exception as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"edc_build is not a valid zip file: {e}",
+        )
+
+    forms_json = {"forms": {}}
+    for name in sorted(zf.namelist()):
+        if not name.lower().endswith(".xlsx"):
+            continue
+        try:
+            with zf.open(name) as f:
+                wb_bytes = f.read()
+            wb = _openpyxl.load_workbook(_io.BytesIO(wb_bytes),
+                                          read_only=True, data_only=True)
+            survey_rows = []
+            if "survey" in wb.sheetnames:
+                ws = wb["survey"]
+                rows = list(ws.iter_rows(values_only=True))
+                if rows:
+                    headers = [str(h or "").strip() for h in rows[0]]
+                    for r in rows[1:]:
+                        row_dict = {headers[i]: r[i]
+                                    for i in range(len(headers))
+                                    if i < len(r) and r[i] is not None}
+                        if row_dict:
+                            survey_rows.append(row_dict)
+            forms_json["forms"][os.path.basename(name)] = {
+                "survey": survey_rows}
+        except Exception as e:
+            print(f"[regenerate-dvs] skipping {name}: {e}", flush=True)
+
+    # ── Run DVS extract + build (mirrors run_dvs_xlsx in pipeline.py) ────
+    import sys as _sys
+    _sys.path.insert(0, os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "skills", "dvs-specification", "scripts"))
+    try:
+        from extract_dvs_from_forms import extract_dvs_data
+        from generate_dvs import build_dvs
+    except ImportError as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"DVS scripts unavailable: {e}",
+        )
+
+    dvs_data = extract_dvs_data(struct_json, forms_json)
+    n_uat = len(dvs_data.get("uat_cases", []))
+    print(f"[regenerate-dvs] {len(dvs_data.get('dvs_oc4', []))} checks, "
+          f"{len(dvs_data.get('query_text_library', []))} unique messages, "
+          f"{n_uat} UAT cases", flush=True)
+
+    protocol = (struct_json.get("study_meta", {}).get("protocol_number")
+                or "STUDY")
+
+    import tempfile as _tempfile
+    with _tempfile.TemporaryDirectory() as tmp:
+        xlsx_path = os.path.join(tmp, f"{protocol}_DVS.xlsx")
+        build_dvs(dvs_data, xlsx_path)
+        with open(xlsx_path, "rb") as f:
+            dvs_bytes = f.read()
+
+    # ── Upload + log ──────────────────────────────────────────────────────
+    await upload_file(item_id, COL["dvs_output"],
+                      f"{protocol}_DVS.xlsx", dvs_bytes)
+    await append_log(item_id, "DVS regenerated via /admin/regenerate-dvs")
+
+    return {"status": "ok", "dvs_rows": n_uat}
