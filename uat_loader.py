@@ -713,8 +713,38 @@ async def run_uat_loader(item_id: str) -> dict:
                 f"UAT Loader: ODM import for {run_key} — "
                 f"status={import_result.get('status')} "
                 f"url={import_result.get('url','?')} "
-                f"snippet={str(import_result.get('body_snippet',''))[:200]}"
+                f"snippet={str(import_result.get('log','')[:500])[:200]}"
             )
+            # Parse the job log CSV to count Inserted vs Failed rows.
+            import csv as _csv
+            import io as _csvio
+            _log_text = import_result.get("log", "") or ""
+            _inserted, _failed_rows = 0, []
+            if _log_text:
+                reader = _csv.DictReader(_csvio.StringIO(_log_text))
+                for _row in reader:
+                    _status = (_row.get("Status") or "").strip()
+                    if _status == "Inserted":
+                        _inserted += 1
+                    elif _status == "Failed":
+                        _failed_rows.append(_row)
+            _job_uuid = import_result.get("job_uuid", "?")
+            await append_log(
+                item_id,
+                f"UAT Loader: ODM job {_job_uuid} — "
+                f"Inserted: {_inserted}, Failed: {len(_failed_rows)}"
+            )
+            if _failed_rows:
+                for _fr in _failed_rows[:3]:
+                    _msg  = (_fr.get("Message") or "").strip()
+                    _evt  = (_fr.get("StudyEventOID") or "").strip()
+                    _form = (_fr.get("FormOID") or "").strip()
+                    _item = (_fr.get("ItemOID") or "").strip()
+                    await append_log(
+                        item_id,
+                        f"  FAILED row — Event={_evt} Form={_form} "
+                        f"Item={_item} Message={_msg}"
+                    )
         except Exception as e:
             err = f"ODM import failed for {run_key}: {e}"
             result["errors"].append(err)
