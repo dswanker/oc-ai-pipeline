@@ -995,9 +995,16 @@ def _build_form_event_map(struct_json):
         return mapping
     for form in struct_json.get("forms", []):
         fid = (form.get("form_id") or "").upper()
-        visits = form.get("visits_assigned") or []
+        visits = (form.get("visits_assigned")
+                  or form.get("study_events")
+                  or form.get("events_assigned")
+                  or form.get("events")
+                  or [])
         if fid and visits:
             mapping[fid] = visits[0]
+    if not mapping:
+        print(f"[form_event_map] WARNING: no mappings built. First form sample: "
+              f"{str(struct_json.get('forms', [{}])[0])[:300]}", flush=True)
     return mapping
 
 
