@@ -605,9 +605,19 @@ async def run_uat_loader(item_id: str) -> dict:
         result["errors"].append(f"Site creation failed: {e}")
         return result
 
-    # ── Step 4b: Set TEST environment to AVAILABLE (skipped — returns 500) ──
-    # PUT /api/study-environments returns 500 for this operation.
-    # Participant creation works regardless, so this step is omitted.
+    # ── Step 4b: Activate TEST environment (PUT status → AVAILABLE) ──────
+    # _activate_test_environment lives in pipeline.py; lazy-imported here
+    # because pipeline.py already imports run_uat_loader from this module at
+    # module-load time — a top-level "from pipeline import …" would loop.
+    await append_log(item_id,
+        "UAT Loader: activating TEST environment → AVAILABLE...")
+    try:
+        from pipeline import _activate_test_environment
+        await _activate_test_environment(subdomain, study_uuid)
+        await append_log(item_id, "UAT Loader: TEST environment activated")
+    except Exception as e:
+        result["errors"].append(f"TEST environment activation failed: {e}")
+        return result
 
     # ── Step 5: Parse UAT_Cases ────────────────────────────────────────────
     await append_log(item_id, "UAT Loader: parsing UAT_Cases sheet...")

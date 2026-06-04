@@ -2349,6 +2349,70 @@ async def _publish_study_version(
         )
 
 
+async def _activate_test_environment(subdomain, study_uuid):
+    """Activate the TEST environment after publish by PUTting the full
+    StudyEnvironmentDTO with status="AVAILABLE".
+
+    Steps:
+      1. GET /study-service/api/studies/{study_uuid}/study-environments
+         to find the env where environmentType == "TEST" or
+         environmentName == "Test".
+      2. Set its status to "AVAILABLE".
+      3. PUT /study-service/api/study-environments with the full modified
+         object as JSON body (UUID is carried inside the body, not the URL).
+
+    Returns the PUT response JSON. Raises RuntimeError on any non-2xx.
+    Uses Bearer token via _get_oc_token (same pattern as publish_to_test).
+    """
+    import httpx
+    token = await _get_oc_token(subdomain, is_production=False)
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type":  "application/json",
+    }
+    base = f"https://{subdomain}.build.openclinica.io/study-service"
+
+    # ── Step 1: GET the environments and locate the TEST one ──────────────
+    get_url = f"{base}/api/studies/{study_uuid}/study-environments"
+    async with httpx.AsyncClient(timeout=30) as c:
+        r = await c.get(get_url, headers=headers)
+    if r.status_code != 200:
+        raise RuntimeError(
+            f"Activate TEST: GET environments failed "
+            f"{r.status_code}: {r.text[:300]}"
+        )
+    envs = r.json() or []
+    test_env = None
+    for env in envs:
+        env_type = (env.get("environmentType") or "").upper()
+        env_name = (env.get("environmentName") or "").upper()
+        if env_type == "TEST" or env_name == "TEST":
+            test_env = env
+            break
+    if test_env is None:
+        names = [e.get("environmentName") for e in envs]
+        raise RuntimeError(
+            f"Activate TEST: no TEST environment found for study "
+            f"{study_uuid}. Got: {names}"
+        )
+
+    # ── Step 2: Mutate status on the full object ──────────────────────────
+    test_env["status"] = "AVAILABLE"
+
+    # ── Step 3: PUT the modified object back ──────────────────────────────
+    put_url = f"{base}/api/study-environments"
+    async with httpx.AsyncClient(timeout=30) as c:
+        r = await c.put(put_url, headers=headers, json=test_env)
+    if r.status_code not in (200, 201, 204):
+        raise RuntimeError(
+            f"Activate TEST: PUT failed {r.status_code}: {r.text[:300]}"
+        )
+    try:
+        return r.json()
+    except Exception:
+        return {"status_code": r.status_code, "body": r.text[:300]}
+
+
 async def publish_calendaring_rules(subdomain, study_uuid, cal_zip_bytes, is_production=False):
     """POST validated calendaring rules to the OC4 rule-service.
 
