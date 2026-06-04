@@ -5185,3 +5185,33 @@ async def run_design_change_intake(item_id, source_type, source_text,
         await set_status(item_id, COL["pipeline_status"],
                          STATUS["change_intake_failed"])
         raise
+
+
+async def run_email_change_intake(member_id=None):
+    """
+    Email Change Intake handler.
+    Polls Gmail inboxes for active PS team members hourly (triggered via
+    Monday.com automation → POST /admin/run-email-intake).
+    member_id: optional Monday user ID to run for one member only.
+    """
+    import sys as _sys
+    _sys.path.insert(0, os.path.join(os.path.dirname(
+        os.path.abspath(__file__)),
+        "skills", "email-change-intake", "scripts"))
+    from email_change_intake import (
+        run_email_change_intake as _run,
+        handle_review_decision  as _handle,
+    )
+    return await _run(member_id)
+
+async def handle_email_review_decision(item_id, decision_label):
+    """
+    Called from /webhook/email-change-decision when Review Decision
+    column changes on Change Requests board.
+    """
+    import sys as _sys
+    _sys.path.insert(0, os.path.join(os.path.dirname(
+        os.path.abspath(__file__)),
+        "skills", "email-change-intake", "scripts"))
+    from email_change_intake import handle_review_decision as _handle
+    return await _handle(item_id, decision_label)

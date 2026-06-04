@@ -833,3 +833,84 @@ async def design_change_webhook(request: Request,
     background_tasks.add_task(safe_run, item_id, source_type, text,
                                protocol_hint)
     return {"status": "design_change_intake_started", "item_id": item_id}
+
+
+@app.post("/admin/run-email-intake")
+async def run_email_intake_route(request: Request,
+                                  background_tasks: BackgroundTasks):
+    """
+    Hourly email polling trigger.
+    Called by Monday.com automation every hour.
+    Optional body: {"member_id": "12345678"} to run for one member only.
+    Requires X-Admin-Secret header.
+    """
+    secret = request.headers.get("X-Admin-Secret", "")
+    if secret != os.environ.get("ADMIN_SECRET", ""):
+        return {"status": "unauthorized"}
+
+    body_bytes = await request.body()
+    try:
+        payload = json.loads(body_bytes) if body_bytes else {}
+    except Exception:
+        payload = {}
+
+    member_id = payload.get("member_id")
+
+    async def safe_run(mid):
+        try:
+            from pipeline import run_email_change_intake
+            result = await run_email_change_intake(mid)
+            print(f"EMAIL_INTAKE_COMPLETE: {result}", flush=True)
+        except Exception as e:
+            print(f"EMAIL_INTAKE_CRASHED: {e}", flush=True)
+            print(traceback.format_exc(), flush=True)
+
+    background_tasks.add_task(safe_run, member_id)
+    return {"status": "email_intake_started",
+            "member_id": member_id or "all"}
+
+
+@app.post("/webhook/email-change-decision")
+async def email_change_decision_webhook(request: Request,
+                                         background_tasks: BackgroundTasks):
+    """
+    Fires when Review Decision column changes on Change Requests board.
+    Monday.com webhook payload: event.pulseId, event.columnId,
+    event.value.label.text
+    Routes Approve → post [DESIGN_CHANGE] to AI Hub.
+    Routes Dismiss → close item with no action.
+    """
+    body_bytes = await request.body()
+    payload    = json.loads(body_bytes)
+
+    if "challenge" in payload:
+        return {"challenge": payload["challenge"]}
+
+    event    = payload.get("event", {})
+    item_id  = str(event.get("pulseId", ""))
+    col_id   = event.get("columnId", "")
+    label    = (event.get("value", {})
+                     .get("label", {})
+                     .get("text", ""))
+
+    print(f"EMAIL_DECISION_WEBHOOK: item={item_id} col={col_id} "
+          f"label={label}", flush=True)
+
+    if col_id != "color_mm3zkh2y":
+        return {"status": "ignored - wrong column"}
+
+    if label not in ("Approve", "Dismiss"):
+        return {"status": "ignored - not an actionable label"}
+
+    async def safe_handle(iid, lbl):
+        try:
+            from pipeline import handle_email_review_decision
+            result = await handle_email_review_decision(iid, lbl)
+            print(f"EMAIL_DECISION_RESULT: {result}", flush=True)
+        except Exception as e:
+            print(f"EMAIL_DECISION_CRASHED: {e}", flush=True)
+            print(traceback.format_exc(), flush=True)
+
+    background_tasks.add_task(safe_handle, item_id, label)
+    return {"status": "email_decision_processing",
+            "item_id": item_id, "decision": label}
