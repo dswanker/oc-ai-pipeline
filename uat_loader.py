@@ -314,16 +314,33 @@ def _validate_odm_xml(odm_xml: str) -> list[str]:
     Tier 1 — XSD structural validation of ODM XML.
     Returns a list of error strings (empty = valid).
     Uses the bundled minimal ODM 1.3.2 transactional XSD.
+
+    The bundled CDISC XSD does not include the OpenClinica extension schema,
+    so OpenClinica:* attributes (e.g. StudySubjectID) on SubjectData elements
+    would be rejected during validation even though OC requires them at
+    import time. Before validating, strip any OpenClinica-namespaced
+    attributes from SubjectData elements on the parsed in-memory copy. The
+    original odm_xml string is unchanged — the caller still sends the full
+    XML with the OpenClinica attributes intact to _import_odm.
     """
     from lxml import etree
     xsd_path = (Path(__file__).parent
                 / "skills" / "dvs-specification" / "references"
                 / "ODM1-3-2-transactional.xsd")
+    _OC_NS  = "http://www.openclinica.com/ns/odm_ext_v130/v3.1"
+    _ODM_NS = "http://www.cdisc.org/ns/odm/v1.3"
     errors = []
     try:
         schema_doc = etree.parse(str(xsd_path))
         schema     = etree.XMLSchema(schema_doc)
         doc        = etree.fromstring(odm_xml.encode("utf-8"))
+        # Strip OpenClinica:* attributes from SubjectData elements on the
+        # parsed copy only (the original odm_xml string is unchanged).
+        for sd in doc.iter(f"{{{_ODM_NS}}}SubjectData"):
+            for attr_key in [
+                k for k in sd.attrib if k.startswith(f"{{{_OC_NS}}}")
+            ]:
+                del sd.attrib[attr_key]
         if not schema.validate(doc):
             errors = [str(e) for e in schema.error_log]
     except etree.XMLSyntaxError as e:
