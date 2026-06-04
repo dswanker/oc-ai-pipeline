@@ -947,7 +947,8 @@ def _qt_row(qt_id, check_id, message, check_type):
 
 def _uat_row(uat_id, check_id, form_id, field_name, field_label, case,
              form_event_map=None):
-    event_oid = (form_event_map or {}).get(form_id.upper(), "")
+    _fid_key = form_id.upper() if form_id.upper().startswith("F_") else f"F_{form_id.upper()}"
+    event_oid = (form_event_map or {}).get(_fid_key, "")
     return {
         "UAT Case ID":       uat_id,
         "Status":            "Not Run",
@@ -971,7 +972,7 @@ def _uat_row(uat_id, check_id, form_id, field_name, field_label, case,
         "Participant_Key":   "",        # stamped at runtime by uat_loader
         "Study_Event_OID":   event_oid,
         "Event_Repeat_Key":  "1",
-        "Form_OID":          form_id,
+        "Form_OID":          f"F_{form_id}" if not form_id.upper().startswith("F_") else form_id,
         "Item_Group_OID":    f"IG_{form_id}_1",
         "Item_OID":          f"{form_id}.{field_name}" if field_name else f"IG_{form_id}_1",
         "Participant_ID":    "UAT-P001",
