@@ -655,8 +655,12 @@ async def run_uat_loader(item_id: str) -> dict:
     token = await _get_oc_token(subdomain)
     stamp_map = {}
 
+    # ── Pass 1: Create ALL participants first ─────────────────────────────
+    # Decouples creation from ODM import so OC has time to propagate every
+    # new participant before any data lands. A failed creation is recorded
+    # in result["errors"] and the participant is excluded from Pass 2
+    # (stamp_map gets no entry for it).
     for logical_pid, rows in groups.items():
-        # ── Step 6: Create participant ─────────────────────────────────────
         p_suffix = logical_pid.replace("UAT-P", "P")
         run_key  = f"{site_oid}-{p_suffix}"
 
@@ -670,18 +674,30 @@ async def run_uat_loader(item_id: str) -> dict:
                 "site_oid":        created_site_oid,
                 "participant_key": confirmed_key,
             }
+            await append_log(
+                item_id,
+                f"UAT Loader: participant {run_key} → OC SubjectKey={confirmed_key}"
+            )
         except Exception as e:
-            # Non-fatal: OC4 may auto-enroll participant on ODM import.
-            # Log the warning but continue to attempt ODM import anyway.
-            await append_log(item_id,
-                f"UAT Loader: participant creation returned error (proceeding to ODM): {e}")
-            result["participants_created"].append(run_key)
-            stamp_map[logical_pid] = {
-                "site_oid":        created_site_oid,
-                "participant_key": run_key,
-            }
+            err = f"Participant creation failed for {run_key}: {e}"
+            result["errors"].append(err)
+            await append_log(
+                item_id,
+                f"UAT Loader: ERROR — {err} (skipping this participant)"
+            )
 
-        # ── Steps 7+8: Build and import ODM ───────────────────────────────
+    # Give OC time to propagate all participant creations before importing
+    # data against any of them.
+    await asyncio.sleep(2)
+
+    # ── Pass 2: Build + import ODM for each successfully-created participant ──
+    for logical_pid, rows in groups.items():
+        if logical_pid not in stamp_map:
+            continue  # creation failed in Pass 1 — skip ODM
+        confirmed_key = stamp_map[logical_pid]["participant_key"]
+        p_suffix = logical_pid.replace("UAT-P", "P")
+        run_key  = f"{site_oid}-{p_suffix}"
+
         await append_log(
             item_id,
             f"UAT Loader: importing ODM for {run_key} "
@@ -689,7 +705,7 @@ async def run_uat_loader(item_id: str) -> dict:
         )
         try:
             odm_xml = _build_odm_xml(
-                study_oid, created_site_oid, run_key, rows
+                study_oid, created_site_oid, confirmed_key, rows
             )
             # ── Tier 1: XSD structural validation ────────────────────────
             odm_errors = _validate_odm_xml(odm_xml)
