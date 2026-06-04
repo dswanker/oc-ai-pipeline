@@ -424,8 +424,16 @@ def _validate_odm_xml(odm_xml: str) -> list[str]:
 
 
 def _build_odm_xml(study_oid: str, site_oid: str,
-                   participant_key: str, rows: list) -> str:
-    """Build ODM XML for one participant's data rows."""
+                   participant_oid: str, participant_id: str,
+                   rows: list) -> str:
+    """Build ODM XML for one participant's data rows.
+
+    participant_oid: OC's internal Participant OID (e.g. SS_UAT20260_8695) —
+                     goes into SubjectKey, satisfies the ODM XSD.
+    participant_id:  the human Participant ID (e.g. UAT-…-P001) — goes into
+                     OpenClinica:StudySubjectID, which is what OC's import
+                     uses to look up the participant.
+    """
     now = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S")
 
     # Tree: events[ev_oid][repeat_key][form_oid][ig_oid] = [(item_oid, val)]
@@ -455,7 +463,7 @@ def _build_odm_xml(study_oid: str, site_oid: str,
         f'<ODM {ODM_NAMESPACE}',
         f'    FileType="Transactional" FileOID="UAT-{now}" CreationDateTime="{now}">',
         f'  <ClinicalData StudyOID="{study_oid}" MetaDataVersionOID="null">',
-        f'    <SubjectData SubjectKey="{participant_key}" OpenClinica:StudySubjectID="{participant_key}">',
+        f'    <SubjectData SubjectKey="{participant_oid}" OpenClinica:StudySubjectID="{participant_id}">',
         f'      <SiteRef LocationOID="{site_oid}"/>',
     ]
     for ev_oid, repeats in events.items():
@@ -797,7 +805,8 @@ async def run_uat_loader(item_id: str) -> dict:
     for logical_pid, rows in groups.items():
         if logical_pid not in stamp_map:
             continue  # creation failed in Pass 1 — skip ODM
-        oc_oid = stamp_map[logical_pid]["oc_oid"]
+        oc_oid       = stamp_map[logical_pid]["oc_oid"]
+        confirmed_id = stamp_map[logical_pid]["participant_key"]
         p_suffix = logical_pid.replace("UAT-P", "P")
         run_key  = f"{site_oid}-{p_suffix}"
 
@@ -808,7 +817,7 @@ async def run_uat_loader(item_id: str) -> dict:
         )
         try:
             odm_xml = _build_odm_xml(
-                study_oid, created_site_oid, oc_oid, rows
+                study_oid, created_site_oid, oc_oid, confirmed_id, rows
             )
             # ── Tier 1: XSD structural validation ────────────────────────
             odm_errors = _validate_odm_xml(odm_xml)
