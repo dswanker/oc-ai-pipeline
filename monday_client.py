@@ -55,6 +55,7 @@ COL = {
     # Output selection
     "output_requested":  "dropdown_mm2nc7d4",
     # Design change intake columns (added 2026-06-02)
+    "spec_xlsx_working":  "file_mm2gjqgx",     # Protocol Specification (xlsx) — read/write by design-change-intake
     "change_transcripts": "file_mm3tntz9",     # Change Request Transcripts — source text files
     "assignee":           "dup__of_requester__1",  # Assigned PS team member (People column)
     # Build Preview file column (created by scripts/create_build_preview_column.py)

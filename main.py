@@ -10,6 +10,15 @@ from auth_manager import (
     handle_session_upload,
     render_instructions_page,
 )
+from gmail_oauth import (
+    build_auth_url,
+    exchange_code_for_token,
+    token_exists,
+    delete_token,
+    render_success_page,
+    render_error_page,
+    GmailAuthRequired,
+)
 from monday_client import COL, PIPELINE_CONFIG_ITEM_ID, download_column_file
 from migration_pipeline import MIGRATIONS_HUB_COLUMNS
 
@@ -914,3 +923,106 @@ async def email_change_decision_webhook(request: Request,
     background_tasks.add_task(safe_handle, item_id, label)
     return {"status": "email_decision_processing",
             "item_id": item_id, "decision": label}
+
+
+@app.get("/auth/gmail/{monday_user_id}")
+async def gmail_auth_start(monday_user_id: str):
+    """
+    Step 1 of Gmail OAuth flow.
+    Team member clicks the link from their bell notification.
+    Redirects to Google consent screen requesting gmail.readonly scope.
+    """
+    from starlette.responses import RedirectResponse
+    auth_url = build_auth_url(monday_user_id)
+    print(f"GMAIL_AUTH: redirecting {monday_user_id} to Google consent",
+          flush=True)
+    return RedirectResponse(url=auth_url)
+
+
+@app.get("/auth/gmail/callback")
+async def gmail_auth_callback(code: str = "", state: str = "",
+                               error: str = ""):
+    """
+    Step 2 of Gmail OAuth flow — Google redirects here after consent.
+    Exchanges the authorisation code for access + refresh tokens,
+    saves to /data/gmail_sessions/{monday_user_id}.json, shows
+    success/error page.
+    """
+    from gmail_oauth import _verify_state
+
+    if error:
+        print(f"GMAIL_AUTH_CALLBACK: Google returned error: {error}",
+              flush=True)
+        return HTMLResponse(
+            render_error_page(
+                f"Google returned an error: {error}. "
+                "Please try again or contact Dan."
+            )
+        )
+
+    if not code or not state:
+        return HTMLResponse(
+            render_error_page("Missing code or state parameter."))
+
+    monday_user_id, state_error = _verify_state(state)
+    if state_error:
+        print(f"GMAIL_AUTH_CALLBACK: state error: {state_error}",
+              flush=True)
+        return HTMLResponse(render_error_page(state_error))
+
+    token_data = await exchange_code_for_token(code, monday_user_id)
+    if not token_data:
+        return HTMLResponse(
+            render_error_page(
+                "Failed to exchange authorisation code for token. "
+                "Please try again or contact Dan."
+            )
+        )
+
+    # Look up the team member's name for the success page
+    member_name = monday_user_id
+    try:
+        import httpx as _httpx
+        from monday_client import get_headers, MONDAY_API_URL
+        q = f"query {{ users(ids: [{monday_user_id}]) {{ name }} }}"
+        async with _httpx.AsyncClient(timeout=10) as _c:
+            _r = await _c.post(MONDAY_API_URL, headers=get_headers(),
+                               json={"query": q})
+        users = _r.json().get("data", {}).get("users", [])
+        if users:
+            member_name = users[0].get("name", monday_user_id)
+    except Exception:
+        pass
+
+    gmail_address = token_data.get("gmail_address", "")
+    print(f"GMAIL_AUTH_CALLBACK: success for {monday_user_id} "
+          f"({gmail_address})", flush=True)
+    return HTMLResponse(render_success_page(gmail_address, member_name))
+
+
+@app.get("/auth/gmail/status/{monday_user_id}")
+async def gmail_auth_status(monday_user_id: str, request: Request):
+    """
+    Check Gmail connection status for a team member.
+    Requires X-Admin-Secret header.
+    Returns: {connected: bool, gmail_address: str, expires_at: int}
+    """
+    secret = request.headers.get("X-Admin-Secret", "")
+    if secret != os.environ.get("ADMIN_SECRET", ""):
+        raise HTTPException(status_code=403, detail="unauthorized")
+
+    from gmail_oauth import load_token
+    token = load_token(monday_user_id)
+    if not token:
+        return {"connected": False, "monday_user_id": monday_user_id}
+
+    import time
+    obtained_at = token.get("obtained_at", 0)
+    expires_in  = token.get("expires_in", 3600)
+    return {
+        "connected":       True,
+        "monday_user_id":  monday_user_id,
+        "gmail_address":   token.get("gmail_address", ""),
+        "expires_at":      obtained_at + expires_in,
+        "has_refresh":     bool(token.get("refresh_token")),
+    }

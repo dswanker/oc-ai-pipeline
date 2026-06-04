@@ -211,53 +211,25 @@ class GmailAuthRequired(Exception):
 
 async def _fetch_emails(member: dict) -> list:
     """
-    Fetches unread emails for a team member via Gmail MCP connector.
-    Token stored at /data/gmail_sessions/{monday_user_id}.json on Railway volume.
-    Raises GmailAuthRequired if token is missing or expired.
+    Fetches unread emails for a team member using the Gmail OAuth2 token
+    stored at /data/gmail_sessions/{monday_user_id}.json on Railway volume.
+    Uses gmail_oauth.fetch_unread_emails() which handles token refresh.
+    Raises GmailAuthRequired if token is missing or refresh fails.
     """
-    token_path = f"/data/gmail_sessions/{member['monday_user_id']}.json"
-    if not os.path.exists(token_path):
-        raise GmailAuthRequired(
-            f"No Gmail token for {member['name']} ({member['monday_user_id']}). "
-            f"Team member must complete Gmail OAuth setup."
+    import sys as _sys, os as _os
+    _sys.path.insert(0, _os.path.dirname(_os.path.dirname(
+        _os.path.dirname(_os.path.abspath(__file__)))))
+    from gmail_oauth import fetch_unread_emails, GmailAuthRequired as _GmailAuthRequired
+
+    try:
+        emails = await fetch_unread_emails(
+            monday_user_id=member["monday_user_id"],
+            after_date=member.get("last_checked"),
+            max_results=50,
         )
-
-    search_parts = ["is:unread", "-from:me"]
-    if member["last_checked"]:
-        date_fmt = member["last_checked"].replace("-", "/")
-        search_parts.append(f"after:{date_fmt}")
-
-    query = " ".join(search_parts)
-    gmail_mcp_url = os.environ.get(
-        "GMAIL_MCP_URL", "http://gmail-mcp.railway.internal:8080"
-    )
-    token_data = json.loads(open(token_path).read())
-
-    async with httpx.AsyncClient(timeout=30) as c:
-        r = await c.post(
-            f"{gmail_mcp_url}/messages/list",
-            headers={
-                "Authorization": f"Bearer {token_data.get('access_token', '')}"},
-            json={"query": query, "max_results": 50},
-        )
-
-    if r.status_code == 401:
-        raise GmailAuthRequired(
-            f"Gmail token expired for {member['name']}. Re-authentication required."
-        )
-
-    r.raise_for_status()
-    raw_messages = r.json().get("messages", [])
-
-    return [{
-        "message_id":  msg.get("id", ""),
-        "subject":     msg.get("subject", "(no subject)"),
-        "from_email":  msg.get("from_email", ""),
-        "from_name":   msg.get("from_name", ""),
-        "body":        msg.get("body_plain", ""),
-        "received_at": msg.get("received_at", ""),
-        "thread_id":   msg.get("thread_id", ""),
-    } for msg in raw_messages]
+        return emails
+    except _GmailAuthRequired as e:
+        raise GmailAuthRequired(str(e))
 
 
 # ── Step 4: Classify email via Claude ────────────────────────────────────────
@@ -640,6 +612,19 @@ async def run_email_change_intake(member_id: str = None) -> dict:
             print(f"  Auth required: {e}", flush=True)
             summary["errors"].append(
                 f"{member['name']}: Gmail not connected")
+            # Notify team member to connect their Gmail
+            try:
+                import sys as _sys, os as _os
+                _sys.path.insert(0, _os.path.dirname(_os.path.dirname(
+                    _os.path.dirname(_os.path.abspath(__file__)))))
+                from pipeline import generate_gmail_auth_link
+                await generate_gmail_auth_link(
+                    member["monday_user_id"],
+                    member["name"],
+                    member["staff_item_id"],
+                )
+            except Exception as _e:
+                print(f"  Could not send auth link: {_e}", flush=True)
             continue
         except Exception as e:
             print(f"  Fetch failed: {e}", flush=True)

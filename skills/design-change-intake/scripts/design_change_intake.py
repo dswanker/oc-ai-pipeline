@@ -30,7 +30,7 @@ from openpyxl.utils import get_column_letter
 BOARD_ID              = "18409146946"
 CONV_BOARD_ID         = "18411236453"
 CONV_GROUP_ID         = "group_mm3xt80m"
-COL_SPEC_XLSX         = "file_mm2n3x71"
+COL_SPEC_XLSX         = "file_mm2gjqgx"   # Protocol Specification (xlsx) — always write here
 COL_TRANSCRIPTS       = "file_mm3tntz9"
 COL_ASSIGNEE          = "dup__of_requester__1"
 COL_PROTOCOL_NUM      = "text_mm2hcfre"
@@ -231,11 +231,38 @@ async def _find_board_row(protocol_id: str) -> dict:
 
 # ── Step 3: Download spec XLSX ────────────────────────────────────────────────
 
-async def _download_spec_xlsx(item_id: str) -> bytes:
+# Columns to search for the spec XLSX — read from whichever has the
+# most recently uploaded file; always write back to COL_SPEC_XLSX_OUT.
+COL_SPEC_XLSX_IN  = "file_mm2gjqgx"   # Protocol Specification (xlsx) — pipeline output / skill write-back
+COL_SPEC_XLSX_ALT = "file_mm2n3x71"   # Study Specification Update Input — human upload slot
+
+
+async def _download_spec_xlsx(item_id: str) -> tuple[bytes, str]:
+    """
+    Download the most recently uploaded spec XLSX from the board row.
+
+    Checks both COL_SPEC_XLSX_IN (file_mm2gjqgx) and COL_SPEC_XLSX_ALT
+    (file_mm2n3x71) and returns the file with the latest created_at
+    timestamp. This handles the case where a PS team member manually
+    uploads a revised spec to the Update Input column after the skill
+    has already written a version to the output column.
+
+    Returns (xlsx_bytes, source_col_id). Returns (b"", "") if no xlsx found.
+
+    Example timeline this handles correctly:
+      08:00 — pipeline writes spec to file_mm2gjqgx
+      09:00 — email change request → skill reads file_mm2gjqgx, applies
+               changes, writes back to file_mm2gjqgx
+      10:30 — second email change request → skill reads file_mm2gjqgx
+               (still newest), applies changes, writes back
+      11:00 — PS team member uploads manual revision to file_mm2n3x71
+      11:30 — third email change request → skill finds file_mm2n3x71 is
+               newer, reads from there, writes result to file_mm2gjqgx
+    """
     q = """
     query($i: [ID!]) {
       items(ids: $i) {
-        assets { id name url public_url created_at }
+        assets { id name url public_url created_at column_id }
       }
     }
     """
@@ -244,16 +271,148 @@ async def _download_spec_xlsx(item_id: str) -> bytes:
                   .get("items", [{}])[0]
                   .get("assets", []))
 
-    xlsx_assets = [a for a in assets
-                   if (a.get("name") or "").lower().endswith(".xlsx")]
-    if not xlsx_assets:
-        return b""
+    # Filter to xlsx files from either of the two spec columns
+    spec_cols = {COL_SPEC_XLSX_IN, COL_SPEC_XLSX_ALT}
+    xlsx_assets = [
+        a for a in assets
+        if (a.get("name") or "").lower().endswith(".xlsx")
+        and a.get("column_id") in spec_cols
+    ]
 
+    # If no column_id in assets (older Monday API responses), fall back
+    # to all xlsx assets on the row
+    if not xlsx_assets:
+        xlsx_assets = [
+            a for a in assets
+            if (a.get("name") or "").lower().endswith(".xlsx")
+        ]
+
+    if not xlsx_assets:
+        return b"", ""
+
+    # Pick the most recently uploaded
     xlsx_assets.sort(key=lambda a: a.get("created_at", ""), reverse=True)
-    url = xlsx_assets[0].get("public_url") or xlsx_assets[0].get("url", "")
+    best = xlsx_assets[0]
+    source_col = best.get("column_id", COL_SPEC_XLSX_IN)
+
+    url = best.get("public_url") or best.get("url", "")
     if not url:
-        return b""
-    return await _download(url)
+        return b"", ""
+
+    data = await _download(url)
+    print(f"_download_spec_xlsx: read from col={source_col} "
+          f"file={best.get('name','')} "
+          f"created_at={best.get('created_at','')}", flush=True)
+    return data, source_col
+
+
+# ── Notification helpers ─────────────────────────────────────────────────────
+
+async def _post_item_update(item_id: str, body: str):
+    q = """mutation($id: ID!, $b: String!) {
+        create_update(item_id: $id, body: $b) { id }
+    }"""
+    try:
+        await _gql(q, {"id": str(item_id), "b": body})
+    except Exception as e:
+        print(f"_post_item_update failed: {e}", flush=True)
+
+
+async def _bell_assignee(assignee_value: str, item_id: str, text: str):
+    """Send bell notification to the assignee if one is set on the row."""
+    if not assignee_value:
+        return
+    try:
+        parsed = json.loads(assignee_value)
+        persons = parsed.get("personsAndTeams", [])
+        if not persons:
+            return
+        uid = str(persons[0]["id"])
+        q = """mutation($u: ID!, $t: ID!, $tx: String!) {
+            create_notification(user_id: $u, target_id: $t,
+                                text: $tx, target_type: Project) { text }
+        }"""
+        await _gql(q, {"u": uid, "t": str(item_id), "tx": text})
+    except Exception as e:
+        print(f"_bell_assignee failed: {e}", flush=True)
+
+
+async def _create_unmatched_review_item(source_text: str, source_type: str,
+                                         summary: str, reason: str,
+                                         protocol_id: str = "") -> str | None:
+    """
+    Creates a review item on the Change Requests New board when the skill
+    cannot match the change request to a board row. Routes to the
+    'Email Change Requests (AI)' group so a PS team member can identify
+    the correct study and re-submit.
+
+    reason: 'no_protocol_id' | 'no_board_row'
+    """
+    from datetime import datetime, timezone as _tz
+    ts = datetime.now(_tz.utc).strftime("%Y-%m-%d %H:%M UTC")
+    src_label = {
+        "meeting_notes": "meeting notes",
+        "email": "email",
+        "transcript": "voice transcript",
+    }.get(source_type, source_type)
+
+    if reason == "no_protocol_id":
+        item_name = f"[UNMATCHED] No protocol ID — {src_label} {ts}"
+        ai_summary = (f"Change request received via {src_label} but no "
+                      f"protocol ID could be identified. Human must match "
+                      f"to the correct study row and re-submit.")
+    else:
+        item_name = f"[UNMATCHED] {protocol_id} — row not found — {ts}"
+        ai_summary = (f"Change request for protocol '{protocol_id}' received "
+                      f"via {src_label} but no matching AI Hub board row found. "
+                      f"Check protocol number spelling or create the study row "
+                      f"first, then re-submit.")
+
+    proposed_update = (
+        f"[DESIGN_CHANGE] [SOURCE_TYPE:{source_type}]"
+        + (f" [PROTOCOL:{protocol_id}]" if protocol_id else "")
+        + f"\n\n{source_text}"
+    )
+
+    col_values = json.dumps({
+        "project_status":         {"label": "Ready To Start"},
+        "project_priority":       {"label": "High"},
+        "long_text_mm3zvw2q":     {"text": source_text},
+        "long_text_mm3z80v1":     {"text": ai_summary},
+        "long_text_mm3z9m21":     {"text": proposed_update},
+        "color_mm3zkh2y":         {"label": "Awaiting Review"},
+        "text_mm3zkmkw":          protocol_id or "Not identified",
+    })
+
+    q = """
+    mutation($name: String!, $col: JSON!) {
+        create_item(
+            board_id: 18395557554,
+            group_id: "group_mm3zj7yj",
+            item_name: $name,
+            column_values: $col
+        ) { id }
+    }
+    """
+    try:
+        resp = await _gql(q, {"name": item_name, "col": col_values})
+        new_id = (resp.get("data", {})
+                      .get("create_item", {})
+                      .get("id"))
+        if new_id:
+            await _post_item_update(new_id, (
+                f"⚠️ Unmatched design change request\n\n"
+                f"Reason: {ai_summary}\n\n"
+                f"To action this:\n"
+                f"1. Identify the correct AI Hub board row for this study\n"
+                f"2. Copy the Proposed Update text from this item\n"
+                f"3. Post it as an update on the correct AI Hub row\n"
+                f"(The [PROTOCOL:] tag will ensure the pipeline routes it correctly)"
+            ))
+        return new_id
+    except Exception as e:
+        print(f"_create_unmatched_review_item failed: {e}", flush=True)
+        return None
 
 
 # ── Step 4: Apply changes to spec XLSX ───────────────────────────────────────
@@ -691,8 +850,18 @@ async def run_design_change_intake(payload: dict) -> dict:
 
     protocol_id = parsed.get("protocol_id") or protocol_hint
     if not protocol_id:
+        # No protocol ID — route to Change Requests board for human matching
+        msg = ("No protocol ID could be identified in the source text. "
+               "A PS team member must match this to the correct study row "
+               "and re-submit with a [PROTOCOL:XXX] tag.")
+        await _create_unmatched_review_item(
+            source_text=source_text,
+            source_type=source_type,
+            summary=parsed.get("summary", ""),
+            reason="no_protocol_id",
+        )
         return {"status": "error",
-                "message": "Cannot identify study row: no protocol ID found in text and no hint provided."}
+                "message": "No protocol ID found — review item created on Change Requests board."}
 
     changes = parsed.get("changes", [])
     summary = parsed.get("summary", "")
@@ -700,16 +869,36 @@ async def run_design_change_intake(payload: dict) -> dict:
     # Step 2 — Find board row
     row_info = await _find_board_row(protocol_id)
     if not row_info:
+        # Protocol identified but no matching board row — route to review
+        msg = (f"No AI Hub board row found matching protocol: {protocol_id}. "
+               f"The protocol number may be misspelled or the study may not "
+               f"yet have a row on the AI Hub board.")
+        await _create_unmatched_review_item(
+            source_text=source_text,
+            source_type=source_type,
+            summary=parsed.get("summary", ""),
+            reason="no_board_row",
+            protocol_id=protocol_id,
+        )
         return {"status": "error",
-                "message": f"No AI Hub board row found matching protocol: {protocol_id}"}
+                "message": f"No board row for {protocol_id} — review item created."}
     item_id        = row_info["item_id"]
     assignee_value = row_info.get("assignee_value")
 
     # Step 3 — Download spec XLSX
-    spec_bytes = await _download_spec_xlsx(item_id)
+    # Reads from whichever of file_mm2gjqgx or file_mm2n3x71 has the
+    # most recently uploaded xlsx. Always writes result to file_mm2gjqgx.
+    spec_bytes, source_col = await _download_spec_xlsx(item_id)
     if not spec_bytes:
-        return {"status": "error",
-                "message": f"No spec XLSX on board row for {protocol_id}. Cannot apply changes."}
+        # No spec found in either column — notify and abort
+        msg = (f"No Protocol Specification (xlsx) found on board row for "
+               f"{protocol_id}. Neither file_mm2gjqgx nor file_mm2n3x71 "
+               f"contains an xlsx file. Run the full pipeline first to "
+               f"generate the spec, then re-submit the change request.")
+        await _post_item_update(item_id, f"⚠️ Design change intake failed\n\n{msg}")
+        await _bell_assignee(assignee_value, item_id,
+            f"Design change intake failed for {protocol_id}: no spec XLSX found.")
+        return {"status": "error", "message": msg}
 
     # Step 4 — Apply changes
     wb = load_workbook(io.BytesIO(spec_bytes))

@@ -46,7 +46,7 @@ rules as produced by generate_study_spec_xlsx.py.
 
 | Purpose | Column ID |
 |---------|-----------|
-| Study Spec XLSX | file_mm2n3x71 |
+| Protocol Specification (xlsx) — working spec | file_mm2gjqgx |
 | Change Request Transcripts | file_mm3tntz9 |
 | Assigned PS team member (People) | dup__of_requester__1 |
 | Protocol Number | text_mm2hcfre |

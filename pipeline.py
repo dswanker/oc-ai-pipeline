@@ -5233,3 +5233,64 @@ async def handle_email_review_decision(item_id, decision_label):
         "skills", "email-change-intake", "scripts"))
     from email_change_intake import handle_review_decision as _handle
     return await _handle(item_id, decision_label)
+
+
+async def generate_gmail_auth_link(monday_user_id: str,
+                                    member_name: str,
+                                    staff_item_id: str):
+    """
+    Called by email_change_intake when it detects a missing Gmail token.
+    Generates the Gmail OAuth initiation URL and posts a bell notification
+    to the team member with a link to connect their Gmail.
+    Uses monday_client.get_headers() / MONDAY_API_URL directly —
+    monday_client has no generic gql_request helper.
+    """
+    try:
+        import httpx as _httpx
+        from gmail_oauth import build_initiation_url
+        from monday_client import get_headers, MONDAY_API_URL
+
+        auth_url = build_initiation_url(monday_user_id)
+        notif_text = (
+            f"Action needed: connect your Gmail to enable email monitoring. "
+            f"Click here to connect: {auth_url}"
+        )
+        update_body = (
+            f"Gmail connection required for email monitoring\n\n"
+            f"Hi {member_name} — to activate automatic email change request "
+            f"detection for your inbox, please connect your Gmail:\n\n"
+            f"{auth_url}\n\n"
+            f"This grants read-only access to your Gmail inbox. "
+            f"You only need to do this once."
+        )
+
+        async with _httpx.AsyncClient(timeout=30) as c:
+            # Bell notification
+            await c.post(MONDAY_API_URL, headers=get_headers(), json={
+                "query": """mutation($u: ID!, $t: ID!, $tx: String!) {
+                    create_notification(user_id: $u, target_id: $t,
+                                        text: $tx, target_type: Project) { text }
+                }""",
+                "variables": {
+                    "u": str(monday_user_id),
+                    "t": str(staff_item_id),
+                    "tx": notif_text,
+                },
+            })
+            # Item update (triggers email notification)
+            await c.post(MONDAY_API_URL, headers=get_headers(), json={
+                "query": """mutation($id: ID!, $b: String!) {
+                    create_update(item_id: $id, body: $b) { id }
+                }""",
+                "variables": {
+                    "id": str(staff_item_id),
+                    "b": update_body,
+                },
+            })
+
+        print(f"GMAIL_AUTH_LINK sent to {member_name} ({monday_user_id})",
+              flush=True)
+
+    except Exception as e:
+        print(f"generate_gmail_auth_link failed for {monday_user_id}: {e}",
+              flush=True)
