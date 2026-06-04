@@ -1001,7 +1001,7 @@ def _build_form_event_map(struct_json):
                   or form.get("events")
                   or [])
         if fid and visits:
-            mapping[fid] = visits[0]
+            mapping[fid if fid.startswith('F_') else f'F_{fid}'] = visits[0]
     if not mapping:
         print(f"[form_event_map] WARNING: no mappings built. First form sample: "
               f"{str(struct_json.get('forms', [{}])[0])[:300]}", flush=True)
