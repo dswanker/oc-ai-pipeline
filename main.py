@@ -1152,6 +1152,10 @@ async def regenerate_dvs(request: Request):
     _sys.path.insert(0, os.path.join(
         os.path.dirname(os.path.abspath(__file__)),
         "skills", "dvs-specification", "scripts"))
+    import importlib
+    for _mod in list(_sys.modules.keys()):
+        if 'extract_dvs_from_forms' in _mod or 'generate_dvs' in _mod:
+            del _sys.modules[_mod]
     try:
         from extract_dvs_from_forms import extract_dvs_data
         from generate_dvs import build_dvs
@@ -1163,6 +1167,9 @@ async def regenerate_dvs(request: Request):
 
     print(f"[regenerate-dvs] forms_json keys sample: {list(forms_json['forms'].keys())[:5]}", flush=True)
     print(f"[regenerate-dvs] struct_json forms sample: {[(f.get('form_id'), f.get('visits_assigned')) for f in struct_json.get('forms', [])[:3]]}", flush=True)
+    from extract_dvs_from_forms import _build_form_event_map
+    _test_map = _build_form_event_map(struct_json)
+    print(f'[regenerate-dvs] form_event_map size={len(_test_map)} sample={list(_test_map.items())[:3]}', flush=True)
     dvs_data = extract_dvs_data(struct_json, forms_json)
     sample_uat = dvs_data.get('uat_cases', [])[:3]
     print(f"[regenerate-dvs] UAT sample Study_Event_OID: {[r.get('Study_Event_OID') for r in sample_uat]}", flush=True)
