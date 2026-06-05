@@ -458,6 +458,11 @@ def _build_odm_xml(study_oid: str, site_oid: str,
          .setdefault(ig, [])
          .append((item_oid, val)))
 
+    # UAT start date — used as OpenClinica:StartDate for Visit-Based events.
+    # Common/Unscheduled events (SE_COMMON, SE_UNSCHEDULED) don't need a
+    # start date. All other event types require one for OC to accept data.
+    UAT_VISIT_DATE = "2026-01-22"
+
     lines = [
         '<?xml version="1.0" encoding="UTF-8"?>',
         f'<ODM {ODM_NAMESPACE}',
@@ -467,10 +472,15 @@ def _build_odm_xml(study_oid: str, site_oid: str,
         f'      <SiteRef LocationOID="{site_oid}"/>',
     ]
     for ev_oid, repeats in events.items():
+        is_common = ("COMMON" in ev_oid.upper() or "UNSCH" in ev_oid.upper())
+        start_date_attr = (
+            "" if is_common
+            else f' OpenClinica:StartDate="{UAT_VISIT_DATE}"'
+        )
         for repeat_key, forms in repeats.items():
             lines.append(
                 f'      <StudyEventData StudyEventOID="{ev_oid}" '
-                f'StudyEventRepeatKey="{repeat_key}">'
+                f'StudyEventRepeatKey="{repeat_key}"{start_date_attr}>'
             )
             for form_oid, igs in forms.items():
                 lines.append(

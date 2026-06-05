@@ -946,9 +946,20 @@ def _qt_row(qt_id, check_id, message, check_type):
 
 
 def _uat_row(uat_id, check_id, form_id, field_name, field_label, case,
-             form_event_map=None):
+             form_event_map=None, ig_name=None):
     _fid_key = form_id.upper() if form_id.upper().startswith("F_") else f"F_{form_id.upper()}"
     event_oid = (form_event_map or {}).get(_fid_key, "")
+    form_oid  = f"F_{form_id}" if not form_id.upper().startswith("F_") else form_id
+
+    # ItemGroup OID: OC derives it as IG_{FormOID}_{ig_name} where ig_name
+    # comes from bind::oc:itemgroup in the XLSForm survey sheet.
+    # Fall back to IG_{FormOID}_MAIN if not supplied.
+    ig_name_clean = ig_name or "MAIN"
+    item_group_oid = f"IG_{form_oid}_{ig_name_clean}"
+
+    # Item OID: OC uses FormOID.ItemName
+    item_oid = f"{form_oid}.{field_name}" if field_name else item_group_oid
+
     return {
         "UAT Case ID":       uat_id,
         "Status":            "Not Run",
@@ -972,9 +983,9 @@ def _uat_row(uat_id, check_id, form_id, field_name, field_label, case,
         "Participant_Key":   "",        # stamped at runtime by uat_loader
         "Study_Event_OID":   event_oid,
         "Event_Repeat_Key":  "1",
-        "Form_OID":          f"F_{form_id}" if not form_id.upper().startswith("F_") else form_id,
-        "Item_Group_OID":    f"IG_{form_id}_1",
-        "Item_OID":          f"{form_id}.{field_name}" if field_name else f"IG_{form_id}_1",
+        "Form_OID":          form_oid,
+        "Item_Group_OID":    item_group_oid,
+        "Item_OID":          item_oid,
         "Participant_ID":    "UAT-P001",
         "Load_Order":        "",        # set below by caller if needed
         "Load_Value":        case.get("input_data", ""),
@@ -1041,6 +1052,21 @@ def extract_dvs_data(struct_json, forms_json):
         if form_id.lower().endswith(".xlsx"):
             form_id = form_id[:-5]
 
+        # Build field → itemgroup name map from bind::oc:itemgroup column.
+        # OC constructs ItemGroup OIDs as IG_F_{form_id}_{ig_name}.
+        # We also track the form-level default (first non-null ig_name found).
+        field_ig_map = {}
+        form_default_ig = None
+        for r in survey:
+            if not isinstance(r, dict):
+                continue
+            fn = r.get("name") or ""
+            ig = r.get("bind::oc:itemgroup") or ""
+            if ig and fn:
+                field_ig_map[fn] = ig
+                if form_default_ig is None:
+                    form_default_ig = ig
+
         for row_idx, row in enumerate(survey, start=2):
             if not isinstance(row, dict):
                 continue
@@ -1048,6 +1074,12 @@ def extract_dvs_data(struct_json, forms_json):
             field_name  = row.get("name") or ""
             field_label = row.get("label") or ""
             choices_for_field = _choices_for_field(row, choices)
+
+            # Resolve itemgroup name for this field
+            ig_name = (field_ig_map.get(field_name)
+                       or row.get("bind::oc:itemgroup")
+                       or form_default_ig
+                       or "MAIN")
 
             for check in _check_types_for_row(row):
                 check_counter += 1
@@ -1079,7 +1111,7 @@ def extract_dvs_data(struct_json, forms_json):
                     uat_ids_for_this_check.append(uat_id)
                     _row = _uat_row(
                         uat_id, check_id, form_id, field_name, field_label,
-                        case, form_event_map)
+                        case, form_event_map, ig_name=ig_name)
                     _row["Load_Order"] = str(uat_counter)
                     uat_cases.append(_row)
 
