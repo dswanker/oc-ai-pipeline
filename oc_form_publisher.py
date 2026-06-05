@@ -793,65 +793,9 @@ class FormPublisher:
                     # guard below intercepts that: when the form is already
                     # in the bucket we skip getForm entirely and reuse the
                     # existing OID.
+                    # NOTE: _bucket_forms_by_name is populated AFTER the
+                    # minicard wait below, once Cards is loaded in Minimongo.
                     _bucket_forms_by_name: dict = {}
-                    try:
-                        _bucket_forms_raw = await page.evaluate("""
-                            () => {
-                                try {
-                                    const boardId = window.location.pathname.split('/')[2];
-                                    // Read form OIDs directly from the board cards —
-                                    // importStudy already set formOcoid to the clean OID
-                                    // (e.g. F_ICF) on every card. FormDefinitions/Forms
-                                    // are server-side only and never sync to client minimongo.
-                                    const cards = Cards.find(
-                                        {boardId: boardId, archived: {$ne: true}}
-                                    ).fetch();
-                                    const seen = new Set();
-                                    const result = [];
-                                    for (const c of cards) {
-                                        const name = c.title || '';
-                                        const ocoid = c.formOcoid || '';
-                                        if (name && ocoid && !seen.has(name)) {
-                                            seen.add(name);
-                                            result.push({
-                                                name:     name,
-                                                ocoid:    ocoid,
-                                                id:       '',
-                                                versions: []
-                                            });
-                                        }
-                                    }
-                                    return result;
-                                } catch(e) {
-                                    return [];
-                                }
-                            }
-                        """)
-                        for _f in (_bucket_forms_raw or []):
-                            _fname = _f.get('name', '')
-                            _focoid = _f.get('ocoid', '')
-                            if _fname:
-                                _bucket_forms_by_name[_fname] = _f
-                            # Also index by full OID so reused boards (where
-                            # cards already carry suffixed OIDs like F_ICF_1700
-                            # from a prior getForm pass) hit the guard correctly.
-                            if _focoid and _focoid != _fname:
-                                _bucket_forms_by_name[_focoid] = _f
-                        if _bucket_forms_by_name:
-                            print(
-                                f"[publisher] bucket-forms (cards): "
-                                f"{len(_bucket_forms_by_name)} forms read from board cards",
-                                flush=True)
-                        else:
-                            print(
-                                f"[publisher] bucket-forms (cards): 0 forms found — "
-                                f"Cards collection may not be loaded yet",
-                                flush=True)
-                    except Exception as _bfe:
-                        print(
-                            f"[publisher] bucket-forms lookup error: "
-                            f"{_bfe} — will call getForm normally",
-                            flush=True)
 
                     # ── XLSForm hash store (fast-rerun skip) ──────────────
                     # Load hashes from previous run. If hash matches AND
@@ -887,6 +831,62 @@ class FormPublisher:
                         await page.wait_for_timeout(1000)
                     except Exception:
                         pass  # evaluate will return empty; logged below
+
+                    # ── POPULATE bucket-forms from Cards Minimongo ────────
+                    # Cards are loaded in Minimongo by the time minicards
+                    # appear in the DOM. Read formOcoid off each card to
+                    # build the guard dict — if a form is already registered
+                    # (importStudy set a clean OID like F_ICF) we skip
+                    # getForm entirely and reuse it, preventing suffixed
+                    # clones (F_ICF_65) from being created.
+                    try:
+                        _bf_raw = await page.evaluate("""
+                            () => {
+                                try {
+                                    const boardId =
+                                        window.location.pathname.split('/')[2];
+                                    const cards = Cards.find(
+                                        {boardId: boardId,
+                                         archived: {$ne: true}}
+                                    ).fetch();
+                                    const seen = new Set();
+                                    const result = [];
+                                    for (const c of cards) {
+                                        const name  = c.title    || '';
+                                        const ocoid = c.formOcoid || '';
+                                        if (name && ocoid && !seen.has(name)) {
+                                            seen.add(name);
+                                            result.push({
+                                                name:     name,
+                                                ocoid:    ocoid,
+                                                id:       '',
+                                                versions: []
+                                            });
+                                        }
+                                    }
+                                    return result;
+                                } catch(e) {
+                                    return [];
+                                }
+                            }
+                        """)
+                        for _f in (_bf_raw or []):
+                            _fname  = _f.get('name',  '')
+                            _focoid = _f.get('ocoid', '')
+                            if _fname:
+                                _bucket_forms_by_name[_fname] = _f
+                            if _focoid and _focoid != _fname:
+                                _bucket_forms_by_name[_focoid] = _f
+                        print(
+                            f"[publisher] bucket-forms (cards): "
+                            f"{len(_bf_raw or [])} forms read from "
+                            f"board cards",
+                            flush=True)
+                    except Exception as _bfe:
+                        print(
+                            f"[publisher] bucket-forms error: {_bfe}",
+                            flush=True)
+                    # ──────────────────────────────────────────────────────
 
                     # Capture the board URL now that the board has rendered
                     # — the FAST(JS) URL-nav fallback navigates away to a
