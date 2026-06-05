@@ -590,6 +590,219 @@ async def _import_odm(subdomain: str, study_oid: str,
         await asyncio.sleep(interval)
 
 
+# ── Clinical data read-back ───────────────────────────────────────────────────
+
+async def _fetch_clinical_data(
+    subdomain: str,
+    study_oid: str,
+    participant_oc_oid: str,
+    token: str,
+) -> dict:
+    """
+    GET all clinical data for one participant and return a lookup dict:
+        (event_oid, form_oid, ig_oid, item_oid) -> value
+
+    Uses the wildcard form of the endpoint:
+        GET .../clinicaldata/{studyOID}/{participantOID}/*/*?clinicalData=y
+
+    participant_oc_oid is the internal OC OID (SS_UAT20260_xxxx).
+    Returns an empty dict on any failure — callers treat missing = Not Run.
+    """
+    from urllib.parse import quote as _quote
+    import xml.etree.ElementTree as _ET
+
+    base = _pages_base(subdomain)
+    url  = (
+        f"{base}/pages/auth/api/clinicaldata"
+        f"/{_quote(study_oid, safe='')}"
+        f"/{_quote(participant_oc_oid, safe='')}"
+        f"/*/*"
+        f"?clinicalData=y&includeMetadata=n&includeDN=n"
+        f"&includeAudits=n&showArchived=n"
+    )
+    try:
+        async with httpx.AsyncClient(timeout=60) as client:
+            resp = await client.get(
+                url,
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Accept":        "application/xml",
+                },
+            )
+        if not resp.is_success:
+            print(
+                f"[uat_loader] clinical data GET HTTP {resp.status_code} "
+                f"for {participant_oc_oid} — body: {resp.text[:300]}",
+                flush=True,
+            )
+            return {}
+        xml_text = resp.text or ""
+        if not xml_text.strip():
+            return {}
+    except Exception as e:
+        print(f"[uat_loader] clinical data GET failed: {e}", flush=True)
+        return {}
+
+    # Parse ODM XML into lookup dict
+    lookup: dict = {}
+    try:
+        ODM_NS = "http://www.cdisc.org/ns/odm/v1.3"
+        root   = _ET.fromstring(xml_text.encode("utf-8"))
+
+        def _tag(local):
+            return f"{{{ODM_NS}}}{local}"
+
+        for cd in root.iter(_tag("ClinicalData")):
+            for sd in cd.iter(_tag("SubjectData")):
+                for sed in sd.iter(_tag("StudyEventData")):
+                    ev_oid = sed.get("StudyEventOID", "")
+                    for fd in sed.iter(_tag("FormData")):
+                        fo_oid = fd.get("FormOID", "")
+                        for igd in fd.iter(_tag("ItemGroupData")):
+                            ig_oid = igd.get("ItemGroupOID", "")
+                            for itd in igd.iter(_tag("ItemData")):
+                                it_oid = itd.get("ItemOID", "")
+                                val    = itd.get("Value", "")
+                                key    = (
+                                    ev_oid.upper(),
+                                    fo_oid.upper(),
+                                    ig_oid.upper(),
+                                    it_oid.upper(),
+                                )
+                                lookup[key] = val
+    except Exception as e:
+        print(f"[uat_loader] ODM parse error: {e}", flush=True)
+
+    print(
+        f"[uat_loader] clinical data read-back: "
+        f"{len(lookup)} item values for {participant_oc_oid}",
+        flush=True,
+    )
+    return lookup
+
+
+def _evaluate_uat_cases(
+    dvs_bytes: bytes,
+    stamp_map: dict,
+    clinical_data: dict,
+) -> bytes:
+    """
+    For each row in UAT_Cases, look up the stored value in clinical_data
+    and compare against Expected Result.  Writes:
+        - Status         → 'Pass', 'Fail', or 'Not Run'
+        - Actual Result  → what OC returned (or blank)
+        - Test Result    → 'Pass', 'Fail', or 'Not Run'
+        - Execution Date → UTC timestamp (Pass/Fail rows only)
+
+    clinical_data: merged lookup from all participants:
+        (event_oid_upper, form_oid_upper, ig_oid_upper, item_oid_upper)
+        → stored_value
+
+    stamp_map: { logical_pid → {site_oid, participant_key, oc_oid} }
+
+    Returns updated workbook bytes.
+    """
+    import datetime as _dt
+
+    wb = load_workbook(io.BytesIO(dvs_bytes))
+    if "UAT_Cases" not in wb.sheetnames:
+        return dvs_bytes
+    ws = wb["UAT_Cases"]
+
+    # Locate header row and column indices
+    header_row_idx = None
+    col_idx: dict = {}
+    for row_idx, row in enumerate(ws.iter_rows(values_only=True), start=1):
+        if row and row[0] == "UAT Case ID":
+            header_row_idx = row_idx
+            for ci, val in enumerate(row, start=1):
+                if val:
+                    col_idx[str(val).strip()] = ci
+            break
+
+    if not header_row_idx:
+        return dvs_bytes
+
+    # Required columns
+    needed = [
+        "Status", "Actual Result", "Test Result", "Execution Date",
+        "Study_Event_OID", "Form_OID", "Item_Group_OID",
+        "Load_Value", "Expected Result",
+    ]
+    if not all(c in col_idx for c in needed):
+        missing = [c for c in needed if c not in col_idx]
+        print(
+            f"[uat_loader] _evaluate_uat_cases: missing columns "
+            f"{missing} — skipping evaluation",
+            flush=True,
+        )
+        return dvs_bytes
+
+    now_str = _dt.datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+    passed = failed = skipped = 0
+
+    for row in ws.iter_rows(min_row=header_row_idx + 1):
+        ev_oid  = str(row[col_idx["Study_Event_OID"]  - 1].value or "").strip().upper()
+        fo_oid  = str(row[col_idx["Form_OID"]         - 1].value or "").strip().upper()
+        ig_oid  = str(row[col_idx["Item_Group_OID"]   - 1].value or "").strip().upper()
+        lv      = str(row[col_idx["Load_Value"]       - 1].value or "").strip()
+        expected = str(row[col_idx["Expected Result"] - 1].value or "").strip()
+
+        if not ev_oid or not fo_oid or not ig_oid or not lv:
+            skipped += 1
+            continue
+
+        # Derive item OID from Load_Value: "ITEM_OID=value" format
+        # e.g. "AEID=AE-001" → item_oid = "I_AE_AEID" or just "AEID"
+        # The DVS uses "FIELD=value" notation; item OID in OC is
+        # typically I_{FORM}_{FIELD} — try both forms.
+        item_oid_raw = lv.split("=")[0].strip().upper() if "=" in lv else ""
+        form_bare    = fo_oid.replace("F_", "", 1) if fo_oid.startswith("F_") else fo_oid
+        item_oid_long = f"I_{form_bare}_{item_oid_raw}"
+
+        # Look up stored value — try long form first, then short form
+        stored = clinical_data.get(
+            (ev_oid, fo_oid, ig_oid, item_oid_long)
+        )
+        if stored is None:
+            stored = clinical_data.get(
+                (ev_oid, fo_oid, ig_oid, item_oid_raw)
+            )
+
+        if stored is None:
+            # Item not found in read-back — leave as Not Run
+            skipped += 1
+            continue
+
+        # Simple comparison — both as stripped strings
+        # For computed/display fields expected may contain descriptive
+        # text; we check if stored value appears anywhere in expected.
+        stored_str   = str(stored).strip()
+        expected_str = expected.strip()
+
+        # Match: exact OR stored value contained in expected description
+        if stored_str == expected_str or stored_str in expected_str:
+            result = "Pass"
+            passed += 1
+        else:
+            result = "Fail"
+            failed += 1
+
+        row[col_idx["Actual Result"]  - 1].value = stored_str
+        row[col_idx["Test Result"]    - 1].value = result
+        row[col_idx["Status"]         - 1].value = result
+        row[col_idx["Execution Date"] - 1].value = now_str
+
+    print(
+        f"[uat_loader] UAT evaluation: "
+        f"Pass={passed} Fail={failed} Not Run={skipped}",
+        flush=True,
+    )
+    out = io.BytesIO()
+    wb.save(out)
+    return out.getvalue()
+
+
 # ── DVS stamping ──────────────────────────────────────────────────────────────
 
 def _stamp_dvs(dvs_bytes: bytes, stamp_map: dict) -> bytes:
@@ -878,6 +1091,31 @@ async def run_uat_loader(item_id: str) -> dict:
             result["errors"].append(err)
             await append_log(item_id, f"UAT Loader: ERROR — {err}")
 
+    # ── Step 8b: Read back clinical data + evaluate UAT cases ────────────
+    # For each participant that was successfully created, fetch all stored
+    # item values from OC via the clinical data GET endpoint, then compare
+    # against Expected Result in UAT_Cases and stamp Pass/Fail.
+    clinical_data: dict = {}
+    if stamp_map:
+        await append_log(item_id,
+            "UAT Loader: reading back clinical data from OC...")
+        for logical_pid, info in stamp_map.items():
+            oc_oid = info.get("oc_oid", "")
+            if not oc_oid:
+                continue
+            try:
+                participant_data = await _fetch_clinical_data(
+                    subdomain, study_oid, oc_oid, token
+                )
+                clinical_data.update(participant_data)
+                await append_log(item_id,
+                    f"UAT Loader: read {len(participant_data)} item "
+                    f"values for {logical_pid}")
+            except Exception as e:
+                await append_log(item_id,
+                    f"UAT Loader: clinical data read failed for "
+                    f"{logical_pid} (non-fatal): {e}")
+
     # ── Step 9: Stamp DVS ─────────────────────────────────────────────────
     if stamp_map:
         await append_log(item_id, "UAT Loader: stamping DVS with runtime OIDs...")
@@ -888,6 +1126,18 @@ async def run_uat_loader(item_id: str) -> dict:
             await append_log(item_id, f"UAT Loader: stamp failed (non-fatal): {e}")
     else:
         stamped_bytes = dvs_bytes
+
+    # ── Step 9b: Evaluate UAT cases (Pass/Fail) ───────────────────────────
+    if clinical_data:
+        await append_log(item_id,
+            "UAT Loader: evaluating UAT cases against clinical data...")
+        try:
+            stamped_bytes = _evaluate_uat_cases(
+                stamped_bytes, stamp_map, clinical_data
+            )
+        except Exception as e:
+            await append_log(item_id,
+                f"UAT Loader: evaluation failed (non-fatal): {e}")
 
     # ── Step 10: Upload stamped DVS ────────────────────────────────────────
     protocol_number = (
