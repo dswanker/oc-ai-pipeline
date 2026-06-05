@@ -341,39 +341,13 @@ async def probe_board_fields(request: Request):
 
     from playwright.async_api import async_playwright
     _probe_js = """async () => {
-        const board = Boards.findOne();
-        if (!board) return {error: 'no board found'};
-
-        // Try to list forms already registered in this bucket via REST
-        let restResult = null;
-        try {
-            const token = window.__meteor_runtime_config__?.autoupdateVersion || 'unknown';
-            // Try common form-service list endpoints
-            const urls = [
-                `https://build.openclinica.io/form-service/api/buckets/${board.bucketUuid}/forms`,
-                `https://build.openclinica.io/form-service/api/forms?bucketUuid=${board.bucketUuid}`,
-            ];
-            for (const url of urls) {
-                const r = await fetch(url, {credentials: 'include'});
-                restResult = {url, status: r.status, ok: r.ok};
-                if (r.ok) {
-                    const data = await r.json();
-                    restResult.count = Array.isArray(data) ? data.length : (data.content?.length ?? null);
-                    restResult.sample = Array.isArray(data) ? data.slice(0,2).map(f => ({ocoid: f.ocoid, name: f.name})) : null;
-                    break;
-                }
-            }
-        } catch(e) {
-            restResult = {error: String(e)};
-        }
-
-        return {
-            _id: board._id,
-            bucketUuid: board.bucketUuid || null,
-            studyUuid: board.studyUuid || null,
-            restResult,
-        };
-    }"""
+    const board = Boards.findOne();
+    if (!board) return {error: 'no board found'};
+    const cards = Cards.find({boardId: board._id, archived: {$ne: true}}).fetch();
+    const sample = cards.slice(0,5).map(c => ({title: c.title, formOcoid: c.formOcoid}));
+    const allOcoids = [...new Set(cards.map(c => c.formOcoid).filter(Boolean))].sort();
+    return {bucketUuid: board.bucketUuid, cardCount: cards.length, sample, allOcoids};
+}"""
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
         try:
