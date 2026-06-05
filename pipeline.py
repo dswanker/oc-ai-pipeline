@@ -1685,7 +1685,18 @@ async def _rename_board_card_titles(subdomain, board_id, board_json,
             page = await ctx.new_page()
             await page.goto(board_url, wait_until="networkidle",
                             timeout=30000)
-            await page.wait_for_timeout(3000)
+            # Wait for Meteor to be available — the board JS bundle loads
+            # asynchronously and Meteor is not defined until it does.
+            try:
+                await page.wait_for_function(
+                    "() => typeof Meteor !== 'undefined'",
+                    timeout=20000,
+                )
+                await page.wait_for_timeout(1000)
+            except Exception as _mwe:
+                print(f"[board-rename] Meteor not available after 20s: "
+                      f"{_mwe} — skipping rename", flush=True)
+                return
 
             renamed = 0
             for card_id, display_title in filtered_rename.items():
@@ -3383,6 +3394,29 @@ async def _session_keepalive(session_path: str, subdomain: str, interval_s: int 
             except Exception as _eue:
                 print(f"[session-keepalive] EU clinical ping error "
                       f"(non-fatal): {_eue}", flush=True)
+
+            # Ping 4 — build app My Studies. The publisher authenticates by
+            # navigating to cust1.build.openclinica.io/#/account-study.  The
+            # build app has its own Angular JWT that can idle out independently
+            # of the Keycloak SSO session — hitting the API with the saved
+            # cookies keeps that JWT active so the publisher doesn't land on
+            # the Keycloak login page after a long analysis + build phase.
+            try:
+                _build_ping_url = (
+                    f"https://{subdomain}.build.openclinica.io"
+                    f"/study-service/api/studies"
+                )
+                async with httpx.AsyncClient(
+                        timeout=10,
+                        follow_redirects=False,
+                        cookies=cookies) as _bp:
+                    _bp_r = await _bp.get(_build_ping_url)
+                print(f"[session-keepalive] build app ping: "
+                      f"{_build_ping_url} status={_bp_r.status_code}",
+                      flush=True)
+            except Exception as _bpe:
+                print(f"[session-keepalive] build app ping error "
+                      f"(non-fatal): {_bpe}", flush=True)
         except asyncio.CancelledError:
             raise
         except Exception as e:
