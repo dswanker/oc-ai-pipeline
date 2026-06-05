@@ -387,6 +387,68 @@ async def probe_board_fields(request: Request):
             await browser.close()
 
 
+@app.post("/admin/probe-form-service")
+async def probe_form_service(request: Request):
+    """Probe the OC4 form-service for a bucket's registered forms.
+
+    Calls two candidate list endpoints with a fresh Bearer token from
+    pipeline._get_oc_token (which already wraps the OAuth call against
+    OC_API_USERNAME / OC_API_PASSWORD env vars) and returns the raw HTTP
+    outcome of each so we can confirm which path the form-service exposes.
+
+    Body  : {"bucket_uuid": "...", "subdomain": "...", "email": "..."}
+            (email is accepted for shape consistency with
+             /admin/probe-board-fields but is not used — the OAuth flow
+             takes its credentials from env vars.)
+    Header: X-Admin-Secret must match the ADMIN_SECRET env var.
+    """
+    admin_secret = os.environ.get("ADMIN_SECRET", "")
+    if not admin_secret:
+        raise HTTPException(status_code=503,
+                            detail="ADMIN_SECRET env var not set")
+    if request.headers.get("X-Admin-Secret", "") != admin_secret:
+        raise HTTPException(status_code=403, detail="unauthorized")
+
+    body = await request.json()
+    bucket_uuid = (body.get("bucket_uuid") or "").strip()
+    subdomain   = (body.get("subdomain") or "").strip()
+    if not bucket_uuid or not subdomain:
+        raise HTTPException(status_code=400,
+                            detail="bucket_uuid and subdomain are required")
+
+    from pipeline import _get_oc_token
+    import httpx as _httpx
+    try:
+        token = await _get_oc_token(subdomain, is_production=False)
+    except Exception as e:
+        raise HTTPException(status_code=500,
+                            detail=f"OAuth token fetch failed: {e}")
+
+    base = f"https://{subdomain}.build.openclinica.io/form-service/api"
+    urls = [
+        f"{base}/buckets/{bucket_uuid}/forms",
+        f"{base}/forms?bucketUuid={bucket_uuid}",
+    ]
+    headers = {"Authorization": f"Bearer {token}"}
+    results = []
+    async with _httpx.AsyncClient(timeout=30) as c:
+        for url in urls:
+            try:
+                r = await c.get(url, headers=headers)
+                results.append({
+                    "url": url,
+                    "status": r.status_code,
+                    "response_text_first_500_chars": r.text[:500],
+                })
+            except Exception as e:
+                results.append({"url": url, "error": str(e)})
+    return {
+        "bucket_uuid": bucket_uuid,
+        "subdomain":   subdomain,
+        "results":     results,
+    }
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Temporary diagnostic — slow-forms upload timing test
 #
