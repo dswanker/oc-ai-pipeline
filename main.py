@@ -340,15 +340,38 @@ async def probe_board_fields(request: Request):
                             detail=f"session not found: {session_path}")
 
     from playwright.async_api import async_playwright
-    _probe_js = """() => {
+    _probe_js = """async () => {
         const board = Boards.findOne();
-        if (!board) return {error: 'no board found', globals: Object.keys(window).filter(k => window[k] && typeof window[k].find === 'function')};
+        if (!board) return {error: 'no board found'};
+
+        // Try to list forms already registered in this bucket via REST
+        let restResult = null;
+        try {
+            const token = window.__meteor_runtime_config__?.autoupdateVersion || 'unknown';
+            // Try common form-service list endpoints
+            const urls = [
+                `https://build.openclinica.io/form-service/api/buckets/${board.bucketUuid}/forms`,
+                `https://build.openclinica.io/form-service/api/forms?bucketUuid=${board.bucketUuid}`,
+            ];
+            for (const url of urls) {
+                const r = await fetch(url, {credentials: 'include'});
+                restResult = {url, status: r.status, ok: r.ok};
+                if (r.ok) {
+                    const data = await r.json();
+                    restResult.count = Array.isArray(data) ? data.length : (data.content?.length ?? null);
+                    restResult.sample = Array.isArray(data) ? data.slice(0,2).map(f => ({ocoid: f.ocoid, name: f.name})) : null;
+                    break;
+                }
+            }
+        } catch(e) {
+            restResult = {error: String(e)};
+        }
+
         return {
             _id: board._id,
-            all_keys: Object.keys(board),
             bucketUuid: board.bucketUuid || null,
             studyUuid: board.studyUuid || null,
-            customerUuid: board.customerUuid || null,
+            restResult,
         };
     }"""
     async with async_playwright() as p:
