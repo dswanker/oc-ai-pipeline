@@ -313,6 +313,57 @@ async def reset_upload_record(request: Request):
     return {"item_id": item_id, "path": path, "written": record}
 
 
+@app.post("/admin/probe-board-fields")
+async def probe_board_fields(request: Request):
+    """Headless Playwright probe — open an OC4 designer board and return
+    the Meteor `Boards` document shape (keys + selected UUID candidates).
+
+    Body  : {"board_url": "https://…/b/…/…", "email": "user@host"}
+    Header: X-Admin-Secret must match the ADMIN_SECRET env var.
+    """
+    admin_secret = os.environ.get("ADMIN_SECRET", "")
+    if not admin_secret:
+        raise HTTPException(status_code=503,
+                            detail="ADMIN_SECRET env var not set")
+    if request.headers.get("X-Admin-Secret", "") != admin_secret:
+        raise HTTPException(status_code=403, detail="unauthorized")
+
+    body = await request.json()
+    board_url = (body.get("board_url") or "").strip()
+    email     = (body.get("email") or "").strip()
+    if not board_url or not email:
+        raise HTTPException(status_code=400,
+                            detail="board_url and email are required")
+    session_path = f"/data/browser_sessions/{email}.json"
+    if not os.path.exists(session_path):
+        raise HTTPException(status_code=404,
+                            detail=f"session not found: {session_path}")
+
+    from playwright.async_api import async_playwright
+    _probe_js = """() => {
+        const board = Boards.findOne();
+        if (!board) return {error: 'no board found', globals: Object.keys(window).filter(k => window[k] && typeof window[k].find === 'function')};
+        return {
+            _id: board._id,
+            all_keys: Object.keys(board),
+            bucketUuid: board.bucketUuid || null,
+            studyUuid: board.studyUuid || null,
+            customerUuid: board.customerUuid || null,
+        };
+    }"""
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        try:
+            ctx  = await browser.new_context(storage_state=session_path)
+            page = await ctx.new_page()
+            await page.goto(board_url, wait_until="networkidle",
+                            timeout=30000)
+            await page.wait_for_timeout(5000)
+            return await page.evaluate(_probe_js)
+        finally:
+            await browser.close()
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Temporary diagnostic — slow-forms upload timing test
 #
