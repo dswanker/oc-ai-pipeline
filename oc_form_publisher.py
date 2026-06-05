@@ -783,73 +783,74 @@ class FormPublisher:
                     _session_lost: bool = False
 
                     # ── BUCKET FORMS LOOKUP ────────────────────────────────
-                    # Fetch all forms already registered in this bucket from
-                    # the form-service REST API. Used to skip getForm when
-                    # F_SLEEP etc. already exist — calling getForm on an
-                    # existing name creates a suffixed clone (F_SLEEP_1793)
-                    # instead of reusing F_SLEEP, which breaks publish.
+                    # Read all forms already registered in this bucket
+                    # directly from Meteor's client-side minimongo — avoids
+                    # the form-service REST endpoint which returns 405.
+                    # importStudy registers every form in the bucket with
+                    # a clean OID (e.g. F_ICF). If we call getForm("ICF")
+                    # after that, OC sees the name "ICF" already exists and
+                    # creates a suffixed clone (F_ICF_4776). The bucket-hit
+                    # guard below intercepts that: when the form is already
+                    # in the bucket we skip getForm entirely and reuse the
+                    # existing OID.
                     _bucket_forms_by_name: dict = {}
-                    _bucket_uuid: str = ""
-                    _page_token: str = ""
                     try:
-                        _page_info = await page.evaluate("""
+                        _bucket_forms_raw = await page.evaluate("""
                             () => {
-                                const board = Boards.findOne(
-                                    window.location.pathname.split('/')[2]);
-                                const token = localStorage.getItem(
-                                    'jhi_access_token');
-                                return {
-                                    bucketUuid: board ? board.bucketUuid : null,
-                                    token: token
-                                };
+                                try {
+                                    const board = Boards.findOne(
+                                        window.location.pathname.split('/')[2]);
+                                    if (!board || !board.bucketUuid) return [];
+                                    // FormDefinitions is the Meteor collection
+                                    // that mirrors the form-service bucket.
+                                    // Try both known collection names.
+                                    const coll = (typeof FormDefinitions !== 'undefined'
+                                        ? FormDefinitions
+                                        : (typeof Forms !== 'undefined' ? Forms : null));
+                                    if (!coll) return [];
+                                    return coll.find(
+                                        {bucketUuid: board.bucketUuid}
+                                    ).fetch().map(f => ({
+                                        name:   f.name   || '',
+                                        ocoid:  f.ocoid  || '',
+                                        id:     f.id     || f._id || '',
+                                        versions: f.versions || []
+                                    }));
+                                } catch(e) {
+                                    return [];
+                                }
                             }
                         """)
-                        _bucket_uuid = _page_info.get('bucketUuid') or ''
-                        _page_token = _page_info.get('token') or ''
-                        if _bucket_uuid and _page_token:
-                            # Extract subdomain from study_url — 'subdomain'
-                            # var is defined in the outer publish_all_forms
-                            # function but is not in scope inside this async
-                            # playwright block, so derive it here directly.
-                            _subdomain_for_bucket = (
-                                urlparse(study_url).hostname.split('.')[0]
-                            )
-                            _forms_url = (
-                                f"https://{_subdomain_for_bucket}"
-                                f".build.openclinica.io"
-                                f"/form-service/api/buckets"
-                                f"/{_bucket_uuid}/forms"
-                            )
-                            async with httpx.AsyncClient(timeout=15) as _fc:
-                                _fr = await _fc.get(
-                                    _forms_url,
-                                    headers={
-                                        "Authorization":
-                                            f"Bearer {_page_token}"
-                                    }
-                                )
-                            if _fr.status_code == 200:
-                                for _f in _fr.json():
-                                    _fname = _f.get('name', '')
-                                    if _fname:
-                                        _bucket_forms_by_name[_fname] = _f
-                                print(
-                                    f"[publisher] bucket-forms: "
-                                    f"{len(_bucket_forms_by_name)} forms "
-                                    f"already registered in bucket "
-                                    f"{_bucket_uuid}",
-                                    flush=True)
-                            else:
-                                print(
-                                    f"[publisher] bucket-forms lookup "
-                                    f"failed: {_fr.status_code} — will "
-                                    f"call getForm normally",
-                                    flush=True)
-                        else:
+                        for _f in (_bucket_forms_raw or []):
+                            _fname = _f.get('name', '')
+                            if _fname:
+                                _bucket_forms_by_name[_fname] = _f
+                        if _bucket_forms_by_name:
                             print(
-                                "[publisher] bucket-forms: no bucketUuid "
-                                "or token available — will call getForm "
-                                "normally",
+                                f"[publisher] bucket-forms (minimongo): "
+                                f"{len(_bucket_forms_by_name)} forms already "
+                                f"registered in bucket",
+                                flush=True)
+                        else:
+                            # Collection returned empty — log available
+                            # Meteor global names to identify the right one.
+                            _coll_names = await page.evaluate("""
+                                () => {
+                                    try {
+                                        return Object.keys(window)
+                                            .filter(k => {
+                                                try {
+                                                    const v = window[k];
+                                                    return v && typeof v.find === 'function'
+                                                        && typeof v.findOne === 'function';
+                                                } catch(e) { return false; }
+                                            });
+                                    } catch(e) { return []; }
+                                }
+                            """)
+                            print(
+                                f"[publisher] bucket-forms (minimongo): 0 forms found. "
+                                f"Meteor collection globals: {_coll_names}",
                                 flush=True)
                     except Exception as _bfe:
                         print(
