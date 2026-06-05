@@ -990,7 +990,16 @@ def _build_board_json(struct_json):
                                or "COMMON" in event_oid.upper())
             card = {
                 "_id":      card_id,
-                "title":    form_title,
+                # ── Two-step title strategy ───────────────────────────────
+                # OC derives the form OID from the card title at import
+                # time.  We want F_ICF, not F_INFORMED_CONSENT, so we
+                # send the bare form_id ("ICF") as the title during
+                # importStudy.  After import, _rename_board_card_titles()
+                # updates every card's title to the human-readable
+                # form_title ("Informed Consent").  display_title carries
+                # that value through the board JSON for the rename pass.
+                "title":         form_id,
+                "display_title": form_title,
                 "listId":   list_id,
                 "formOcoid": _form_ocoid(form_id),
                 "sort":     sort_idx,
@@ -1604,6 +1613,109 @@ async def _clear_board(board_url: str, session_path: str) -> None:
             await browser.close()
 
 
+async def _rename_board_card_titles(subdomain, board_id, board_json,
+                                     session_path, is_production):
+    """
+    After importStudy, update each card's title from the bare form_id
+    (e.g. "ICF") to the human-readable display_title (e.g. "Informed
+    Consent").
+
+    importStudy uses the card title to derive the form OID, so we send
+    form_id as title to get F_ICF.  This pass renames the cards to the
+    display title so they look correct in the OC Designer UI.
+
+    Only renames cards where display_title differs from title.
+    Non-fatal — a failure here is logged but does not abort the run.
+    """
+    from playwright.async_api import async_playwright
+
+    # Build a map of card_id → display_title for cards that need renaming
+    rename_map = {}
+    for card in board_json.get("cards", []):
+        dt = card.get("display_title", "")
+        t  = card.get("title", "")
+        cid = card.get("_id", "")
+        if dt and t and dt != t and cid:
+            rename_map[cid] = dt
+
+    if not rename_map:
+        print("[board-rename] no cards need renaming", flush=True)
+        return
+
+    # Only rename the first card per form_id — sibling cards (_parentId
+    # present) share the same form definition and OC propagates the title
+    # from the parent; renaming them individually is unnecessary.
+    seen_titles: set = set()
+    filtered_rename: dict = {}
+    for card in board_json.get("cards", []):
+        cid = card.get("_id", "")
+        if cid not in rename_map:
+            continue
+        if card.get("_parentId"):
+            continue   # sibling — skip
+        dt = rename_map[cid]
+        if dt in seen_titles:
+            continue
+        seen_titles.add(dt)
+        filtered_rename[cid] = dt
+
+    print(f"[board-rename] renaming {len(filtered_rename)} card titles "
+          f"via Meteor DDP...", flush=True)
+
+    designer_url = f"https://{subdomain}.design.openclinica.io"
+    board_url    = f"{designer_url}/b/{board_id}"
+
+    import json as _json
+    session_data = {}
+    try:
+        with open(session_path) as _sf:
+            session_data = _json.load(_sf)
+    except Exception as _se:
+        print(f"[board-rename] could not read session: {_se} — skipping",
+              flush=True)
+        return
+
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=True)
+        try:
+            ctx = await browser.new_context()
+            cookies = session_data.get("cookies", [])
+            if cookies:
+                await ctx.add_cookies(cookies)
+            page = await ctx.new_page()
+            await page.goto(board_url, wait_until="networkidle",
+                            timeout=30000)
+            await page.wait_for_timeout(3000)
+
+            renamed = 0
+            for card_id, display_title in filtered_rename.items():
+                try:
+                    await page.evaluate(
+                        """([cid, newTitle]) => {
+                            Meteor.call(
+                                '/cards/update',
+                                {_id: cid},
+                                {$set: {
+                                    title: newTitle,
+                                    dateLastActivity: {$date: Date.now()}
+                                }},
+                                {}
+                            );
+                        }""",
+                        [card_id, display_title]
+                    )
+                    renamed += 1
+                except Exception as _re:
+                    print(f"[board-rename] failed for card {card_id}: "
+                          f"{_re}", flush=True)
+
+            await page.wait_for_timeout(1000)
+            print(f"[board-rename] renamed {renamed}/{len(filtered_rename)} "
+                  f"cards", flush=True)
+        finally:
+            await browser.close()
+
+
 async def _import_board(subdomain, board_id, board_json, is_production, token=None):
     """
     Import the board.json into the study designer.
@@ -1966,6 +2078,24 @@ async def create_oc_study(subdomain, struct_json, is_production=False,
                 subdomain, board_id, board_json, is_production, token=token)
             print("Study design board imported successfully.", flush=True)
             board_imported = True
+
+            # ── Two-step title rename ─────────────────────────────────────
+            # importStudy used bare form_id as card title to get clean OIDs
+            # (F_ICF not F_INFORMED_CONSENT).  Now rename cards to their
+            # human-readable display_title via Meteor DDP.
+            _rename_session = (f"/data/browser_sessions/{oc_email}.json"
+                               if oc_email else "")
+            if _rename_session and os.path.exists(_rename_session):
+                try:
+                    await _rename_board_card_titles(
+                        subdomain, board_id, board_json,
+                        _rename_session, is_production)
+                except Exception as _rne:
+                    print(f"[board-rename] non-fatal error: {_rne}",
+                          flush=True)
+            else:
+                print("[board-rename] skipped — no usable session",
+                      flush=True)
             # Prefer the import response's board-id+slug URL — the
             # Playwright form-upload flow needs THAT to render the designer.
             # The UUID-based study_url we built above just redirects to the

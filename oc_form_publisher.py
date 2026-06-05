@@ -1226,6 +1226,55 @@ class FormPublisher:
                                     oid = ((await oid_el.input_value()).upper()
                                            if oid_el else "")
 
+                                    # ── Suffix-normalisation ──────────────
+                                    # OC appends a numeric suffix to a form
+                                    # OID when a new definition is registered
+                                    # for an already-used name (e.g. re-runs
+                                    # produce F_AE_2130, then F_AE_4675).
+                                    # The canonical OID must be clean
+                                    # (F_AE), so if the panel returns a
+                                    # suffixed value we rewrite the card's
+                                    # formOcoid in minimongo back to the
+                                    # clean OID before getForm / uploadVersion
+                                    # run.  Without this, every re-run
+                                    # compounds the suffix.
+                                    import re as _re_oid
+                                    _oid_clean = _re_oid.sub(
+                                        r'_\d+$', '', oid)
+                                    if _oid_clean and _oid_clean != oid:
+                                        print(
+                                            f"[publisher] suffix-normalise "
+                                            f"{form_name}: {oid!r} → "
+                                            f"{_oid_clean!r} — rewriting "
+                                            f"card formOcoid in minimongo",
+                                            flush=True)
+                                        try:
+                                            await page.evaluate(
+                                                """([cardId, cleanOid]) => {
+                                                    Meteor.call(
+                                                        '/cards/update',
+                                                        {_id: cardId},
+                                                        {$set: {
+                                                            formOcoid: cleanOid,
+                                                            dateLastActivity: {
+                                                                $date: Date.now()
+                                                            }
+                                                        }},
+                                                        {}
+                                                    );
+                                                }""",
+                                                [card['card_id'], _oid_clean]
+                                            )
+                                            oid = _oid_clean
+                                        except Exception as _sne:
+                                            print(
+                                                f"[publisher] suffix-normalise "
+                                                f"card rewrite failed for "
+                                                f"{form_name}: {_sne}",
+                                                flush=True)
+                                            # Keep suffixed oid — better than
+                                            # crashing; suffix guard will log.
+
                                     # (2)+(3) Per-card minimongo diagnostics:
                                     # the event (list) type/repeating flag and
                                     # the card's link status. Looked up live
