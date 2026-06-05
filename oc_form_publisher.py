@@ -798,24 +798,30 @@ class FormPublisher:
                         _bucket_forms_raw = await page.evaluate("""
                             () => {
                                 try {
-                                    const board = Boards.findOne(
-                                        window.location.pathname.split('/')[2]);
-                                    if (!board || !board.bucketUuid) return [];
-                                    // FormDefinitions is the Meteor collection
-                                    // that mirrors the form-service bucket.
-                                    // Try both known collection names.
-                                    const coll = (typeof FormDefinitions !== 'undefined'
-                                        ? FormDefinitions
-                                        : (typeof Forms !== 'undefined' ? Forms : null));
-                                    if (!coll) return [];
-                                    return coll.find(
-                                        {bucketUuid: board.bucketUuid}
-                                    ).fetch().map(f => ({
-                                        name:   f.name   || '',
-                                        ocoid:  f.ocoid  || '',
-                                        id:     f.id     || f._id || '',
-                                        versions: f.versions || []
-                                    }));
+                                    const boardId = window.location.pathname.split('/')[2];
+                                    // Read form OIDs directly from the board cards —
+                                    // importStudy already set formOcoid to the clean OID
+                                    // (e.g. F_ICF) on every card. FormDefinitions/Forms
+                                    // are server-side only and never sync to client minimongo.
+                                    const cards = Cards.find(
+                                        {boardId: boardId, archived: {$ne: true}}
+                                    ).fetch();
+                                    const seen = new Set();
+                                    const result = [];
+                                    for (const c of cards) {
+                                        const name = c.title || '';
+                                        const ocoid = c.formOcoid || '';
+                                        if (name && ocoid && !seen.has(name)) {
+                                            seen.add(name);
+                                            result.push({
+                                                name:     name,
+                                                ocoid:    ocoid,
+                                                id:       '',
+                                                versions: []
+                                            });
+                                        }
+                                    }
+                                    return result;
                                 } catch(e) {
                                     return [];
                                 }
@@ -823,34 +829,23 @@ class FormPublisher:
                         """)
                         for _f in (_bucket_forms_raw or []):
                             _fname = _f.get('name', '')
+                            _focoid = _f.get('ocoid', '')
                             if _fname:
                                 _bucket_forms_by_name[_fname] = _f
+                            # Also index by full OID so reused boards (where
+                            # cards already carry suffixed OIDs like F_ICF_1700
+                            # from a prior getForm pass) hit the guard correctly.
+                            if _focoid and _focoid != _fname:
+                                _bucket_forms_by_name[_focoid] = _f
                         if _bucket_forms_by_name:
                             print(
-                                f"[publisher] bucket-forms (minimongo): "
-                                f"{len(_bucket_forms_by_name)} forms already "
-                                f"registered in bucket",
+                                f"[publisher] bucket-forms (cards): "
+                                f"{len(_bucket_forms_by_name)} forms read from board cards",
                                 flush=True)
                         else:
-                            # Collection returned empty — log available
-                            # Meteor global names to identify the right one.
-                            _coll_names = await page.evaluate("""
-                                () => {
-                                    try {
-                                        return Object.keys(window)
-                                            .filter(k => {
-                                                try {
-                                                    const v = window[k];
-                                                    return v && typeof v.find === 'function'
-                                                        && typeof v.findOne === 'function';
-                                                } catch(e) { return false; }
-                                            });
-                                    } catch(e) { return []; }
-                                }
-                            """)
                             print(
-                                f"[publisher] bucket-forms (minimongo): 0 forms found. "
-                                f"Meteor collection globals: {_coll_names}",
+                                f"[publisher] bucket-forms (cards): 0 forms found — "
+                                f"Cards collection may not be loaded yet",
                                 flush=True)
                     except Exception as _bfe:
                         print(
@@ -1593,17 +1588,16 @@ class FormPublisher:
                                                     and not (_cdiag and _cdiag.get("parentId"))
                                                     and oid not in _getform_called_oids):
                                                 _oid_label = oid[2:] if oid.startswith('F_') else oid
-
-                                                # ── Bucket-hit check ──────────────────────────
-                                                # If this OID name already exists in the form
-                                                # service bucket, skip getForm entirely and use
-                                                # the existing registration. Calling getForm on
-                                                # an already-registered name creates a suffixed
-                                                # clone (F_SLEEP_1793) instead of returning the
-                                                # existing F_SLEEP — which breaks publish.
-                                                if _oid_label in _bucket_forms_by_name:
+                                                # Check both the stripped label (e.g. "ICF"
+                                                # for fresh boards) and the full OID (e.g.
+                                                # "F_ICF_1700" for reused boards where a prior
+                                                # getForm pass already suffixed the card).
+                                                _bucket_key = (_oid_label
+                                                               if _oid_label in _bucket_forms_by_name
+                                                               else oid)
+                                                if _bucket_key in _bucket_forms_by_name:
                                                     _existing_bf = (
-                                                        _bucket_forms_by_name[_oid_label])
+                                                        _bucket_forms_by_name[_bucket_key])
                                                     _gf_ocoid = (
                                                         _existing_bf.get('ocoid', ''))
                                                     print(

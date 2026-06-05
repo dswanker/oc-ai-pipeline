@@ -1,0 +1,52 @@
+{
+  "id": "validation.calculate_requires_readonly",
+  "title": "Any field with a calculation expression must have readonly=yes",
+  "kind": "structured",
+  "scope": "global",
+  "status": "active",
+  "natural_key": "calculate_requires_readonly",
+  "description": "Every survey row that has a non-empty calculation expression must carry readonly=yes, unless the row also has a non-empty trigger value (trigger-based calculations are an exception OC allows). This applies regardless of type — type=calculate, type=text, type=integer, type=decimal, or any other type. OpenClinica's form validator rejects any calculated field missing readonly=yes with: 'Element [name] cannot have a value in column calculation unless it is read-only.'",
+  "rationale": "OC platform requirement, not a stylistic default. Cannot be overridden. A calculated field without readonly=yes causes a silent upload failure: the form record is created but no version object is attached, poisoning all subsequent operations on that form in the study. The most common violation is AGE computed from BRTHDAT (floor((today() - ${BRTHDAT}) / 365.25)) on the DM form, where the field is type=integer with a calculation but readonly left blank.",
+  "target": "field",
+  "applies_when": {
+    "all_of": [
+      {
+        "field.calculation": {
+          "non_empty": true
+        }
+      },
+      {
+        "field.trigger": {
+          "empty": true
+        }
+      },
+      {
+        "field.readonly": {
+          "not_equals": "yes"
+        }
+      }
+    ]
+  },
+  "effect": {
+    "ensure": {
+      "field.readonly": "yes"
+    },
+    "flag": {
+      "category": "review_flags.calculate_readonly_enforced",
+      "message": "Field ${field.name} on ${form.form_id} has a calculation expression but was missing readonly=yes. Auto-enforced per §29 (OC platform requirement). If this field also needs a trigger, add it to the trigger column and this convention will no longer apply."
+    }
+  },
+  "created_at": "2026-06-05T00:00:00Z",
+  "created_by": "system:conventions_md_s29",
+  "source": "conventions.md:§29",
+  "tags": ["validation", "calculate", "readonly", "platform_requirement"],
+  "history": [
+    {
+      "at": "2026-06-05T00:00:00Z",
+      "by": "system:conventions_md_s29",
+      "action": "created",
+      "status": "active",
+      "note": "Implements §29 of conventions.md as a structured conventions engine rule so it is enforced deterministically on every spec regardless of LLM first-pass consistency. The applies_when checks calculation non-empty AND trigger empty AND readonly != yes — the ensure directive sets readonly=yes only when all three hold. Paired with the existing field_types.visible_calculated_uses_text_type convention which handles the type=calculate visibility concern."
+    }
+  ]
+}
