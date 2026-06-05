@@ -29,7 +29,7 @@ Human-in-the-loop paths:
   E. Edited SOE CSV uploaded          → update SOE in OpenClinica (not impl)
 """
 
-import asyncio, io, json, os, sys, tempfile, traceback, zipfile, datetime as _dt
+import asyncio, io, json, os, sys, tempfile, time, traceback, zipfile, datetime as _dt
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
@@ -3561,9 +3561,28 @@ async def run_pipeline(item_id):
             # checks disabled (the _validate_oc_session stub).
             if auth_manager.session_exists(oc_email):
                 session_path = str(auth_manager.get_session_path(oc_email))
-                from oc_form_publisher import probe_sso_session
-                _session_live = await probe_sso_session(
-                    oc_subdomain, session_path)
+                # Grace period: if the session was written within the last
+                # 2 minutes, skip the probe entirely — it was just created
+                # by the user completing the auth flow and is guaranteed
+                # fresh. The probe on a brand-new session is unreliable
+                # (Keycloak cookies may not be fully propagated) and is the
+                # root cause of the recurring "flips back to Do Not Send"
+                # regression after every fresh authentication.
+                _session_age_s = (
+                    time.time() - os.path.getmtime(session_path)
+                )
+                if _session_age_s < 120:
+                    print(
+                        f"[session-preflight] session for {oc_email} is "
+                        f"{_session_age_s:.0f}s old — skipping probe "
+                        f"(fresh session grace period)",
+                        flush=True,
+                    )
+                    _session_live = True
+                else:
+                    from oc_form_publisher import probe_sso_session
+                    _session_live = await probe_sso_session(
+                        oc_subdomain, session_path)
                 if not _session_live:
                     print(f"[session-preflight] session for {oc_email} "
                           f"is stale — deleting and re-requesting auth",
