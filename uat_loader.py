@@ -589,7 +589,7 @@ async def _import_odm(subdomain: str, study_oid: str,
     # ── Step 2: Poll the job until it completes (or 120s deadline) ───────
     poll_url = f"{base}/pages/auth/api/jobs/{job_uuid}/downloadFile"
     loop = asyncio.get_event_loop()
-    deadline = loop.time() + 120
+    deadline = loop.time() + 300
     interval = 5
     last_status: int | None = None
     last_body = ""
