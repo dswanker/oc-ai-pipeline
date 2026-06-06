@@ -583,13 +583,14 @@ async def _import_odm(subdomain: str, study_oid: str,
             f"job uuid in response: {body[:300]}"
         )
     job_uuid = m.group(1)
-    print(f"[uat_loader] ODM import submitted, job_uuid={job_uuid}",
+    # Capture JSESSIONID from submit response — OC's nginx load balancer uses
+    # this cookie to route requests to the same backend node that registered
+    # the job. Without it every poll hits a different node and gets 404.
+    jsessionid = resp.cookies.get("JSESSIONID")
+    print(f"[uat_loader] ODM import submitted, job_uuid={job_uuid} jsessionid={jsessionid}",
           flush=True)
-    print(f"[uat_loader] ODM submit HTTP {resp.status_code} body={body[:300]!r}", flush=True)
-    print(f"[uat_loader] ODM submit cookies={dict(resp.cookies)!r}", flush=True)
-    print(f"[uat_loader] ODM submit headers={dict(resp.headers)!r}", flush=True)
 
-    # ── Step 2: Poll the job until it completes (or 120s deadline) ───────
+    # ── Step 2: Poll the job until it completes (or 300s deadline) ───────
     poll_url = f"{base}/pages/auth/api/jobs/{job_uuid}/downloadFile"
     loop = asyncio.get_event_loop()
     deadline = loop.time() + 300
@@ -598,10 +599,13 @@ async def _import_odm(subdomain: str, study_oid: str,
     last_body = ""
     while True:
         poll_token = await _get_oc_token(subdomain)
+        poll_headers = {"Authorization": f"Bearer {poll_token}"}
+        poll_cookies = {"JSESSIONID": jsessionid} if jsessionid else {}
         async with httpx.AsyncClient(timeout=30) as client:
             poll_resp = await client.get(
                 poll_url,
-                headers={"Authorization": f"Bearer {poll_token}"},
+                headers=poll_headers,
+                cookies=poll_cookies,
             )
         last_status = poll_resp.status_code
         last_body = poll_resp.text or ""
