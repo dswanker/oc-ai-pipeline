@@ -89,11 +89,29 @@ def _pages_base(subdomain: str) -> str:
     return f"https://{subdomain}.build.openclinica.io"
 
 
+# Module-level token cache: keyed by subdomain, value is (token_str, fetched_at).
+# Tokens are valid for ~24h; we cache for 20 minutes to avoid 429s from
+# repeated calls within a single pipeline run while still refreshing well
+# before actual expiry.
+_TOKEN_CACHE: dict[str, tuple[str, float]] = {}
+_TOKEN_CACHE_TTL_S = 1200  # 20 minutes
+
+
 async def _get_oc_token(subdomain: str) -> str:
-    """Fetch a short-lived OC OAuth bearer token for study-service API calls.
-    Matches the pattern used by pipeline.py _get_oc_token exactly.
+    """Return a cached OC OAuth bearer token, refreshing if older than 20 min.
+
+    OC tokens are valid for ~24 hours but the token endpoint rate-limits
+    (HTTP 429) if called more than ~10 times in quick succession. Caching
+    avoids redundant fetches within a single pipeline run.
     """
+    import time
     import os
+    cached = _TOKEN_CACHE.get(subdomain)
+    if cached:
+        token_str, fetched_at = cached
+        if time.monotonic() - fetched_at < _TOKEN_CACHE_TTL_S:
+            return token_str
+
     username = os.environ.get("OC_API_USERNAME", "").strip()
     password = os.environ.get("OC_API_PASSWORD", "").strip()
     if not username or not password:
@@ -108,7 +126,9 @@ async def _get_oc_token(subdomain: str) -> str:
     if resp.status_code != 200:
         raise RuntimeError(
             f"OC auth failed {resp.status_code}: {resp.text[:200]}")
-    return resp.text.strip()
+    token_str = resp.text.strip()
+    _TOKEN_CACHE[subdomain] = (token_str, time.monotonic())
+    return token_str
 
 
 async def _get_test_env_uuid(subdomain: str, study_uuid: str) -> tuple:
