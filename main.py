@@ -954,6 +954,108 @@ async def design_change_webhook(request: Request,
     return {"status": "design_change_intake_started", "item_id": item_id}
 
 
+
+@app.post("/admin/regen-dvs")
+async def regen_dvs_route(request: Request, background_tasks: BackgroundTasks):
+    """
+    Re-generate the DVS XLSX from the cached spec JSON + EDC zip already on Monday,
+    upload to dvs_output column, then run the UAT loader.
+    Requires X-Admin-Secret header and item_id in body.
+    """
+    secret = request.headers.get("X-Admin-Secret", "")
+    if secret != os.environ.get("ADMIN_SECRET", ""):
+        return {"status": "unauthorized"}
+
+    body_bytes = await request.body()
+    try:
+        payload = json.loads(body_bytes) if body_bytes else {}
+    except Exception:
+        payload = {}
+
+    item_id = str(payload.get("item_id", ""))
+    if not item_id:
+        return {"status": "error", "detail": "item_id required"}
+
+    async def safe_regen(iid):
+        try:
+            from monday_client import (
+                COL, download_column_file, upload_file, get_item,
+                set_status, append_log
+            )
+            from pipeline import run_dvs_xlsx
+            import json as _json, zipfile as _zf, io as _io, tempfile as _tmp, os as _os
+
+            await append_log(iid, "Regen DVS: starting...")
+            await set_status(iid, COL["pipeline_status"], "DVS Running")
+
+            # 1. Download spec JSON
+            spec_bytes = await download_column_file(iid, COL["spec_json"])
+            if not spec_bytes:
+                await append_log(iid, "Regen DVS: ERROR — spec JSON not found in monday")
+                await set_status(iid, COL["pipeline_status"], "Failed")
+                return
+            struct_json = _json.loads(spec_bytes)
+            await append_log(iid, f"Regen DVS: spec JSON loaded ({len(spec_bytes)} bytes)")
+
+            # 2. Download EDC zip and extract forms JSON
+            edc_bytes = await download_column_file(iid, COL["edc_build"])
+            if not edc_bytes:
+                await append_log(iid, "Regen DVS: ERROR — EDC zip not found in monday")
+                await set_status(iid, COL["pipeline_status"], "Failed")
+                return
+            import openpyxl as _opxl
+            forms_json = {"forms": {}}
+            with _zf.ZipFile(_io.BytesIO(edc_bytes)) as z:
+                for name in z.namelist():
+                    if name.endswith(".xlsx") and "/forms/" in name:
+                        fname = _os.path.basename(name)
+                        wb = _opxl.load_workbook(_io.BytesIO(z.read(name)),
+                                                 read_only=True, data_only=True)
+                        survey_rows = []
+                        if "survey" in wb.sheetnames:
+                            ws = wb["survey"]
+                            rows = list(ws.iter_rows(values_only=True))
+                            if rows:
+                                headers = [str(h or "").strip() for h in rows[0]]
+                                for r in rows[1:]:
+                                    row_dict = {headers[i]: r[i] for i in range(len(headers))
+                                                if i < len(r) and r[i] is not None}
+                                    if row_dict:
+                                        survey_rows.append(row_dict)
+                        forms_json["forms"][fname] = {"survey": survey_rows}
+            await append_log(iid, f"Regen DVS: EDC zip loaded, {len(forms_json['forms'])} forms")
+
+            # 3. Regenerate DVS
+            dvs_bytes = run_dvs_xlsx(struct_json, forms_json)
+            if not dvs_bytes:
+                await append_log(iid, "Regen DVS: ERROR — DVS generation failed")
+                await set_status(iid, COL["pipeline_status"], "Failed")
+                return
+
+            # 4. Upload DVS
+            fname = "DVS_regen.xlsx"
+            await upload_file(iid, COL["dvs_output"], fname, dvs_bytes)
+            await append_log(iid, f"Regen DVS: uploaded {fname} ({len(dvs_bytes)} bytes)")
+
+            # 5. Run UAT loader
+            await append_log(iid, "Regen DVS: launching UAT loader...")
+            await set_status(iid, COL["pipeline_status"], "Loading UAT Data")
+            from pipeline import load_dvs_uat_data
+            await load_dvs_uat_data(iid)
+
+        except Exception as exc:
+            import traceback
+            print(f"REGEN_DVS_ERROR: {exc}\n{traceback.format_exc()}", flush=True)
+            try:
+                from pipeline import append_log, set_status
+                await append_log(iid, f"Regen DVS: EXCEPTION — {exc}")
+                await set_status(iid, COL["pipeline_status"], "Failed")
+            except Exception:
+                pass
+
+    background_tasks.add_task(safe_regen, item_id)
+    return {"status": "regen_dvs_started", "item_id": item_id}
+
 @app.post("/admin/run-email-intake")
 async def run_email_intake_route(request: Request,
                                   background_tasks: BackgroundTasks):
