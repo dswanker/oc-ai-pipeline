@@ -586,6 +586,8 @@ async def _import_odm(subdomain: str, study_oid: str,
     print(f"[uat_loader] ODM import submitted, job_uuid={job_uuid}",
           flush=True)
     print(f"[uat_loader] ODM submit HTTP {resp.status_code} body={body[:300]!r}", flush=True)
+    print(f"[uat_loader] ODM submit cookies={dict(resp.cookies)!r}", flush=True)
+    print(f"[uat_loader] ODM submit headers={dict(resp.headers)!r}", flush=True)
 
     # ── Step 2: Poll the job until it completes (or 120s deadline) ───────
     poll_url = f"{base}/pages/auth/api/jobs/{job_uuid}/downloadFile"
