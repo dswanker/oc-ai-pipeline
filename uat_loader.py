@@ -593,7 +593,7 @@ async def _import_odm(subdomain: str, study_oid: str,
     # ── Step 2: Poll the job until it completes (or 300s deadline) ───────
     poll_url = f"{base}/pages/auth/api/jobs/{job_uuid}/downloadFile"
     loop = asyncio.get_event_loop()
-    deadline = loop.time() + 300
+    deadline = loop.time() + 60
     interval = 5
     last_status: int | None = None
     last_body = ""
@@ -1070,17 +1070,19 @@ async def run_uat_loader(item_id: str) -> dict:
         p_suffix = logical_pid.replace("UAT-P", "P")
         run_key  = f"{site_oid}-{p_suffix}"
 
+        BATCH_SIZE = 50
+        batches = [rows[i:i+BATCH_SIZE] for i in range(0, len(rows), BATCH_SIZE)]
         await append_log(
             item_id,
             f"UAT Loader: importing ODM for {run_key} "
-            f"({len(rows)} rows)..."
+            f"({len(rows)} rows in {len(batches)} batches)..."
         )
         try:
-            odm_xml = _build_odm_xml(
+            # Validate once against the full XML before batching
+            odm_xml_full = _build_odm_xml(
                 study_oid, created_site_oid, oc_oid, confirmed_id, rows
             )
-            # ── Tier 1: XSD structural validation ────────────────────────
-            odm_errors = _validate_odm_xml(odm_xml)
+            odm_errors = _validate_odm_xml(odm_xml_full)
             if odm_errors:
                 err_summary = "; ".join(odm_errors[:3])
                 raise RuntimeError(
@@ -1088,9 +1090,37 @@ async def run_uat_loader(item_id: str) -> dict:
                     f"{err_summary}"
                 )
             await append_log(item_id, f"UAT Loader: ODM XML valid (XSD passed)")
-            import_result = await _import_odm(
-                subdomain, study_oid, odm_xml
-            )
+            batch_inserted = 0
+            batch_failed = 0
+            for b_idx, batch_rows in enumerate(batches):
+                b_num = b_idx + 1
+                odm_xml = _build_odm_xml(
+                    study_oid, created_site_oid, oc_oid, confirmed_id, batch_rows
+                )
+                await append_log(
+                    item_id,
+                    f"UAT Loader: submitting batch {b_num}/{len(batches)} "
+                    f"({len(batch_rows)} rows)..."
+                )
+                import_result = await _import_odm(
+                    subdomain, study_oid, odm_xml
+                )
+                log_csv = import_result.get("log", "")
+                # Count inserted/failed from CSV log
+                ins = sum(1 for ln in log_csv.splitlines() if ",Inserted," in ln)
+                fail = sum(1 for ln in log_csv.splitlines() if ",Failed," in ln)
+                batch_inserted += ins
+                batch_failed += fail
+                await append_log(
+                    item_id,
+                    f"UAT Loader: batch {b_num}/{len(batches)} complete — "
+                    f"Inserted={ins} Failed={fail}"
+                )
+            import_result = {
+                "status":   "completed",
+                "job_uuid": "batched",
+                "log":      f"Inserted={batch_inserted} Failed={batch_failed}",
+            }
             result["odm_imports"].append({
                 "participant": run_key,
                 "rows":        len(rows),
@@ -1098,10 +1128,9 @@ async def run_uat_loader(item_id: str) -> dict:
             })
             await append_log(
                 item_id,
-                f"UAT Loader: ODM import for {run_key} — "
-                f"status={import_result.get('status')} "
-                f"url={import_result.get('url','?')} "
-                f"snippet={str(import_result.get('log','')[:500])[:200]}"
+                f"UAT Loader: ODM import for {run_key} complete — "
+                f"Inserted={batch_inserted} Failed={batch_failed} "
+                f"across {len(batches)} batches"
             )
             # Parse the job log CSV to count Inserted vs Failed rows.
             import csv as _csv
