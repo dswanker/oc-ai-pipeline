@@ -407,13 +407,19 @@ def _validate_odm_xml(odm_xml: str) -> list[str]:
         schema_doc = etree.parse(str(xsd_path))
         schema     = etree.XMLSchema(schema_doc)
         doc        = etree.fromstring(odm_xml.encode("utf-8"))
-        # Strip OpenClinica:* attributes from SubjectData elements on the
-        # parsed copy only (the original odm_xml string is unchanged).
-        for sd in doc.iter(f"{{{_ODM_NS}}}SubjectData"):
+        # Strip OpenClinica:* attributes from SubjectData and StudyEventData
+        # elements on the parsed copy only (the original odm_xml string is
+        # unchanged). The CDISC XSD doesn't include the OC extension schema
+        # so OpenClinica:StudySubjectID and OpenClinica:StartDate would both
+        # be rejected during validation even though OC requires them at import.
+        for element in doc.iter(
+            f"{{{_ODM_NS}}}SubjectData",
+            f"{{{_ODM_NS}}}StudyEventData",
+        ):
             for attr_key in [
-                k for k in sd.attrib if k.startswith(f"{{{_OC_NS}}}")
+                k for k in element.attrib if k.startswith(f"{{{_OC_NS}}}")
             ]:
-                del sd.attrib[attr_key]
+                del element.attrib[attr_key]
         if not schema.validate(doc):
             errors = [str(e) for e in schema.error_log]
     except etree.XMLSyntaxError as e:
