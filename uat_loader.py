@@ -597,6 +597,7 @@ async def _import_odm(subdomain: str, study_oid: str,
     interval = 5
     last_status: int | None = None
     last_body = ""
+    poll_count = 0
     while True:
         poll_token = await _get_oc_token(subdomain)
         poll_headers = {"Authorization": f"Bearer {poll_token}"}
@@ -607,6 +608,9 @@ async def _import_odm(subdomain: str, study_oid: str,
                 headers=poll_headers,
                 cookies=poll_cookies,
             )
+        poll_count += 1
+        if poll_count <= 3:
+            print(f"[uat_loader] poll #{poll_count} HTTP {poll_resp.status_code} body={poll_resp.text[:200]!r}", flush=True)
         last_status = poll_resp.status_code
         last_body = poll_resp.text or ""
 
