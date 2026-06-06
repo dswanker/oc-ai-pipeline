@@ -960,8 +960,9 @@ def _uat_row(uat_id, check_id, form_id, field_name, field_label, case,
     form_short = form_oid[2:] if form_oid.upper().startswith("F_") else form_oid
     item_group_oid = f"IG_{form_short}_{ig_name_clean}"
 
-    # Item OID: OC uses FormOID.ItemName
-    item_oid = f"{form_oid}.{field_name}" if field_name else item_group_oid
+    # Item OID: OC derives it as I_{form_short}_{fieldname}
+    # e.g. for form AE, field AEYN -> I_AE_AEYN  (NOT F_AE.AEYN)
+    item_oid = f"I_{form_short}_{field_name}" if field_name else item_group_oid
 
     return {
         "UAT Case ID":       uat_id,
