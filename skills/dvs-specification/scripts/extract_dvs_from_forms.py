@@ -955,7 +955,10 @@ def _uat_row(uat_id, check_id, form_id, field_name, field_label, case,
     # comes from bind::oc:itemgroup in the XLSForm survey sheet.
     # Fall back to IG_{FormOID}_MAIN if not supplied.
     ig_name_clean = ig_name or "MAIN"
-    item_group_oid = f"IG_{form_oid}_{ig_name_clean}"
+    # OC constructs ItemGroup OIDs as IG_{form_short_name}_{ig_name} where
+    # form_short_name does NOT include the F_ prefix (e.g. IG_AE_AE not IG_F_AE_AE)
+    form_short = form_oid[2:] if form_oid.upper().startswith("F_") else form_oid
+    item_group_oid = f"IG_{form_short}_{ig_name_clean}"
 
     # Item OID: OC uses FormOID.ItemName
     item_oid = f"{form_oid}.{field_name}" if field_name else item_group_oid
@@ -1053,7 +1056,7 @@ def extract_dvs_data(struct_json, forms_json):
             form_id = form_id[:-5]
 
         # Build field → itemgroup name map from bind::oc:itemgroup column.
-        # OC constructs ItemGroup OIDs as IG_F_{form_id}_{ig_name}.
+        # OC constructs ItemGroup OIDs as IG_{form_short}_{ig_name} (no F_ prefix).
         # We also track the form-level default (first non-null ig_name found).
         field_ig_map = {}
         form_default_ig = None
