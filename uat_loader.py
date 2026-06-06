@@ -590,51 +590,20 @@ async def _import_odm(subdomain: str, study_oid: str,
     print(f"[uat_loader] ODM import submitted, job_uuid={job_uuid} jsessionid={jsessionid}",
           flush=True)
 
-    # ── Step 2: Poll the job until it completes (or 300s deadline) ───────
-    poll_url = f"{base}/pages/auth/api/jobs/{job_uuid}/downloadFile"
-    loop = asyncio.get_event_loop()
-    deadline = loop.time() + 60
-    interval = 5
-    last_status: int | None = None
-    last_body = ""
-    poll_count = 0
-    while True:
-        poll_token = await _get_oc_token(subdomain)
-        poll_headers = {"Authorization": f"Bearer {poll_token}"}
-        poll_cookies = {"JSESSIONID": jsessionid} if jsessionid else {}
-        async with httpx.AsyncClient(timeout=30) as client:
-            poll_resp = await client.get(
-                poll_url,
-                headers=poll_headers,
-                cookies=poll_cookies,
-            )
-        poll_count += 1
-        if poll_count <= 3:
-            print(f"[uat_loader] poll #{poll_count} HTTP {poll_resp.status_code} body={poll_resp.text[:200]!r}", flush=True)
-        last_status = poll_resp.status_code
-        last_body = poll_resp.text or ""
-
-        if "errorCode.invalidUuid" in last_body:
-            raise RuntimeError(
-                f"ODM import job {job_uuid}: server reports invalid UUID "
-                f"({last_body[:300]})"
-            )
-
-        # jobInProgress is the OC4-defined "still running" signal.
-        if (poll_resp.is_success
-                and "errorCode.jobInProgress" not in last_body):
-            return {
-                "status":   "completed",
-                "job_uuid": job_uuid,
-                "log":      last_body[:4000],
-            }
-
-        if loop.time() >= deadline:
-            raise RuntimeError(
-                f"ODM import job {job_uuid} did not complete within 120s "
-                f"(last HTTP {last_status}, body: {last_body[:300]})"
-            )
-        await asyncio.sleep(interval)
+    # ── Step 2: Wait for OC to process the import ───────────────────────
+    # NOTE: The /pages/auth/api/jobs/{uuid}/downloadFile poll endpoint is
+    # broken on cust1 — returns 404 error.invalidUuid immediately for all
+    # jobs regardless of payload, client, or cookies. Reported to OC
+    # engineering. Workaround: fixed wait, then caller verifies via
+    # clinical data read-back.
+    wait_s = 20
+    print(f"[uat_loader] ODM submitted {job_uuid} — waiting {wait_s}s for OC to process", flush=True)
+    await asyncio.sleep(wait_s)
+    return {
+        "status":   "submitted",
+        "job_uuid": job_uuid,
+        "log":      "",
+    }
 
 
 # ── Clinical data read-back ───────────────────────────────────────────────────
