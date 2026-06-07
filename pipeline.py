@@ -661,7 +661,18 @@ def run_edc_build(struct_json):
                                         if i < len(r) and r[i] is not None}
                             if row_dict:
                                 survey_rows.append(row_dict)
-                forms_json["forms"][fname] = {"survey": survey_rows}
+                choice_rows = []
+                if 'choices' in wb.sheetnames:
+                    ws_c = wb['choices']
+                    c_rows = list(ws_c.iter_rows(values_only=True))
+                    if c_rows:
+                        c_hdrs = [str(h or '').strip() for h in c_rows[0]]
+                        for r in c_rows[1:]:
+                            rd = {c_hdrs[i]: r[i] for i in range(len(c_hdrs))
+                                  if i < len(r) and r[i] is not None}
+                            if rd:
+                                choice_rows.append(rd)
+                forms_json["forms"][fname] = {"survey": survey_rows, "choices": choice_rows}
         return zip_bytes, build_log, forms_json
 
 
