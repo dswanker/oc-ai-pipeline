@@ -1060,6 +1060,9 @@ async def run_uat_loader(item_id: str) -> dict:
         )
         try:
             # Validate once against the full XML before batching
+            if rows:
+                _r0 = rows[0]
+                await append_log(item_id, f"UAT Loader: rows[0] ev={_r0.get('Study_Event_OID')!r} item={_r0.get('Item_OID')!r} val={str(_r0.get('Load_Value',''))[:20]!r}")
             odm_xml_full = _build_odm_xml(
                 study_oid, created_site_oid, oc_oid, confirmed_id, rows
             )
