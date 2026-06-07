@@ -497,7 +497,7 @@ def _build_odm_xml(study_oid: str, site_oid: str,
         "<?xml version='1.0' encoding='UTF-8'?>",
         f'<ODM {ODM_NAMESPACE}',
         f'    FileOID="UAT-{now}" CreationDateTime="{now}" FileType="Snapshot">',
-        f'  <ClinicalData StudyOID="{study_oid.split(chr(40))[0].strip()}" MetaDataVersionOID="v1.0">',
+        f'  <ClinicalData StudyOID="{study_oid}" MetaDataVersionOID="v1.0">',
         f'    <SubjectData SubjectKey="{participant_id}">',
     ]
     for ev_oid, repeats in events.items():
@@ -599,6 +599,23 @@ async def _import_odm(subdomain: str, study_oid: str,
     wait_s = 15
     print(f"[uat_loader] ODM submitted {job_uuid} — waiting {wait_s}s for OC to process", flush=True)
     await asyncio.sleep(wait_s)
+    # Attempt to poll job result with jsessionid cookie
+    poll_url = f"{base}/pages/auth/api/jobs/{job_uuid}/downloadFile"
+    poll_token = await _get_oc_token(subdomain)
+    poll_headers = {"Authorization": f"Bearer {poll_token}"}
+    poll_cookies = {"JSESSIONID": jsessionid} if jsessionid else {}
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            pr = await client.get(poll_url, headers=poll_headers, cookies=poll_cookies)
+        poll_body = pr.text[:1000]
+        print(f"[uat_loader] ODM job poll HTTP {pr.status_code} body={poll_body[:200]!r}", flush=True)
+        if pr.is_success and "Inserted" in pr.text:
+            inserted = pr.text.count(",Inserted")
+            failed   = pr.text.count(",Failed")
+            return {"status": "complete", "job_uuid": job_uuid, "log": pr.text,
+                    "inserted": inserted, "failed": failed}
+    except Exception as pe:
+        print(f"[uat_loader] ODM job poll error: {pe}", flush=True)
     return {
         "status":   "submitted",
         "job_uuid": job_uuid,
