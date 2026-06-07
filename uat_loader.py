@@ -1072,8 +1072,12 @@ async def run_uat_loader(item_id: str) -> dict:
                 )
             await append_log(item_id, f"UAT Loader: ODM XML valid (XSD passed)")
             # DEBUG: log first 300 chars of ODM to Monday to verify OID format
-            odm_preview = odm_xml_full[odm_xml_full.find("<ItemGroupData"):odm_xml_full.find("<ItemGroupData")+300] if "<ItemGroupData" in odm_xml_full else odm_xml_full[:300]
-            await append_log(item_id, f"UAT Loader: ODM preview — {odm_preview!r}")
+            # Log StudyOID and first ItemGroupData
+            _soid_start = odm_xml_full.find('StudyOID="') + len('StudyOID="')
+            _soid_end = odm_xml_full.find('"', _soid_start)
+            _soid_val = odm_xml_full[_soid_start:_soid_end] if _soid_start > 9 else "NOT FOUND"
+            _igd = odm_xml_full[odm_xml_full.find("<ItemGroupData"):odm_xml_full.find("<ItemGroupData")+200] if "<ItemGroupData" in odm_xml_full else "NONE"
+            await append_log(item_id, f"UAT Loader: ODM StudyOID={_soid_val!r} first_IG={_igd[:100]!r}")
             batch_inserted = 0
             batch_failed = 0
             for b_idx, batch_rows in enumerate(batches):
