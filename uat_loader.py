@@ -600,7 +600,11 @@ async def _import_odm(subdomain: str, study_oid: str,
     # jobs regardless of payload, client, or cookies. Reported to OC
     # engineering. Workaround: fixed wait, then caller verifies via
     # clinical data read-back.
-    wait_s = 20
+    # Poll for completion by checking if OC has processed the job.
+    # The /jobs/{uuid}/downloadFile endpoint is broken on cust1 (returns 404).
+    # Instead we wait a short time and return — the caller reads back clinical
+    # data after all batches are done to verify.
+    wait_s = 5
     print(f"[uat_loader] ODM submitted {job_uuid} — waiting {wait_s}s for OC to process", flush=True)
     await asyncio.sleep(wait_s)
     return {
@@ -1045,6 +1049,10 @@ async def run_uat_loader(item_id: str) -> dict:
 
         BATCH_SIZE = 50
         batches = [rows[i:i+BATCH_SIZE] for i in range(0, len(rows), BATCH_SIZE)]
+        # DEBUG: limit to first batch only when UAT_DEBUG_BATCHES=1
+        if os.environ.get("UAT_DEBUG_BATCHES") == "1":
+            batches = batches[:1]
+            print(f"[uat_loader] UAT_DEBUG_BATCHES=1 — limiting to 1 batch ({len(batches[0])} rows)", flush=True)
         await append_log(
             item_id,
             f"UAT Loader: importing ODM for {run_key} "
