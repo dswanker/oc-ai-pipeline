@@ -59,7 +59,7 @@ UAT_MATRIX_COL       = "file_mm3h7r4"    # UAT Traceability Matrix (future)
 
 ODM_NAMESPACE = (
     'xmlns="http://www.cdisc.org/ns/odm/v1.3" '
-    'xmlns:OpenClinica="http://www.openclinica.com/ns/odm_ext_v130/v3.1"'
+    'xmlns:OpenClinica="http://www.openclinica.org/ns/odm_ext_v130/v3.1"'
 )
 
 
@@ -422,7 +422,7 @@ def _validate_odm_xml(odm_xml: str) -> list[str]:
     xsd_path = (Path(__file__).parent
                 / "skills" / "dvs-specification" / "references"
                 / "ODM1-3-2-transactional.xsd")
-    _OC_NS  = "http://www.openclinica.com/ns/odm_ext_v130/v3.1"
+    _OC_NS  = "http://www.openclinica.org/ns/odm_ext_v130/v3.1"
     _ODM_NS = "http://www.cdisc.org/ns/odm/v1.3"
     errors = []
     try:
