@@ -477,10 +477,7 @@ def _build_odm_xml(study_oid: str, site_oid: str,
         val = row.get("Load_Value", "").strip()
         if not ev or not fo or not ig or not val:
             continue
-        # DEBUG: log first 5 rows to verify OID format
-        _n = sum(len(list(vv.values())) for vv in events.values())
-        if _n < 5:
-            print(f"[odm-debug] ev={ev} fo={fo} ig={ig} item_oid={item_oid} val={val!r}", flush=True)
+
         (events
          .setdefault(ev, {})
          .setdefault(rk, {})
@@ -1071,6 +1068,9 @@ async def run_uat_loader(item_id: str) -> dict:
                     f"{err_summary}"
                 )
             await append_log(item_id, f"UAT Loader: ODM XML valid (XSD passed)")
+            # DEBUG: log first 300 chars of ODM to Monday to verify OID format
+            odm_preview = odm_xml_full[odm_xml_full.find("<ItemGroupData"):odm_xml_full.find("<ItemGroupData")+300] if "<ItemGroupData" in odm_xml_full else odm_xml_full[:300]
+            await append_log(item_id, f"UAT Loader: ODM preview — {odm_preview!r}")
             batch_inserted = 0
             batch_failed = 0
             for b_idx, batch_rows in enumerate(batches):
