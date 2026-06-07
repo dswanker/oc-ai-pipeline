@@ -1116,11 +1116,13 @@ async def run_uat_loader(item_id: str) -> dict:
                 "rows":        len(rows),
                 "result":      import_result,
             })
+            log_csv = import_result.get("log", "") or ""
+            ins  = sum(1 for ln in log_csv.splitlines() if ",Inserted," in ln)
+            fail = sum(1 for ln in log_csv.splitlines() if ",Failed,"  in ln)
             await append_log(
                 item_id,
                 f"UAT Loader: ODM import for {run_key} complete — "
-                f"Inserted={batch_inserted} Failed={batch_failed} "
-                f"across {len(batches)} batches"
+                f"Inserted={ins} Failed={fail}"
             )
             # Parse the job log CSV to count Inserted vs Failed rows.
             import csv as _csv
