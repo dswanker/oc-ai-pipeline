@@ -1075,8 +1075,10 @@ async def run_uat_loader(item_id: str) -> dict:
                 )
             await append_log(item_id, f"UAT Loader: ODM XML valid (XSD passed)")
             # DEBUG: log first 300 chars of ODM to Monday to verify OID format
-            # Log raw ODM XML first 600 chars to diagnose
-            await append_log(item_id, f"UAT Loader: ODM first600={odm_xml_full[:600]!r}")
+            # Log ODM stats
+            _has_se = "StudyEventData" in odm_xml_full
+            _has_ig = "ItemGroupData" in odm_xml_full
+            await append_log(item_id, f"UAT Loader: ODM len={len(odm_xml_full)} has_SE={_has_se} has_IG={_has_ig} start={odm_xml_full[:80]!r}")
             batch_inserted = 0
             batch_failed = 0
             for b_idx, batch_rows in enumerate(batches):
