@@ -499,6 +499,7 @@ def _build_odm_xml(study_oid: str, site_oid: str,
         f'    FileOID="UAT-{now}" CreationDateTime="{now}" FileType="Snapshot">',
         f'  <ClinicalData StudyOID="{study_oid}" MetaDataVersionOID="v1.0">',
         f'    <SubjectData SubjectKey="{participant_id}">',
+        f'      <SiteRef LocationOID="{site_oid}"/>',
     ]
     for ev_oid, repeats in events.items():
         for repeat_key, forms in repeats.items():
@@ -608,7 +609,7 @@ async def _import_odm(subdomain: str, study_oid: str,
         async with httpx.AsyncClient(timeout=30) as client:
             pr = await client.get(poll_url, headers=poll_headers, cookies=poll_cookies)
         poll_body = pr.text[:1000]
-        print(f"[uat_loader] ODM job poll HTTP {pr.status_code} body={poll_body[:200]!r}", flush=True)
+        print(f"[uat_loader] ODM job poll HTTP {pr.status_code} body={poll_body[:500]!r}", flush=True)
         if pr.is_success and "Inserted" in pr.text:
             inserted = pr.text.count(",Inserted")
             failed   = pr.text.count(",Failed")
