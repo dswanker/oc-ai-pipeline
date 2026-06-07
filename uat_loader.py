@@ -901,6 +901,9 @@ async def run_uat_loader(item_id: str) -> dict:
     if not study_uuid:
         result["errors"].append("Study UUID is blank — run the pipeline first.")
         return result
+    # Strip environment suffix — OC stores "S_CRS135_8497(TEST)" but
+    # ODM import and clinical data API use the bare OID "S_CRS135_8497"
+    study_oid = study_oid.split("(")[0].strip()
     if not study_oid:
         result["errors"].append("Study OID is blank — publish to Test first.")
         return result
