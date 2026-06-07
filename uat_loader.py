@@ -500,7 +500,7 @@ def _build_odm_xml(study_oid: str, site_oid: str,
         f'<ODM {ODM_NAMESPACE}',
         f'    FileOID="UAT-{now}" CreationDateTime="{now}" FileType="Snapshot">',
         f'  <ClinicalData StudyOID="{study_oid}" MetaDataVersionOID="v1.0">',
-        f'    <SubjectData SubjectKey="{participant_id}" OpenClinica:StudySubjectID="{participant_id}">',
+        f'    <SubjectData SubjectKey="{participant_oid}" OpenClinica:StudySubjectID="{participant_id}">',
         f'      <SiteRef LocationOID="{site_oid}"/>',
     ]
     for ev_oid, repeats in events.items():
