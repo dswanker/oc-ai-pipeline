@@ -497,7 +497,7 @@ def _build_odm_xml(study_oid: str, site_oid: str,
         '<?xml version="1.0" encoding="UTF-8"?>',
         f'<ODM {ODM_NAMESPACE}',
         f'    FileType="Transactional" FileOID="UAT-{now}" CreationDateTime="{now}">',
-        f'  <ClinicalData StudyOID="{study_oid.split(chr(40))[0].strip()}" MetaDataVersionOID="null">',
+        f'  <ClinicalData StudyOID="{study_oid}" MetaDataVersionOID="null">',
         f'    <SubjectData SubjectKey="{participant_oid}" OpenClinica:StudySubjectID="{participant_id}">',
         f'      <SiteRef LocationOID="{site_oid}"/>',
     ]
