@@ -485,6 +485,8 @@ def _build_odm_xml(study_oid: str, site_oid: str,
          .setdefault(fo, {})
          .setdefault(ig, [])
          .append((item_oid, val)))
+    _n_pass = sum(len(items) for ev_d in events.values() for rk_d in ev_d.values() for fo_d in rk_d.values() for items in fo_d.values())
+    print(f"[odm-build] {_n_pass} items passed filter out of {len(rows)} rows", flush=True)
 
     # UAT start date — used as OpenClinica:StartDate for Visit-Based events.
     # Common/Unscheduled events (SE_COMMON, SE_UNSCHEDULED) don't need a
