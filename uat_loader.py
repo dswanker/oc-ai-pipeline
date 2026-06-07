@@ -599,31 +599,29 @@ async def _import_odm(subdomain: str, study_oid: str,
     # The /jobs/{uuid}/downloadFile endpoint is broken on cust1 (returns 404).
     # Instead we wait a short time and return — the caller reads back clinical
     # data after all batches are done to verify.
-    wait_s = 15
-    print(f"[uat_loader] ODM submitted {job_uuid} — waiting {wait_s}s for OC to process", flush=True)
-    await asyncio.sleep(wait_s)
-    # Attempt to poll job result with jsessionid cookie
-    poll_url = f"{base}/pages/auth/api/jobs/{job_uuid}/downloadFile"
-    poll_token = await _get_oc_token(subdomain)
-    poll_headers = {"Authorization": f"Bearer {poll_token}"}
+    # Poll for job completion — poll every 2s up to 30s
+    poll_url     = f"{base}/pages/auth/api/jobs/{job_uuid}/downloadFile"
     poll_cookies = {"JSESSIONID": jsessionid} if jsessionid else {}
-    try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            pr = await client.get(poll_url, headers=poll_headers, cookies=poll_cookies)
-        poll_body = pr.text[:1000]
-        print(f"[uat_loader] ODM job poll HTTP {pr.status_code} body={poll_body[:500]!r}", flush=True)
-        if pr.is_success and "Inserted" in pr.text:
-            inserted = pr.text.count(",Inserted")
-            failed   = pr.text.count(",Failed")
-            return {"status": "complete", "job_uuid": job_uuid, "log": pr.text,
-                    "inserted": inserted, "failed": failed}
-    except Exception as pe:
-        print(f"[uat_loader] ODM job poll error: {pe}", flush=True)
-    return {
-        "status":   "submitted",
-        "job_uuid": job_uuid,
-        "log":      "",
-    }
+    poll_interval, poll_timeout = 2, 30
+    elapsed = 0
+    while elapsed < poll_timeout:
+        await asyncio.sleep(poll_interval)
+        elapsed += poll_interval
+        try:
+            poll_token = await _get_oc_token(subdomain)
+            async with httpx.AsyncClient(timeout=15) as client:
+                pr = await client.get(
+                    poll_url,
+                    headers={"Authorization": f"Bearer {poll_token}"},
+                    cookies=poll_cookies,
+                )
+            if pr.is_success and ("Inserted" in pr.text or "Failed" in pr.text):
+                print(f"[uat_loader] ODM job done after {elapsed}s: {pr.text[:300]!r}", flush=True)
+                return {"status": "complete", "job_uuid": job_uuid, "log": pr.text}
+        except Exception as pe:
+            print(f"[uat_loader] ODM poll error at {elapsed}s: {pe}", flush=True)
+    print(f"[uat_loader] ODM job poll timed out after {poll_timeout}s", flush=True)
+    return {"status": "timeout", "job_uuid": job_uuid, "log": ""}
 
 
 # ── Clinical data read-back ───────────────────────────────────────────────────
@@ -1066,9 +1064,7 @@ async def run_uat_loader(item_id: str) -> dict:
                 f"UAT Loader: ERROR — {err} (skipping this participant)"
             )
 
-    # Give OC time to propagate all participant creations before importing
-    # data against any of them.
-    await asyncio.sleep(2)
+    # Participant creation is synchronous — no propagation delay needed
 
     # ── Pass 2: Build + import ODM for each successfully-created participant ──
     for logical_pid, rows in groups.items():
@@ -1079,16 +1075,9 @@ async def run_uat_loader(item_id: str) -> dict:
         p_suffix = logical_pid.replace("UAT-P", "P")
         run_key  = f"{site_oid}-{p_suffix}"
 
-        BATCH_SIZE = 50
-        batches = [rows[i:i+BATCH_SIZE] for i in range(0, len(rows), BATCH_SIZE)]
-        # DEBUG: limit to first batch only when UAT_DEBUG_BATCHES=1
-        if os.environ.get("UAT_DEBUG_BATCHES") == "1":
-            batches = batches[:1]
-            print(f"[uat_loader] UAT_DEBUG_BATCHES=1 — limiting to 1 batch ({len(batches[0])} rows)", flush=True)
         await append_log(
             item_id,
-            f"UAT Loader: importing ODM for {run_key} "
-            f"({len(rows)} rows in {len(batches)} batches)..."
+            f"UAT Loader: importing ODM for {run_key} ({len(rows)} rows)..."
         )
         try:
             # Validate once against the full XML before batching
@@ -1111,37 +1100,17 @@ async def run_uat_loader(item_id: str) -> dict:
             _has_se = "StudyEventData" in odm_xml_full
             _has_ig = "ItemGroupData" in odm_xml_full
             await append_log(item_id, f"UAT Loader: ODM len={len(odm_xml_full)} has_SE={_has_se} has_IG={_has_ig} start={odm_xml_full[:80]!r}")
-            batch_inserted = 0
-            batch_failed = 0
-            for b_idx, batch_rows in enumerate(batches):
-                b_num = b_idx + 1
-                odm_xml = _build_odm_xml(
-                    study_oid, created_site_oid, oc_oid, confirmed_id, batch_rows
-                )
-                await append_log(
-                    item_id,
-                    f"UAT Loader: submitting batch {b_num}/{len(batches)} "
-                    f"({len(batch_rows)} rows)..."
-                )
-                import_result = await _import_odm(
-                    subdomain, study_oid, odm_xml
-                )
-                log_csv = import_result.get("log", "")
-                # Count inserted/failed from CSV log
-                ins = sum(1 for ln in log_csv.splitlines() if ",Inserted," in ln)
-                fail = sum(1 for ln in log_csv.splitlines() if ",Failed," in ln)
-                batch_inserted += ins
-                batch_failed += fail
-                await append_log(
-                    item_id,
-                    f"UAT Loader: batch {b_num}/{len(batches)} complete — "
-                    f"Inserted={ins} Failed={fail}"
-                )
-            import_result = {
-                "status":   "completed",
-                "job_uuid": "batched",
-                "log":      f"Inserted={batch_inserted} Failed={batch_failed}",
-            }
+            # Submit full ODM in one call — no batching needed
+            import_result = await _import_odm(
+                subdomain, study_oid, odm_xml_full
+            )
+            log_csv = import_result.get("log", "")
+            ins  = sum(1 for ln in log_csv.splitlines() if ",Inserted," in ln)
+            fail = sum(1 for ln in log_csv.splitlines() if ",Failed,"  in ln)
+            await append_log(
+                item_id,
+                f"UAT Loader: ODM import complete — Inserted={ins} Failed={fail}"
+            )
             result["odm_imports"].append({
                 "participant": run_key,
                 "rows":        len(rows),
