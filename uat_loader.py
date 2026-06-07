@@ -929,16 +929,35 @@ async def run_uat_loader(item_id: str) -> dict:
     site_name = f"UAT Automation Site - {now.strftime('%Y-%m-%d %H:%M')}"
     site_oid  = f"UAT-{now.strftime('%Y%m%d-%H%M%S')}"
 
-    await append_log(item_id, f"UAT Loader: creating site '{site_name}'...")
+    # Try to reuse an existing site — fresh sites may lack published form versions
+    created_site_oid = None
     try:
-        created_site_oid = await _create_site(
-            subdomain, test_env_uuid, site_name, site_oid
-        )
-        result["site_oid"] = created_site_oid
-        await append_log(item_id, f"UAT Loader: site created → {created_site_oid}")
-    except Exception as e:
-        result["errors"].append(f"Site creation failed: {e}")
-        return result
+        _sites_url = (f"{_study_service_base(subdomain)}/api/study-environments"
+                      f"/{test_env_uuid}/sites")
+        _tok2 = await _get_oc_token(subdomain)
+        async with httpx.AsyncClient(timeout=30) as _hc:
+            _sr = await _hc.get(_sites_url, headers={"Authorization": f"Bearer {_tok2}"})
+        if _sr.is_success:
+            _existing = _sr.json() if isinstance(_sr.json(), list) else []
+            if _existing:
+                created_site_oid = (_existing[0].get("oid")
+                                    or _existing[0].get("uniqueIdentifier"))
+                await append_log(item_id,
+                    f"UAT Loader: reusing existing site → {created_site_oid}")
+    except Exception as _se:
+        await append_log(item_id, f"UAT Loader: site list failed: {_se}")
+
+    if not created_site_oid:
+        await append_log(item_id, f"UAT Loader: creating site '{site_name}'...")
+        try:
+            created_site_oid = await _create_site(
+                subdomain, test_env_uuid, site_name, site_oid
+            )
+            result["site_oid"] = created_site_oid
+            await append_log(item_id, f"UAT Loader: site created → {created_site_oid}")
+        except Exception as e:
+            result["errors"].append(f"Site creation failed: {e}")
+            return result
 
     # ── Step 4b: Activate TEST environment (PUT status → AVAILABLE) ──────
     # _activate_test_environment lives in pipeline.py; lazy-imported here
