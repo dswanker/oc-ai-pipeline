@@ -638,7 +638,7 @@ async def _fetch_clinical_data(
     base = _pages_base(subdomain)
     url  = (
         f"{base}/pages/auth/api/clinicaldata"
-        f"/{_quote(study_oid.split('(')[0].strip(), safe='')}"
+        f"/{_quote(study_oid, safe='')}"
         f"/{_quote(participant_oc_oid, safe='')}"
         f"/*/*"
         f"?clinicalData=y&includeMetadata=n&includeDN=n"
