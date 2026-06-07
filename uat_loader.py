@@ -494,28 +494,21 @@ def _build_odm_xml(study_oid: str, site_oid: str,
     UAT_VISIT_DATE = "2026-01-22"
 
     lines = [
-        '<?xml version="1.0" encoding="UTF-8"?>',
+        "<?xml version='1.0' encoding='UTF-8'?>",
         f'<ODM {ODM_NAMESPACE}',
-        f'    FileType="Transactional" FileOID="UAT-{now}" CreationDateTime="{now}">',
-        f'  <ClinicalData StudyOID="{study_oid}" MetaDataVersionOID="null">',
-        f'    <SubjectData SubjectKey="{participant_oid}" OpenClinica:StudySubjectID="{participant_id}">',
-        f'      <SiteRef LocationOID="{site_oid}"/>',
+        f'    FileOID="UAT-{now}" Description="UAT Load" CreationDateTime="{now}" FileType="Snapshot" ODMVersion="1.3">',
+        f'  <ClinicalData StudyOID="" MetaDataVersionOID="v1.0" TransactionType="Insert">',
+        f'    <SubjectData SubjectKey="{participant_id}">',
     ]
     for ev_oid, repeats in events.items():
-        is_common = ("COMMON" in ev_oid.upper() or "UNSCH" in ev_oid.upper())
-        start_date_attr = (
-            "" if is_common
-            else f' OpenClinica:StartDate="{UAT_VISIT_DATE}"'
-        )
         for repeat_key, forms in repeats.items():
             lines.append(
                 f'      <StudyEventData StudyEventOID="{ev_oid}" '
-                f'StudyEventRepeatKey="{repeat_key}"{start_date_attr}>'
+                f'StartDate="{UAT_VISIT_DATE}">'
             )
             for form_oid, igs in forms.items():
                 lines.append(
-                    f'        <FormData FormOID="{form_oid}" '
-                    f'TransactionType="Insert">'
+                    f'        <FormData FormOID="{form_oid}">'
                 )
                 for ig_oid, items in igs.items():
                     lines.append(
