@@ -173,7 +173,7 @@ UAT_COLS = [
     "Site_OID", "Participant_Key",
     # Cols 19-25 are populated by DVS skill from XLSForm metadata
     "Study_Event_OID", "Event_Repeat_Key", "Form_OID",
-    "Item_Group_OID", "Participant_ID", "Load_Order", "Load_Value",
+    "Item_Group_OID", "Item_OID", "Participant_ID", "Load_Order", "Load_Value",
 ]
 UAT_WIDTHS = {
     "UAT Case ID": 12, "Status": 12, "Related Check ID": 14, "Scenario": 32,
@@ -184,7 +184,7 @@ UAT_WIDTHS = {
     # ODM columns
     "Site_OID": 28, "Participant_Key": 30,
     "Study_Event_OID": 22, "Event_Repeat_Key": 16, "Form_OID": 16,
-    "Item_Group_OID": 22, "Participant_ID": 14, "Load_Order": 12,
+    "Item_Group_OID": 22, "Item_OID": 28, "Participant_ID": 14, "Load_Order": 12,
     "Load_Value": 22,
 }
 

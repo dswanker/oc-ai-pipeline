@@ -475,7 +475,8 @@ def _build_odm_xml(study_oid: str, site_oid: str,
             field = row.get("field_name", "").strip()
             item_oid = f"{fo}.{field}" if field else ig
         val = row.get("Load_Value", "").strip()
-        if not ev or not fo or not ig or not val:
+        # Skip placeholder and calc-input rows — not directly loadable via ODM
+        if not ev or not fo or not ig or not val or val.lower() == "(leave blank)" or "=" in val:
             continue
 
         (events
