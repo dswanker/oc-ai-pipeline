@@ -477,6 +477,10 @@ def _build_odm_xml(study_oid: str, site_oid: str,
         val = row.get("Load_Value", "").strip()
         if not ev or not fo or not ig or not val:
             continue
+        # DEBUG: log first 5 rows to verify OID format
+        _n = sum(len(list(vv.values())) for vv in events.values())
+        if _n < 5:
+            print(f"[odm-debug] ev={ev} fo={fo} ig={ig} item_oid={item_oid} val={val!r}", flush=True)
         (events
          .setdefault(ev, {})
          .setdefault(rk, {})
