@@ -719,7 +719,11 @@ def _evaluate_uat_cases(
     dvs_bytes: bytes,
     stamp_map: dict,
     clinical_data: dict,
+    job_failures: dict = None,
 ) -> bytes:
+    """
+    job_failures: {(item_oid_upper): message} from ODM job CSV Failed rows
+    """
     """
     For each row in UAT_Cases, look up the stored value in clinical_data
     and compare against Expected Result.  Writes:
@@ -760,8 +764,8 @@ def _evaluate_uat_cases(
     # Required columns
     needed = [
         "Status", "Actual Result", "Test Result", "Execution Date",
-        "Study_Event_OID", "Form_OID", "Item_Group_OID",
-        "Load_Value", "Expected Result",
+        "Study_Event_OID", "Form_OID", "Item_Group_OID", "Item_OID",
+        "Load_Value", "Expected Result", "Notes",
     ]
     if not all(c in col_idx for c in needed):
         missing = [c for c in needed if c not in col_idx]
@@ -786,35 +790,38 @@ def _evaluate_uat_cases(
             skipped += 1
             continue
 
-        # Derive item OID from Load_Value: "ITEM_OID=value" format
-        # e.g. "AEID=AE-001" → item_oid = "I_AE_AEID" or just "AEID"
-        # The DVS uses "FIELD=value" notation; item OID in OC is
-        # typically I_{FORM}_{FIELD} — try both forms.
-        item_oid_raw = lv.split("=")[0].strip().upper() if "=" in lv else ""
-        form_bare    = fo_oid.replace("F_", "", 1) if fo_oid.startswith("F_") else fo_oid
-        item_oid_long = f"I_{form_bare}_{item_oid_raw}"
-
-        # Look up stored value — try long form first, then short form
-        stored = clinical_data.get(
-            (ev_oid, fo_oid, ig_oid, item_oid_long)
-        )
-        if stored is None:
-            stored = clinical_data.get(
-                (ev_oid, fo_oid, ig_oid, item_oid_raw)
-            )
-
-        if stored is None:
-            # Item not found in read-back — leave as Not Run
+        # Use Item_OID column directly for lookup
+        item_oid = str(row[col_idx["Item_OID"] - 1].value or "").strip().upper()
+        if not item_oid:
             skipped += 1
             continue
 
-        # Simple comparison — both as stripped strings
-        # For computed/display fields expected may contain descriptive
-        # text; we check if stored value appears anywhere in expected.
+        # Lookup key — all uppercase to match _fetch_clinical_data keys
+        key = (ev_oid, fo_oid, ig_oid, item_oid)
+        stored = clinical_data.get(key)
+
+        # Check if this item failed in the ODM import job
+        job_msg = (job_failures or {}).get(item_oid, "")
+
+        if stored is None and job_msg:
+            # Item failed to import — mark as Fail with reason in Notes
+            row[col_idx["Actual Result"]  - 1].value = f"Import failed: {job_msg}"
+            row[col_idx["Test Result"]    - 1].value = "Fail"
+            row[col_idx["Status"]         - 1].value = "Fail"
+            row[col_idx["Execution Date"] - 1].value = now_str
+            row[col_idx["Notes"]          - 1].value = f"ODM import error: {job_msg}"
+            failed += 1
+            continue
+
+        if stored is None:
+            # Item not found in read-back — Not Run
+            skipped += 1
+            continue
+
+        # Compare stored value against expected
         stored_str   = str(stored).strip()
         expected_str = expected.strip()
 
-        # Match: exact OR stored value contained in expected description
         if stored_str == expected_str or stored_str in expected_str:
             result = "Pass"
             passed += 1
@@ -826,6 +833,8 @@ def _evaluate_uat_cases(
         row[col_idx["Test Result"]    - 1].value = result
         row[col_idx["Status"]         - 1].value = result
         row[col_idx["Execution Date"] - 1].value = now_str
+        if result == "Fail":
+            row[col_idx["Notes"] - 1].value = f"Expected: {expected_str!r} | Got: {stored_str!r}"
 
     print(
         f"[uat_loader] UAT evaluation: "
@@ -1200,8 +1209,21 @@ async def run_uat_loader(item_id: str) -> dict:
         await append_log(item_id,
             "UAT Loader: evaluating UAT cases against clinical data...")
         try:
+            # Build job_failures: item_oid_upper -> error message
+            _job_failures = {}
+            _all_log = ""
+            for _imp in result.get("odm_imports", []):
+                _all_log += _imp.get("result", {}).get("log", "") or ""
+            if _all_log:
+                import csv as _csv2, io as _io2
+                for _fr in _csv2.DictReader(_io2.StringIO(_all_log)):
+                    if (_fr.get("Status") or "").strip() == "Failed":
+                        _ioid = (_fr.get("ItemOID") or "").strip().upper()
+                        _msg  = (_fr.get("Message") or "").strip()
+                        if _ioid:
+                            _job_failures[_ioid] = _msg
             stamped_bytes = _evaluate_uat_cases(
-                stamped_bytes, stamp_map, clinical_data
+                stamped_bytes, stamp_map, clinical_data, _job_failures
             )
         except Exception as e:
             await append_log(item_id,
