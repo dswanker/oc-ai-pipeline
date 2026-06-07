@@ -1032,6 +1032,19 @@ async def regen_dvs_route(request: Request, background_tasks: BackgroundTasks):
                 await set_status(iid, COL["pipeline_status"], "Failed")
                 return
 
+            # 4. Debug: verify Item_OID in generated DVS
+            import openpyxl as _opxl2, io as _io2
+            _wb2 = _opxl2.load_workbook(_io2.BytesIO(dvs_bytes), read_only=True, data_only=True)
+            _ws2 = _wb2["UAT_Cases"] if "UAT_Cases" in _wb2.sheetnames else None
+            if _ws2:
+                _hdrs2 = None
+                for _ri2, _row2 in enumerate(_ws2.iter_rows(values_only=True), 1):
+                    _vals2 = [str(c).strip() if c is not None else "" for c in _row2]
+                    if _vals2 and _vals2[0] == "UAT Case ID":
+                        _hdrs2 = _vals2
+                        break
+                _has_item_oid = "Item_OID" in (_hdrs2 or [])
+                await append_log(iid, f"Regen DVS: DVS has Item_OID col={_has_item_oid} cols={len(_hdrs2 or [])}")
             # 4. Upload DVS
             fname = "DVS_regen.xlsx"
             await upload_file(iid, COL["dvs_output"], fname, dvs_bytes)
