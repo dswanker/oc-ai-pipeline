@@ -496,8 +496,8 @@ def _build_odm_xml(study_oid: str, site_oid: str,
     lines = [
         "<?xml version='1.0' encoding='UTF-8'?>",
         f'<ODM {ODM_NAMESPACE}',
-        f'    FileOID="UAT-{now}" Description="UAT Load" CreationDateTime="{now}" FileType="Snapshot" ODMVersion="1.3">',
-        f'  <ClinicalData StudyOID="" MetaDataVersionOID="v1.0" TransactionType="Insert">',
+        f'    FileOID="UAT-{now}" CreationDateTime="{now}" FileType="Snapshot">',
+        f'  <ClinicalData StudyOID="" MetaDataVersionOID="v1.0">',
         f'    <SubjectData SubjectKey="{participant_id}">',
     ]
     for ev_oid, repeats in events.items():
