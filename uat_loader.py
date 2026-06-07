@@ -497,7 +497,7 @@ def _build_odm_xml(study_oid: str, site_oid: str,
         '<?xml version="1.0" encoding="UTF-8"?>',
         f'<ODM {ODM_NAMESPACE}',
         f'    FileType="Transactional" FileOID="UAT-{now}" CreationDateTime="{now}">',
-        f'  <ClinicalData StudyOID="{study_oid}" MetaDataVersionOID="null">',
+        f'  <ClinicalData StudyOID="{study_oid.split(chr(40))[0].strip()}" MetaDataVersionOID="null">',
         f'    <SubjectData SubjectKey="{participant_oid}" OpenClinica:StudySubjectID="{participant_id}">',
         f'      <SiteRef LocationOID="{site_oid}"/>',
     ]
@@ -638,7 +638,7 @@ async def _fetch_clinical_data(
     base = _pages_base(subdomain)
     url  = (
         f"{base}/pages/auth/api/clinicaldata"
-        f"/{_quote(study_oid, safe='')}"
+        f"/{_quote(study_oid.split('(')[0].strip(), safe='')}"
         f"/{_quote(participant_oc_oid, safe='')}"
         f"/*/*"
         f"?clinicalData=y&includeMetadata=n&includeDN=n"
@@ -901,9 +901,6 @@ async def run_uat_loader(item_id: str) -> dict:
     if not study_uuid:
         result["errors"].append("Study UUID is blank — run the pipeline first.")
         return result
-    # Strip environment suffix — OC stores "S_CRS135_8497(TEST)" but
-    # ODM import and clinical data API use the bare OID "S_CRS135_8497"
-    study_oid = study_oid.split("(")[0].strip()
     if not study_oid:
         result["errors"].append("Study OID is blank — publish to Test first.")
         return result
