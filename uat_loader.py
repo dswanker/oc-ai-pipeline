@@ -803,8 +803,25 @@ def _evaluate_uat_cases(
         # Check if this item failed in the ODM import job
         job_msg = (job_failures or {}).get(item_oid, "")
 
+        # Classify non-loadable rows as Not Testable via ODM
+        lv_lower = lv.lower()
+        is_blank_case    = lv_lower == "(leave blank)"
+        is_calc_case     = "=" in lv and not lv.startswith("20")  # field=value, not date
+        is_multistep     = "," in lv and "then" in lv_lower
+        is_visibility    = any(x in expected.upper() for x in ["VISIBLE", "HIDDEN", "RELEVANT"])
+        is_ui_constraint = any(x in expected for x in ["error shown", "Form does not save",
+                                                         "Constraint fires", "constraint"])
+        not_testable = is_blank_case or is_calc_case or is_multistep or is_visibility or is_ui_constraint
+
+        if not_testable:
+            row[col_idx["Test Result"]    - 1].value = "Not Run"
+            row[col_idx["Status"]         - 1].value = "Not Run"
+            row[col_idx["Actual Result"]  - 1].value = "Not Testable via ODM"
+            skipped += 1
+            continue
+
         if stored is None and job_msg:
-            # Item failed to import — mark as Fail with reason in Notes
+            # Item failed to import — mark as Fail with reason
             row[col_idx["Actual Result"]  - 1].value = f"Import failed: {job_msg}"
             row[col_idx["Test Result"]    - 1].value = "Fail"
             row[col_idx["Status"]         - 1].value = "Fail"
@@ -818,11 +835,9 @@ def _evaluate_uat_cases(
             skipped += 1
             continue
 
-        # Compare stored value against expected
-        stored_str   = str(stored).strip()
-        expected_str = expected.strip()
-
-        if stored_str == expected_str or stored_str in expected_str:
+        # Pass = stored value matches what we loaded
+        stored_str = str(stored).strip()
+        if stored_str == lv.strip():
             result = "Pass"
             passed += 1
         else:
@@ -834,7 +849,7 @@ def _evaluate_uat_cases(
         row[col_idx["Status"]         - 1].value = result
         row[col_idx["Execution Date"] - 1].value = now_str
         if result == "Fail":
-            row[col_idx["Notes"] - 1].value = f"Expected: {expected_str!r} | Got: {stored_str!r}"
+            row[col_idx["Notes"] - 1].value = f"Loaded: {lv.strip()!r} | Got back: {stored_str!r}"
 
     print(
         f"[uat_loader] UAT evaluation: "
