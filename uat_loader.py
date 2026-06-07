@@ -503,8 +503,7 @@ def _build_odm_xml(study_oid: str, site_oid: str,
     for ev_oid, repeats in events.items():
         for repeat_key, forms in repeats.items():
             lines.append(
-                f'      <StudyEventData StudyEventOID="{ev_oid}" '
-                f'StartDate="{UAT_VISIT_DATE}">'
+                f'      <StudyEventData StudyEventOID="{ev_oid}">'
             )
             for form_oid, igs in forms.items():
                 lines.append(
