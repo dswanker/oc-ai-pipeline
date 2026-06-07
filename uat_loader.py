@@ -602,7 +602,7 @@ async def _import_odm(subdomain: str, study_oid: str,
     # The /jobs/{uuid}/downloadFile endpoint is broken on cust1 (returns 404).
     # Instead we wait a short time and return — the caller reads back clinical
     # data after all batches are done to verify.
-    wait_s = 5
+    wait_s = 15
     print(f"[uat_loader] ODM submitted {job_uuid} — waiting {wait_s}s for OC to process", flush=True)
     await asyncio.sleep(wait_s)
     return {
