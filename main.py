@@ -1055,6 +1055,7 @@ async def regen_dvs_route(request: Request, background_tasks: BackgroundTasks):
             await set_status(iid, COL["pipeline_status"], "Loading UAT Data")
             from uat_loader import run_uat_loader
             await run_uat_loader(iid)
+            await set_status(iid, COL["pipeline_status"], "All Complete")
 
         except Exception as exc:
             import traceback
