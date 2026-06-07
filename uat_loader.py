@@ -261,7 +261,9 @@ async def _create_participant(subdomain: str, study_oid: str,
                 f"HTTP {resp.status_code} — body: {resp.text[:300]}"
             )
     try:
-        return resp.json().get("subjectKey") or subject_key
+        body = resp.json()
+        print(f"[uat_loader] _create_participant response: {body}", flush=True)
+        return body.get("subjectKey") or subject_key
     except Exception:
         return subject_key
 
