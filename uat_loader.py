@@ -940,10 +940,11 @@ async def run_uat_loader(item_id: str) -> dict:
         if _sr.is_success:
             _existing = _sr.json() if isinstance(_sr.json(), list) else []
             if _existing:
-                created_site_oid = (_existing[0].get("oid")
-                                    or _existing[0].get("uniqueIdentifier"))
+                _s0 = _existing[0]
+                created_site_oid = (_s0.get("oid") or _s0.get("uniqueIdentifier")
+                                    or _s0.get("siteOid") or _s0.get("id"))
                 await append_log(item_id,
-                    f"UAT Loader: reusing existing site → {created_site_oid}")
+                    f"UAT Loader: reusing existing site → {created_site_oid} keys={list(_s0.keys())[:6]}")
     except Exception as _se:
         await append_log(item_id, f"UAT Loader: site list failed: {_se}")
 
