@@ -218,9 +218,13 @@ async def run_playwright_uat(
                 await page.goto(url, timeout=NAV_TIMEOUT,
                                 wait_until="domcontentloaded")
                 await page.wait_for_timeout(WAIT_MS)
+                actual_url = page.url
+                page_title = await page.title()
+                print(f"[pw-uat] landed: {actual_url[:120]} title={page_title!r}", flush=True)
                 nav_ok = True
             except Exception as e:
                 print(f"[pw-uat] nav failed {fo}/{ev}: {e}", flush=True)
+                print(f"[pw-uat] attempted URL: {url}", flush=True)
 
             for row, row_dict, test_type in form_rows:
                 uid  = str(row_dict.get("UAT Case ID") or "")
