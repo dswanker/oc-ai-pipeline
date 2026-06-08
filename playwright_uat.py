@@ -329,7 +329,7 @@ async def run_playwright_uat(
             try:
                 await page.goto(url, timeout=NAV_TIMEOUT,
                                 wait_until="domcontentloaded")
-                await page.wait_for_timeout(5000)
+                await page.wait_for_timeout(2000)  # brief pause for srcdoc to initialize
                 actual_url = page.url
                 page_title = await page.title()
                 print(f"[pw-uat] landed: {actual_url[:120]} title={page_title!r}", flush=True)
@@ -342,7 +342,8 @@ async def run_playwright_uat(
                 # Form cards are in the about:srcdoc iframe (frame[1], ~145KB, same-origin).
                 # frame[0] is hub.html (CORS-blocked, CrossStorage bridge only).
                 # Poll the srcdoc frame for [title^="Edit {ABBREV}"] to appear.
-                _poll_max = 20
+                # Poll up to 30s — srcdoc starts ~57KB and grows to ~145KB+ as data loads
+                _poll_max = 30
                 _elapsed = 0.0
                 while _elapsed < _poll_max:
                     try:
