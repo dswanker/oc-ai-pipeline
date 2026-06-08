@@ -286,26 +286,39 @@ async def run_playwright_uat(
                 form_abbrev = fo.replace("F_", "", 1) if fo.startswith("F_") else fo
                 form_frame = page  # fallback
                 app_frame = None
-                # Wait for Angular app iframe to load (it may not be ready immediately)
-                await page.wait_for_timeout(2000)
+                # hub.html is an SPA loader — wait for it to render the Angular app
+                # Find the hub.html frame first
+                hub_frame = None
                 for f_obj in page.frames:
+                    if "hub.html" in f_obj.url:
+                        hub_frame = f_obj
+                        break
+
+                if hub_frame:
+                    # Wait for Angular app to render form cards inside hub.html
                     try:
-                        body_len = await f_obj.evaluate("() => document.body ? document.body.innerHTML.length : 0")
-                        f_url = f_obj.url
-                        print(f"[pw-uat] frame url={f_url[:60]} len={body_len}", flush=True)
-                        if body_len > 100000:
-                            app_frame = f_obj
-                            # Verify it has the OC4 Angular form cards
-                            has_edit = await f_obj.evaluate(
-                                "() => document.querySelector('[title^=\'Edit \']') !== null"
-                            )
-                            if has_edit:
-                                print(f"[pw-uat] found Angular app frame (len={body_len})", flush=True)
-                                break
-                            else:
-                                app_frame = None  # wrong large frame
-                    except Exception as _fe:
-                        pass  # some frames may not be accessible
+                        await hub_frame.wait_for_selector(
+                            "[title^='Edit ']",
+                            timeout=15000
+                        )
+                        app_frame = hub_frame
+                        print(f"[pw-uat] Angular app loaded in hub.html", flush=True)
+                    except Exception as _he:
+                        # Try waiting longer and checking body size
+                        await page.wait_for_timeout(5000)
+                        try:
+                            body_len = await hub_frame.evaluate(
+                                "() => document.body ? document.body.innerHTML.length : 0")
+                            print(f"[pw-uat] hub.html after wait: len={body_len}", flush=True)
+                            has_edit = await hub_frame.evaluate(
+                                "() => !!document.querySelector('[title]')")
+                            print(f"[pw-uat] hub.html has [title]: {has_edit}", flush=True)
+                            if body_len > 10000:
+                                app_frame = hub_frame
+                        except Exception as _he2:
+                            print(f"[pw-uat] hub.html wait failed: {_he2}", flush=True)
+                else:
+                    print(f"[pw-uat] hub.html frame not found", flush=True)
 
                 if app_frame:
                     # Click the form card to open the form
