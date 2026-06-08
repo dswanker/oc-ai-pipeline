@@ -1290,20 +1290,14 @@ async def run_uat_loader(item_id: str) -> dict:
         await append_log(item_id,
             f"UAT Loader: Playwright UAT skipped — {_pw_err}")
 
-    # Surface Playwright session status to Monday log
+    # If no session file, let user know how to get Playwright tests enabled
     import os as _os2
     _oc_email = (cols.get("emailothn6i3m") or {}).get("text", "") or ""
     _sess_file = f"/data/browser_sessions/{_oc_email}.json"
     if _oc_email and not _os2.path.exists(_sess_file):
         await append_log(item_id,
-            "⚠️ Playwright UI tests unavailable — no browser session on file. "
-            "Run a full pipeline build first to create one, then re-run UAT.")
-    elif _oc_email and _os2.path.exists(_sess_file):
-        _age_h = (datetime.datetime.now().timestamp() - _os2.path.getmtime(_sess_file)) / 3600
-        if _age_h > 8:
-            await append_log(item_id,
-                f"⚠️ Playwright UI tests unavailable — browser session is {_age_h:.1f}h old. "
-                f"Run a full pipeline build or POST /admin/refresh-session, then re-run UAT.")
+            "⚠️ Playwright UI tests skipped — no browser session on file. "
+            "Run a full pipeline build from Monday to enable them.")
 
     # ── Step 9b: Evaluate UAT cases (Pass/Fail) ───────────────────────────
     if clinical_data:
