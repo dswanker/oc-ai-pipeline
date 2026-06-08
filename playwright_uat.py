@@ -352,11 +352,11 @@ async def run_playwright_uat(
                         )
                         if srcdoc_frame:
                             has_edit = await srcdoc_frame.evaluate(
-                                "() => !!document.querySelector('[title^=\'Edit \']')")
+                                '() => !!document.querySelector(\'[title^="Edit "]\')')
                             if has_edit:
                                 app_frame = srcdoc_frame
                                 n = await srcdoc_frame.evaluate(
-                                    "() => document.querySelectorAll('[title^=\'Edit \']').length")
+                                    '() => document.querySelectorAll(\'[title^="Edit "]\').length')
                                 print(f"[pw-uat] srcdoc frame ready after {_elapsed:.1f}s ({n} Edit elements)", flush=True)
                                 break
                             if _elapsed == 0 or _elapsed % 5 == 0:
