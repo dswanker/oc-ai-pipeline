@@ -343,6 +343,18 @@ async def run_playwright_uat(
                 # Log localStorage on eu domain to check for jhi-idtoken
                 eu_ls = await page.evaluate("() => Object.keys(localStorage).join(',')")
                 print(f"[pw-uat] eu localStorage keys: {eu_ls}", flush=True)
+                # Log iframe details to understand why participants-details-page doesn't load
+                iframe_info = await page.evaluate("""() => {
+                    const iframes = document.querySelectorAll('iframe');
+                    return Array.from(iframes).map((f,i) => ({
+                        i,
+                        id: f.id || '',
+                        src: (f.getAttribute('src') || '').substring(0,80),
+                        hasSrcdoc: !!f.getAttribute('srcdoc'),
+                        name: f.name || ''
+                    }));
+                }""")
+                print(f"[pw-uat] iframes: {iframe_info}", flush=True)
 
                 # Form abbreviation: F_DM -> DM, F_AE -> AE etc.
                 form_abbrev = fo.replace("F_", "", 1) if fo.startswith("F_") else fo
