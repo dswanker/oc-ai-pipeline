@@ -27,7 +27,26 @@ WAIT_MS      = 2_000    # ms after navigation before reading
 
 
 def _legacy_base(subdomain: str) -> str:
+    """Read bridge_url from customer_uuids.csv — handles eu/us/ap regions."""
+    from pathlib import Path as _Path
+    import csv as _csv
+    csv_path = _Path(__file__).parent / "references" / "customer_uuids.csv"
+    if csv_path.exists():
+        with open(csv_path, newline="") as _f:
+            for _row in _csv.DictReader(_f):
+                if _row.get("subdomain", "").lower() == subdomain.lower():
+                    bridge = _row.get("bridge_url", "").rstrip("/")
+                    if bridge:
+                        return bridge
+    # Fallback to eu if not in CSV
     return f"https://{subdomain}.eu.openclinica.io/OpenClinica"
+
+
+def _legacy_host(subdomain: str) -> str:
+    """Return just the hostname (no path) for cookie domain setting."""
+    base = _legacy_base(subdomain)
+    from urllib.parse import urlparse as _up
+    return _up(base).netloc  # e.g. cust1.eu.openclinica.io
 
 
 def _form_entry_url(subdomain: str, subject_oid: str, event_oid: str,
@@ -243,7 +262,7 @@ async def run_playwright_uat(
                 await context.add_cookies([{
                     "name": "JSESSIONID",
                     "value": jsessionid,
-                    "domain": f"{subdomain}.eu.openclinica.io",
+                    "domain": _legacy_host(subdomain),
                     "path": "/OpenClinica",
                     "httpOnly": True,
                     "secure": True,

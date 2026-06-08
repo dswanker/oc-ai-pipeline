@@ -3507,7 +3507,16 @@ async def run_pipeline(item_id):
                             pass
             if not _am.session_exists(_oc_email_early):
                 _oc_sub_for_link = (cols.get(COL.get("oc_subdomain","text_mm3aa7cx"), {}).get("text") or "").strip()
-                _clinical_host = f"{_oc_sub_for_link}.eu.openclinica.io" if _oc_sub_for_link else ""
+                # Derive clinical host from CSV (region-aware)
+                _clinical_host = ""
+                if _oc_sub_for_link:
+                    from uat_loader import _pages_base as _pb
+                    try:
+                        _bridge = _pb(_oc_sub_for_link)
+                        from urllib.parse import urlparse as _up2
+                        _clinical_host = _up2(_bridge).netloc
+                    except Exception:
+                        _clinical_host = f"{_oc_sub_for_link}.eu.openclinica.io"
                 _auth_link = _am.generate_auth_link(
                     _oc_email_early,
                     "https://oc-ai-pipeline-production.up.railway.app",
