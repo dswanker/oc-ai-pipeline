@@ -334,38 +334,46 @@ async def run_playwright_uat(
                 page_title = await page.title()
                 print(f"[pw-uat] landed: {actual_url[:120]} title={page_title!r}", flush=True)
 
-                # Poll main page for form cards
                 # Form abbreviation: F_DM -> DM, F_AE -> AE etc.
                 form_abbrev = fo.replace("F_", "", 1) if fo.startswith("F_") else fo
                 form_frame = page  # fallback
                 app_frame = None
-                # Find hub.html iframe — Angular SPA embedded in legacy eu page.
-                # hub.html renders with build app cookies from saved session.
-                # hub.html is a CrossStorage bridge (974 bytes, always static).
-                # Form content renders in the MAIN PAGE via cross-storage reads
-                # from build.openclinica.io localStorage through that bridge.
-                # Poll main page for [title^="Edit "] form cards to appear.
+
+                # Form cards are in the about:srcdoc iframe (frame[1], ~145KB, same-origin).
+                # frame[0] is hub.html (CORS-blocked, CrossStorage bridge only).
+                # Poll the srcdoc frame for [title^="Edit {ABBREV}"] to appear.
                 _poll_max = 20
                 _elapsed = 0.0
                 while _elapsed < _poll_max:
                     try:
-                        has_edit = await page.evaluate(
-                            "() => !!document.querySelector('[title^=\'Edit \']')")
-                        if has_edit:
-                            app_frame = page
-                            print(f"[pw-uat] form cards ready after {_elapsed:.1f}s", flush=True)
-                            break
-                        body_len = await page.evaluate(
-                            "() => document.body ? document.body.innerHTML.length : 0")
-                        if _elapsed == 0 or _elapsed % 5 == 0:
-                            txt = await page.evaluate("() => document.body ? document.body.innerText.substring(0,300) : 'no body'")
-                            print(f"[pw-uat] main page t={_elapsed:.0f}s len={body_len} url={page.url[:80]} text={txt!r}", flush=True)
-                    except Exception:
-                        pass
+                        srcdoc_frame = next(
+                            (f for f in page.frames if f.url == "about:srcdoc"),
+                            None
+                        )
+                        if srcdoc_frame:
+                            has_edit = await srcdoc_frame.evaluate(
+                                "() => !!document.querySelector('[title^=\'Edit \']')")
+                            if has_edit:
+                                app_frame = srcdoc_frame
+                                n = await srcdoc_frame.evaluate(
+                                    "() => document.querySelectorAll('[title^=\'Edit \']').length")
+                                print(f"[pw-uat] srcdoc frame ready after {_elapsed:.1f}s ({n} Edit elements)", flush=True)
+                                break
+                            if _elapsed == 0 or _elapsed % 5 == 0:
+                                body_len = await srcdoc_frame.evaluate(
+                                    "() => document.body ? document.body.innerHTML.length : 0")
+                                print(f"[pw-uat] srcdoc t={_elapsed:.0f}s len={body_len}", flush=True)
+                        else:
+                            if _elapsed == 0 or _elapsed % 5 == 0:
+                                all_frames = [f.url[:60] for f in page.frames]
+                                print(f"[pw-uat] t={_elapsed:.0f}s no srcdoc frame yet. frames={all_frames}", flush=True)
+                    except Exception as _pe:
+                        if _elapsed == 0:
+                            print(f"[pw-uat] poll error: {_pe}", flush=True)
                     await asyncio.sleep(1.0)
                     _elapsed += 1.0
                 if not app_frame:
-                    print(f"[pw-uat] form cards not found after {_poll_max}s", flush=True)
+                    print(f"[pw-uat] srcdoc frame not ready after {_poll_max}s", flush=True)
 
                 if app_frame:
                     # Click the form card to open the form
