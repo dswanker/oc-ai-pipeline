@@ -30,26 +30,14 @@ def _legacy_base(subdomain: str) -> str:
     return f"https://{subdomain}.eu.openclinica.io/OpenClinica"
 
 
-def _participant_url(subdomain: str, subject_oid: str) -> str:
-    """
-    Navigate to the participant page in the build app (same domain as session).
-    The session from oc_form_publisher covers cust1.build.openclinica.io.
-    Navigating within the build app avoids cross-domain iframe issues.
-    """
-    return f"https://{subdomain}.build.openclinica.io/#/participants/{subject_oid}"
-
 def _form_entry_url(subdomain: str, subject_oid: str, event_oid: str,
                     form_oid: str, study_uuid: str = "",
                     study_env_uuid: str = "") -> str:
     """
-    Use the build app participant page (same origin as saved session).
-    Falls back to legacy page if study UUIDs not available.
+    OC data entry lives on the legacy eu.openclinica.io interface.
+    The form renders inside hub.html which needs both eu and build cookies.
+    Both are captured when the user authenticates with the legacy tab open.
     """
-    if study_uuid and study_env_uuid:
-        return (f"https://{subdomain}.build.openclinica.io/"
-                f"#/studies/{study_uuid}/environments/test"
-                f"/participants/{subject_oid}")
-    # Legacy fallback
     base = _legacy_base(subdomain)
     return (f"{base}/ParticipantDetailsPage?"
             f"participantOid={subject_oid}&enketoOpen=true"
@@ -311,17 +299,13 @@ async def run_playwright_uat(
                 form_abbrev = fo.replace("F_", "", 1) if fo.startswith("F_") else fo
                 form_frame = page  # fallback
                 app_frame = None
-                # When navigating directly to build app, main page IS the Angular app.
-                # When on legacy eu page, look for hub.html iframe.
+                # Find hub.html iframe — Angular SPA embedded in legacy eu page.
+                # hub.html renders with build app cookies from saved session.
                 hub_frame = None
-                if "build.openclinica.io" in page.url:
-                    hub_frame = page
-                    print(f"[pw-uat] using build app main page directly", flush=True)
-                else:
-                    for f_obj in page.frames:
-                        if "hub.html" in f_obj.url:
-                            hub_frame = f_obj
-                            break
+                for f_obj in page.frames:
+                    if "hub.html" in f_obj.url:
+                        hub_frame = f_obj
+                        break
 
                 if hub_frame:
                     # Poll for Angular SPA to render (max 30s, 1s intervals)

@@ -167,8 +167,17 @@ def render_instructions_page(token: str, email: str,
         f"OpenClinica session before it can publish forms. Steps below take ~90 seconds."
     )
 
-    # No extra step needed for UAT — extension v1.0.1 sweeps all tabs
-    clinical_step = ""
+    # For UAT: add a step to open the legacy data entry interface so its
+    # session cookies get captured alongside the build app cookies.
+    if is_uat and clinical_host:
+        clinical_step = (
+            f'<li>Open this tab in your browser (keep it open): '
+            f'<a href="https://{clinical_host}/OpenClinica/MainMenu" '
+            f'target="_blank" class="designer">https://{clinical_host}/OpenClinica/MainMenu</a> '
+            f'— this captures the data entry session needed for UI testing.</li>'
+        )
+    else:
+        clinical_step = ""
 
     return f"""<!DOCTYPE html>
 <html>

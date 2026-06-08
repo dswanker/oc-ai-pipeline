@@ -3506,10 +3506,17 @@ async def run_pipeline(item_id):
                         except OSError:
                             pass
             if not _am.session_exists(_oc_email_early):
+                _oc_sub_for_link = (cols.get(COL.get("oc_subdomain","text_mm3aa7cx"), {}).get("text") or "").strip()
+                _clinical_host = f"{_oc_sub_for_link}.eu.openclinica.io" if _oc_sub_for_link else ""
                 _auth_link = _am.generate_auth_link(
                     _oc_email_early,
                     "https://oc-ai-pipeline-production.up.railway.app",
+                    context="uat",
                 )
+                # Include clinical host in link so instructions page can show it
+                if _clinical_host:
+                    from urllib.parse import urlencode as _ue
+                    _auth_link += "&clinical_host=" + _clinical_host
                 await append_log(item_id,
                     f"⚠️ Authentication Required\n\n"
                     f"Click here to authenticate your OpenClinica account:\n"
