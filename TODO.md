@@ -27,10 +27,14 @@ Items listed roughly in priority order. Move to DONE when complete.
 **Where:** `playwright_uat.py` — add `_open_repeat_group()` helper called before field interactions for repeat-group forms.
 **Added:** 2026-06-08
 
-### Playwright UAT — Selector Tuning
-**What:** First Playwright run will reveal whether the OC data entry URL format and field selectors in `playwright_uat.py` are correct.
-**Where:** `playwright_uat.py` — `_form_entry_url()`, `_fill_and_save()`, `_is_field_visible()`, `_read_field_errors()`
-**Notes:** OC legacy form URL pattern needs verification against actual rendered HTML. Field selectors may need adjustment based on OC's actual DOM structure.
+### Playwright UAT — Form navigation (open Enketo form)
+**What:** ParticipantDetailsPage loads participant summary, not an open form. Playwright needs to click the specific form link to open it in Enketo before reading UI state.
+**Timing impact:** Without fix — 10s timeout per form × 24 forms = ~4 min overhead. With fix — ~3s per form click = ~72s total. Full Playwright run target: ~3 min.
+**Current total run time:** ~10-11 min (ODM ~51s + Playwright ~8-10 min). Target: ~4 min.
+**Options:**
+- (A) Playwright clicks form link in hub.html iframe after landing on ParticipantDetailsPage
+- (B) Find direct Enketo form URL — bypasses participant details page
+**Where:** `playwright_uat.py` — `_form_entry_url()`, nav block, form_frame detection
 **Added:** 2026-06-08
 
 ### Calc Fields returning 0 (ODISUM, PCSTOT, PHQTOT, AGE)
