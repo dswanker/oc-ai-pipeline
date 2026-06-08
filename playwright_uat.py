@@ -410,7 +410,7 @@ async def run_playwright_uat(
                     # form.eu.openclinica.io — no click needed for non-repeating events.
                     # Poll for that iframe to appear in page.frames.
                     form_frame = None
-                    for _t in range(20):
+                    for _t in range(30):
                         try:
                             for _f in page.frames:
                                 if 'form.' in _f.url and 'openclinica' in _f.url:
@@ -420,15 +420,26 @@ async def run_playwright_uat(
                                     break
                             if form_frame:
                                 break
-                            if _t == 0 or _t % 5 == 0:
+                            # Also check study-runner-ui DOM for nested form iframe src
+                            if app_frame:
+                                try:
+                                    inner = await app_frame.evaluate("""() =>
+                                        Array.from(document.querySelectorAll('iframe'))
+                                            .map(f => f.src).filter(s => s.includes('form.'))
+                                    """)
+                                    if inner and _t % 5 == 0:
+                                        print(f"[pw-uat] form src in DOM at t={_t}s: {inner[0][:70]}", flush=True)
+                                except Exception:
+                                    pass
+                            if _t % 5 == 0:
                                 frame_urls = [_f.url[:50] for _f in page.frames]
-                                print(f"[pw-uat] waiting for form iframe t={_t}s frames={frame_urls}", flush=True)
+                                print(f"[pw-uat] t={_t}s frames={frame_urls}", flush=True)
                         except Exception as _fe:
                             if _t == 0:
                                 print(f"[pw-uat] form iframe poll error: {_fe}", flush=True)
                         await page.wait_for_timeout(1000)
                     if not form_frame:
-                        print(f"[pw-uat] Enketo iframe not found after 20s", flush=True)
+                        print(f"[pw-uat] Enketo iframe not found after 30s", flush=True)
                         form_frame = app_frame
                 else:
                     print(f"[pw-uat] Angular app frame not found", flush=True)
