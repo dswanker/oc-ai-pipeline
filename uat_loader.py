@@ -1253,6 +1253,23 @@ async def run_uat_loader(item_id: str) -> dict:
     else:
         stamped_bytes = dvs_bytes
 
+    # ── Step 9a: Playwright UAT for UI-only test cases ──────────────────
+    try:
+        from playwright_uat import run_playwright_uat
+        oc_email = (cols.get(COL.get("oc_email", "emailothn6i3m"), {}).get("text") or "").strip()
+        # Use the first participant's OC OID for Playwright
+        _first_oc_oid = next(iter(stamp_map.values()), {}).get("oc_oid", "")
+        if _first_oc_oid:
+            await append_log(item_id,
+                "UAT Loader: running Playwright UAT for UI-only cases...")
+            stamped_bytes = await run_playwright_uat(
+                stamped_bytes if stamp_map else dvs_bytes,
+                subdomain, _first_oc_oid, oc_email, stamp_map,
+            )
+    except Exception as _pw_err:
+        await append_log(item_id,
+            f"UAT Loader: Playwright UAT skipped — {_pw_err}")
+
     # ── Step 9b: Evaluate UAT cases (Pass/Fail) ───────────────────────────
     if clinical_data:
         await append_log(item_id,
