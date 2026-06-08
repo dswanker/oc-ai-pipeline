@@ -12,6 +12,16 @@ Items listed roughly in priority order. Move to DONE when complete.
 **Notes:** ILS controls which roles/users can see individual items on a form. Needs to be part of the automated build so it doesn't have to be configured manually post-build.
 **Added:** 2026-06-08
 
+### AE Form: no fields visible in OC4 TEST environment
+**What:** Opening the AE form for a UAT participant shows only the group header "Adverse Event / Adverse Device Effect" with no fields and no way to add an entry. Close/Complete buttons only.
+**Observed:** 2026-06-08 on participant UAT-20260608-124957-P001 in cust1 TEST env.
+**Possible causes:**
+- Repeat group not configured with min-count=0 / appearance=minimal — form starts collapsed with no add button
+- SE_COMMON event not properly scheduled/opened for the participant
+- Form version not published to the TEST site being used
+**Investigate:** Compare AE XLSForm repeat group settings against a working form. Check if SE_COMMON has been properly activated for UAT participants.
+**Added:** 2026-06-08
+
 ### Playwright UAT — Repeating group handling
 **What:** Forms with repeat groups (AE, AESAE, CM, MH, DV) start empty — Playwright needs to click "Add" to create a new repeat instance before fields appear.
 **Where:** `playwright_uat.py` — add `_open_repeat_group()` helper called before field interactions for repeat-group forms.
