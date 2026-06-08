@@ -419,9 +419,9 @@ async def run_playwright_uat(
                         await page.wait_for_timeout(2000)
                         _sel = f'[title="Edit {form_abbrev}"]'
                         _pre_url = app_frame.url
-                        await app_frame.evaluate(
-                            f"() => {{ const el = document.querySelector('{_sel}'); if(el) el.click(); }}"
-                        )
+                        # Use force=True to bypass the iframe-container overlay — fires real
+                        # pointer events that Angular's Zone.js can intercept (unlike JS .click())
+                        await app_frame.click(edit_sel, force=True)
                         await page.wait_for_timeout(500)
                         _post_url = app_frame.url
                         print(f"[pw-uat] clicked {edit_sel} | pre={_pre_url[-30:]} post={_post_url[-30:]}", flush=True)
