@@ -252,6 +252,8 @@ async def run_playwright_uat(
     passed = failed = skipped = 0
 
     async with async_playwright() as p:
+        build_base = f"https://{subdomain}.build.openclinica.io"
+
         browser = await p.chromium.launch(headless=True)
         if has_session:
             # Saved session has cookies for build app (cust1.build.openclinica.io)
@@ -292,6 +294,22 @@ async def run_playwright_uat(
             ev = str(row_dict.get("Study_Event_OID") or "").strip()
             by_form[(fo, ev)].append((row, row_dict, test_type))
 
+        # Warm up build app first — participant matrix on eu page requires
+        # build app localStorage to be populated via CrossStorage before it renders.
+        print(f"[pw-uat] warming up build app session...", flush=True)
+        warm_page = await context.new_page()
+        try:
+            await warm_page.goto(
+                f"{build_base}/#/account-study",
+                timeout=30000, wait_until="networkidle"
+            )
+            await warm_page.wait_for_timeout(3000)
+            print(f"[pw-uat] build app ready: {warm_page.url}", flush=True)
+        except Exception as _we:
+            print(f"[pw-uat] build app warmup warning: {_we}", flush=True)
+        finally:
+            await warm_page.close()
+
         for (fo, ev), form_rows in by_form.items():
             print(f"[pw-uat] {fo}/{ev} — {len(form_rows)} rows", flush=True)
 
@@ -303,17 +321,12 @@ async def run_playwright_uat(
             try:
                 await page.goto(url, timeout=NAV_TIMEOUT,
                                 wait_until="domcontentloaded")
-                await page.wait_for_timeout(3000)
+                await page.wait_for_timeout(5000)
                 actual_url = page.url
                 page_title = await page.title()
                 print(f"[pw-uat] landed: {actual_url[:120]} title={page_title!r}", flush=True)
 
-                # OC4 renders forms via Enketo in an iframe
-                # Wait for the Enketo iframe to appear
-                # Form renders in about:srcdoc iframe (same-origin, accessible)
-                # Wait for it to load, then switch to that frame
-                await page.wait_for_timeout(3000)
-                # Switch into the OC4 Angular app iframe (iframe[0], ~196KB)
+                # Poll main page for form cards
                 # Form abbreviation: F_DM -> DM, F_AE -> AE etc.
                 form_abbrev = fo.replace("F_", "", 1) if fo.startswith("F_") else fo
                 form_frame = page  # fallback
@@ -324,7 +337,7 @@ async def run_playwright_uat(
                 # Form content renders in the MAIN PAGE via cross-storage reads
                 # from build.openclinica.io localStorage through that bridge.
                 # Poll main page for [title^="Edit "] form cards to appear.
-                _poll_max = 15
+                _poll_max = 20
                 _elapsed = 0.0
                 while _elapsed < _poll_max:
                     try:
