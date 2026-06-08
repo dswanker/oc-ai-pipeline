@@ -1264,9 +1264,12 @@ async def run_uat_loader(item_id: str) -> dict:
         if _first_oc_oid:
             await append_log(item_id,
                 "UAT Loader: running Playwright UAT for UI-only cases...")
+            # Get a fresh token for Playwright auth
+            _pw_token = await _get_oc_token(subdomain)
             stamped_bytes = await run_playwright_uat(
                 stamped_bytes if stamp_map else dvs_bytes,
                 subdomain, _first_oc_oid, oc_email, stamp_map,
+                bearer_token=_pw_token,
             )
     except Exception as _pw_err:
         await append_log(item_id,

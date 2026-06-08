@@ -149,16 +149,19 @@ async def run_playwright_uat(
     subject_oid: str,
     user_email: str,
     stamp_map: dict,
+    bearer_token: str = "",
 ) -> bytes:
     """
     Run Playwright UAT. ODM has already loaded all field values.
     Playwright navigates to forms and reads UI state.
+    Uses bearer_token for auth (preferred) or falls back to saved session file.
     """
     from playwright.async_api import async_playwright
 
     session_path = os.path.join(SESSION_DIR, f"{user_email}.json")
-    if not os.path.exists(session_path):
-        print(f"[pw-uat] No session for {user_email} — skipping", flush=True)
+    has_session = os.path.exists(session_path)
+    if not bearer_token and not has_session:
+        print(f"[pw-uat] No token or session for {user_email} — skipping", flush=True)
         return dvs_bytes
 
     wb = openpyxl.load_workbook(io.BytesIO(dvs_bytes))
@@ -204,7 +207,17 @@ async def run_playwright_uat(
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
-        context = await browser.new_context(storage_state=session_path)
+        if bearer_token:
+            # Inject Bearer token as Authorization header for all requests
+            context = await browser.new_context(
+                extra_http_headers={"Authorization": f"Bearer {bearer_token}"},
+            )
+            print(f"[pw-uat] using Bearer token auth", flush=True)
+        elif has_session:
+            context = await browser.new_context(storage_state=session_path)
+            print(f"[pw-uat] using saved session for {user_email}", flush=True)
+        else:
+            context = await browser.new_context()
         page = await context.new_page()
 
         # Group by (form, event) to minimise navigations
