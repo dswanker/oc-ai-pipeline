@@ -405,9 +405,19 @@ async def run_playwright_uat(
                     print(f"[pw-uat] matrix frame not ready after {_poll_max}s", flush=True)
 
                 if app_frame:
-                    # Click the form card to open the form.
-                    # An overlay div#iframe-container intercepts pointer events,
-                    # so use JS click to bypass it.
+                    # For common/repeating events, form cards are inside a
+                    # collapsed accordion — expand it first.
+                    if ev == "SE_COMMON" or "common" in ev.lower():
+                        try:
+                            acc = await app_frame.query_selector('a.p-accordion-header-link')
+                            if acc:
+                                await app_frame.evaluate(
+                                    '() => document.querySelector("a.p-accordion-header-link").click()')
+                                await app_frame.wait_for_timeout(1000)
+                                print(f"[pw-uat] expanded common visit accordion", flush=True)
+                        except Exception as _ae:
+                            print(f"[pw-uat] accordion expand warning: {_ae}", flush=True)
+
                     try:
                         edit_sel = f'[title="Edit {form_abbrev}"]'
                         await app_frame.wait_for_selector(edit_sel, timeout=5000)
@@ -418,13 +428,27 @@ async def run_playwright_uat(
                         )
                         await app_frame.evaluate(_js_click)
                         print(f"[pw-uat] clicked {edit_sel}", flush=True)
-                        # Wait for Enketo form to render inside the Angular app
-                        await app_frame.wait_for_selector(
-                            ".question, [data-name], .enketo-form, .form-group",
-                            timeout=10000
-                        )
-                        form_frame = app_frame
-                        print(f"[pw-uat] form open in app frame", flush=True)
+                        # Enketo form opens in a new frame or navigates the page.
+                        # Wait for any frame to contain .question or known Enketo selectors.
+                        _form_found = False
+                        for _t in range(15):
+                            await page.wait_for_timeout(1000)
+                            for _f in page.frames:
+                                try:
+                                    has_q = await _f.evaluate(
+                                        '() => !!document.querySelector(".question, [data-name], .enketo-form")')
+                                    if has_q:
+                                        form_frame = _f
+                                        _form_found = True
+                                        print(f"[pw-uat] Enketo form ready after {_t+1}s url={_f.url[:60]}", flush=True)
+                                        break
+                                except Exception:
+                                    pass
+                            if _form_found:
+                                break
+                        if not _form_found:
+                            print(f"[pw-uat] Enketo form not found after 15s", flush=True)
+                            form_frame = app_frame
                     except Exception as _ce:
                         print(f"[pw-uat] form click failed: {_ce}", flush=True)
                         form_frame = app_frame or page
