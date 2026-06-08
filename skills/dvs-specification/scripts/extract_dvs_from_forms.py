@@ -276,6 +276,12 @@ def _sample_for_field(field_name, row_type, choices_for_field, ctx):
             return "2"  # "Moderate"
         return "1"  # generic default selection
 
+    # Type check FIRST — date fields always get a date regardless of name
+    # (prevents e.g. NRSDAT matching "nrs" prefix and getting a score value)
+    if t == "date":     return "2026-02-01"
+    if t == "datetime": return "2026-02-01 09:00"
+    if t == "time":     return "09:00"
+
     # Try exact match first, then prefix match
     if fn in ctx:
         return ctx[fn]
@@ -286,9 +292,6 @@ def _sample_for_field(field_name, row_type, choices_for_field, ctx):
     # Type-based fallback
     if t == "integer":  return "1"
     if t == "decimal":  return "1.5"
-    if t == "date":     return "2026-02-01"
-    if t == "time":     return "09:00"
-    if t == "datetime": return "2026-02-01 09:00"
     if t == "text":     return "Sample text"
     return "Test value"
 
