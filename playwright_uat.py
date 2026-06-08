@@ -294,6 +294,14 @@ async def run_playwright_uat(
             ev = str(row_dict.get("Study_Event_OID") or "").strip()
             by_form[(fo, ev)].append((row, row_dict, test_type))
 
+        # PW_FORMS env var: comma-separated form OIDs to test (e.g. "F_DM,F_IE")
+        # Leave unset to test all forms. Use for fast iteration during development.
+        _pw_forms_filter = os.environ.get("PW_FORMS", "").strip()
+        if _pw_forms_filter:
+            _allowed = {f.strip().upper() for f in _pw_forms_filter.split(",")}
+            by_form = {k: v for k, v in by_form.items() if k[0].upper() in _allowed}
+            print(f"[pw-uat] PW_FORMS filter active: {_allowed} — {len(by_form)} form/event pairs", flush=True)
+
         # Warm up build app first — participant matrix on eu page requires
         # build app localStorage to be populated via CrossStorage before it renders.
         print(f"[pw-uat] warming up build app session...", flush=True)
