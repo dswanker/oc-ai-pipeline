@@ -12,6 +12,11 @@ Items listed roughly in priority order. Move to DONE when complete.
 **Notes:** ILS controls which roles/users can see individual items on a form. Needs to be part of the automated build so it doesn't have to be configured manually post-build.
 **Added:** 2026-06-08
 
+### Playwright UAT — Repeating group handling
+**What:** Forms with repeat groups (AE, AESAE, CM, MH, DV) start empty — Playwright needs to click "Add" to create a new repeat instance before fields appear.
+**Where:** `playwright_uat.py` — add `_open_repeat_group()` helper called before field interactions for repeat-group forms.
+**Added:** 2026-06-08
+
 ### Playwright UAT — Selector Tuning
 **What:** First Playwright run will reveal whether the OC data entry URL format and field selectors in `playwright_uat.py` are correct.
 **Where:** `playwright_uat.py` — `_form_entry_url()`, `_fill_and_save()`, `_is_field_visible()`, `_read_field_errors()`
