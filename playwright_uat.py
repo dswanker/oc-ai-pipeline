@@ -349,42 +349,40 @@ async def run_playwright_uat(
                 form_frame = page  # fallback
                 app_frame = None
 
-                # Form cards are in the about:srcdoc iframe (frame[1], ~145KB, same-origin).
-                # frame[0] is hub.html (CORS-blocked, CrossStorage bridge only).
-                # Poll the srcdoc frame for [title^="Edit {ABBREV}"] to appear.
-                # Poll up to 30s — srcdoc starts ~57KB and grows to ~145KB+ as data loads
+                # The visit matrix loads in the study-runner-ui iframe (same-origin eu domain).
+                # It starts as about:srcdoc (57KB stub) then navigates to
+                # https://{subdomain}.eu.openclinica.io/study-runner-ui-*/...
+                # Once loaded (~195KB) it contains all [title^="Edit "] form cards.
+                # Poll ALL frames — don't filter by URL, just find whichever has Edit elements.
                 _poll_max = 30
                 _elapsed = 0.0
                 while _elapsed < _poll_max:
                     try:
-                        srcdoc_frame = next(
-                            (f for f in page.frames if f.url == "about:srcdoc"),
-                            None
-                        )
-                        if srcdoc_frame:
-                            has_edit = await srcdoc_frame.evaluate(
-                                '() => !!document.querySelector(\'[title^="Edit "]\')')
-                            if has_edit:
-                                app_frame = srcdoc_frame
-                                n = await srcdoc_frame.evaluate(
-                                    '() => document.querySelectorAll(\'[title^="Edit "]\').length')
-                                print(f"[pw-uat] srcdoc frame ready after {_elapsed:.1f}s ({n} Edit elements)", flush=True)
-                                break
-                            if _elapsed == 0 or _elapsed % 5 == 0:
-                                body_len = await srcdoc_frame.evaluate(
-                                    "() => document.body ? document.body.innerHTML.length : 0")
-                                print(f"[pw-uat] srcdoc t={_elapsed:.0f}s len={body_len}", flush=True)
-                        else:
-                            if _elapsed == 0 or _elapsed % 5 == 0:
-                                all_frames = [f.url[:60] for f in page.frames]
-                                print(f"[pw-uat] t={_elapsed:.0f}s no srcdoc frame yet. frames={all_frames}", flush=True)
+                        for _f in page.frames:
+                            try:
+                                has_edit = await _f.evaluate(
+                                    '() => !!document.querySelector(\'[title^="Edit "]\')')
+                                if has_edit:
+                                    app_frame = _f
+                                    n = await _f.evaluate(
+                                        '() => document.querySelectorAll(\'[title^="Edit "]\').length')
+                                    print(f"[pw-uat] matrix frame ready after {_elapsed:.1f}s "
+                                          f"({n} Edit elements) url={_f.url[:60]}", flush=True)
+                                    break
+                            except Exception:
+                                pass
+                        if app_frame:
+                            break
+                        if _elapsed == 0 or _elapsed % 5 == 0:
+                            frame_urls = [_f.url[:70] for _f in page.frames]
+                            print(f"[pw-uat] t={_elapsed:.0f}s frames={frame_urls}", flush=True)
                     except Exception as _pe:
                         if _elapsed == 0:
                             print(f"[pw-uat] poll error: {_pe}", flush=True)
                     await asyncio.sleep(1.0)
                     _elapsed += 1.0
                 if not app_frame:
-                    print(f"[pw-uat] srcdoc frame not ready after {_poll_max}s", flush=True)
+                    print(f"[pw-uat] matrix frame not ready after {_poll_max}s", flush=True)
 
                 if app_frame:
                     # Click the form card to open the form
