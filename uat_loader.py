@@ -476,8 +476,31 @@ def _build_odm_xml(study_oid: str, site_oid: str,
             field = row.get("field_name", "").strip()
             item_oid = f"{fo}.{field}" if field else ig
         val = row.get("Load_Value", "").strip()
-        # Skip placeholder and calc-input rows — not directly loadable via ODM
-        if not ev or not fo or not ig or not val or val.lower() == "(leave blank)" or "=" in val:
+        # Skip placeholder rows and multi-step setup rows
+        if not ev or not fo or not ig or not val:
+            continue
+        if val.lower() == "(leave blank)":
+            continue
+        if "then" in val.lower():
+            # Multi-step cross-field test — requires Playwright, skip
+            continue
+
+        # Calc rows: "ODI1=28, ODI2=28, ODI3=28" — parse into multiple items
+        # These get loaded as the INPUT fields so OC can compute the output
+        if "=" in val and not val.startswith("20"):
+            # Parse field=value pairs; use the form's IG for each input field
+            _pairs = [p.strip() for p in val.split(",") if "=" in p]
+            for _pair in _pairs:
+                _fname, _fval = _pair.split("=", 1)
+                _fname = _fname.strip()
+                _fval  = _fval.strip()
+                _item_oid = f"I_{fo.replace('F_', '', 1)}_{_fname}"
+                (events
+                 .setdefault(ev, {})
+                 .setdefault(rk, {})
+                 .setdefault(fo, {})
+                 .setdefault(ig, [])
+                 .append((_item_oid, _fval)))
             continue
 
         (events
@@ -816,12 +839,16 @@ def _evaluate_uat_cases(
         # Classify non-loadable rows as Not Testable via ODM
         lv_lower = lv.lower()
         is_blank_case    = lv_lower == "(leave blank)"
-        is_calc_case     = "=" in lv and not lv.startswith("20")  # field=value, not date
-        is_multistep     = "," in lv and "then" in lv_lower
+        is_calc_case     = "=" in lv and not lv.startswith("20")  # field=value patterns
+        is_multistep     = "then" in lv_lower  # multi-step setup like "ICFDAT=x, then date=y"
         is_visibility    = any(x in expected.upper() for x in ["VISIBLE", "HIDDEN", "RELEVANT"])
         is_ui_constraint = any(x in expected for x in ["error shown", "Form does not save",
                                                          "Constraint fires", "constraint"])
-        not_testable = is_blank_case or is_calc_case or is_multistep or is_visibility or is_ui_constraint
+        # Calc rows with multiple inputs (ODI1=x, ODI2=y) are loaded via ODM
+        # and OC computes the output with runFormLogic=y — these ARE testable
+        is_pure_calc     = "Calc path" in str(row[col_idx.get("Scenario", 1) - 1].value or "")
+        not_testable = (is_blank_case or is_multistep or is_visibility or is_ui_constraint
+                        or (is_calc_case and not is_pure_calc))
 
         if not_testable:
             row[col_idx["Test Result"]    - 1].value = "Not Run"
