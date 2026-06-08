@@ -31,19 +31,25 @@ def _legacy_base(subdomain: str) -> str:
 
 
 def _form_entry_url(subdomain: str, subject_oid: str, event_oid: str,
-                    form_oid: str, event_repeat: str = "1") -> str:
+                    form_oid: str, study_uuid: str = "",
+                    study_env_uuid: str = "") -> str:
     """
-    OC4 participant details page with enketoOpen=true.
-    The form is rendered by Enketo inside an iframe/overlay.
-    event_oid and form_oid are used to navigate to the specific form
-    once the participant page loads.
+    Navigate directly to the OC4 build app participant data entry page.
+    The build app is same-origin so Playwright can read the DOM.
+    URL pattern: https://{subdomain}.build.openclinica.io/#/studies/{study_uuid}/
+                 environments/{env_uuid}/participants/{subject_oid}/
+                 events/{event_oid}/forms/{form_oid}
+    Falls back to legacy ParticipantDetailsPage if UUIDs not available.
     """
+    if study_uuid and study_env_uuid:
+        return (f"https://{subdomain}.build.openclinica.io/"
+                f"#/studies/{study_uuid}/environments/{study_env_uuid}"
+                f"/participants/{subject_oid}/events/{event_oid}/forms/{form_oid}")
+    # Fallback: legacy page
     base = _legacy_base(subdomain)
     return (f"{base}/ParticipantDetailsPage?"
-            f"participantOid={subject_oid}"
-            f"&enketoOpen=true"
-            f"&studyEventOid={event_oid}"
-            f"&crfOid={form_oid}")
+            f"participantOid={subject_oid}&enketoOpen=true"
+            f"&studyEventOid={event_oid}&crfOid={form_oid}")
 
 
 def _classify_pw_row(row_dict: dict) -> Optional[str]:
@@ -64,16 +70,21 @@ def _classify_pw_row(row_dict: dict) -> Optional[str]:
 
 
 async def _read_field_errors(page, field_name: str) -> list[str]:
-    """Read visible error messages near a specific field."""
+    """
+    Read visible error/constraint messages.
+    OC4 Enketo uses .invalid-required, .invalid-constraint, .question.invalid-*
+    """
     msgs = []
+    # Enketo validation message selectors
     selectors = [
-        f"[data-field*='{field_name}'] .errorRequired",
-        f"[data-field*='{field_name}'] .errorMessage",
-        ".errorRequired",
-        ".errorMessage",
+        ".invalid-required .required-message",
+        ".invalid-constraint .constraint-message",
+        ".question.invalid-required",
+        ".question.invalid-constraint",
+        "[class*='invalid']",
         ".alert-danger",
-        "[class*='constraintMessage']",
-        "[class*='error-message']",
+        ".errorMessage",
+        ".errorRequired",
     ]
     for sel in selectors:
         try:
@@ -81,7 +92,7 @@ async def _read_field_errors(page, field_name: str) -> list[str]:
             for el in els:
                 if await el.is_visible():
                     txt = (await el.inner_text() or "").strip()
-                    if txt and txt not in msgs:
+                    if txt and len(txt) > 2 and txt not in msgs:
                         msgs.append(txt)
         except Exception:
             pass
@@ -89,50 +100,70 @@ async def _read_field_errors(page, field_name: str) -> list[str]:
 
 
 async def _is_field_visible(page, field_name: str, form_oid: str) -> Optional[bool]:
-    """True=visible, False=hidden, None=not found."""
-    form_bare = form_oid.replace("F_", "", 1) if form_oid.startswith("F_") else form_oid
+    """
+    True=visible, False=hidden, None=not found.
+    OC4 Enketo renders fields as .question divs with data-name attribute.
+    The field container is hidden via CSS display:none when not relevant.
+    """
+    fn_lower = field_name.lower()
+    form_bare = (form_oid.replace("F_", "", 1) if form_oid.startswith("F_") else form_oid).lower()
+
+    # Enketo selectors — field name appears in data-name, name, or id attributes
     candidates = [
-        f"[name*='_{field_name}']",
-        f"[id*='_{field_name}']",
-        f"[name*='{form_bare}_{field_name}']",
-        f"[id*='{form_bare}_{field_name}']",
-        # OC often wraps field in a table row with class based on name
-        f"tr[id*='{field_name}']",
-        f"td[class*='{field_name}']",
+        f"[data-name='{field_name}']",
+        f"[data-name='{field_name.lower()}']",
+        f".question[data-name*='{fn_lower}']",
+        f"[name='{field_name}']",
+        f"[name='{field_name.lower()}']",
+        f"input[name*='{fn_lower}'], select[name*='{fn_lower}'], textarea[name*='{fn_lower}']",
+        # OC4 sometimes uses full item OID path
+        f"[name*='/{field_name}']",
+        f"[data-name*='/{field_name}']",
     ]
     for sel in candidates:
         try:
             el = await page.query_selector(sel)
-            if el:
-                # Check the element itself or its containing row
-                parent = await el.evaluate_handle(
-                    "el => el.closest('tr') || el.closest('.field-row') || el")
-                return await parent.as_element().is_visible()
+            if el is not None:
+                # Walk up to the .question container which has visibility
+                container = await el.evaluate_handle(
+                    "el => el.closest('.question') || el.closest('.form-group') || el"
+                )
+                cel = container.as_element()
+                if cel:
+                    return await cel.is_visible()
         except Exception:
             pass
+
+    # Last resort: search by label text
+    try:
+        labels = await page.query_selector_all("label, .question-label")
+        for lbl in labels:
+            txt = (await lbl.inner_text() or "").strip().upper()
+            if field_name.upper() in txt:
+                parent = await lbl.evaluate_handle(
+                    "el => el.closest('.question') || el.closest('.form-group') || el.parentElement")
+                pel = parent.as_element()
+                if pel:
+                    return await pel.is_visible()
+    except Exception:
+        pass
+
     return None
 
 
 async def _fill_and_save(page, field_name: str, form_oid: str):
-    """Fill a field with empty string and click Save — for leave_blank tests."""
-    form_bare = form_oid.replace("F_", "", 1) if form_oid.startswith("F_") else form_oid
-    for sel in [f"[name*='_{field_name}']", f"[id*='_{field_name}']",
-                f"[name*='{form_bare}_{field_name}']"]:
-        try:
-            el = await page.query_selector(sel)
-            if el and await el.is_visible():
-                tag = (await el.get_attribute("type") or "").lower()
-                if tag in ("select", "radio", "checkbox"):
-                    pass  # can't clear select easily; skip fill
-                else:
-                    await el.fill("")
-                break
-        except Exception:
-            pass
-
-    # Click Save
-    for sel in ["input[value*='Save']", "button:text('Save')",
-                "input[type='submit']", "#btnSave"]:
+    """
+    For leave_blank: try to submit/close form without filling required field.
+    OC4 Enketo uses a Complete/Submit button.
+    """
+    # Try to click Complete/Submit without filling the field
+    for sel in [
+        "button:has-text('Complete')",
+        "button:has-text('Submit')",
+        "button.btn-primary",
+        ".form-footer button[type='submit']",
+        "button[id*='submit']",
+    ]:
         try:
             btn = await page.query_selector(sel)
             if btn and await btn.is_visible():
@@ -151,6 +182,8 @@ async def run_playwright_uat(
     stamp_map: dict,
     bearer_token: str = "",
     jsessionid: str = "",
+    study_uuid: str = "",
+    study_env_uuid: str = "",
 ) -> bytes:
     """
     Run Playwright UAT. ODM has already loaded all field values.
@@ -210,16 +243,19 @@ async def run_playwright_uat(
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
         if jsessionid:
-            # Inject the active JSESSIONID cookie from the ODM import
+            # Inject JSESSIONID for both legacy and build app domains
             context = await browser.new_context()
-            await context.add_cookies([{
-                "name": "JSESSIONID",
-                "value": jsessionid,
-                "domain": f"{subdomain}.eu.openclinica.io",
-                "path": "/",
-                "httpOnly": True,
-                "secure": True,
-            }])
+            cookies = [
+                {
+                    "name": "JSESSIONID",
+                    "value": jsessionid,
+                    "domain": f"{subdomain}.eu.openclinica.io",
+                    "path": "/OpenClinica",
+                    "httpOnly": True,
+                    "secure": True,
+                },
+            ]
+            await context.add_cookies(cookies)
             print(f"[pw-uat] using JSESSIONID cookie auth", flush=True)
         elif has_session:
             context = await browser.new_context(storage_state=session_path)
@@ -239,7 +275,9 @@ async def run_playwright_uat(
         for (fo, ev), form_rows in by_form.items():
             print(f"[pw-uat] {fo}/{ev} — {len(form_rows)} rows", flush=True)
 
-            url = _form_entry_url(subdomain, subject_oid, ev, fo)
+            url = _form_entry_url(subdomain, subject_oid, ev, fo,
+                                  study_uuid=study_uuid,
+                                  study_env_uuid=study_env_uuid)
             nav_ok = False
             form_frame = None
             try:
@@ -252,16 +290,17 @@ async def run_playwright_uat(
 
                 # OC4 renders forms via Enketo in an iframe
                 # Wait for the Enketo iframe to appear
-                # TODO: OC4 ParticipantDetailsPage loads the participant summary.
-                # The Enketo form only opens when the specific form is clicked.
-                # Need to: (1) find and click the form link in hub.html iframe,
-                # OR (2) navigate directly to the Enketo form URL.
-                # For now, use the hub.html frame which is the OC4 build app.
+                # Build app is same-origin — read DOM directly from main frame
+                # Wait for the form to render (Enketo takes a moment to load)
+                try:
+                    await page.wait_for_selector(
+                        ".question, [data-name], .form-group, input, select",
+                        timeout=10000
+                    )
+                    print(f"[pw-uat] form loaded", flush=True)
+                except Exception:
+                    print(f"[pw-uat] form load timeout — proceeding anyway", flush=True)
                 form_frame = page
-                for f_obj in page.frames:
-                    if "hub.html" in f_obj.url:
-                        form_frame = f_obj
-                        break
 
                 nav_ok = True
             except Exception as e:

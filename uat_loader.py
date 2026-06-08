@@ -956,6 +956,7 @@ async def run_uat_loader(item_id: str) -> dict:
         "participants_created": [],
         "odm_imports": [],
         "errors": [],
+        "test_env_uuid": "",
     }
 
     # ── Step 1: Read item metadata ─────────────────────────────────────────
@@ -993,6 +994,7 @@ async def run_uat_loader(item_id: str) -> dict:
         test_env_uuid, test_env_oid = await _get_test_env_uuid(
             subdomain, study_uuid
         )
+        result["test_env_uuid"] = test_env_uuid
     except Exception as e:
         result["errors"].append(f"Could not find TEST environment: {e}")
         return result
@@ -1273,11 +1275,16 @@ async def run_uat_loader(item_id: str) -> dict:
                 if _js:
                     _jsessionid = _js
                     break
+            # Get study env UUID for build app navigation
+            _study_uuid = cols.get("text_mm3ggzga", {}).get("text", "").strip()
+            _test_env_uuid = result.get("test_env_uuid", "")
             stamped_bytes = await run_playwright_uat(
                 stamped_bytes if stamp_map else dvs_bytes,
                 subdomain, _first_oc_oid, oc_email, stamp_map,
                 bearer_token=_pw_token,
                 jsessionid=_jsessionid,
+                study_uuid=_study_uuid,
+                study_env_uuid=_test_env_uuid,
             )
     except Exception as _pw_err:
         await append_log(item_id,
