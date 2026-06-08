@@ -34,18 +34,10 @@ def _form_entry_url(subdomain: str, subject_oid: str, event_oid: str,
                     form_oid: str, study_uuid: str = "",
                     study_env_uuid: str = "") -> str:
     """
-    Navigate directly to the OC4 build app participant data entry page.
-    The build app is same-origin so Playwright can read the DOM.
-    URL pattern: https://{subdomain}.build.openclinica.io/#/studies/{study_uuid}/
-                 environments/{env_uuid}/participants/{subject_oid}/
-                 events/{event_oid}/forms/{form_oid}
-    Falls back to legacy ParticipantDetailsPage if UUIDs not available.
+    OC legacy ParticipantDetailsPage with enketoOpen.
+    The form renders inline — content is in the about:srcdoc iframe
+    which is same-origin and accessible to Playwright.
     """
-    if study_uuid and study_env_uuid:
-        return (f"https://{subdomain}.build.openclinica.io/"
-                f"#/studies/{study_uuid}/environments/{study_env_uuid}"
-                f"/participants/{subject_oid}/events/{event_oid}/forms/{form_oid}")
-    # Fallback: legacy page
     base = _legacy_base(subdomain)
     return (f"{base}/ParticipantDetailsPage?"
             f"participantOid={subject_oid}&enketoOpen=true"
@@ -243,19 +235,15 @@ async def run_playwright_uat(
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
         if jsessionid:
-            # Inject JSESSIONID for both legacy and build app domains
             context = await browser.new_context()
-            cookies = [
-                {
-                    "name": "JSESSIONID",
-                    "value": jsessionid,
-                    "domain": f"{subdomain}.eu.openclinica.io",
-                    "path": "/OpenClinica",
-                    "httpOnly": True,
-                    "secure": True,
-                },
-            ]
-            await context.add_cookies(cookies)
+            await context.add_cookies([{
+                "name": "JSESSIONID",
+                "value": jsessionid,
+                "domain": f"{subdomain}.eu.openclinica.io",
+                "path": "/OpenClinica",
+                "httpOnly": True,
+                "secure": True,
+            }])
             print(f"[pw-uat] using JSESSIONID cookie auth", flush=True)
         elif has_session:
             context = await browser.new_context(storage_state=session_path)
@@ -290,17 +278,23 @@ async def run_playwright_uat(
 
                 # OC4 renders forms via Enketo in an iframe
                 # Wait for the Enketo iframe to appear
-                # Build app is same-origin — read DOM directly from main frame
-                # Wait for the form to render (Enketo takes a moment to load)
-                try:
-                    await page.wait_for_selector(
-                        ".question, [data-name], .form-group, input, select",
-                        timeout=10000
-                    )
-                    print(f"[pw-uat] form loaded", flush=True)
-                except Exception:
-                    print(f"[pw-uat] form load timeout — proceeding anyway", flush=True)
-                form_frame = page
+                # Form renders in about:srcdoc iframe (same-origin, accessible)
+                # Wait for it to load, then switch to that frame
+                await page.wait_for_timeout(3000)
+                form_frame = page  # default
+                for f_obj in page.frames:
+                    if f_obj.url == "about:srcdoc":
+                        try:
+                            # Verify it has form content
+                            body = await f_obj.evaluate("() => document.body.innerHTML.length")
+                            if body > 500:
+                                form_frame = f_obj
+                                print(f"[pw-uat] using srcdoc frame (len={body})", flush=True)
+                                break
+                        except Exception:
+                            pass
+                if form_frame is page:
+                    print(f"[pw-uat] using main page frame", flush=True)
 
                 nav_ok = True
             except Exception as e:
