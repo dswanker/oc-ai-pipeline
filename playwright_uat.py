@@ -295,28 +295,28 @@ async def run_playwright_uat(
                         break
 
                 if hub_frame:
-                    # Wait for Angular app to render form cards inside hub.html
-                    try:
-                        await hub_frame.wait_for_selector(
-                            "[title^='Edit ']",
-                            timeout=15000
-                        )
-                        app_frame = hub_frame
-                        print(f"[pw-uat] Angular app loaded in hub.html", flush=True)
-                    except Exception as _he:
-                        # Try waiting longer and checking body size
-                        await page.wait_for_timeout(5000)
+                    # Poll until Angular SPA renders form cards (max 30s, 1s intervals)
+                    _poll_max = 30
+                    _poll_interval = 1.0
+                    _elapsed = 0
+                    while _elapsed < _poll_max:
                         try:
                             body_len = await hub_frame.evaluate(
                                 "() => document.body ? document.body.innerHTML.length : 0")
-                            print(f"[pw-uat] hub.html after wait: len={body_len}", flush=True)
                             has_edit = await hub_frame.evaluate(
-                                "() => !!document.querySelector('[title]')")
-                            print(f"[pw-uat] hub.html has [title]: {has_edit}", flush=True)
-                            if body_len > 10000:
+                                "() => !!document.querySelector('[title^=\'Edit \']')")
+                            if has_edit:
                                 app_frame = hub_frame
-                        except Exception as _he2:
-                            print(f"[pw-uat] hub.html wait failed: {_he2}", flush=True)
+                                print(f"[pw-uat] Angular app ready after {_elapsed:.1f}s (len={body_len})", flush=True)
+                                break
+                            if _elapsed == 0 or _elapsed % 5 == 0:
+                                print(f"[pw-uat] hub.html polling {_elapsed}s: len={body_len} has_edit={has_edit}", flush=True)
+                        except Exception:
+                            pass
+                        await asyncio.sleep(_poll_interval)
+                        _elapsed += _poll_interval
+                    if not app_frame:
+                        print(f"[pw-uat] hub.html never rendered Edit selectors after {_poll_max}s", flush=True)
                 else:
                     print(f"[pw-uat] hub.html frame not found", flush=True)
 
