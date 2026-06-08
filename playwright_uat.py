@@ -282,14 +282,19 @@ async def run_playwright_uat(
                 # Wait for it to load, then switch to that frame
                 await page.wait_for_timeout(3000)
                 form_frame = page  # default
+                _first_form = (fo == list(by_form.keys())[0][0])
                 for f_obj in page.frames:
                     if f_obj.url == "about:srcdoc":
                         try:
-                            # Verify it has form content
-                            body = await f_obj.evaluate("() => document.body.innerHTML.length")
-                            if body > 500:
+                            body_len = await f_obj.evaluate("() => document.body.innerHTML.length")
+                            if body_len > 500:
                                 form_frame = f_obj
-                                print(f"[pw-uat] using srcdoc frame (len={body})", flush=True)
+                                print(f"[pw-uat] using srcdoc frame (len={body_len})", flush=True)
+                                # Debug first form only — dump HTML snippet
+                                if _first_form:
+                                    snippet = await f_obj.evaluate(
+                                        "() => document.body.innerHTML.substring(0, 1500)")
+                                    print(f"[pw-uat] srcdoc snippet: {snippet!r}", flush=True)
                                 break
                         except Exception:
                             pass
