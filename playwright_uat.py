@@ -286,15 +286,26 @@ async def run_playwright_uat(
                 form_abbrev = fo.replace("F_", "", 1) if fo.startswith("F_") else fo
                 form_frame = page  # fallback
                 app_frame = None
+                # Wait for Angular app iframe to load (it may not be ready immediately)
+                await page.wait_for_timeout(2000)
                 for f_obj in page.frames:
-                    if f_obj.url == "about:srcdoc":
-                        try:
-                            body_len = await f_obj.evaluate("() => document.body.innerHTML.length")
-                            if body_len > 100000:  # Angular app is ~196KB
-                                app_frame = f_obj
+                    try:
+                        body_len = await f_obj.evaluate("() => document.body ? document.body.innerHTML.length : 0")
+                        f_url = f_obj.url
+                        print(f"[pw-uat] frame url={f_url[:60]} len={body_len}", flush=True)
+                        if body_len > 100000:
+                            app_frame = f_obj
+                            # Verify it has the OC4 Angular form cards
+                            has_edit = await f_obj.evaluate(
+                                "() => document.querySelector('[title^=\'Edit \']') !== null"
+                            )
+                            if has_edit:
+                                print(f"[pw-uat] found Angular app frame (len={body_len})", flush=True)
                                 break
-                        except Exception:
-                            pass
+                            else:
+                                app_frame = None  # wrong large frame
+                    except Exception as _fe:
+                        pass  # some frames may not be accessible
 
                 if app_frame:
                     # Click the form card to open the form
