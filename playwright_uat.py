@@ -180,8 +180,10 @@ async def run_playwright_uat(
         uid = str(row[col_idx["UAT Case ID"] - 1].value or "").strip()
         if not uid:
             continue
+        # Skip rows already evaluated by ODM phase (Pass or Fail with a real value)
+        tr = str(row[col_idx["Test Result"] - 1].value or "").strip()
         ar = str(row[col_idx["Actual Result"] - 1].value or "").strip()
-        if ar != "Not Testable via ODM":
+        if tr in ("Pass", "Fail") and ar not in ("Not Testable via ODM", ""):
             continue
         row_dict = {k: row[v - 1].value for k, v in col_idx.items()}
         test_type = _classify_pw_row(row_dict)
