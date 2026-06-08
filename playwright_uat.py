@@ -234,7 +234,22 @@ async def run_playwright_uat(
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
-        if jsessionid:
+        if has_session:
+            # Saved session has cookies for build app (cust1.build.openclinica.io)
+            # which the Angular SPA needs to render.
+            context = await browser.new_context(storage_state=session_path)
+            if jsessionid:
+                # Also inject fresh JSESSIONID for legacy eu domain nav
+                await context.add_cookies([{
+                    "name": "JSESSIONID",
+                    "value": jsessionid,
+                    "domain": f"{subdomain}.eu.openclinica.io",
+                    "path": "/OpenClinica",
+                    "httpOnly": True,
+                    "secure": True,
+                }])
+            print(f"[pw-uat] using saved session (+ JSESSIONID={bool(jsessionid)})", flush=True)
+        elif jsessionid:
             context = await browser.new_context()
             await context.add_cookies([{
                 "name": "JSESSIONID",
@@ -244,12 +259,10 @@ async def run_playwright_uat(
                 "httpOnly": True,
                 "secure": True,
             }])
-            print(f"[pw-uat] using JSESSIONID cookie auth", flush=True)
-        elif has_session:
-            context = await browser.new_context(storage_state=session_path)
-            print(f"[pw-uat] using saved session for {user_email}", flush=True)
+            print(f"[pw-uat] JSESSIONID only — SPA may not render (no build session)", flush=True)
         else:
             context = await browser.new_context()
+            print(f"[pw-uat] no auth — tests will likely fail", flush=True)
         page = await context.new_page()
 
         # Group by (form, event) to minimise navigations
@@ -295,28 +308,30 @@ async def run_playwright_uat(
                         break
 
                 if hub_frame:
-                    # Poll until Angular SPA renders form cards (max 30s, 1s intervals)
+                    # Poll for Angular SPA to render (max 30s, 1s intervals)
+                    # Note: SPA requires build app session auth to render.
+                    # Session file at /data/browser_sessions/{email}.json must be fresh.
+                    # Session is refreshed when oc_form_publisher runs (EDC build step).
                     _poll_max = 30
-                    _poll_interval = 1.0
-                    _elapsed = 0
+                    _elapsed = 0.0
                     while _elapsed < _poll_max:
                         try:
-                            body_len = await hub_frame.evaluate(
-                                "() => document.body ? document.body.innerHTML.length : 0")
                             has_edit = await hub_frame.evaluate(
                                 "() => !!document.querySelector('[title^=\'Edit \']')")
                             if has_edit:
                                 app_frame = hub_frame
-                                print(f"[pw-uat] Angular app ready after {_elapsed:.1f}s (len={body_len})", flush=True)
+                                print(f"[pw-uat] Angular app ready after {_elapsed:.1f}s", flush=True)
                                 break
-                            if _elapsed == 0 or _elapsed % 5 == 0:
-                                print(f"[pw-uat] hub.html polling {_elapsed}s: len={body_len} has_edit={has_edit}", flush=True)
+                            body_len = await hub_frame.evaluate(
+                                "() => document.body ? document.body.innerHTML.length : 0")
+                            if _elapsed == 0 or _elapsed % 10 == 0:
+                                print(f"[pw-uat] hub.html t={_elapsed:.0f}s len={body_len}", flush=True)
                         except Exception:
                             pass
-                        await asyncio.sleep(_poll_interval)
-                        _elapsed += _poll_interval
+                        await asyncio.sleep(1.0)
+                        _elapsed += 1.0
                     if not app_frame:
-                        print(f"[pw-uat] hub.html never rendered Edit selectors after {_poll_max}s", flush=True)
+                        print(f"[pw-uat] SPA not ready after {_poll_max}s — session may be expired", flush=True)
                 else:
                     print(f"[pw-uat] hub.html frame not found", flush=True)
 
