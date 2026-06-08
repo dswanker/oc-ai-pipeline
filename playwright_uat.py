@@ -355,6 +355,14 @@ async def run_playwright_uat(
                     }));
                 }""")
                 print(f"[pw-uat] iframes: {iframe_info}", flush=True)
+                # Log full page HTML to find participants-details-page iframe source
+                page_html = await page.content()
+                pdp_idx = page_html.find('participants-details-page')
+                if pdp_idx >= 0:
+                    print(f"[pw-uat] participants-details-page found in HTML at {pdp_idx}: "
+                          f"{page_html[max(0,pdp_idx-100):pdp_idx+300]!r}", flush=True)
+                else:
+                    print(f"[pw-uat] participants-details-page NOT in page HTML (len={len(page_html)})", flush=True)
 
                 # Form abbreviation: F_DM -> DM, F_AE -> AE etc.
                 form_abbrev = fo.replace("F_", "", 1) if fo.startswith("F_") else fo
