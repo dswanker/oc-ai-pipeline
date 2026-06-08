@@ -47,6 +47,19 @@ Items listed roughly in priority order. Move to DONE when complete.
 
 ## 🟡 Medium Priority
 
+### Replace customer_uuids.csv with a better subdomain-to-region source
+**What:** The `references/customer_uuids.csv` file (committed to the repo) is used to map customer subdomains to their regional bridge URL (eu/us/ap). This requires manual CSV maintenance and a git commit + Railway deploy whenever a new customer is added.
+**Problem:** New customers not in the CSV fall back to `.eu.` which is wrong for US/AP customers.
+**Options to explore:**
+- (A) OC API endpoint that returns the region for a given subdomain — ask Shiva if one exists
+- (B) Monday board as the source of truth: add a hidden region column populated when a new row is created (auto-detect from subdomain naming convention if possible)
+- (C) Runtime probe: attempt a known API call against eu/us/ap in order and use whichever responds — slow but self-healing
+- (D) Derive from subdomain naming convention if OC uses a consistent pattern (e.g. cust1-eu, cust2-us)
+**Current fallback:** `.eu.openclinica.io` — wrong for non-EU customers
+**Added:** 2026-06-08
+
+
+
 ### Human-editable DVS test cases
 **What:** Allow testers to add, remove, or modify UAT test cases in the DVS XLSX directly, with the pipeline able to ingest those changes and execute them.
 **Use cases:**
