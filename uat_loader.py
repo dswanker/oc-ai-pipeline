@@ -477,36 +477,32 @@ def _build_odm_xml(study_oid: str, site_oid: str,
             field = row.get("field_name", "").strip()
             item_oid = f"{fo}.{field}" if field else ig
         val = row.get("Load_Value", "").strip()
-        # Skip only leave-blank rows — Playwright handles those via fill+save
+        # Skip rows that need Playwright or aren't directly loadable
         if not ev or not fo or not ig or not val:
             continue
         if val.lower() == "(leave blank)":
-            continue
-
-        # Parse field=value patterns into ODM items:
-        # - "FIELD=val" (gate/visibility): load FIELD into ODM
-        # - "FIELD1=val1, then FIELD2=val2" (constraint): load both fields
-        # - "FIELD1=val1, FIELD2=val2" (calc inputs): load all input fields
-        # Playwright then just navigates and reads — no form interaction needed
+            continue  # required-field test — Playwright handles
+        if "then" in val.lower():
+            continue  # multi-step constraint test — Playwright handles
         if "=" in val and not val.startswith("20"):
-            _pairs = []
-            # Handle "X=v1, then Y=v2" multi-step: split on ", then "
+            # gate/visibility setup (FIELD=val) or calc inputs (F1=v1, F2=v2)
+            # Only load calc input rows — identified by "Calc path" in Scenario
+            sc = str(row.get("Scenario", "")).strip()
+            if "Calc path" not in sc:
+                continue  # visibility/gate rows — Playwright sets these in browser
+            # Calc inputs: parse "ODI1=28, ODI2=28" into multiple items
             _lv_clean = re.sub(r",\s*then\s+", ", ", val, flags=re.IGNORECASE)
             for _p in _lv_clean.split(","):
                 _p = _p.strip()
                 if "=" in _p:
-                    _pairs.append(_p)
-            for _pair in _pairs:
-                _fname, _fval = _pair.split("=", 1)
-                _fname = _fname.strip()
-                _fval  = _fval.strip()
-                _item_oid = f"I_{fo.replace('F_', '', 1)}_{_fname}"
-                (events
-                 .setdefault(ev, {})
-                 .setdefault(rk, {})
-                 .setdefault(fo, {})
-                 .setdefault(ig, [])
-                 .append((_item_oid, _fval)))
+                    _fname, _fval = _p.split("=", 1)
+                    _item_oid = f"I_{fo.replace('F_', '', 1)}_{_fname.strip()}"
+                    (events
+                     .setdefault(ev, {})
+                     .setdefault(rk, {})
+                     .setdefault(fo, {})
+                     .setdefault(ig, [])
+                     .append((_item_oid, _fval.strip())))
             continue
 
         (events
