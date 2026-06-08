@@ -337,7 +337,8 @@ async def run_playwright_uat(
                         body_len = await page.evaluate(
                             "() => document.body ? document.body.innerHTML.length : 0")
                         if _elapsed == 0 or _elapsed % 5 == 0:
-                            print(f"[pw-uat] main page t={_elapsed:.0f}s len={body_len}", flush=True)
+                            txt = await page.evaluate("() => document.body ? document.body.innerText.substring(0,300) : 'no body'")
+                            print(f"[pw-uat] main page t={_elapsed:.0f}s len={body_len} url={page.url[:80]} text={txt!r}", flush=True)
                     except Exception:
                         pass
                     await asyncio.sleep(1.0)
