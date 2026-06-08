@@ -411,32 +411,43 @@ async def run_playwright_uat(
                     form_frame = None
                     form_page = None
 
-                    # Step 1: JS click Edit button to trigger Angular form open
+                    # Step 1: Wait for Angular router to be fully ready, then JS click
                     edit_sel = f'[title="Edit {form_abbrev}"]'
                     try:
                         await app_frame.wait_for_selector(edit_sel, timeout=5000)
+                        # Brief wait for Angular router to fully initialize
+                        await page.wait_for_timeout(2000)
                         _sel = f'[title="Edit {form_abbrev}"]'
+                        _pre_url = app_frame.url
                         await app_frame.evaluate(
                             f"() => {{ const el = document.querySelector('{_sel}'); if(el) el.click(); }}"
                         )
-                        print(f"[pw-uat] clicked {edit_sel}", flush=True)
+                        await page.wait_for_timeout(500)
+                        _post_url = app_frame.url
+                        print(f"[pw-uat] clicked {edit_sel} | pre={_pre_url[-30:]} post={_post_url[-30:]}", flush=True)
                     except Exception as _ce:
                         print(f"[pw-uat] Edit click failed: {_ce}", flush=True)
 
                     # Step 2: Poll app_frame DOM for form.eu.openclinica.io iframe src
+                    # Also log all iframes in app_frame to see what's there
                     _form_url = None
                     for _t in range(15):
                         try:
                             inner = await app_frame.evaluate("""() =>
                                 Array.from(document.querySelectorAll('iframe'))
-                                    .map(f => f.src).filter(s => s.includes('form.'))
+                                    .map(f => ({src: f.src, id: f.id}))
                             """)
-                            if inner:
-                                _form_url = inner[0]
+                            form_srcs = [i['src'] for i in inner if 'form.' in i.get('src','')]
+                            if form_srcs:
+                                _form_url = form_srcs[0]
                                 print(f"[pw-uat] form src found at t={_t}s: {_form_url[:70]}", flush=True)
                                 break
-                        except Exception:
-                            pass
+                            if _t % 5 == 0:
+                                all_srcs = [i['src'][:50] for i in inner]
+                                print(f"[pw-uat] t={_t}s app_frame iframes: {all_srcs} url={app_frame.url[-40:]}", flush=True)
+                        except Exception as _ie:
+                            if _t == 0:
+                                print(f"[pw-uat] iframe eval error: {_ie}", flush=True)
                         await page.wait_for_timeout(1000)
 
                     if _form_url:
