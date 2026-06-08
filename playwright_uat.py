@@ -478,32 +478,50 @@ async def run_playwright_uat(
                         _pre_url = app_frame.url
                         await app_frame.evaluate(_js_click)
                         print(f"[pw-uat] clicked {edit_sel}", flush=True)
-                        # After clicking Edit, study-runner-ui navigates to the form view.
-                        # Poll for the frame URL to change (form opened) then check for .question.
+                        # After clicking Edit DM, check what changes in app_frame DOM.
+                        # The form likely renders inline in study-runner-ui (not a new frame).
                         _form_found = False
                         for _t in range(20):
                             await page.wait_for_timeout(1000)
-                            # Check if study-runner-ui URL changed to form view
-                            _new_url = app_frame.url
-                            if _new_url != _pre_url:
-                                print(f"[pw-uat] frame navigated to: {_new_url[:80]}", flush=True)
-                            # Check all frames for Enketo .question elements
+                            try:
+                                # Log what selectors exist in the app_frame
+                                _debug = await app_frame.evaluate("""() => {
+                                    const q = !!document.querySelector('.question');
+                                    const ef = !!document.querySelector('.enketo-form');
+                                    const dn = !!document.querySelector('[data-name]');
+                                    const fi = !!document.querySelector('.form-items, .form-panel');
+                                    const url = location.href.substring(0,80);
+                                    const len = document.body.innerHTML.length;
+                                    return {q, ef, dn, fi, url, len};
+                                }""")
+                                if _t == 0 or _t % 5 == 0:
+                                    print(f"[pw-uat] app_frame t={_t}s: {_debug}", flush=True)
+                                if _debug.get('q') or _debug.get('ef') or _debug.get('dn'):
+                                    form_frame = app_frame
+                                    _form_found = True
+                                    print(f"[pw-uat] Enketo ready in app_frame after {_t+1}s", flush=True)
+                                    break
+                            except Exception as _de:
+                                if _t == 0:
+                                    print(f"[pw-uat] app_frame eval error: {_de}", flush=True)
+                            # Also check all other frames
                             for _f in page.frames:
+                                if _f == app_frame:
+                                    continue
                                 try:
                                     has_q = await _f.evaluate(
-                                        '() => !!document.querySelector(".question, .enketo-form, [data-name]")')
+                                        '() => !!document.querySelector(".question, .enketo-form")')
                                     if has_q:
                                         form_frame = _f
                                         _form_found = True
-                                        print(f"[pw-uat] Enketo ready after {_t+1}s url={_f.url[:60]}", flush=True)
+                                        print(f"[pw-uat] Enketo in other frame after {_t+1}s url={_f.url[:60]}", flush=True)
                                         break
                                 except Exception:
                                     pass
                             if _form_found:
                                 break
                         if not _form_found:
-                            print(f"[pw-uat] Enketo not found after 20s. Frame URLs: "
-                                  f"{[_f.url[:50] for _f in page.frames]}", flush=True)
+                            print(f"[pw-uat] Enketo not found after 20s", flush=True)
                             form_frame = app_frame
                     except Exception as _ce:
                         print(f"[pw-uat] form click failed: {_ce}", flush=True)
