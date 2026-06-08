@@ -187,9 +187,35 @@ async def run_playwright_uat(
 
     session_path = os.path.join(SESSION_DIR, f"{user_email}.json")
     has_session = os.path.exists(session_path)
-    if not jsessionid and not has_session:
-        print(f"[pw-uat] No jsessionid or session file — skipping", flush=True)
-        return dvs_bytes
+
+    # Check session freshness — Keycloak sessions expire, typically after ~8 hours.
+    # The session file is written by oc_form_publisher after an EDC build run.
+    SESSION_MAX_AGE_HOURS = 8
+    session_stale = False
+    if has_session:
+        age_hours = (
+            _dt.datetime.now().timestamp() - os.path.getmtime(session_path)
+        ) / 3600
+        if age_hours > SESSION_MAX_AGE_HOURS:
+            session_stale = True
+            print(
+                f"[pw-uat] ⚠️  Browser session is {age_hours:.1f}h old (max {SESSION_MAX_AGE_HOURS}h). "
+                f"Playwright UI tests will be skipped. "
+                f"To enable: run a full pipeline build to refresh the session, "
+                f"or POST /admin/refresh-session.",
+                flush=True
+            )
+
+    if not has_session or session_stale:
+        if jsessionid:
+            # JSESSIONID-only: can navigate legacy pages but SPA won't render.
+            # Playwright will run but form cards won't be clickable.
+            print(f"[pw-uat] No fresh build session — running with JSESSIONID only "
+                  f"(SPA may not render)", flush=True)
+        else:
+            print(f"[pw-uat] No session or JSESSIONID — skipping Playwright UAT", flush=True)
+            return dvs_bytes
+        has_session = False  # force JSESSIONID-only path
 
     wb = openpyxl.load_workbook(io.BytesIO(dvs_bytes))
     ws = wb["UAT_Cases"]
