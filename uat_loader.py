@@ -1,3 +1,4 @@
+import re
 """
 uat_loader.py — UAT Data Loader for oc-ai-pipeline
 ====================================================
@@ -476,20 +477,25 @@ def _build_odm_xml(study_oid: str, site_oid: str,
             field = row.get("field_name", "").strip()
             item_oid = f"{fo}.{field}" if field else ig
         val = row.get("Load_Value", "").strip()
-        # Skip placeholder rows and multi-step setup rows
+        # Skip only leave-blank rows — Playwright handles those via fill+save
         if not ev or not fo or not ig or not val:
             continue
         if val.lower() == "(leave blank)":
             continue
-        if "then" in val.lower():
-            # Multi-step cross-field test — requires Playwright, skip
-            continue
 
-        # Calc rows: "ODI1=28, ODI2=28, ODI3=28" — parse into multiple items
-        # These get loaded as the INPUT fields so OC can compute the output
+        # Parse field=value patterns into ODM items:
+        # - "FIELD=val" (gate/visibility): load FIELD into ODM
+        # - "FIELD1=val1, then FIELD2=val2" (constraint): load both fields
+        # - "FIELD1=val1, FIELD2=val2" (calc inputs): load all input fields
+        # Playwright then just navigates and reads — no form interaction needed
         if "=" in val and not val.startswith("20"):
-            # Parse field=value pairs; use the form's IG for each input field
-            _pairs = [p.strip() for p in val.split(",") if "=" in p]
+            _pairs = []
+            # Handle "X=v1, then Y=v2" multi-step: split on ", then "
+            _lv_clean = re.sub(r",\s*then\s+", ", ", val, flags=re.IGNORECASE)
+            for _p in _lv_clean.split(","):
+                _p = _p.strip()
+                if "=" in _p:
+                    _pairs.append(_p)
             for _pair in _pairs:
                 _fname, _fval = _pair.split("=", 1)
                 _fname = _fname.strip()
