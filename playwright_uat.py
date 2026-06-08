@@ -150,18 +150,20 @@ async def run_playwright_uat(
     user_email: str,
     stamp_map: dict,
     bearer_token: str = "",
+    jsessionid: str = "",
 ) -> bytes:
     """
     Run Playwright UAT. ODM has already loaded all field values.
     Playwright navigates to forms and reads UI state.
-    Uses bearer_token for auth (preferred) or falls back to saved session file.
+    Auth priority: jsessionid cookie > saved session file.
+    Bearer token NOT used as HTTP header (causes OC logout).
     """
     from playwright.async_api import async_playwright
 
     session_path = os.path.join(SESSION_DIR, f"{user_email}.json")
     has_session = os.path.exists(session_path)
-    if not bearer_token and not has_session:
-        print(f"[pw-uat] No token or session for {user_email} — skipping", flush=True)
+    if not jsessionid and not has_session:
+        print(f"[pw-uat] No jsessionid or session file — skipping", flush=True)
         return dvs_bytes
 
     wb = openpyxl.load_workbook(io.BytesIO(dvs_bytes))
@@ -207,12 +209,18 @@ async def run_playwright_uat(
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
-        if bearer_token:
-            # Inject Bearer token as Authorization header for all requests
-            context = await browser.new_context(
-                extra_http_headers={"Authorization": f"Bearer {bearer_token}"},
-            )
-            print(f"[pw-uat] using Bearer token auth", flush=True)
+        if jsessionid:
+            # Inject the active JSESSIONID cookie from the ODM import
+            context = await browser.new_context()
+            await context.add_cookies([{
+                "name": "JSESSIONID",
+                "value": jsessionid,
+                "domain": f"{subdomain}.eu.openclinica.io",
+                "path": "/",
+                "httpOnly": True,
+                "secure": True,
+            }])
+            print(f"[pw-uat] using JSESSIONID cookie auth", flush=True)
         elif has_session:
             context = await browser.new_context(storage_state=session_path)
             print(f"[pw-uat] using saved session for {user_email}", flush=True)

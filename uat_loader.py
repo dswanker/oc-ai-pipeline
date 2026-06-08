@@ -647,11 +647,11 @@ async def _import_odm(subdomain: str, study_oid: str,
                 )
             if pr.is_success and ("Inserted" in pr.text or "Failed" in pr.text):
                 print(f"[uat_loader] ODM job complete after {elapsed}s", flush=True)
-                return {"status": "complete", "job_uuid": job_uuid, "log": pr.text}
+                return {"status": "complete", "job_uuid": job_uuid, "log": pr.text, "jsessionid": jsessionid or ""}
         except Exception as pe:
             print(f"[uat_loader] ODM poll error at {elapsed}s: {pe}", flush=True)
     print(f"[uat_loader] ODM job poll timed out after {poll_timeout}s", flush=True)
-    return {"status": "timeout", "job_uuid": job_uuid, "log": ""}
+    return {"status": "timeout", "job_uuid": job_uuid, "log": "", "jsessionid": jsessionid or ""}
 
 
 # ── Clinical data read-back ───────────────────────────────────────────────────
@@ -1264,12 +1264,20 @@ async def run_uat_loader(item_id: str) -> dict:
         if _first_oc_oid:
             await append_log(item_id,
                 "UAT Loader: running Playwright UAT for UI-only cases...")
-            # Get a fresh token for Playwright auth
+            # Get fresh token + jsessionid for Playwright auth
             _pw_token = await _get_oc_token(subdomain)
+            # Collect jsessionid from ODM imports — it's an active OC session
+            _jsessionid = ""
+            for _imp in result.get("odm_imports", []):
+                _js = _imp.get("result", {}).get("jsessionid", "")
+                if _js:
+                    _jsessionid = _js
+                    break
             stamped_bytes = await run_playwright_uat(
                 stamped_bytes if stamp_map else dvs_bytes,
                 subdomain, _first_oc_oid, oc_email, stamp_map,
                 bearer_token=_pw_token,
+                jsessionid=_jsessionid,
             )
     except Exception as _pw_err:
         await append_log(item_id,
