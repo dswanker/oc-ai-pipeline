@@ -255,10 +255,16 @@ async def run_playwright_uat(
         build_base = f"https://{subdomain}.build.openclinica.io"
 
         browser = await p.chromium.launch(headless=True)
+        # Match a real Chrome user-agent — OC server JSP conditionally renders
+        # participants-details-page iframe based on browser detection.
+        # Playwright's default headless UA may be treated as non-browser.
+        _ua = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+               "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
         if has_session:
             # Saved session has cookies for build app (cust1.build.openclinica.io)
             # which the Angular SPA needs to render.
-            context = await browser.new_context(storage_state=session_path)
+            context = await browser.new_context(
+                storage_state=session_path, user_agent=_ua)
             if jsessionid:
                 # Also inject fresh JSESSIONID for legacy eu domain nav
                 await context.add_cookies([{
@@ -271,7 +277,7 @@ async def run_playwright_uat(
                 }])
             print(f"[pw-uat] using saved session (+ JSESSIONID={bool(jsessionid)})", flush=True)
         elif jsessionid:
-            context = await browser.new_context()
+            context = await browser.new_context(user_agent=_ua)
             await context.add_cookies([{
                 "name": "JSESSIONID",
                 "value": jsessionid,
@@ -282,7 +288,7 @@ async def run_playwright_uat(
             }])
             print(f"[pw-uat] JSESSIONID only — SPA may not render (no build session)", flush=True)
         else:
-            context = await browser.new_context()
+            context = await browser.new_context(user_agent=_ua)
             print(f"[pw-uat] no auth — tests will likely fail", flush=True)
         page = await context.new_page()
 
