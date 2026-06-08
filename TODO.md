@@ -48,9 +48,19 @@ Items listed roughly in priority order. Move to DONE when complete.
 4. **Custom UAT Case ID prefix**: human-added rows get "UAT-CUSTOM-xxx" prefix so
    pipeline can distinguish them from generated rows.
 
-**Files affected:** `main.py` (regen-dvs endpoint), 
+**New Monday column needed:** Add a file column to the AI Study Hub board (e.g. `file_mm_dvs_override`) for "DVS with Custom Tests". Tester downloads the generated DVS, edits it, uploads back here.
+
+**Pipeline logic on regen-dvs:**
+- If `file_mm_dvs_override` is populated → download it → use as base for merge
+- If empty → generate fresh DVS (current behavior)
+- Merge: keep all `Custom` rows from override; regenerate `Generated` rows fresh; fill in any blank OIDs on custom rows using XLSForm lookup
+
+**Monday board change:** Add column `file_mm_dvs_override` (File type) with label "DVS with Custom Tests" to board `18409146946`. Update `monday_client.py` COL dict with new column ID.
+
+**Files affected:** `main.py` (regen-dvs endpoint),
   `skills/dvs-specification/scripts/generate_dvs.py` (merge logic),
-  `uat_loader.py` (no change needed — already handles any valid row)
+  `uat_loader.py` (no change needed — already handles any valid row),
+  `monday_client.py` (new COL entry)
 
 **Added:** 2026-06-08
 
