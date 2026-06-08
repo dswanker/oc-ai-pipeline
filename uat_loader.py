@@ -567,6 +567,7 @@ async def _import_odm(subdomain: str, study_oid: str,
             files={"file": ("import.xml",
                             odm_xml.encode("utf-8"),
                             "text/xml")},
+            data={"runImportLogic": "true"},   # run form logic / calculated fields post-import
             headers={"Authorization": f"Bearer {submit_token}"},
         )
     if not resp.is_success:
