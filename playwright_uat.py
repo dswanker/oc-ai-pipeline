@@ -265,17 +265,11 @@ async def run_playwright_uat(
             # which the Angular SPA needs to render.
             context = await browser.new_context(
                 storage_state=session_path, user_agent=_ua)
-            if jsessionid:
-                # Also inject fresh JSESSIONID for legacy eu domain nav
-                await context.add_cookies([{
-                    "name": "JSESSIONID",
-                    "value": jsessionid,
-                    "domain": _legacy_host(subdomain),
-                    "path": "/OpenClinica",
-                    "httpOnly": True,
-                    "secure": True,
-                }])
-            print(f"[pw-uat] using saved session (+ JSESSIONID={bool(jsessionid)})", flush=True)
+            # Do NOT inject JSESSIONID from ODM import — it's a service-account
+            # session that causes the server to render different HTML (no
+            # participants-details-page iframe). The saved session already has
+            # a valid browser JSESSIONID from the user's authentication.
+            print(f"[pw-uat] using saved session (session-only, no JSESSIONID override)", flush=True)
         elif jsessionid:
             context = await browser.new_context(user_agent=_ua)
             await context.add_cookies([{
