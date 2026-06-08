@@ -281,25 +281,22 @@ async def run_playwright_uat(
                 # Form renders in about:srcdoc iframe (same-origin, accessible)
                 # Wait for it to load, then switch to that frame
                 await page.wait_for_timeout(3000)
-                form_frame = page  # default
-                _first_form = (fo == list(by_form.keys())[0][0])
-                for f_obj in page.frames:
-                    if f_obj.url == "about:srcdoc":
-                        try:
-                            body_len = await f_obj.evaluate("() => document.body.innerHTML.length")
-                            if body_len > 500:
-                                form_frame = f_obj
-                                print(f"[pw-uat] using srcdoc frame (len={body_len})", flush=True)
-                                # Debug first form only — dump HTML snippet
-                                if _first_form:
-                                    snippet = await f_obj.evaluate(
-                                        "() => document.body.innerHTML.substring(0, 1500)")
-                                    print(f"[pw-uat] srcdoc snippet: {snippet!r}", flush=True)
-                                break
-                        except Exception:
-                            pass
-                if form_frame is page:
-                    print(f"[pw-uat] using main page frame", flush=True)
+                # Form renders directly in main page DOM (not in any iframe)
+                # The about:srcdoc iframe is the Userpilot widget, not the form
+                form_frame = page
+                # Debug: dump main page HTML around form content (first form only)
+                _debug = not hasattr(_is_field_visible, '_debugged')
+                if _debug:
+                    _is_field_visible._debugged = True
+                    try:
+                        snippet = await page.evaluate(
+                            "() => document.querySelector('form, .enketo-form, [id*=form], .data-entry, main, #page-body, .page-content, #content') ? "
+                            "document.querySelector('form, .enketo-form, [id*=form], .data-entry, main, #page-body, .page-content, #content').innerHTML.substring(0,2000) : "
+                            "'NO FORM CONTAINER FOUND — body: ' + document.body.innerHTML.substring(0,1000)"
+                        )
+                        print(f"[pw-uat] main page snippet: {snippet!r}", flush=True)
+                    except Exception as _de:
+                        print(f"[pw-uat] debug error: {_de}", flush=True)
 
                 nav_ok = True
             except Exception as e:
