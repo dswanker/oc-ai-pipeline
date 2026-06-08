@@ -328,8 +328,9 @@ async def run_playwright_uat(
             form_frame = None
             try:
                 await page.goto(url, timeout=NAV_TIMEOUT,
-                                wait_until="domcontentloaded")
-                await page.wait_for_timeout(2000)  # brief pause for srcdoc to initialize
+                                wait_until="networkidle")
+                # srcdoc is injected after network settles — brief pause for render
+                await page.wait_for_timeout(1000)
                 actual_url = page.url
                 page_title = await page.title()
                 print(f"[pw-uat] landed: {actual_url[:120]} title={page_title!r}", flush=True)

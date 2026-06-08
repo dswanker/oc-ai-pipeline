@@ -1108,69 +1108,41 @@ async def run_uat_loader(item_id: str) -> dict:
     token = await _get_oc_token(subdomain)
     stamp_map = {}
 
-    # ── Pass 1: Reuse or create participants ──────────────────────────────
-    # Reuse an existing UAT participant if one already exists for this study.
-    # This preserves scheduled events so the Playwright page renders form cards.
-    # A fresh participant has no event schedule and renders an empty matrix.
-    existing_participants = await _list_participants(subdomain, study_oid, token)
-    existing_uat = [p for p in existing_participants
-                    if str(p.get("subjectKey") or "").startswith("UAT-")]
-    if existing_uat:
-        reuse_p = existing_uat[0]
-        reuse_key = str(reuse_p.get("subjectKey") or "")
-        reuse_oid = str(reuse_p.get("subjectOid") or reuse_p.get("participantOid") or "")
-        print(f"[uat_loader] reusing existing UAT participant: {reuse_key} ({reuse_oid})",
-              flush=True)
-        await append_log(item_id, f"UAT Loader: reusing participant {reuse_key}...")
-
+    # ── Pass 1: Create ALL participants first ─────────────────────────────
     for logical_pid, rows in groups.items():
         p_suffix = logical_pid.replace("UAT-P", "P")
         run_key  = f"{site_oid}-{p_suffix}"
 
-        if existing_uat:
-            # Reuse the existing participant — skip creation
-            confirmed_key = reuse_key
-            oc_oid = reuse_oid
-            if not oc_oid:
-                oc_oid = await _get_participant_oid(
-                    subdomain, study_oid, confirmed_key, token
-                )
+        await append_log(item_id, f"UAT Loader: creating participant {run_key}...")
+        try:
+            confirmed_key = await _create_participant(
+                subdomain, study_oid, created_site_oid, run_key, token, {}
+            )
+            result["participants_created"].append(confirmed_key)
+            oc_oid = await _get_participant_oid(
+                subdomain, study_oid, confirmed_key, token
+            )
+
             stamp_map[logical_pid] = {
                 "site_oid":        created_site_oid,
                 "participant_key": confirmed_key,
                 "oc_oid":          oc_oid,
             }
-        else:
-            await append_log(item_id, f"UAT Loader: creating participant {run_key}...")
-            try:
-                confirmed_key = await _create_participant(
-                    subdomain, study_oid, created_site_oid, run_key, token, {}
-                )
-                result["participants_created"].append(confirmed_key)
-                oc_oid = await _get_participant_oid(
-                    subdomain, study_oid, confirmed_key, token
-                )
-
-                stamp_map[logical_pid] = {
-                    "site_oid":        created_site_oid,
-                    "participant_key": confirmed_key,
-                    "oc_oid":          oc_oid,
-                }
-                await append_log(
-                    item_id,
-                    f"UAT Loader: participant {run_key} → OC SubjectKey={confirmed_key}"
-                )
-                await append_log(
-                    item_id,
-                    f"UAT Loader: participant {run_key} → OC internal OID={oc_oid}"
-                )
-            except Exception as e:
-                err = f"Participant creation failed for {run_key}: {e}"
-                result["errors"].append(err)
-                await append_log(
-                    item_id,
-                    f"UAT Loader: ERROR — {err} (skipping this participant)"
-                )
+            await append_log(
+                item_id,
+                f"UAT Loader: participant {run_key} → OC SubjectKey={confirmed_key}"
+            )
+            await append_log(
+                item_id,
+                f"UAT Loader: participant {run_key} → OC internal OID={oc_oid}"
+            )
+        except Exception as e:
+            err = f"Participant creation failed for {run_key}: {e}"
+            result["errors"].append(err)
+            await append_log(
+                item_id,
+                f"UAT Loader: ERROR — {err} (skipping this participant)"
+            )
 
     # Participant creation is synchronous — no propagation delay needed
 
