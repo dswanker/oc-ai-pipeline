@@ -281,36 +281,40 @@ async def run_playwright_uat(
                 # Form renders in about:srcdoc iframe (same-origin, accessible)
                 # Wait for it to load, then switch to that frame
                 await page.wait_for_timeout(3000)
-                # Form renders directly in main page DOM (not in any iframe)
-                # The about:srcdoc iframe is the Userpilot widget, not the form
-                form_frame = page
-                # Debug: dump main page HTML around form content (first form only)
-                _debug = not hasattr(_is_field_visible, '_debugged')
-                if _debug:
-                    _is_field_visible._debugged = True
+                # Switch into the OC4 Angular app iframe (iframe[0], ~196KB)
+                # Form abbreviation: F_DM -> DM, F_AE -> AE etc.
+                form_abbrev = fo.replace("F_", "", 1) if fo.startswith("F_") else fo
+                form_frame = page  # fallback
+                app_frame = None
+                for f_obj in page.frames:
+                    if f_obj.url == "about:srcdoc":
+                        try:
+                            body_len = await f_obj.evaluate("() => document.body.innerHTML.length")
+                            if body_len > 100000:  # Angular app is ~196KB
+                                app_frame = f_obj
+                                break
+                        except Exception:
+                            pass
+
+                if app_frame:
+                    # Click the form card to open the form
                     try:
-                        # Dump all top-level IDs and classes to find form container
-                        structure = await page.evaluate("""() => {
-                            const els = document.querySelectorAll('body > *, #main > *, #content > *, td > div, .col-md-9 > *, .formContainer, [id*=enketo], [class*=enketo]');
-                            return Array.from(els).slice(0, 30).map(el =>
-                                el.tagName + '#' + (el.id||'') + '.' + (el.className||'').substring(0,40) + ' len=' + el.innerHTML.length
-                            ).join('\n');
-                        }""")
-                        print(f"[pw-uat] page structure:\n{structure}", flush=True)
-                        # Also try to find any element containing 'Subject ID' or field labels
-                        found = await page.evaluate("""() => {
-                            const all = document.querySelectorAll('*');
-                            for (const el of all) {
-                                if (el.children.length < 3 && el.textContent.trim() === 'Subject ID') {
-                                    const p = el.parentElement;
-                                    return p ? p.tagName + '#' + p.id + ' class=' + p.className + ' outerHTML=' + p.outerHTML.substring(0,500) : 'no parent';
-                                }
-                            }
-                            return 'Subject ID label not found';
-                        }""")
-                        print(f"[pw-uat] Subject ID label: {found!r}", flush=True)
-                    except Exception as _de:
-                        print(f"[pw-uat] debug error: {_de}", flush=True)
+                        edit_sel = f'[title="Edit {form_abbrev}"]'
+                        await app_frame.wait_for_selector(edit_sel, timeout=5000)
+                        await app_frame.click(edit_sel)
+                        print(f"[pw-uat] clicked {edit_sel}", flush=True)
+                        # Wait for Enketo form to render inside the Angular app
+                        await app_frame.wait_for_selector(
+                            ".question, [data-name], .enketo-form, .form-group",
+                            timeout=10000
+                        )
+                        form_frame = app_frame
+                        print(f"[pw-uat] form open in app frame", flush=True)
+                    except Exception as _ce:
+                        print(f"[pw-uat] form click failed: {_ce}", flush=True)
+                        form_frame = app_frame or page
+                else:
+                    print(f"[pw-uat] Angular app frame not found", flush=True)
 
                 nav_ok = True
             except Exception as e:
