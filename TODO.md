@@ -12,13 +12,6 @@ Items listed roughly in priority order. Move to DONE when complete.
 **Notes:** ILS controls which roles/users can see individual items on a form. Needs to be part of the automated build so it doesn't have to be configured manually post-build.
 **Added:** 2026-06-08
 
-### Playwright: /admin/refresh-session endpoint
-**What:** Add endpoint that runs a headless Keycloak SSO login to refresh the build app session file at `/data/browser_sessions/{email}.json`. Needed for Playwright to render the Angular SPA in hub.html.
-**Why:** Session file expires and is only refreshed when oc_form_publisher runs (EDC build). Between builds, Playwright can't auth to the build app and the SPA stays at 974 bytes.
-**Approach:** Minimal Playwright browser flow — navigate to cust1.build.openclinica.io, follow SSO redirect, fill credentials (from env vars OC_EMAIL/OC_PASSWORD), save session file.
-**Env vars needed:** OC_EMAIL, OC_PASSWORD on Railway (or use OAuth token exchange).
-**Added:** 2026-06-08
-
 ### AE Form: no fields visible in OC4 TEST environment
 **What:** Opening the AE form for a UAT participant shows only the group header "Adverse Event / Adverse Device Effect" with no fields and no way to add an entry. Close/Complete buttons only.
 **Observed:** 2026-06-08 on participant UAT-20260608-124957-P001 in cust1 TEST env.
