@@ -289,12 +289,26 @@ async def run_playwright_uat(
                 if _debug:
                     _is_field_visible._debugged = True
                     try:
-                        snippet = await page.evaluate(
-                            "() => document.querySelector('form, .enketo-form, [id*=form], .data-entry, main, #page-body, .page-content, #content') ? "
-                            "document.querySelector('form, .enketo-form, [id*=form], .data-entry, main, #page-body, .page-content, #content').innerHTML.substring(0,2000) : "
-                            "'NO FORM CONTAINER FOUND — body: ' + document.body.innerHTML.substring(0,1000)"
-                        )
-                        print(f"[pw-uat] main page snippet: {snippet!r}", flush=True)
+                        # Dump all top-level IDs and classes to find form container
+                        structure = await page.evaluate("""() => {
+                            const els = document.querySelectorAll('body > *, #main > *, #content > *, td > div, .col-md-9 > *, .formContainer, [id*=enketo], [class*=enketo]');
+                            return Array.from(els).slice(0, 30).map(el =>
+                                el.tagName + '#' + (el.id||'') + '.' + (el.className||'').substring(0,40) + ' len=' + el.innerHTML.length
+                            ).join('\n');
+                        }""")
+                        print(f"[pw-uat] page structure:\n{structure}", flush=True)
+                        # Also try to find any element containing 'Subject ID' or field labels
+                        found = await page.evaluate("""() => {
+                            const all = document.querySelectorAll('*');
+                            for (const el of all) {
+                                if (el.children.length < 3 && el.textContent.trim() === 'Subject ID') {
+                                    const p = el.parentElement;
+                                    return p ? p.tagName + '#' + p.id + ' class=' + p.className + ' outerHTML=' + p.outerHTML.substring(0,500) : 'no parent';
+                                }
+                            }
+                            return 'Subject ID label not found';
+                        }""")
+                        print(f"[pw-uat] Subject ID label: {found!r}", flush=True)
                     except Exception as _de:
                         print(f"[pw-uat] debug error: {_de}", flush=True)
 
