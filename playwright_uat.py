@@ -405,127 +405,31 @@ async def run_playwright_uat(
                     print(f"[pw-uat] matrix frame not ready after {_poll_max}s", flush=True)
 
                 if app_frame:
-                    # For common/repeating events, form cards are inside a
-                    # collapsed p-accordion. Expand it before looking for edit buttons.
-                    # Strategy: find collapsed accordions (icon-caret-d = down = collapsed)
-                    # and click to expand.
-                    try:
-                        _n_expanded = await app_frame.evaluate("""() => {
-                            let n = 0;
-                            const collapsed = document.querySelectorAll(
-                                '.p-accordion-toggle-icon.icon-caret-d');
-                            collapsed.forEach(icon => {
-                                const link = icon.closest('.p-accordion-header-link');
-                                if (link) { link.click(); n++; }
-                            });
-                            return n;
-                        }""")
-                        if _n_expanded > 0:
-                            await app_frame.wait_for_timeout(1000)
-                            print(f"[pw-uat] expanded {_n_expanded} collapsed accordion(s)", flush=True)
-                    except Exception as _ae:
-                        print(f"[pw-uat] accordion expand warning: {_ae}", flush=True)
-
-                    try:
-                        edit_sel = f'[title="Edit {form_abbrev}"]'
-                        # Try normal Edit button first (non-repeating scheduled events)
-                        _edit_exists = False
+                    # The navigation URL includes enketoOpen=true&crfOid=F_XX which
+                    # causes study-runner-ui to auto-open Enketo in a nested iframe at
+                    # form.eu.openclinica.io — no click needed for non-repeating events.
+                    # Poll for that iframe to appear in page.frames.
+                    form_frame = None
+                    for _t in range(20):
                         try:
-                            await app_frame.wait_for_selector(edit_sel, timeout=3000)
-                            _edit_exists = True
-                        except Exception:
-                            pass
-
-                        if not _edit_exists:
-                            # Repeating event: find form section by abbreviation and click
-                            # the first occurrence pagination button to expose Edit button
-                            _fa = form_abbrev  # avoid f-string issues
-                            _clicked_occ = await app_frame.evaluate(f"""() => {{
-                                const walker = document.createTreeWalker(
-                                    document.body, NodeFilter.SHOW_TEXT);
-                                let node;
-                                while (node = walker.nextNode()) {{
-                                    if (node.textContent.trim() === '{_fa}') {{
-                                        let el = node.parentElement;
-                                        for (let i = 0; i < 8; i++) {{
-                                            if (!el) break;
-                                            const btn = el.querySelector('button.pagination-button');
-                                            if (btn) {{ btn.click(); return true; }}
-                                            el = el.parentElement;
-                                        }}
-                                    }}
-                                }}
-                                return false;
-                            }}""")
-                            if _clicked_occ:
-                                await app_frame.wait_for_timeout(500)
-                                print(f"[pw-uat] clicked occurrence 1 for {form_abbrev}", flush=True)
-                                try:
-                                    await app_frame.wait_for_selector(edit_sel, timeout=3000)
-                                    _edit_exists = True
-                                except Exception:
-                                    pass
-                            if not _edit_exists:
-                                raise Exception(
-                                    f"No Edit button found for {form_abbrev} "
-                                    f"(tried direct + occurrence pagination)")
-
-                        # JS click bypasses the overlay div#iframe-container
-                        _js_click = (
-                            '() => { const el = document.querySelector'
-                            f'(\'[title="Edit {form_abbrev}"]\'); if(el) el.click(); }}'
-                        )
-                        _pre_url = app_frame.url
-                        await app_frame.evaluate(_js_click)
-                        print(f"[pw-uat] clicked {edit_sel}", flush=True)
-                        # After clicking Edit DM, check what changes in app_frame DOM.
-                        # The form likely renders inline in study-runner-ui (not a new frame).
-                        _form_found = False
-                        for _t in range(20):
-                            await page.wait_for_timeout(1000)
-                            try:
-                                # Log what selectors exist in the app_frame
-                                _debug = await app_frame.evaluate("""() => {
-                                    const q = !!document.querySelector('.question');
-                                    const ef = !!document.querySelector('.enketo-form');
-                                    const dn = !!document.querySelector('[data-name]');
-                                    const fi = !!document.querySelector('.form-items, .form-panel');
-                                    const url = location.href.substring(0,80);
-                                    const len = document.body.innerHTML.length;
-                                    return {q, ef, dn, fi, url, len};
-                                }""")
-                                if _t == 0 or _t % 5 == 0:
-                                    print(f"[pw-uat] app_frame t={_t}s: {_debug}", flush=True)
-                                if _debug.get('q') or _debug.get('ef') or _debug.get('dn'):
-                                    form_frame = app_frame
-                                    _form_found = True
-                                    print(f"[pw-uat] Enketo ready in app_frame after {_t+1}s", flush=True)
-                                    break
-                            except Exception as _de:
-                                if _t == 0:
-                                    print(f"[pw-uat] app_frame eval error: {_de}", flush=True)
-                            # Also check all other frames
                             for _f in page.frames:
-                                if _f == app_frame:
-                                    continue
-                                try:
-                                    has_q = await _f.evaluate(
-                                        '() => !!document.querySelector(".question, .enketo-form")')
-                                    if has_q:
-                                        form_frame = _f
-                                        _form_found = True
-                                        print(f"[pw-uat] Enketo in other frame after {_t+1}s url={_f.url[:60]}", flush=True)
-                                        break
-                                except Exception:
-                                    pass
-                            if _form_found:
+                                if 'form.' in _f.url and 'openclinica' in _f.url:
+                                    form_frame = _f
+                                    nav_ok = True
+                                    print(f"[pw-uat] Enketo iframe ready after {_t}s: {_f.url[:70]}", flush=True)
+                                    break
+                            if form_frame:
                                 break
-                        if not _form_found:
-                            print(f"[pw-uat] Enketo not found after 20s", flush=True)
-                            form_frame = app_frame
-                    except Exception as _ce:
-                        print(f"[pw-uat] form click failed: {_ce}", flush=True)
-                        form_frame = app_frame or page
+                            if _t == 0 or _t % 5 == 0:
+                                frame_urls = [_f.url[:50] for _f in page.frames]
+                                print(f"[pw-uat] waiting for form iframe t={_t}s frames={frame_urls}", flush=True)
+                        except Exception as _fe:
+                            if _t == 0:
+                                print(f"[pw-uat] form iframe poll error: {_fe}", flush=True)
+                        await page.wait_for_timeout(1000)
+                    if not form_frame:
+                        print(f"[pw-uat] Enketo iframe not found after 20s", flush=True)
+                        form_frame = app_frame
                 else:
                     print(f"[pw-uat] Angular app frame not found", flush=True)
 
