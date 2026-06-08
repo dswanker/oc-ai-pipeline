@@ -28,6 +28,34 @@ Items listed roughly in priority order. Move to DONE when complete.
 
 ## 🟡 Medium Priority
 
+### Human-editable DVS test cases
+**What:** Allow testers to add, remove, or modify UAT test cases in the DVS XLSX directly, with the pipeline able to ingest those changes and execute them.
+**Use cases:**
+- Tester adds a new test case the generator missed
+- Tester modifies a Load_Value or Expected Result to be more precise
+- Tester removes a test case that doesn't apply
+- Tester adds plain-language field/form names (not OID format)
+
+**Design decisions needed:**
+1. **Merge strategy on regen-dvs**: currently regenerates from scratch, wiping human edits.
+   Options: (a) merge generated rows with human-edited DVS — preserve human changes,
+   add new generated rows, fill in missing OIDs from XLSForm; (b) lock generated rows
+   and only add human rows to a separate "Custom Tests" section.
+2. **OID derivation**: human writes "AEYN" → pipeline maps to I_AE_AEYN using XLSForm.
+   Human writes "AE form" → pipeline maps to F_AE.
+3. **Human-deleted rows**: if a row exists in generated set but not in human file,
+   treat as intentional deletion — don't recreate on regen.
+4. **Custom UAT Case ID prefix**: human-added rows get "UAT-CUSTOM-xxx" prefix so
+   pipeline can distinguish them from generated rows.
+
+**Files affected:** `main.py` (regen-dvs endpoint), 
+  `skills/dvs-specification/scripts/generate_dvs.py` (merge logic),
+  `uat_loader.py` (no change needed — already handles any valid row)
+
+**Added:** 2026-06-08
+
+
+
 ### UAT — Results file naming for UAT Results
 **What:** `CRS-135_DVS_UAT_Results.xlsx` accumulates versions in `file_mm3h5s3h`. Clear before each run or use a single named file.
 **Added:** 2026-06-08
