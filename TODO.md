@@ -6,6 +6,17 @@ Items listed roughly in priority order. Move to DONE when complete.
 
 ## 🔴 High Priority
 
+### Fix spec generation: calculate field rules for common/repeating events
+**Priority: HIGH**
+**What:** The spec generation (protocol analysis → form_specs) needs two new rules:
+1. **Calculate field function syntax** — calculated fields must use proper XLSForm `calculate` column syntax. The spec should define the correct formula (e.g. `${field1} + ${field2}`) not just note that the field is calculated.
+2. **Calculate fields in common/repeating events** — calculated fields inside repeating groups (SE_COMMON / repeat blocks) need special handling. The XLSForm `calculate` expression must reference fields within the same repeat group using relative paths, not absolute paths. The spec must flag when a calculate field is inside a repeat group and generate the correct scoped formula.
+**Impact:** Currently calculated fields in common visit forms are broken (returning 0 or not evaluating). This blocks Playwright UAT for repeating event forms.
+**Files to update:** `prompts.py` (form_specs prompt), `pipeline.py` (spec generation chain)
+**Added:** 2026-06-08
+
+
+
 ### Add Item Level Security to EDC Build
 **What:** Wire Item Level Security (ILS) configuration into the study build flow.
 **Where:** `pipeline.py` / `oc_form_publisher.py` — after forms are published to TEST/PROD.
