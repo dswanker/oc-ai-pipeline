@@ -320,39 +320,30 @@ async def run_playwright_uat(
                 app_frame = None
                 # Find hub.html iframe — Angular SPA embedded in legacy eu page.
                 # hub.html renders with build app cookies from saved session.
-                hub_frame = None
-                for f_obj in page.frames:
-                    if "hub.html" in f_obj.url:
-                        hub_frame = f_obj
-                        break
-
-                if hub_frame:
-                    # Poll for Angular SPA to render (max 30s, 1s intervals)
-                    # Note: SPA requires build app session auth to render.
-                    # Session file at /data/browser_sessions/{email}.json must be fresh.
-                    # Session is refreshed when oc_form_publisher runs (EDC build step).
-                    _poll_max = 5
-                    _elapsed = 0.0
-                    while _elapsed < _poll_max:
-                        try:
-                            has_edit = await hub_frame.evaluate(
-                                "() => !!document.querySelector('[title^=\'Edit \']')")
-                            if has_edit:
-                                app_frame = hub_frame
-                                print(f"[pw-uat] Angular app ready after {_elapsed:.1f}s", flush=True)
-                                break
-                            body_len = await hub_frame.evaluate(
-                                "() => document.body ? document.body.innerHTML.length : 0")
-                            if _elapsed == 0 or _elapsed % 10 == 0:
-                                print(f"[pw-uat] hub.html t={_elapsed:.0f}s len={body_len}", flush=True)
-                        except Exception:
-                            pass
-                        await asyncio.sleep(1.0)
-                        _elapsed += 1.0
-                    if not app_frame:
-                        print(f"[pw-uat] SPA not ready after {_poll_max}s — session may be expired", flush=True)
-                else:
-                    print(f"[pw-uat] hub.html frame not found", flush=True)
+                # hub.html is a CrossStorage bridge (974 bytes, always static).
+                # Form content renders in the MAIN PAGE via cross-storage reads
+                # from build.openclinica.io localStorage through that bridge.
+                # Poll main page for [title^="Edit "] form cards to appear.
+                _poll_max = 15
+                _elapsed = 0.0
+                while _elapsed < _poll_max:
+                    try:
+                        has_edit = await page.evaluate(
+                            "() => !!document.querySelector('[title^=\'Edit \']')")
+                        if has_edit:
+                            app_frame = page
+                            print(f"[pw-uat] form cards ready after {_elapsed:.1f}s", flush=True)
+                            break
+                        body_len = await page.evaluate(
+                            "() => document.body ? document.body.innerHTML.length : 0")
+                        if _elapsed == 0 or _elapsed % 5 == 0:
+                            print(f"[pw-uat] main page t={_elapsed:.0f}s len={body_len}", flush=True)
+                    except Exception:
+                        pass
+                    await asyncio.sleep(1.0)
+                    _elapsed += 1.0
+                if not app_frame:
+                    print(f"[pw-uat] form cards not found after {_poll_max}s", flush=True)
 
                 if app_frame:
                     # Click the form card to open the form
