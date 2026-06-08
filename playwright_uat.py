@@ -252,35 +252,16 @@ async def run_playwright_uat(
 
                 # OC4 renders forms via Enketo in an iframe
                 # Wait for the Enketo iframe to appear
-                try:
-                    # Log all iframes and links on the page for diagnosis
-                    all_frames = page.frames
-                    print(f"[pw-uat] page has {len(all_frames)} frames", flush=True)
-                    for f_obj in all_frames[1:]:  # skip main frame
-                        print(f"[pw-uat]   frame url: {f_obj.url[:100]}", flush=True)
-
-                    # Check for Enketo-related elements
-                    enketo_els = await page.query_selector_all("iframe, [class*='enketo'], [id*='enketo'], .form-container")
-                    print(f"[pw-uat] enketo-related elements: {len(enketo_els)}", flush=True)
-                    for el in enketo_els[:3]:
-                        tag = await el.evaluate("el => el.tagName + ' ' + (el.src || el.className || el.id || '')")
-                        print(f"[pw-uat]   el: {tag[:100]}", flush=True)
-
-                    # Try waiting for Enketo iframe
-                    await page.wait_for_selector("iframe[src*='enketo'], iframe[class*='enketo'], .enketo-form iframe", timeout=10000)
-                    frames = page.frames
-                    for f_obj in frames:
-                        f_url = f_obj.url
-                        if "enketo" in f_url or "form" in f_url:
-                            form_frame = f_obj
-                            print(f"[pw-uat] found Enketo frame: {f_url[:80]}", flush=True)
-                            break
-                    if not form_frame:
-                        form_frame = page
-                        print("[pw-uat] no Enketo iframe found, using main page", flush=True)
-                except Exception as _ie:
-                    form_frame = page
-                    print(f"[pw-uat] iframe search: {_ie}", flush=True)
+                # TODO: OC4 ParticipantDetailsPage loads the participant summary.
+                # The Enketo form only opens when the specific form is clicked.
+                # Need to: (1) find and click the form link in hub.html iframe,
+                # OR (2) navigate directly to the Enketo form URL.
+                # For now, use the hub.html frame which is the OC4 build app.
+                form_frame = page
+                for f_obj in page.frames:
+                    if "hub.html" in f_obj.url:
+                        form_frame = f_obj
+                        break
 
                 nav_ok = True
             except Exception as e:
