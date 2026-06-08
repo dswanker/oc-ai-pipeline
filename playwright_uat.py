@@ -331,7 +331,7 @@ async def run_playwright_uat(
                     # Note: SPA requires build app session auth to render.
                     # Session file at /data/browser_sessions/{email}.json must be fresh.
                     # Session is refreshed when oc_form_publisher runs (EDC build step).
-                    _poll_max = 30
+                    _poll_max = 5
                     _elapsed = 0.0
                     while _elapsed < _poll_max:
                         try:
