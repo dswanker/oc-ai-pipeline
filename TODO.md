@@ -20,8 +20,8 @@ Items listed roughly in priority order. Move to DONE when complete.
 
 ### Calc Fields returning 0 (ODISUM, PCSTOT, PHQTOT, AGE)
 **What:** Calculated fields compute to 0 despite correct input values being loaded via ODM.
-**Where:** `uat_loader.py` `_build_odm_xml` — calc input items may be landing in wrong ItemGroup structure.
-**Notes:** OC formula may expect inputs in a repeating ItemGroup; need to verify ItemGroupOID used for calc inputs matches what the formula references.
+**Root cause:** ODISUM formula sums ODI1-10 but DVS test only loads ODI1-4. Missing ODI5-10 default to 0.
+**Fix needed:** DVS generator (`extract_dvs_from_forms.py`) should detect calc formulas and include ALL referenced input fields in the Load_Value, not just the first few. Alternatively, load a valid value for all ODI/PCS/PHQ items when generating the calc test case.
 **Added:** 2026-06-08
 
 ---
