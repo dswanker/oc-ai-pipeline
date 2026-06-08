@@ -268,6 +268,29 @@ async def _create_participant(subdomain: str, study_oid: str,
         return subject_key
 
 
+async def _list_participants(subdomain: str, study_oid: str,
+                             token: str) -> list:
+    """Return all participants for the study as a list of dicts."""
+    from urllib.parse import quote as _quote
+    url = (f"{_pages_base(subdomain)}/pages/auth/api/clinicaldata"
+           f"/studies/{_quote(study_oid, safe='')}/participants")
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.get(url,
+                                headers={"Authorization": f"Bearer {token}"})
+    if not resp.is_success:
+        return []
+    try:
+        body = resp.json()
+    except Exception:
+        return []
+    if isinstance(body, list):
+        return body
+    for v in body.values() if isinstance(body, dict) else []:
+        if isinstance(v, list):
+            return v
+    return []
+
+
 async def _get_participant_oid(subdomain: str, study_oid: str,
                                 participant_id: str, token: str) -> str:
     """GET /pages/auth/api/clinicaldata/studies/{studyOID}/participants and
@@ -1085,49 +1108,69 @@ async def run_uat_loader(item_id: str) -> dict:
     token = await _get_oc_token(subdomain)
     stamp_map = {}
 
-    # ── Pass 1: Create ALL participants first ─────────────────────────────
-    # Decouples creation from ODM import so OC has time to propagate every
-    # new participant before any data lands. A failed creation is recorded
-    # in result["errors"] and the participant is excluded from Pass 2
-    # (stamp_map gets no entry for it).
+    # ── Pass 1: Reuse or create participants ──────────────────────────────
+    # Reuse an existing UAT participant if one already exists for this study.
+    # This preserves scheduled events so the Playwright page renders form cards.
+    # A fresh participant has no event schedule and renders an empty matrix.
+    existing_participants = await _list_participants(subdomain, study_oid, token)
+    existing_uat = [p for p in existing_participants
+                    if str(p.get("subjectKey") or "").startswith("UAT-")]
+    if existing_uat:
+        reuse_p = existing_uat[0]
+        reuse_key = str(reuse_p.get("subjectKey") or "")
+        reuse_oid = str(reuse_p.get("subjectOid") or reuse_p.get("participantOid") or "")
+        print(f"[uat_loader] reusing existing UAT participant: {reuse_key} ({reuse_oid})",
+              flush=True)
+        await append_log(item_id, f"UAT Loader: reusing participant {reuse_key}...")
+
     for logical_pid, rows in groups.items():
         p_suffix = logical_pid.replace("UAT-P", "P")
         run_key  = f"{site_oid}-{p_suffix}"
 
-        await append_log(item_id, f"UAT Loader: creating participant {run_key}...")
-        try:
-            confirmed_key = await _create_participant(
-                subdomain, study_oid, created_site_oid, run_key, token, {}
-            )
-            result["participants_created"].append(confirmed_key)
-
-            # Look up the internal OC OID for this participant — that is
-            # what _build_odm_xml must use as SubjectKey/StudySubjectID,
-            # not the ParticipantID we POSTed.
-            oc_oid = await _get_participant_oid(
-                subdomain, study_oid, confirmed_key, token
-            )
-
+        if existing_uat:
+            # Reuse the existing participant — skip creation
+            confirmed_key = reuse_key
+            oc_oid = reuse_oid
+            if not oc_oid:
+                oc_oid = await _get_participant_oid(
+                    subdomain, study_oid, confirmed_key, token
+                )
             stamp_map[logical_pid] = {
                 "site_oid":        created_site_oid,
                 "participant_key": confirmed_key,
                 "oc_oid":          oc_oid,
             }
-            await append_log(
-                item_id,
-                f"UAT Loader: participant {run_key} → OC SubjectKey={confirmed_key}"
-            )
-            await append_log(
-                item_id,
-                f"UAT Loader: participant {run_key} → OC internal OID={oc_oid}"
-            )
-        except Exception as e:
-            err = f"Participant creation failed for {run_key}: {e}"
-            result["errors"].append(err)
-            await append_log(
-                item_id,
-                f"UAT Loader: ERROR — {err} (skipping this participant)"
-            )
+        else:
+            await append_log(item_id, f"UAT Loader: creating participant {run_key}...")
+            try:
+                confirmed_key = await _create_participant(
+                    subdomain, study_oid, created_site_oid, run_key, token, {}
+                )
+                result["participants_created"].append(confirmed_key)
+                oc_oid = await _get_participant_oid(
+                    subdomain, study_oid, confirmed_key, token
+                )
+
+                stamp_map[logical_pid] = {
+                    "site_oid":        created_site_oid,
+                    "participant_key": confirmed_key,
+                    "oc_oid":          oc_oid,
+                }
+                await append_log(
+                    item_id,
+                    f"UAT Loader: participant {run_key} → OC SubjectKey={confirmed_key}"
+                )
+                await append_log(
+                    item_id,
+                    f"UAT Loader: participant {run_key} → OC internal OID={oc_oid}"
+                )
+            except Exception as e:
+                err = f"Participant creation failed for {run_key}: {e}"
+                result["errors"].append(err)
+                await append_log(
+                    item_id,
+                    f"UAT Loader: ERROR — {err} (skipping this participant)"
+                )
 
     # Participant creation is synchronous — no propagation delay needed
 
