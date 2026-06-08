@@ -3469,6 +3469,65 @@ async def run_pipeline(item_id):
         # and run the UAT loader directly against the existing published study.
         # This is useful when only test data needs to be reloaded (e.g. DVS
         # was regenerated) without rebuilding or republishing the study.
+
+        # ── Auth check must happen BEFORE any early exits ─────────────────────
+        # Any checkbox that touches OC requires a valid Playwright session.
+        def _bool_col_early(col_id: str) -> bool:
+            try:
+                return bool(json.loads(
+                    cols.get(col_id, {}).get("value") or "{}"
+                ).get("checked", False))
+            except Exception:
+                return False
+
+        _oc_email_early = (cols.get(COL["oc_email"], {}).get("text") or "").strip()
+        _needs_session_early = (
+            _bool_col_early(COL["create_study"])
+            or _bool_col_early("boolean_mm3g2vzf")
+            or _bool_col_early("boolean_mm3z1xy8")
+            or _bool_col_early("boolean_mm3gxe49")
+        )
+        if _needs_session_early and _oc_email_early:
+            from auth_manager import AuthManager as _AM
+            _am = _AM()
+            _session_ok = False
+            if _am.session_exists(_oc_email_early):
+                _sess_path = str(_am.get_session_path(_oc_email_early))
+                _age_s = time.time() - os.path.getmtime(_sess_path)
+                if _age_s < 120:
+                    _session_ok = True  # grace period — just created
+                else:
+                    from oc_form_publisher import probe_sso_session as _probe
+                    _oc_sub_early = (cols.get(COL["oc_subdomain"], {}).get("text") or "").strip()
+                    _session_ok = await _probe(_oc_sub_early, _sess_path)
+                    if not _session_ok:
+                        try:
+                            os.remove(_sess_path)
+                        except OSError:
+                            pass
+            if not _am.session_exists(_oc_email_early):
+                _auth_link = _am.generate_auth_link(
+                    _oc_email_early,
+                    "https://oc-ai-pipeline-production.up.railway.app",
+                )
+                await append_log(item_id,
+                    f"⚠️ Authentication Required\n\n"
+                    f"Click here to authenticate your OpenClinica account:\n"
+                    f"{_auth_link}\n\n"
+                    f"After authentication, trigger 'Send to AI' again to continue.")
+                await set_link(item_id, COL["oc_auth_link"], _auth_link,
+                               text="Authenticate OpenClinica")
+                await set_status(item_id, COL["pipeline_status"],
+                                 "Paused for Authentication")
+                try:
+                    await set_status(item_id, COL["ai_trigger"],
+                                     "Do not Send To AI Yet")
+                except Exception:
+                    pass
+                print(f"[auth-early] Auth required for {_oc_email_early} — pausing.",
+                      flush=True)
+                return
+
         _existing_uuid_early = (cols.get(COL["study_uuid"], {})
                                 .get("text") or "").strip()
         _load_uat_early = (cols.get(COL["load_dvs_uat_data"], {})
@@ -3581,105 +3640,8 @@ async def run_pipeline(item_id):
               flush=True)
 
         # ── Early OAuth check (saves chains A-E on first-time auth) ──────────
-        # create_oc_study's form-upload step requires a saved Playwright
-        # session at /data/browser_sessions/{oc_email}.json. If none
-        # exists for this user, post a one-time auth link to the row and
-        # bail BEFORE running ~2-3 min of Claude protocol analysis +
-        # chains A/B/C/D/E that would just be discarded on the next click.
-        # Auth required if ANY of these OC-touching checkboxes is checked:
-        # - create_study (Create OC Study)
-        # - boolean_mm3g2vzf (Publish Forms)
-        # - boolean_mm3z1xy8 (Publish Calendaring Rules)
-        # - boolean_mm3gxe49 (Load UAT Data)
-        def _bool_col(col_id: str) -> bool:
-            try:
-                return bool(json.loads(
-                    cols.get(col_id, {}).get("value") or "{}"
-                ).get("checked", False))
-            except Exception:
-                return False
-        _needs_oc_session = (
-            create_study
-            or _bool_col("boolean_mm3g2vzf")
-            or _bool_col("boolean_mm3z1xy8")
-            or _bool_col("boolean_mm3gxe49")
-        )
-        if _needs_oc_session and oc_email:
-            auth_manager = AuthManager()
-            # Pre-flight: if a session file exists, validate it actually
-            # works before spending ~8 min on chains. A stale session
-            # gets deleted here so the existing "no session" branch
-            # below re-prompts the user via the same code path.
-            #
-            # Uses probe_sso_session (oc_form_publisher) — the AUTHORITATIVE
-            # check: it replays the publisher's exact My-Studies navigation
-            # headless and only reports stale when genuinely redirected to
-            # Keycloak login, failing OPEN on anything ambiguous (slow
-            # render / no studies / transient). This is what lets us fail
-            # fast at minute 0 instead of wasting ~8 min of analysis to
-            # discover a dead session at the publish step, WITHOUT the
-            # false-stale regressions that got the old REST/cookie/userinfo
-            # checks disabled (the _validate_oc_session stub).
-            if auth_manager.session_exists(oc_email):
-                session_path = str(auth_manager.get_session_path(oc_email))
-                # Grace period: if the session was written within the last
-                # 2 minutes, skip the probe entirely — it was just created
-                # by the user completing the auth flow and is guaranteed
-                # fresh. The probe on a brand-new session is unreliable
-                # (Keycloak cookies may not be fully propagated) and is the
-                # root cause of the recurring "flips back to Do Not Send"
-                # regression after every fresh authentication.
-                _session_age_s = (
-                    time.time() - os.path.getmtime(session_path)
-                )
-                if _session_age_s < 120:
-                    print(
-                        f"[session-preflight] session for {oc_email} is "
-                        f"{_session_age_s:.0f}s old — skipping probe "
-                        f"(fresh session grace period)",
-                        flush=True,
-                    )
-                    _session_live = True
-                else:
-                    from oc_form_publisher import probe_sso_session
-                    _session_live = await probe_sso_session(
-                        oc_subdomain, session_path)
-                if not _session_live:
-                    print(f"[session-preflight] session for {oc_email} "
-                          f"is stale — deleting and re-requesting auth",
-                          flush=True)
-                    try:
-                        os.remove(session_path)
-                    except OSError:
-                        pass
-
-            if not auth_manager.session_exists(oc_email):
-                auth_link = auth_manager.generate_auth_link(
-                    oc_email,
-                    "https://oc-ai-pipeline-production.up.railway.app",
-                )
-                await append_log(item_id,
-                    f"⚠️ Authentication Required\n\n"
-                    f"Click here to authenticate your OpenClinica account:\n"
-                    f"{auth_link}\n\n"
-                    f"After authentication, trigger 'Send to AI' again "
-                    f"to continue.")
-                await set_link(item_id, COL["oc_auth_link"], auth_link,
-                               text="Authenticate OpenClinica")
-                await set_status(item_id, COL["pipeline_status"],
-                                 "Paused for Authentication")
-                # Reset the trigger column so the user can re-trigger
-                # with one click after authenticating, without having
-                # to manually flip it off and on first.
-                try:
-                    await set_status(item_id, COL["ai_trigger"],
-                                     "Do not Send To AI Yet")
-                except Exception as _te:
-                    print(f"[auth-pause] trigger column reset failed: "
-                          f"{_te}", flush=True)
-                print(f"Auth required for {oc_email} — posted link to row "
-                      f"and bailed before chains started.", flush=True)
-                return
+        # Auth check already handled above (before early exits) — see
+        # _needs_session_early block. Session path set there for use below.
 
         # ── 1. Check for human-uploaded inputs (parallel downloads) ──────────
         (edited_spec_xlsx,
