@@ -504,9 +504,14 @@ def _build_odm_xml(study_oid: str, site_oid: str,
         f'      <SiteRef LocationOID="{site_oid}"/>',
     ]
     for ev_oid, repeats in events.items():
+        is_common = "COMMON" in ev_oid.upper() or "UNSCH" in ev_oid.upper()
         for repeat_key, forms in repeats.items():
+            start_attr = (
+                "" if is_common
+                else f' OpenClinica:StartDate="{UAT_VISIT_DATE}"'
+            )
             lines.append(
-                f'      <StudyEventData StudyEventOID="{ev_oid}">'
+                f'      <StudyEventData StudyEventOID="{ev_oid}"{start_attr}>'
             )
             for form_oid, igs in forms.items():
                 lines.append(
@@ -780,6 +785,11 @@ def _evaluate_uat_cases(
     passed = failed = skipped = 0
 
     for row in ws.iter_rows(min_row=header_row_idx + 1):
+        # Skip blank rows (empty Excel rows at end of sheet)
+        uid = str(row[col_idx.get("UAT Case ID", 1) - 1].value or "").strip() if "UAT Case ID" in col_idx else ""
+        if not uid:
+            continue  # don't count toward skipped — truly empty row
+
         ev_oid  = str(row[col_idx["Study_Event_OID"]  - 1].value or "").strip().upper()
         fo_oid  = str(row[col_idx["Form_OID"]         - 1].value or "").strip().upper()
         ig_oid  = str(row[col_idx["Item_Group_OID"]   - 1].value or "").strip().upper()
