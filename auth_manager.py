@@ -130,8 +130,10 @@ async def handle_session_upload(token: str, storage_state) -> dict:
         }
     path = write_session_state(email, storage_state)
     n = len(storage_state.get("cookies", []))
-    print(f"[auth] wrote session for {email}: {n} cookies -> {path}",
-          flush=True)
+    n_origins = len(storage_state.get("origins", []))
+    n_ls = sum(len(o.get("localStorage", [])) for o in storage_state.get("origins", []))
+    print(f"[auth] wrote session for {email}: {n} cookies, {n_origins} origins, "
+          f"{n_ls} localStorage keys -> {path}", flush=True)
     return {"ok": True, "email": email, "cookies": n}
 
 

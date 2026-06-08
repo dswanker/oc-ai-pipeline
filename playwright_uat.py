@@ -312,7 +312,13 @@ async def run_playwright_uat(
                 timeout=30000, wait_until="networkidle"
             )
             await warm_page.wait_for_timeout(3000)
-            print(f"[pw-uat] build app ready: {warm_page.url}", flush=True)
+            # Log localStorage keys to diagnose jhi-idtoken presence
+            ls_keys = await warm_page.evaluate(
+                "() => Object.keys(localStorage).join(',')")
+            print(f"[pw-uat] build app ready: {warm_page.url} | localStorage keys: {ls_keys}", flush=True)
+            # Also check eu domain localStorage via the main participant page later
+            eu_base = _legacy_base(subdomain).replace("/OpenClinica","")
+            print(f"[pw-uat] eu base: {eu_base}", flush=True)
         except Exception as _we:
             print(f"[pw-uat] build app warmup warning: {_we}", flush=True)
         finally:
@@ -334,6 +340,9 @@ async def run_playwright_uat(
                 actual_url = page.url
                 page_title = await page.title()
                 print(f"[pw-uat] landed: {actual_url[:120]} title={page_title!r}", flush=True)
+                # Log localStorage on eu domain to check for jhi-idtoken
+                eu_ls = await page.evaluate("() => Object.keys(localStorage).join(',')")
+                print(f"[pw-uat] eu localStorage keys: {eu_ls}", flush=True)
 
                 # Form abbreviation: F_DM -> DM, F_AE -> AE etc.
                 form_abbrev = fo.replace("F_", "", 1) if fo.startswith("F_") else fo
