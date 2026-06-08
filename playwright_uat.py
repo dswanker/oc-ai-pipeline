@@ -405,43 +405,52 @@ async def run_playwright_uat(
                     print(f"[pw-uat] matrix frame not ready after {_poll_max}s", flush=True)
 
                 if app_frame:
-                    # The navigation URL includes enketoOpen=true&crfOid=F_XX which
-                    # causes study-runner-ui to auto-open Enketo in a nested iframe at
-                    # form.eu.openclinica.io — no click needed for non-repeating events.
-                    # Poll for that iframe to appear in page.frames.
+                    # study-runner-ui opens Enketo at form.eu.openclinica.io via postMessage.
+                    # In Playwright headless, postMessage may be blocked so auto-open fails.
+                    # Fix: JS click Edit button → Angular opens form iframe → grab URL → navigate directly.
                     form_frame = None
-                    for _t in range(30):
+                    form_page = None
+
+                    # Step 1: JS click Edit button to trigger Angular form open
+                    edit_sel = f'[title="Edit {form_abbrev}"]'
+                    try:
+                        await app_frame.wait_for_selector(edit_sel, timeout=5000)
+                        _sel = f'[title="Edit {form_abbrev}"]'
+                        await app_frame.evaluate(
+                            f"() => {{ const el = document.querySelector('{_sel}'); if(el) el.click(); }}"
+                        )
+                        print(f"[pw-uat] clicked {edit_sel}", flush=True)
+                    except Exception as _ce:
+                        print(f"[pw-uat] Edit click failed: {_ce}", flush=True)
+
+                    # Step 2: Poll app_frame DOM for form.eu.openclinica.io iframe src
+                    _form_url = None
+                    for _t in range(15):
                         try:
-                            for _f in page.frames:
-                                if 'form.' in _f.url and 'openclinica' in _f.url:
-                                    form_frame = _f
-                                    nav_ok = True
-                                    print(f"[pw-uat] Enketo iframe ready after {_t}s: {_f.url[:70]}", flush=True)
-                                    break
-                            if form_frame:
+                            inner = await app_frame.evaluate("""() =>
+                                Array.from(document.querySelectorAll('iframe'))
+                                    .map(f => f.src).filter(s => s.includes('form.'))
+                            """)
+                            if inner:
+                                _form_url = inner[0]
+                                print(f"[pw-uat] form src found at t={_t}s: {_form_url[:70]}", flush=True)
                                 break
-                            # Also check study-runner-ui DOM for nested form iframe src
-                            if app_frame:
-                                try:
-                                    inner = await app_frame.evaluate("""() =>
-                                        Array.from(document.querySelectorAll('iframe'))
-                                            .map(f => f.src).filter(s => s.includes('form.'))
-                                    """)
-                                    if inner and _t % 5 == 0:
-                                        print(f"[pw-uat] form src in DOM at t={_t}s: {inner[0][:70]}", flush=True)
-                                except Exception:
-                                    pass
-                            if _t % 5 == 0:
-                                frame_urls = [_f.url[:50] for _f in page.frames]
-                                print(f"[pw-uat] t={_t}s frames={frame_urls}", flush=True)
-                        except Exception as _fe:
-                            if _t == 0:
-                                print(f"[pw-uat] form iframe poll error: {_fe}", flush=True)
+                        except Exception:
+                            pass
                         await page.wait_for_timeout(1000)
-                    if not form_frame:
-                        print(f"[pw-uat] Enketo iframe not found after 30s", flush=True)
+
+                    if _form_url:
+                        # Step 3: Navigate directly to Enketo form URL in a new page
+                        form_page = await context.new_page()
+                        await form_page.goto(_form_url, timeout=30000,
+                                             wait_until="domcontentloaded")
+                        await form_page.wait_for_timeout(2000)
+                        form_frame = form_page.main_frame
+                        nav_ok = True
+                        print(f"[pw-uat] navigated to Enketo form directly", flush=True)
+                    else:
+                        print(f"[pw-uat] form.eu URL not found in app_frame DOM after 15s", flush=True)
                         form_frame = app_frame
-                else:
                     print(f"[pw-uat] Angular app frame not found", flush=True)
 
                 nav_ok = True
