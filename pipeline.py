@@ -3586,9 +3586,25 @@ async def run_pipeline(item_id):
         # exists for this user, post a one-time auth link to the row and
         # bail BEFORE running ~2-3 min of Claude protocol analysis +
         # chains A/B/C/D/E that would just be discarded on the next click.
-        # Gated on (create_study and oc_email): if either is missing,
-        # form upload would be skipped anyway and there's nothing to auth.
-        if create_study and oc_email:
+        # Auth required if ANY of these OC-touching checkboxes is checked:
+        # - create_study (Create OC Study)
+        # - boolean_mm3g2vzf (Publish Forms)
+        # - boolean_mm3z1xy8 (Publish Calendaring Rules)
+        # - boolean_mm3gxe49 (Load UAT Data)
+        def _bool_col(col_id: str) -> bool:
+            try:
+                return bool(json.loads(
+                    cols.get(col_id, {}).get("value") or "{}"
+                ).get("checked", False))
+            except Exception:
+                return False
+        _needs_oc_session = (
+            create_study
+            or _bool_col("boolean_mm3g2vzf")
+            or _bool_col("boolean_mm3z1xy8")
+            or _bool_col("boolean_mm3gxe49")
+        )
+        if _needs_oc_session and oc_email:
             auth_manager = AuthManager()
             # Pre-flight: if a session file exists, validate it actually
             # works before spending ~8 min on chains. A stale session
