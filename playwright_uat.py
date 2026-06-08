@@ -405,11 +405,18 @@ async def run_playwright_uat(
                     print(f"[pw-uat] matrix frame not ready after {_poll_max}s", flush=True)
 
                 if app_frame:
-                    # Click the form card to open the form
+                    # Click the form card to open the form.
+                    # An overlay div#iframe-container intercepts pointer events,
+                    # so use JS click to bypass it.
                     try:
                         edit_sel = f'[title="Edit {form_abbrev}"]'
                         await app_frame.wait_for_selector(edit_sel, timeout=5000)
-                        await app_frame.click(edit_sel)
+                        # JS click bypasses the overlay div#iframe-container
+                        _js_click = (
+                            '() => { const el = document.querySelector'
+                            f'(\'[title="Edit {form_abbrev}"]\'); if(el) el.click(); }}'
+                        )
+                        await app_frame.evaluate(_js_click)
                         print(f"[pw-uat] clicked {edit_sel}", flush=True)
                         # Wait for Enketo form to render inside the Angular app
                         await app_frame.wait_for_selector(
