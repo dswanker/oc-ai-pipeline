@@ -262,7 +262,6 @@ async def _create_participant(subdomain: str, study_oid: str,
             )
     try:
         body = resp.json()
-        print(f"[uat_loader] _create_participant response: {body}", flush=True)
         return body.get("subjectKey") or subject_key
     except Exception:
         return subject_key
@@ -567,7 +566,7 @@ async def _import_odm(subdomain: str, study_oid: str,
             files={"file": ("import.xml",
                             odm_xml.encode("utf-8"),
                             "text/xml")},
-            data={"runImportLogic": "true"},   # run form logic / calculated fields post-import
+            data={"runFormLogic": "y"},   # run form logic / calculated fields post-import
             headers={"Authorization": f"Bearer {submit_token}"},
         )
     if not resp.is_success:
@@ -622,7 +621,7 @@ async def _import_odm(subdomain: str, study_oid: str,
                     cookies=poll_cookies,
                 )
             if pr.is_success and ("Inserted" in pr.text or "Failed" in pr.text):
-                print(f"[uat_loader] ODM job done after {elapsed}s: {pr.text[:300]!r}", flush=True)
+                print(f"[uat_loader] ODM job complete after {elapsed}s", flush=True)
                 return {"status": "complete", "job_uuid": job_uuid, "log": pr.text}
         except Exception as pe:
             print(f"[uat_loader] ODM poll error at {elapsed}s: {pe}", flush=True)
@@ -1131,10 +1130,7 @@ async def run_uat_loader(item_id: str) -> dict:
                 )
             await append_log(item_id, f"UAT Loader: ODM XML valid (XSD passed)")
             # DEBUG: log first 300 chars of ODM to Monday to verify OID format
-            # Log ODM stats
-            _has_se = "StudyEventData" in odm_xml_full
-            _has_ig = "ItemGroupData" in odm_xml_full
-            await append_log(item_id, f"UAT Loader: ODM len={len(odm_xml_full)} has_SE={_has_se} has_IG={_has_ig} start={odm_xml_full[:80]!r}")
+            # ODM validated
             # Submit full ODM in one call — no batching needed
             import_result = await _import_odm(
                 subdomain, study_oid, odm_xml_full
