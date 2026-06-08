@@ -253,6 +253,20 @@ async def run_playwright_uat(
                 # OC4 renders forms via Enketo in an iframe
                 # Wait for the Enketo iframe to appear
                 try:
+                    # Log all iframes and links on the page for diagnosis
+                    all_frames = page.frames
+                    print(f"[pw-uat] page has {len(all_frames)} frames", flush=True)
+                    for f_obj in all_frames[1:]:  # skip main frame
+                        print(f"[pw-uat]   frame url: {f_obj.url[:100]}", flush=True)
+
+                    # Check for Enketo-related elements
+                    enketo_els = await page.query_selector_all("iframe, [class*='enketo'], [id*='enketo'], .form-container")
+                    print(f"[pw-uat] enketo-related elements: {len(enketo_els)}", flush=True)
+                    for el in enketo_els[:3]:
+                        tag = await el.evaluate("el => el.tagName + ' ' + (el.src || el.className || el.id || '')")
+                        print(f"[pw-uat]   el: {tag[:100]}", flush=True)
+
+                    # Try waiting for Enketo iframe
                     await page.wait_for_selector("iframe[src*='enketo'], iframe[class*='enketo'], .enketo-form iframe", timeout=10000)
                     frames = page.frames
                     for f_obj in frames:
@@ -262,12 +276,11 @@ async def run_playwright_uat(
                             print(f"[pw-uat] found Enketo frame: {f_url[:80]}", flush=True)
                             break
                     if not form_frame:
-                        # Try the main page — some OC4 versions render inline
                         form_frame = page
                         print("[pw-uat] no Enketo iframe found, using main page", flush=True)
-                except Exception:
+                except Exception as _ie:
                     form_frame = page
-                    print("[pw-uat] no iframe selector matched, using main page", flush=True)
+                    print(f"[pw-uat] iframe search: {_ie}", flush=True)
 
                 nav_ok = True
             except Exception as e:
