@@ -32,12 +32,18 @@ def _legacy_base(subdomain: str) -> str:
 
 def _form_entry_url(subdomain: str, subject_oid: str, event_oid: str,
                     form_oid: str, event_repeat: str = "1") -> str:
+    """
+    OC4 participant details page with enketoOpen=true.
+    The form is rendered by Enketo inside an iframe/overlay.
+    event_oid and form_oid are used to navigate to the specific form
+    once the participant page loads.
+    """
     base = _legacy_base(subdomain)
-    return (f"{base}/DataEntry?"
-            f"studySubjectOID={subject_oid}"
-            f"&studyEventOID={event_oid}"
-            f"&crfOID={form_oid}"
-            f"&studyEventRepeatKey={event_repeat}")
+    return (f"{base}/ParticipantDetailsPage?"
+            f"participantOid={subject_oid}"
+            f"&enketoOpen=true"
+            f"&studyEventOid={event_oid}"
+            f"&crfOid={form_oid}")
 
 
 def _classify_pw_row(row_dict: dict) -> Optional[str]:
@@ -214,13 +220,34 @@ async def run_playwright_uat(
 
             url = _form_entry_url(subdomain, subject_oid, ev, fo)
             nav_ok = False
+            form_frame = None
             try:
                 await page.goto(url, timeout=NAV_TIMEOUT,
                                 wait_until="domcontentloaded")
-                await page.wait_for_timeout(WAIT_MS)
+                await page.wait_for_timeout(3000)
                 actual_url = page.url
                 page_title = await page.title()
                 print(f"[pw-uat] landed: {actual_url[:120]} title={page_title!r}", flush=True)
+
+                # OC4 renders forms via Enketo in an iframe
+                # Wait for the Enketo iframe to appear
+                try:
+                    await page.wait_for_selector("iframe[src*='enketo'], iframe[class*='enketo'], .enketo-form iframe", timeout=10000)
+                    frames = page.frames
+                    for f_obj in frames:
+                        f_url = f_obj.url
+                        if "enketo" in f_url or "form" in f_url:
+                            form_frame = f_obj
+                            print(f"[pw-uat] found Enketo frame: {f_url[:80]}", flush=True)
+                            break
+                    if not form_frame:
+                        # Try the main page — some OC4 versions render inline
+                        form_frame = page
+                        print("[pw-uat] no Enketo iframe found, using main page", flush=True)
+                except Exception:
+                    form_frame = page
+                    print("[pw-uat] no iframe selector matched, using main page", flush=True)
+
                 nav_ok = True
             except Exception as e:
                 print(f"[pw-uat] nav failed {fo}/{ev}: {e}", flush=True)
@@ -243,8 +270,9 @@ async def run_playwright_uat(
                 try:
                     if test_type == "leave_blank":
                         # Playwright: clear field, save, read error
-                        await _fill_and_save(page, field_name, fo)
-                        errors = await _read_field_errors(page, field_name)
+                        frame = form_frame or page
+                        await _fill_and_save(frame, field_name, fo)
+                        errors = await _read_field_errors(frame, field_name)
                         if errors:
                             actual = f"Error: {errors[0][:120]}"
                             result = "Pass"
@@ -256,12 +284,13 @@ async def run_playwright_uat(
                         # Re-navigate to restore form state for next tests
                         await page.goto(url, timeout=NAV_TIMEOUT,
                                         wait_until="domcontentloaded")
-                        await page.wait_for_timeout(WAIT_MS)
+                        await page.wait_for_timeout(3000)
 
                     elif test_type == "constraint":
                         # ODM already loaded prereq + test value.
                         # Just read whether a constraint error is shown.
-                        errors = await _read_field_errors(page, field_name)
+                        frame = form_frame or page
+                        errors = await _read_field_errors(frame, field_name)
                         expect_error = any(x in exp for x in
                             ["Constraint fires", "constraint", "error shown",
                              "does not save"])
@@ -288,7 +317,8 @@ async def run_playwright_uat(
                     elif test_type == "visibility":
                         # ODM already loaded gate field value.
                         # Just read DOM visibility.
-                        visible = await _is_field_visible(page, field_name, fo)
+                        frame = form_frame or page
+                        visible = await _is_field_visible(frame, field_name, fo)
                         expect_visible = "VISIBLE" in exp.upper()
                         if visible is None:
                             actual = f"Field {field_name} not found in DOM"
