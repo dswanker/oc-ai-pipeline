@@ -6,6 +6,20 @@ Items listed roughly in priority order. Move to DONE when complete.
 
 ## 🔴 High Priority
 
+### Fix I_DM_AGE and I_DM_AGEDISP Playwright test failures
+**Priority: HIGH**
+**What:** Two calculated fields in F_DM are failing Playwright UAT:
+- `I_DM_AGE` — Actual=0, expected a calculated age value
+- `I_DM_AGEDISP` — Actual=0, expected a display age value
+**Root cause:** These are XPath calculate fields. The UAT participant's BRTHDAT was
+loaded as 2026-02-01 (current year), so age calculates to 0 — correct behavior but
+wrong test data. Fix: either use a realistic BRTHDAT (e.g. 1980-01-15) in the UAT
+load values, or adjust the expected result for this scenario.
+**Files to update:** DVS UAT_Cases sheet (Load_Value and/or Expected Result for AGE rows)
+**Added:** 2026-06-09
+
+
+
 ### Fix spec generation: calculate field rules for common/repeating events
 **Priority: HIGH**
 **What:** The spec generation (protocol analysis → form_specs) needs deterministic rules for how calculate fields are built. Three specific requirements:
