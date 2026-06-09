@@ -1698,6 +1698,25 @@ async def _rename_board_card_titles(subdomain, board_id, board_json,
             # Log where we landed (detects auth redirect)
             _landed = page.url
             print(f"[board-rename] landed: {_landed[:80]}", flush=True)
+            # The Keycloak SSO callback is a transient redirect: the browser
+            # lands on /callback#state=... then bounces back to the board.
+            # Wait up to 15s for the URL to settle back to the board host
+            # before declaring success or failure.
+            if subdomain not in page.url or "callback" in page.url:
+                print(f"[board-rename] mid-redirect ({page.url[:60]}), "
+                      f"waiting for board URL to settle...", flush=True)
+                try:
+                    await page.wait_for_url(
+                        f"**{subdomain}.design.openclinica.io**",
+                        timeout=15000,
+                        wait_until="networkidle",
+                    )
+                    _landed = page.url
+                    print(f"[board-rename] settled: {_landed[:80]}", flush=True)
+                except Exception as _wu:
+                    print(f"[board-rename] URL did not settle to board "
+                          f"({_wu}) — skipping rename", flush=True)
+                    return
             if "auth" in _landed or "login" in _landed:
                 print("[board-rename] redirected to auth — session may be stale",
                       flush=True)
@@ -1707,11 +1726,11 @@ async def _rename_board_card_titles(subdomain, board_id, board_json,
             try:
                 await page.wait_for_function(
                     "() => typeof Meteor !== 'undefined'",
-                    timeout=20000,
+                    timeout=25000,
                 )
-                await page.wait_for_timeout(1000)
+                await page.wait_for_timeout(1500)
             except Exception as _mwe:
-                print(f"[board-rename] Meteor not available after 20s: "
+                print(f"[board-rename] Meteor not available after 25s: "
                       f"{_mwe} — skipping rename", flush=True)
                 return
 

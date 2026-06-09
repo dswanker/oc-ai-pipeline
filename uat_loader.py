@@ -489,6 +489,19 @@ def _build_odm_xml(study_oid: str, site_oid: str,
 
     # Tree: events[ev_oid][repeat_key][form_oid][ig_oid] = [(item_oid, val)]
     events = {}
+    # Drop reason counters for diagnostics
+    _drop_missing_coords = 0
+    _drop_blank = 0
+    _drop_then = 0
+    _drop_visibility = 0
+    _drop_examples: dict[str, list] = {}  # reason -> up to 3 example strings
+
+    def _record_drop(reason: str, row: dict, val: str = "") -> None:
+        ex = f"ev={row.get('Study_Event_OID','')} fo={row.get('Form_OID','')} item={row.get('Item_OID','')} val={val!r:.60}"
+        _drop_examples.setdefault(reason, [])
+        if len(_drop_examples[reason]) < 3:
+            _drop_examples[reason].append(ex)
+
     for row in rows:
         ev       = row.get("Study_Event_OID", "").strip()
         rk       = row.get("Event_Repeat_Key", "1").strip() or "1"
@@ -502,16 +515,24 @@ def _build_odm_xml(study_oid: str, site_oid: str,
         val = row.get("Load_Value", "").strip()
         # Skip rows that need Playwright or aren't directly loadable
         if not ev or not fo or not ig or not val:
+            _drop_missing_coords += 1
+            _record_drop("missing_coords", row, val)
             continue
         if val.lower() == "(leave blank)":
+            _drop_blank += 1
+            _record_drop("leave_blank", row, val)
             continue  # required-field test — Playwright handles
         if "then" in val.lower():
+            _drop_then += 1
+            _record_drop("has_then", row, val)
             continue  # multi-step constraint test — Playwright handles
         if "=" in val and not val.startswith("20"):
             # gate/visibility setup (FIELD=val) or calc inputs (F1=v1, F2=v2)
             # Only load calc input rows — identified by "Calc path" in Scenario
             sc = str(row.get("Scenario", "")).strip()
             if "Calc path" not in sc:
+                _drop_visibility += 1
+                _record_drop("visibility_gate", row, val)
                 continue  # visibility/gate rows — Playwright sets these in browser
             # Calc inputs: parse "ODI1=28, ODI2=28" into multiple items
             _lv_clean = re.sub(r",\s*then\s+", ", ", val, flags=re.IGNORECASE)
@@ -540,8 +561,21 @@ def _build_odm_xml(study_oid: str, site_oid: str,
          .setdefault(fo, {})
          .setdefault(ig, [])
          .append((item_oid, val)))
+
     _n_pass = sum(len(items) for ev_d in events.values() for rk_d in ev_d.values() for fo_d in rk_d.values() for items in fo_d.values())
-    print(f"[odm-build] {_n_pass} items passed filter out of {len(rows)} rows", flush=True)
+    _n_total = len(rows)
+    _n_drop = _n_total - _n_pass
+    print(f"[odm-build] {_n_pass} items passed filter out of {_n_total} rows "
+          f"({_n_drop} dropped: missing_coords={_drop_missing_coords} "
+          f"leave_blank={_drop_blank} has_then={_drop_then} "
+          f"visibility_gate={_drop_visibility})", flush=True)
+    # Log per-event breakdown so we can see which events are getting data
+    ev_summary = {ev: sum(len(items) for rk_d in rk_map.values() for fo_d in rk_d.values() for items in fo_d.values())
+                  for ev, rk_map in events.items()}
+    print(f"[odm-build] items per event: {ev_summary}", flush=True)
+    # Log drop examples for each reason
+    for reason, examples in _drop_examples.items():
+        print(f"[odm-build] drop/{reason} examples: {examples}", flush=True)
 
     # UAT start date — used as OpenClinica:StartDate for Visit-Based events.
     # Common/Unscheduled events (SE_COMMON, SE_UNSCHEDULED) don't need a
