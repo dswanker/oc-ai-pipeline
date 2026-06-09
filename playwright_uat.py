@@ -470,6 +470,15 @@ async def run_playwright_uat(
                         await form_page.wait_for_timeout(2000)
                         form_frame = form_page.main_frame
                         nav_ok = True
+                        # Log what the Enketo page actually rendered
+                        try:
+                            _title = await form_page.title()
+                            _body_len = await form_page.evaluate("() => document.body.innerHTML.length")
+                            _has_q = await form_page.evaluate(
+                                "() => document.querySelectorAll('.question').length")
+                            print(f"[pw-uat] Enketo page: title={_title!r} bodyLen={_body_len} questions={_has_q}", flush=True)
+                        except Exception as _le:
+                            print(f"[pw-uat] Enketo page log error: {_le}", flush=True)
                         print(f"[pw-uat] navigated to Enketo directly", flush=True)
                     else:
                         print(f"[pw-uat] form.eu URL not found after 20s", flush=True)
