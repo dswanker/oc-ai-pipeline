@@ -438,14 +438,14 @@ def build_choices_sheet(wb, form):
             row_bg = AMBER_HEX
 
         vals = [
-            "",
-            ch.get("list_name", ""),
-            ch.get("label", ""),
-            ch.get("name", ""),
-            ch.get("source", ""),
-            ch.get("filter_column", ""),
-            ch.get("filter_value", ""),
-            "",
+            "",                           # ACTION (blank — user fills if needed)
+            "",                           # NOTES_FOR_AI (blank — user fills if needed)
+            ch.get("list_name", ""),      # list_name
+            ch.get("label", ""),          # label
+            ch.get("name", ""),           # name
+            ch.get("source", ""),         # source
+            ch.get("filter_column", ""),  # filter_column
+            ch.get("filter_value", ""),   # filter_value
         ]
         for col_i, val in enumerate(vals, start=1):
             c = ws.cell(row=row_i, column=col_i, value=safe(val))

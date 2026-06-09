@@ -79,23 +79,27 @@ APPLY THIS TO ALL IDENTIFIERS:
 
 CROSS-FORM DEPENDENCIES — full XPath expressions:
   For each cross_form_dependencies entry you MUST also provide an
-  `xpath_expression` field with the full OpenClinica XPath. Two patterns:
+  `xpath_expression` field with the full OpenClinica XPath.
 
-  Cross-event (data from a different event):
-    instance('clinicaldata')/ODM/ClinicalData/SubjectData/
-      StudyEventData[@StudyEventOID='SE_X']/
-      FormData[@FormOID='Y']/
-      ItemGroupData[@ItemGroupOID='Y.Z']/
-      ItemData[@ItemOID='Y.FIELD']/@Value
+  PREFERRED HYBRID (OIDs at event/form level; names at group/item level):
 
-  Same-event (from current event):
-    instance('clinicaldata')/ODM/ClinicalData/SubjectData/
-      StudyEventData[@OpenClinica:CurrentStudyEvent='true']/
-      FormData[@FormOID='Y']/
-      ItemGroupData/ItemData[@ItemOID='Y.FIELD']/@Value
+  Different event:
+    instance('clinicaldata')/ODM/ClinicalData/SubjectData/StudyEventData[@StudyEventOID='SE_SCREENING']/FormData[@FormOID='F_DM']/ItemGroupData[@OpenClinica:ItemGroupName='DM']/ItemData[@OpenClinica:ItemName='SUBJID']/@Value
 
-  The xpath_expression may be a compact single-line string. Whitespace in
-  the template above is for readability only.
+  Same event (current):
+    instance('clinicaldata')/ODM/ClinicalData/SubjectData/StudyEventData[@OpenClinica:Current='Yes']/FormData[@FormOID='F_ICF']/ItemGroupData[@OpenClinica:ItemGroupName='ICF']/ItemData[@OpenClinica:ItemName='ICFDAT']/@Value
+
+  CRITICAL OID RULES in XPath:
+    @StudyEventOID   → full OID with SE_ prefix: 'SE_SCREENING', 'SE_DAY_30'
+    @FormOID         → full OID with F_ prefix:  'F_DM', 'F_ICF', 'F_AE'
+    ItemGroupName    → bare group name (no prefix): 'DM', 'ICF', 'AE'
+    ItemName         → bare field name (no prefix): 'SUBJID', 'ICFDAT', 'AETERM'
+
+  Do NOT use dotted notation (@ItemGroupOID='Y.Z', @ItemOID='Y.FIELD') —
+  OC4 uses name-based attributes at the group/item level.
+  Do NOT use @OpenClinica:CurrentStudyEvent='true' — use @OpenClinica:Current='Yes'.
+
+  The xpath_expression may be a compact single-line string.
 
 FORM NAMING RULES for form_id:
   CDASH forms — use the CDASH domain code as-is: DM, VS, LB, AE, EX,
@@ -186,25 +190,55 @@ RULE OC-3 — SETTINGS FIELDS REQUIRED
 
 RULE OC-4 — CROSS-FORM/CROSS-EVENT XPATH PATTERNS
   When a field needs a value from another form or event, use these
-  exact patterns in `calculation` (not made-up XPath):
-    Same event, same form:
-      instance('clinicaldata')/ODM/ClinicalData/SubjectData/StudyEventData[@OpenClinica:Current='Yes']/FormData[@FormOID='X']/ItemGroupData/ItemData[@ItemOID='X.FIELD']/@Value
-    Different event (by OID):
-      instance('clinicaldata')/ODM/ClinicalData/SubjectData/StudyEventData[@StudyEventOID='SE_X']/FormData[@FormOID='X']/ItemGroupData[@ItemGroupOID='X.GROUP']/ItemData[@ItemOID='X.FIELD']/@Value
-    Current event OID:
-      instance('clinicaldata')/ODM/ClinicalData/SubjectData/StudyEventData[@OpenClinica:Current='Yes']/@StudyEventOID
-    Timepoint lookup from the study_id_tpt.csv:
-      pulldata('<study_id>_tpt','timepoint','event',${EVENT_CF})
-  Fields using these also need `bind__oc_external: "clinicaldata"` (or
-  the CSV name for `pulldata`). Put referenced event OIDs into
-  `settings.crossform_references` (comma-separated) for performance.
+  exact patterns in `calculation` (not made-up XPath).
+
+  PREFERRED HYBRID — use OIDs at event/form level, names at group/item level:
+
+  Different event (by OID) — PREFERRED:
+    instance('clinicaldata')/ODM/ClinicalData/SubjectData/StudyEventData[@StudyEventOID='SE_SCREENING']/FormData[@FormOID='F_DM']/ItemGroupData[@OpenClinica:ItemGroupName='DM']/ItemData[@OpenClinica:ItemName='SUBJID']/@Value
+
+  Same event as current form — PREFERRED:
+    instance('clinicaldata')/ODM/ClinicalData/SubjectData/StudyEventData[@OpenClinica:Current='Yes']/FormData[@FormOID='F_ICF']/ItemGroupData[@OpenClinica:ItemGroupName='ICF']/ItemData[@OpenClinica:ItemName='ICFDAT']/@Value
+
+  Current event OID (useful for arm-routing relevant logic):
+    instance('clinicaldata')/ODM/ClinicalData/SubjectData/StudyEventData[@OpenClinica:Current='Yes']/@StudyEventOID
+
+  Current event start date (for window calculations):
+    substr(instance('clinicaldata')/ODM/ClinicalData/SubjectData/StudyEventData[@OpenClinica:Current='Yes']/@OpenClinica:StartDate, 0, 10)
+
+  Different event start date:
+    substr(instance('clinicaldata')/ODM/ClinicalData/SubjectData/StudyEventData[@StudyEventOID='SE_SCREENING']/@OpenClinica:StartDate, 0, 10)
+
+  Participant ID:
+    instance('clinicaldata')/ODM/ClinicalData/SubjectData/@OpenClinica:StudySubjectID
+
+  Timepoint lookup from the study_id_tpt.csv:
+    pulldata('<study_id>_tpt','timepoint','event',${EVENT_CF})
+
+  CRITICAL OID RULES — apply to every XPath expression:
+    @StudyEventOID   must use full OID: 'SE_SCREENING', 'SE_DAY_30'   (SE_ prefix)
+    @FormOID         must use full OID: 'F_DM', 'F_ICF', 'F_AE'       (F_ prefix)
+    ItemGroupName    use bare name:     'DM', 'ICF', 'AE'              (no prefix)
+    ItemName         use bare name:     'SUBJID', 'ICFDAT', 'AETERM'   (no prefix)
+
+  FORBIDDEN PATTERNS — never generate these:
+    @FormOID='DM'          ← wrong, missing F_ prefix
+    @FormOID='ICF'         ← wrong, missing F_ prefix
+    @ItemGroupOID='Y.Z'    ← wrong, dotted notation not used by OC4
+    @ItemOID='Y.FIELD'     ← wrong, dotted notation not used by OC4
+    @OpenClinica:CurrentStudyEvent='true'  ← wrong attribute name
+
+  Fields using cross-form XPath also need `bind__oc_external: "clinicaldata"`.
+  Put referenced event OIDs into `settings.crossform_references` (comma-separated)
+  for performance. Include "current_event" if the expression uses
+  [@OpenClinica:Current='Yes'].
 
 RULE OC-5 — REPEATING GROUPS USE once() FOR THE KEY
   Forms with repeating groups (AE, CM, MH, DV, PR, and any custom
   repeating form) must include a `calculate` field at the top of the
   repeating group whose calculation uses `once(... @ItemGroupRepeatKey)`.
   This prevents the repeat key from being overwritten on edit. Example:
-    once(instance('clinicaldata')/ODM/ClinicalData/SubjectData/StudyEventData[@StudyEventOID='SE_X']/FormData[@FormOID='X']/ItemGroupData[@ItemGroupOID='X.AE']/@ItemGroupRepeatKey)
+    once(instance('clinicaldata')/ODM/ClinicalData/SubjectData/StudyEventData[@StudyEventOID='SE_COMMON']/FormData[@FormOID='F_AE']/ItemGroupData[@OpenClinica:ItemGroupName='AE']/@ItemGroupRepeatKey)
   Pair with a separate display-only field using
     if(${ID}!='', ${ID}, 'Scheduled')
   to show the repeat number during data entry.
@@ -605,12 +639,17 @@ RULE OC-9a — REPEATING FORM AUTO-ID USES StudyEventRepeatKey, NOT ItemGroupRep
   scoped to [@OpenClinica:Current='Yes'], NOT @ItemGroupRepeatKey.
 
   CORRECT:
-    name:        AEID
+    name:        AEID                                 ← bare name, no I_AE_ prefix
     type:        calculate
     calculation: once(instance('clinicaldata')/ODM/ClinicalData/SubjectData/StudyEventData[@OpenClinica:Current='Yes']/@StudyEventRepeatKey)
+    bind__oc_external: clinicaldata
+    (no bind__oc_itemgroup — this is an external calculate)
 
-  INCORRECT — uses ItemGroupRepeatKey (wrong key, produces stale/incorrect value):
-    calculation: once(instance('clinicaldata')/ODM/ClinicalData/SubjectData/StudyEventData[@OpenClinica:Current='Yes']/FormData[@FormOID='F_AE']/ItemGroupData[@ItemGroupOID='IG_AE_AE']/@ItemGroupRepeatKey)
+  INCORRECT — uses ItemGroupRepeatKey (wrong key):
+    calculation: once(instance('clinicaldata')/ODM/ClinicalData/SubjectData/StudyEventData[@OpenClinica:Current='Yes']/FormData[@FormOID='F_AE']/ItemGroupData[@OpenClinica:ItemGroupName='AE']/@ItemGroupRepeatKey)
+
+  INCORRECT — uses full OID in name column (causes double-prefix in OC4):
+    name: I_AE_AEID    ← WRONG, do not prefix
 
   The StudyEventRepeatKey uniquely identifies the repeating visit occurrence.
   The ItemGroupRepeatKey is a different key scoped to the item group, which
@@ -621,11 +660,11 @@ RULE OC-9a — REPEATING FORM AUTO-ID USES StudyEventRepeatKey, NOT ItemGroupRep
 
   Note: the display companion field (AEID_CALC, CMID_CALC etc.) that shows
   the ID to data entry staff uses type=text, readonly=yes, and references
-  the hidden calculate field:
-    name:        AEID_CALC
+  the hidden calculate field using bare ${name}:
+    name:        AEID_CALC           ← bare name
     type:        text
     readonly:    yes
-    calculation: if(${AEID}!='', ${AEID}, 'Scheduled')
+    calculation: if(${AEID}!='', ${AEID}, 'Scheduled')    ← ${AEID} = bare name reference
 
 
 
@@ -832,9 +871,10 @@ SURVEY ROWS — REQUIRED FIELDS AND AGGRESSIVE POPULATION
 
 Each survey row MUST include these keys (never omit, may be empty):
     type                   (e.g. "text","integer","date","select_one X","calculate","begin group","end group")
-    name                   (FULL Item OID with prefix — e.g. "I_DM_SUBJID", "I_AE_AETERM")
-                           NEVER bare names like "SUBJID" — Enketo resolves ${I_DM_SUBJID},
-                           not ${SUBJID}. Bare names cause calculate fields to return 0.
+    name                   (bare CDASH field name — e.g. "SUBJID", "AETERM", "BRTHDAT")
+                           OC4 derives the Item OID as I_{FORM}_{name} automatically.
+                           NEVER use the full OID prefix here (not "I_DM_SUBJID").
+                           In ${} references use the same bare name: ${BRTHDAT}, ${SUBJID}.
     label                  (question text visible to the data entry user)
     completion_status      ("COMPLETE" | "FLAGGED" | "PLACEHOLDER")
     library_source         ("CDASH_DEFAULT" | "CDASH_STANDARD" | "PROTOCOL_SPECIFIC" | "CUSTOM")
@@ -892,17 +932,18 @@ POPULATE THESE OPTIONAL FIELDS AGGRESSIVELY — err toward inclusion:
                            Populate alongside every constraint.
 
     calculation          — XPath expression for auto-computed fields.
-                           ALL field references MUST use the full Item OID
-                           with prefix: ${I_DM_BRTHDAT} NOT ${BRTHDAT}.
-                           Bare names silently return 0 in Enketo.
+                           Use bare field names in ${} references — same as the `name` column:
+                             ${BRTHDAT} NOT ${I_DM_BRTHDAT}
+                             ${PHQ1} NOT ${I_PHQ_PHQ1}
+                           OC4 resolves ${BRTHDAT} to the item named BRTHDAT on this form.
                            Populate whenever a value is derivable:
-                             total score          → "${I_PHQ_PHQ1} + ${I_PHQ_PHQ2} + ${I_PHQ_PHQ3}"
-                             age-from-DOB         → "floor((today() - ${I_DM_BRTHDAT}) div 365.25)"
-                             cross-form pulldata  → "pulldata('prtk05_tpt','timepoint','event',${I_DM_EVENT_CF})"
-                             cross-form instance  → full XPath as shown in
-                                                     CROSS-FORM DEPENDENCIES above
-                           For repeating events: scope to StudyEvent OID
-                           (SE_COMMON), NOT ItemGroup OID (IG_AE_GROUP1).
+                             total score          → "${PHQ1} + ${PHQ2} + ${PHQ3}"
+                             age-from-DOB         → "floor((today() - ${BRTHDAT}) div 365.25)"
+                             cross-form pulldata  → "pulldata('prtk05_tpt','timepoint','event',${EVENT_CF})"
+                             cross-form instance  → full XPath per Rule OC-4 (uses
+                                                     @ItemName='BRTHDAT', not ${BRTHDAT})
+                           For repeating events: auto-ID uses StudyEventRepeatKey
+                           (see Rule OC-9a), NOT ItemGroupRepeatKey.
 
     dependencies         — List of cross-form field references in dotted
                            notation: ["DEMO.SUBJID", "EX.EXSTDAT"].
