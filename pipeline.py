@@ -1677,25 +1677,31 @@ async def _rename_board_card_titles(subdomain, board_id, board_json,
     board_url    = f"{designer_url}/b/{board_id}"
 
     import json as _json
-    session_data = {}
-    try:
-        with open(session_path) as _sf:
-            session_data = _json.load(_sf)
-    except Exception as _se:
-        print(f"[board-rename] could not read session: {_se} — skipping",
+    # Verify session file is readable before launching browser
+    import os as _os
+    if not _os.path.exists(session_path):
+        print(f"[board-rename] session file not found: {session_path} — skipping",
               flush=True)
         return
 
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(headless=True)
         try:
-            ctx = await browser.new_context()
-            cookies = session_data.get("cookies", [])
-            if cookies:
-                await ctx.add_cookies(cookies)
+            # Use storage_state= so Playwright restores BOTH cookies AND
+            # localStorage in one shot — same pattern as oc_form_publisher.
+            # Manual cookie-only injection caused Meteor not defined because
+            # Keycloak tokens live in localStorage, not cookies.
+            ctx = await browser.new_context(storage_state=session_path)
             page = await ctx.new_page()
             await page.goto(board_url, wait_until="networkidle",
                             timeout=30000)
+            # Log where we landed (detects auth redirect)
+            _landed = page.url
+            print(f"[board-rename] landed: {_landed[:80]}", flush=True)
+            if "auth" in _landed or "login" in _landed:
+                print("[board-rename] redirected to auth — session may be stale",
+                      flush=True)
+                return
             # Wait for Meteor to be available — the board JS bundle loads
             # asynchronously and Meteor is not defined until it does.
             try:
@@ -1712,8 +1718,25 @@ async def _rename_board_card_titles(subdomain, board_id, board_json,
             renamed = 0
             for card_id, display_title in filtered_rename.items():
                 try:
+                    # Re-verify Meteor is still defined before each call
+                    # (page may have navigated or GC'd the object)
+                    _meteor_ok = await page.evaluate(
+                        "() => typeof Meteor !== 'undefined' && typeof Meteor.call === 'function'"
+                    )
+                    if not _meteor_ok:
+                        # Re-wait for Meteor — can disappear briefly during DDP reconnect
+                        try:
+                            await page.wait_for_function(
+                                "() => typeof Meteor !== 'undefined' && typeof Meteor.call === 'function'",
+                                timeout=10000,
+                            )
+                        except Exception:
+                            print(f"[board-rename] Meteor lost — stopping rename at card {card_id}",
+                                  flush=True)
+                            break
                     await page.evaluate(
                         """([cid, newTitle]) => {
+                            if (typeof Meteor === 'undefined') throw new Error('Meteor not defined');
                             Meteor.call(
                                 '/cards/update',
                                 {_id: cid},
@@ -2606,55 +2629,73 @@ async def publish_calendaring_rules(subdomain, study_uuid, cal_zip_bytes, is_pro
         raise RuntimeError(f"Could not read calendaring zip: {exc}")
 
     uploaded, skipped, failed, errors = 0, 0, 0, []
+    # Semaphore: 8 concurrent rule publishes — safe against OC rate limits
+    _sem = asyncio.Semaphore(8)
 
-    for rule_file in sorted(rule_files):
+    async def _publish_one_rule(rule_file, client):
+        """POST or PUT a single rule; returns (ok, skipped, name, error_str)."""
         rule_json = json.loads(zf.read(rule_file).decode("utf-8"))
         rule_name = rule_json.get("name", rule_file)
-
-        if rule_name in existing_rules:
-            # Rule exists — update it via PUT
-            rule_uuid = existing_rules[rule_name]
-            try:
-                async with httpx.AsyncClient(timeout=30) as c:
-                    r = await c.put(
+        async with _sem:
+            if rule_name in existing_rules:
+                rule_uuid = existing_rules[rule_name]
+                try:
+                    r = await client.put(
                         f"{base_url}/{rule_uuid}",
                         headers=headers,
                         json=rule_json,
                     )
-                if r.status_code in (200, 201):
-                    print(f"[cal-publish] UPDATE {rule_name} uuid={rule_uuid}", flush=True)
-                    uploaded += 1
-                else:
-                    print(f"[cal-publish] FAIL UPDATE {rule_name}: {r.status_code} {r.text[:200]}", flush=True)
-                    failed += 1
-                    errors.append(f"{rule_name} (update): {r.status_code} {r.text[:200]}")
-            except Exception as exc:
-                print(f"[cal-publish] ERROR UPDATE {rule_name}: {exc}", flush=True)
-                failed += 1
-                errors.append(f"{rule_name} (update): {exc}")
-            continue
-
-        try:
-            async with httpx.AsyncClient(timeout=30) as c:
-                r = await c.post(
-                    base_url,
-                    params={"newEpochOrCalendar": "false"},
-                    headers=headers,
-                    json=rule_json,
-                )
-            if r.status_code in (200, 201):
-                rule_uuid = r.json().get("uuid", "?")
-                print(f"[cal-publish] OK {rule_name} uuid={rule_uuid}", flush=True)
-                uploaded += 1
-                existing_rules[rule_name] = r.json().get("uuid", "")
+                    if r.status_code in (200, 201):
+                        print(f"[cal-publish] UPDATE {rule_name} uuid={rule_uuid}", flush=True)
+                        return (True, False, rule_name, None)
+                    else:
+                        msg = f"{r.status_code} {r.text[:200]}"
+                        print(f"[cal-publish] FAIL UPDATE {rule_name}: {msg}", flush=True)
+                        return (False, False, rule_name, f"{rule_name} (update): {msg}")
+                except Exception as exc:
+                    print(f"[cal-publish] ERROR UPDATE {rule_name}: {exc}", flush=True)
+                    return (False, False, rule_name, f"{rule_name} (update): {exc}")
             else:
-                print(f"[cal-publish] FAIL {rule_name}: {r.status_code} {r.text[:200]}", flush=True)
-                failed += 1
-                errors.append(f"{rule_name}: {r.status_code} {r.text[:200]}")
-        except Exception as exc:
-            print(f"[cal-publish] ERROR {rule_name}: {exc}", flush=True)
+                try:
+                    r = await client.post(
+                        base_url,
+                        params={"newEpochOrCalendar": "false"},
+                        headers=headers,
+                        json=rule_json,
+                    )
+                    if r.status_code in (200, 201):
+                        rule_uuid = r.json().get("uuid", "?")
+                        print(f"[cal-publish] OK {rule_name} uuid={rule_uuid}", flush=True)
+                        return (True, False, rule_name, None)
+                    else:
+                        msg = f"{r.status_code} {r.text[:200]}"
+                        print(f"[cal-publish] FAIL {rule_name}: {msg}", flush=True)
+                        return (False, False, rule_name, f"{rule_name}: {msg}")
+                except Exception as exc:
+                    print(f"[cal-publish] ERROR {rule_name}: {exc}", flush=True)
+                    return (False, False, rule_name, f"{rule_name}: {exc}")
+
+    # Publish all rules concurrently with a shared client
+    async with httpx.AsyncClient(timeout=30) as shared_client:
+        results = await asyncio.gather(
+            *[_publish_one_rule(rf, shared_client) for rf in sorted(rule_files)],
+            return_exceptions=True
+        )
+
+    for res in results:
+        if isinstance(res, Exception):
             failed += 1
-            errors.append(f"{rule_name}: {exc}")
+            errors.append(str(res))
+        else:
+            ok, skip, name, err = res
+            if skip:
+                skipped += 1
+            elif ok:
+                uploaded += 1
+            else:
+                failed += 1
+                if err:
+                    errors.append(err)
 
     return {"uploaded": uploaded, "skipped": skipped, "failed": failed, "errors": errors}
 

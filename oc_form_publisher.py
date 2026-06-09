@@ -1189,7 +1189,13 @@ class FormPublisher:
                                     await _mc.scroll_into_view_if_needed(
                                         timeout=5000)
                                     await _mc.click()
-                                    await page.wait_for_timeout(8000)
+                                    # SPEED: replaced fixed 8s wait with
+                                    # event-driven wait for the file input.
+                                    # Falls through to wait_for_selector
+                                    # (handles up to 15s total) — saves ~6s
+                                    # per card on average (151 cards × 6s ≈ 15 min
+                                    # potential but DDP path skips panel entirely,
+                                    # so this only helps the fallback click path).
 
                                     # Confirm the panel opened by waiting
                                     # for the file input it contains.
@@ -2535,64 +2541,80 @@ class FormPublisher:
                         # client-side minimongo only and never reaches the
                         # server. The ! warning in the designer UI clears
                         # when this call succeeds server-side.
+                        # SPEED: batch 20 Meteor.call()/cards/update calls per
+                        # page.evaluate using Promise.all — reduces 151 sequential
+                        # round-trips to 8 batched calls (~5x faster).
                         _meteor_ok = []
                         _meteor_failed = []
-                        for _cid, _vid in _card_version_map.items():
-                            _crd = _card_by_id.get(_cid, {})
-                            _fn = (_crd.get('form_name')
-                                   or _crd.get('form_oid') or _cid)
+                        _SET_DEFAULT_BATCH = 20
+                        _cvm_items = list(_card_version_map.items())
+
+                        for _batch_start in range(0, len(_cvm_items), _SET_DEFAULT_BATCH):
+                            _batch = _cvm_items[_batch_start:_batch_start + _SET_DEFAULT_BATCH]
+                            _batch_args = [
+                                [_cid, _vid,
+                                 _card_target_oid.get(_cid, ""),
+                                 (_card_by_id.get(_cid, {}).get('form_name')
+                                  or _card_by_id.get(_cid, {}).get('form_oid') or _cid)]
+                                for _cid, _vid in _batch
+                            ]
                             try:
-                                _target_oid = _card_target_oid.get(_cid, "")
-                                _mresult = await asyncio.wait_for(
+                                _batch_results = await asyncio.wait_for(
                                     page.evaluate(
                                         """
-                                        ([cardId, versionOcoid, formOcoid]) => new Promise((resolve) => {
-                                            const setDoc = {
-                                                selected_form_version_ocoid: versionOcoid,
-                                                dateLastActivity: {$date: Date.now()}
-                                            };
-                                            // LAYER 1: repoint sibling cards that
-                                            // still carry the bare OID to the form
-                                            // that actually holds the version.
-                                            if (formOcoid) { setDoc.formOcoid = formOcoid; }
-                                            Meteor.call(
-                                                '/cards/update',
-                                                {_id: cardId},
-                                                {$set: setDoc},
-                                                {},
-                                                (err, result) => {
-                                                    if (err) {
-                                                        resolve({ok: false,
-                                                                 err: String(err)});
-                                                    } else {
-                                                        resolve({ok: true,
-                                                                 result: result});
-                                                    }
-                                                }
-                                            );
-                                        })
+                                        (cards) => Promise.all(cards.map(([cardId, versionOcoid, formOcoid, formName]) =>
+                                            new Promise((resolve) => {
+                                                const setDoc = {
+                                                    selected_form_version_ocoid: versionOcoid,
+                                                    dateLastActivity: {$date: Date.now()}
+                                                };
+                                                if (formOcoid) { setDoc.formOcoid = formOcoid; }
+                                                Meteor.call(
+                                                    '/cards/update',
+                                                    {_id: cardId},
+                                                    {$set: setDoc},
+                                                    {},
+                                                    (err) => resolve({
+                                                        cardId: cardId,
+                                                        formName: formName,
+                                                        ok: !err,
+                                                        err: err ? String(err) : null
+                                                    })
+                                                );
+                                            })
+                                        ))
                                         """,
-                                        [_cid, _vid, _target_oid],
+                                        _batch_args,
                                     ),
-                                    timeout=10,
+                                    timeout=30,  # 30s for up to 20 parallel calls
                                 )
-                                if _mresult.get('ok'):
-                                    _meteor_ok.append(_cid)
-                                else:
-                                    _err_msg = _mresult.get('err', 'unknown')
-                                    _meteor_failed.append((_cid, _fn, _err_msg))
-                                    print(f"[publisher] set-default "
-                                          f"Meteor.call failed for {_fn}: "
-                                          f"{_err_msg}", flush=True)
+                                for _res in (_batch_results or []):
+                                    _cid = _res.get('cardId', '')
+                                    _fn  = _res.get('formName', _cid)
+                                    if _res.get('ok'):
+                                        _meteor_ok.append(_cid)
+                                    else:
+                                        _err_msg = _res.get('err', 'unknown')
+                                        _meteor_failed.append((_cid, _fn, _err_msg))
+                                        print(f"[publisher] set-default "
+                                              f"Meteor.call failed for {_fn}: "
+                                              f"{_err_msg}", flush=True)
                             except asyncio.TimeoutError:
-                                _meteor_failed.append((_cid, _fn, 'timeout'))
-                                print(f"[publisher] set-default "
-                                      f"Meteor.call timed out for {_fn}",
+                                for _cid, _vid in _batch:
+                                    _crd = _card_by_id.get(_cid, {})
+                                    _fn = (_crd.get('form_name')
+                                           or _crd.get('form_oid') or _cid)
+                                    _meteor_failed.append((_cid, _fn, 'batch-timeout'))
+                                print(f"[publisher] set-default batch timeout "
+                                      f"(cards {_batch_start}-{_batch_start+len(_batch)-1})",
                                       flush=True)
                             except Exception as _me:
-                                _meteor_failed.append((_cid, _fn, str(_me)))
-                                print(f"[publisher] set-default "
-                                      f"Meteor.call error for {_fn}: {_me}",
+                                for _cid, _vid in _batch:
+                                    _crd = _card_by_id.get(_cid, {})
+                                    _fn = (_crd.get('form_name')
+                                           or _crd.get('form_oid') or _cid)
+                                    _meteor_failed.append((_cid, _fn, str(_me)))
+                                print(f"[publisher] set-default batch error: {_me}",
                                       flush=True)
 
                         _elapsed = _bt_time.time() - _batch_start_t
