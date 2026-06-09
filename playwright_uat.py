@@ -419,7 +419,7 @@ async def run_playwright_uat(
                     try:
                         await app_frame.wait_for_selector(edit_sel, timeout=5000)
                         # Brief wait for Angular router to fully initialize
-                        await page.wait_for_timeout(2000)
+                        await page.wait_for_timeout(500)
                         _sel = f'[title="Edit {form_abbrev}"]'
                         _pre_url = app_frame.url
                         # Normal Playwright click — fires real pointer events that
@@ -467,7 +467,11 @@ async def run_playwright_uat(
                         form_page = await context.new_page()
                         await form_page.goto(_form_url, timeout=30000,
                                              wait_until="domcontentloaded")
-                        await form_page.wait_for_timeout(2000)
+                        # Wait for Enketo to render questions rather than fixed sleep
+                        try:
+                            await form_page.wait_for_selector(".question", timeout=10000)
+                        except Exception:
+                            pass
                         form_frame = form_page.main_frame
                         nav_ok = True
                         # Log what the Enketo page actually rendered
@@ -518,10 +522,14 @@ async def run_playwright_uat(
                             actual = "No required-field error shown"
                             result = "Fail"
                             failed += 1
-                        # Re-navigate to restore form state for next tests
-                        await page.goto(url, timeout=NAV_TIMEOUT,
-                                        wait_until="domcontentloaded")
-                        await page.wait_for_timeout(3000)
+                        # Re-navigate to restore form state only if needed
+                        # (more rows follow for this form — restore so next read is clean)
+                        if form_page and not form_page.is_closed():
+                            await form_page.reload(wait_until="domcontentloaded")
+                            try:
+                                await form_page.wait_for_selector(".question", timeout=8000)
+                            except Exception:
+                                pass
 
                     elif test_type == "constraint":
                         # ODM already loaded prereq + test value.
