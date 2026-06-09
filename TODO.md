@@ -6,6 +6,19 @@ Items listed roughly in priority order. Move to DONE when complete.
 
 ## 🔴 High Priority
 
+### Fix Playwright form card title mismatch for PHQ9, HCU, MBB, WORK, DS
+**Priority: HIGH**
+**What:** Playwright looks for [title="Edit PHQ9"] but the designer card title is "Edit PHQ".
+The form OID (F_PHQ9) doesn't always match the card display abbreviation in the designer.
+Same issue for F_HCU, F_MBB, F_WORK — not in spec but in build.
+Also F_DS/SE_DAY_360 timeout — SE_DAY_360 may not have 74 edits (different event).
+**Fix:** In _test_one_form, look up the card title from the board/spec form_title
+instead of deriving it from fo.replace("F_","",1). Or fall back to trying both
+the OID abbrev and then the form_title short name.
+**Added:** 2026-06-09
+
+
+
 ### TEST PENDING: Verify calculate field OID fix after next pipeline run
 **Priority: HIGH**
 **What:** prompts.py was updated (commit 249de58) to require full Item OID prefixes
