@@ -495,12 +495,9 @@ RULE OC-7 — UNIVERSAL CLINICAL DATA PATTERNS (always apply when applicable)
           `relevant`: `${TPTCALC}='Screening'`
           `relevant`: `${TPTCALC}!='Screening'`
 
-      (f) FIRST-ENTRY-ONLY IN REPEATING FORMS: In AE/CM/MH/DV-style
-          repeating forms, the "any <X> observed?" YN gate only applies
-          to the first repeat instance:
-          `relevant`: `${REPKEY_ID}=1`
-          (Where REPKEY_ID is the calculated display form of the
-           repeat key, e.g. AEID, CMID, MHID.)
+      (f) FIRST-ENTRY-ONLY IN REPEATING FORMS: This pattern is OBSOLETE
+          and MUST NOT be used. SE_COMMON repeating forms do NOT use a
+          YN gate question or begin_group/end_group wrapper — see RULE OC-8.
 
       (g) OUT-OF-RANGE WARNING NOTES: To show a note when a value is
           outside a normal range:
@@ -566,31 +563,37 @@ RULE OC-8 — REPEATING-FORM STRUCTURAL PATTERN
     then validates with pyxform + ODK Validate. Generate the correct
     structure in the first pass anyway — self-correction costs an API call.
 
-  For repeating forms:
-    - All data fields wrapped in a single begin_group / end_group block
-      (gate it with `relevant` on the YN first-entry flag, e.g.
-      `${CMYN}='Y'`), every data field tagged bind::oc:itemgroup=<group>.
-    - DO NOT include a top-level SUBJID text row. OC uses its built-in
-      subject context for repeating forms.
-    - The first-entry YN gate (e.g. CMYN, AEYN, MHYN) uses
-      `relevant: ${REPKEY_ID}=1` where REPKEY_ID is the local
-      calculated display of the repeat key (see OC-7 7O-f).
+  For repeating forms (SE_COMMON: AE, CM, DV, AESAE, MH, and any other
+  form assigned ONLY to SE_COMMON):
+
+  *** CRITICAL RULE — NO YN GATE, NO begin_group/end_group WRAPPER ***
+
+    DO NOT emit:
+      - A YN gate question (AEYN, CMYN, MHYN, etc.)
+      - A begin_group / end_group wrapper block
+    These rows MUST be deleted / never generated for SE_COMMON forms.
+
+    The correct pattern is: data fields emitted DIRECTLY, all tagged
+    with their bind::oc:itemgroup. OC4's repeating event UI (SE_COMMON)
+    handles "add new entry" natively — the form opens fresh for each
+    instance. A YN gate and group wrapper break this flow and prevent
+    OC from showing any fields.
+
+    DO NOT include a top-level SUBJID text row. OC uses its built-in
+    subject context for repeating forms.
 
   Example — minimal CM (concomitant medications) repeating form shape:
 
     EVENT_CF       (external calc, no itemgroup)
-    TPTCALC        (local calc, has itemgroup)
     CMID           (external calc, repeat key, no itemgroup)
-    CMID_CALC      (local calc, display form, has itemgroup)
     ICFDAT_CF      (external calc, for date floor, no itemgroup)
-    CMYN           (select_one yn, relevant=${CMID}=1)
-    begin group CM_GRP             relevant=${CMYN}='Y'  appearance=field-list
-      CMSPID       (type=text + calc + readonly — see OC-5b, itemgroup=CM)
-      CMTRT        (data field, itemgroup=CM)
-      ... more data fields, all itemgroup=CM ...
-      CMENDAT      (itemgroup=CM)
-    end group
-    (no begin repeat / end repeat — the shared bind::oc:itemgroup=CM
+    CMSPID         (text + calc + readonly, itemgroup=CM)
+    CMTRT          (data field, itemgroup=CM)
+    ... more data fields, all itemgroup=CM ...
+    CMENDAT        (itemgroup=CM)
+
+    NO CMYN row. NO begin_group CM_GRP. NO end_group.
+    (no begin_repeat / end_repeat either — the shared bind::oc:itemgroup=CM
      is what makes the group repeating in OpenClinica)
 
 RULE OC-9 — COMMON VISIT FOR CROSS-VISIT FORMS
