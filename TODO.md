@@ -6,6 +6,16 @@ Items listed roughly in priority order. Move to DONE when complete.
 
 ## 🔴 High Priority
 
+### TEST PENDING: Verify calculate field OID fix after next pipeline run
+**Priority: HIGH**
+**What:** prompts.py was updated (commit 249de58) to require full Item OID prefixes
+in the survey `name` column and all calculate expressions. This should fix:
+- I_DM_AGE, I_DM_AGEDISP (age from BRTHDAT)
+- I_ODI_ODISUM, I_PCS_PCSTOT, I_PHQ_PHQTOT (sum totals)
+**To test:** Run a full pipeline (Publish Forms checked) on CRS-135 to regenerate
+forms with the new spec, then re-run UAT. Do NOT test until ready for a full run.
+**Added:** 2026-06-09
+
 ### Fix I_DM_AGE and I_DM_AGEDISP Playwright test failures
 **Priority: HIGH**
 **What:** Two calculated fields in F_DM are failing Playwright UAT:
