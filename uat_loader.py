@@ -519,7 +519,13 @@ def _build_odm_xml(study_oid: str, site_oid: str,
                 _p = _p.strip()
                 if "=" in _p:
                     _fname, _fval = _p.split("=", 1)
-                    _item_oid = f"I_{fo.replace('F_', '', 1)}_{_fname.strip()}"
+                    _fname_clean = _fname.strip()
+                    _form_short = fo.replace('F_', '', 1) if fo.upper().startswith('F_') else fo
+                    _expected_prefix = f"I_{_form_short}_"
+                    if _fname_clean.upper().startswith(_expected_prefix.upper()):
+                        _item_oid = _fname_clean  # already fully qualified
+                    else:
+                        _item_oid = f"I_{_form_short}_{_fname_clean}"
                     (events
                      .setdefault(ev, {})
                      .setdefault(rk, {})

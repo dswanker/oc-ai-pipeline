@@ -63,6 +63,14 @@ def _get_or_set_base_date(field_name, world):
     if fu in _BASELINE_TIMELINE:
         world[fu] = _BASELINE_TIMELINE[fu]
         return world[fu]
+    # Strip I_XX_ prefix and try bare name (handles full-OID field names like I_DM_BRTHDAT)
+    parts = fu.split("_", 2)  # ["I", "DM", "BRTHDAT"]
+    bare = parts[2] if len(parts) == 3 and parts[0] == "I" else fu
+    if bare in world:
+        return world[bare]
+    if bare in _BASELINE_TIMELINE:
+        world[fu] = _BASELINE_TIMELINE[bare]
+        return world[fu]
     # Allocate sensibly for unknown date fields — use mid-2026
     world[fu] = "2026-03-15"
     return world[fu]
@@ -278,9 +286,16 @@ def _sample_for_field(field_name, row_type, choices_for_field, ctx):
 
     # Type check FIRST — date fields always get a date regardless of name
     # (prevents e.g. NRSDAT matching "nrs" prefix and getting a score value)
-    if t == "date":     return "2026-02-01"
-    if t == "datetime": return "2026-02-01 09:00"
-    if t == "time":     return "09:00"
+    if t == "date" or t == "datetime" or t == "time":
+        # Check field-specific timeline before using generic default
+        fu = fn.upper()
+        # Also try bare name after stripping I_XX_ prefix
+        parts = fu.split("_", 2)
+        bare = parts[2] if len(parts) == 3 and parts[0] == "I" else fu
+        specific = _BASELINE_TIMELINE.get(fu) or _BASELINE_TIMELINE.get(bare)
+        if t == "date":     return specific if specific else "2026-02-01"
+        if t == "datetime": return (specific + " 09:00") if specific else "2026-02-01 09:00"
+        if t == "time":     return "09:00"
 
     # Try exact match first, then prefix match
     if fn in ctx:
@@ -964,8 +979,16 @@ def _uat_row(uat_id, check_id, form_id, field_name, field_label, case,
     item_group_oid = f"IG_{form_short}_{ig_name_clean}"
 
     # Item OID: OC derives it as I_{form_short}_{fieldname}
-    # e.g. for form AE, field AEYN -> I_AE_AEYN  (NOT F_AE.AEYN)
-    item_oid = f"I_{form_short}_{field_name}" if field_name else item_group_oid
+    # If the field_name already includes the full OID prefix (e.g. I_AE_AEYN),
+    # use it as-is to avoid double-prefix (I_AE_I_AE_AEYN).
+    if field_name:
+        expected_prefix = f"I_{form_short}_"
+        if field_name.upper().startswith(expected_prefix.upper()):
+            item_oid = field_name  # already fully qualified
+        else:
+            item_oid = f"I_{form_short}_{field_name}"
+    else:
+        item_oid = item_group_oid
 
     return {
         "UAT Case ID":       uat_id,
