@@ -243,15 +243,85 @@ async def _test_one_form(
                     _elapsed += 1.0
 
                 if app_frame:
-                    edit_sel = f'[title="Edit {form_abbrev}"]' 
-                    try:
-                        await app_frame.wait_for_selector(edit_sel, timeout=5000)
-                        await page.wait_for_timeout(500)
-                        await app_frame.click(edit_sel)
-                        await page.wait_for_timeout(500)
-                        print(f"[pw-uat] {fo}/{ev} clicked {edit_sel}", flush=True)
-                    except Exception as _ce:
-                        print(f"[pw-uat] {fo}/{ev} click failed: {_ce}", flush=True)
+                    # Determine click strategy based on event type.
+                    # Repeating events (SE_COMMON etc) use three-dot menu → Edit.
+                    # Scheduled events use the form card click ([title="Edit X"]).
+                    _is_repeating = 'COMMON' in ev.upper() or ev.upper().startswith('SE_REP')
+
+                    if _is_repeating:
+                        # Repeating visit: expand common visit accordion, then
+                        # find the form section by abbreviation text, click the
+                        # pi-ellipsis-v three-dot button, then click Edit.
+                        try:
+                            # Expand the accordion if collapsed
+                            _n_exp = await app_frame.evaluate("""() => {
+                                let n = 0;
+                                document.querySelectorAll(
+                                    '.p-accordion-toggle-icon.icon-caret-d, ' +
+                                    '.p-accordion-header-link[aria-expanded="false"]'
+                                ).forEach(el => {
+                                    const link = el.closest('.p-accordion-header-link') || el;
+                                    link.click(); n++;
+                                });
+                                return n;
+                            }""")
+                            if _n_exp:
+                                await page.wait_for_timeout(1000)
+
+                            # Find the form-section row containing our abbreviation,
+                            # then click its .form-menu ellipsis button.
+                            _fa = form_abbrev
+                            _clicked = await app_frame.evaluate(f"""() => {{
+                                // Walk text nodes to find the form label
+                                const walker = document.createTreeWalker(
+                                    document.body, NodeFilter.SHOW_TEXT);
+                                let node;
+                                while (node = walker.nextNode()) {{
+                                    if (node.textContent.trim() === '{_fa}') {{
+                                        // Walk up to find the containing section
+                                        let el = node.parentElement;
+                                        for (let i = 0; i < 10; i++) {{
+                                            if (!el) break;
+                                            const menu = el.querySelector('.form-menu');
+                                            if (menu) {{ menu.click(); return true; }}
+                                            el = el.parentElement;
+                                        }}
+                                    }}
+                                }}
+                                return false;
+                            }}""")
+
+                            if _clicked:
+                                await page.wait_for_timeout(500)
+                                # Click the Edit menu item
+                                _edit_clicked = await app_frame.evaluate("""() => {
+                                    const items = Array.from(
+                                        document.querySelectorAll('.p-menuitem-link'));
+                                    const edit = items.find(
+                                        i => i.textContent.trim() === 'Edit');
+                                    if (edit) { edit.click(); return true; }
+                                    return false;
+                                }""")
+                                if _edit_clicked:
+                                    print(f"[pw-uat] {fo}/{ev} three-dot → Edit clicked", flush=True)
+                                else:
+                                    print(f"[pw-uat] {fo}/{ev} Edit menu item not found", flush=True)
+                            else:
+                                print(f"[pw-uat] {fo}/{ev} form-menu not found for {_fa}", flush=True)
+                        except Exception as _ce:
+                            print(f"[pw-uat] {fo}/{ev} repeating click failed: {_ce}", flush=True)
+
+                    else:
+                        # Scheduled visit: click the form card directly
+                        edit_sel = f'[title="Edit {form_abbrev}"]'
+                        try:
+                            await app_frame.wait_for_selector(edit_sel, timeout=5000)
+                            await page.wait_for_timeout(500)
+                            await app_frame.click(edit_sel)
+                            await page.wait_for_timeout(500)
+                            print(f"[pw-uat] {fo}/{ev} clicked {edit_sel}", flush=True)
+                        except Exception as _ce:
+                            print(f"[pw-uat] {fo}/{ev} click failed: {_ce}", flush=True)
 
                     _form_url = None
                     for _t in range(20):
