@@ -435,36 +435,44 @@ async def run_playwright_uat(
                     # Step 2: Poll app_frame DOM for form.eu.openclinica.io iframe src
                     # Also log all iframes in app_frame to see what's there
                     _form_url = None
-                    for _t in range(15):
+                    for _t in range(20):
+                        # Check page.frames for form.eu.openclinica.io directly
+                        for _f in page.frames:
+                            if 'form.' in _f.url and 'openclinica' in _f.url:
+                                _form_url = _f.url
+                                print(f"[pw-uat] form frame in page.frames at t={_t}s: {_form_url[:70]}", flush=True)
+                                break
+                        if _form_url:
+                            break
+                        # Also check app_frame DOM for the iframe src attribute
                         try:
                             inner = await app_frame.evaluate("""() =>
                                 Array.from(document.querySelectorAll('iframe'))
-                                    .map(f => ({src: f.src, id: f.id}))
+                                    .map(f => f.src)
                             """)
-                            form_srcs = [i['src'] for i in inner if 'form.' in i.get('src','')]
+                            form_srcs = [s for s in inner if 'form.' in s]
                             if form_srcs:
                                 _form_url = form_srcs[0]
-                                print(f"[pw-uat] form src found at t={_t}s: {_form_url[:70]}", flush=True)
+                                print(f"[pw-uat] form src in DOM at t={_t}s: {_form_url[:70]}", flush=True)
                                 break
                             if _t % 5 == 0:
-                                all_srcs = [i['src'][:50] for i in inner]
-                                print(f"[pw-uat] t={_t}s app_frame iframes: {all_srcs} url={app_frame.url[-40:]}", flush=True)
+                                print(f"[pw-uat] t={_t}s iframes={[s[:40] for s in inner]} url={app_frame.url[-40:]}", flush=True)
                         except Exception as _ie:
                             if _t == 0:
                                 print(f"[pw-uat] iframe eval error: {_ie}", flush=True)
                         await page.wait_for_timeout(1000)
 
                     if _form_url:
-                        # Step 3: Navigate directly to Enketo form URL in a new page
+                        # Navigate directly to Enketo form URL in a new page
                         form_page = await context.new_page()
                         await form_page.goto(_form_url, timeout=30000,
                                              wait_until="domcontentloaded")
                         await form_page.wait_for_timeout(2000)
                         form_frame = form_page.main_frame
                         nav_ok = True
-                        print(f"[pw-uat] navigated to Enketo form directly", flush=True)
+                        print(f"[pw-uat] navigated to Enketo directly", flush=True)
                     else:
-                        print(f"[pw-uat] form.eu URL not found in app_frame DOM after 15s", flush=True)
+                        print(f"[pw-uat] form.eu URL not found after 20s", flush=True)
                         form_frame = app_frame
                     print(f"[pw-uat] Angular app frame not found", flush=True)
 
