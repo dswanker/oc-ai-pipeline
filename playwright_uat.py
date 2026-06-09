@@ -312,16 +312,47 @@ async def _test_one_form(
                             print(f"[pw-uat] {fo}/{ev} repeating click failed: {_ce}", flush=True)
 
                     else:
-                        # Scheduled visit: click the form card directly
+                        # Scheduled visit: click the form card directly.
+                        # Primary selector uses OID-derived abbreviation (F_PHQ9 → PHQ9).
+                        # Fallback: enumerate all Edit buttons and find one whose
+                        # title suffix matches a known alias (e.g. PHQ for F_PHQ9,
+                        # or the form_id from the spec passed via _fo_aliases).
                         edit_sel = f'[title="Edit {form_abbrev}"]'
+                        _clicked_card = False
                         try:
                             await app_frame.wait_for_selector(edit_sel, timeout=5000)
                             await page.wait_for_timeout(500)
                             await app_frame.click(edit_sel)
                             await page.wait_for_timeout(500)
                             print(f"[pw-uat] {fo}/{ev} clicked {edit_sel}", flush=True)
-                        except Exception as _ce:
-                            print(f"[pw-uat] {fo}/{ev} click failed: {_ce}", flush=True)
+                            _clicked_card = True
+                        except Exception:
+                            # Fallback: find any Edit button whose suffix is a
+                            # prefix/suffix of our form_abbrev or vice versa.
+                            # Covers F_PHQ9 vs card title "PHQ", F_HCU vs "HCU", etc.
+                            try:
+                                _all_abbrevs = await app_frame.evaluate("""() =>
+                                    Array.from(document.querySelectorAll('[title^="Edit "]'))
+                                         .map(el => el.getAttribute('title').replace(/^Edit /, ''))
+                                """)
+                                _fa_upper = form_abbrev.upper()
+                                _match = None
+                                for _candidate in _all_abbrevs:
+                                    _cu = _candidate.upper()
+                                    # Match if one is prefix of the other (PHQ ↔ PHQ9)
+                                    if _fa_upper.startswith(_cu) or _cu.startswith(_fa_upper):
+                                        _match = _candidate
+                                        break
+                                if _match:
+                                    _fb_sel = f'[title="Edit {_match}"]'
+                                    await app_frame.click(_fb_sel)
+                                    await page.wait_for_timeout(500)
+                                    print(f"[pw-uat] {fo}/{ev} clicked fallback {_fb_sel}", flush=True)
+                                    _clicked_card = True
+                                else:
+                                    print(f"[pw-uat] {fo}/{ev} no matching Edit button among {_all_abbrevs}", flush=True)
+                            except Exception as _ce2:
+                                print(f"[pw-uat] {fo}/{ev} click failed: {_ce2}", flush=True)
 
                     _form_url = None
                     for _t in range(20):
