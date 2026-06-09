@@ -8,12 +8,22 @@ Items listed roughly in priority order. Move to DONE when complete.
 
 ### Fix spec generation: calculate field rules for common/repeating events
 **Priority: HIGH**
-**What:** The spec generation (protocol analysis → form_specs) needs two new rules:
-1. **Calculate field function syntax** — calculated fields must use proper XLSForm `calculate` column syntax. The spec should define the correct formula (e.g. `${field1} + ${field2}`) not just note that the field is calculated.
-2. **Calculate fields in common/repeating events** — calculated fields inside repeating groups (SE_COMMON / repeat blocks) need special handling. The XLSForm `calculate` expression must reference fields within the same repeat group using relative paths, not absolute paths. The spec must flag when a calculate field is inside a repeat group and generate the correct scoped formula.
-**Impact:** Currently calculated fields in common visit forms are broken (returning 0 or not evaluating). This blocks Playwright UAT for repeating event forms.
+**What:** The spec generation (protocol analysis → form_specs) needs deterministic rules for how calculate fields are built. Three specific requirements:
+
+1. **Full OID prefixes always required** — every OID reference in a calculate expression must use its full prefixed form:
+   - Form OID: `F_XXX` (not just `XXX`)
+   - Item Group OID: `IG_XXX` (not just `XXX`)
+   - Item OID: `I_XXX` (not just `XXX`)
+   - No exceptions — the spec generator must never emit bare/unprefixed OID references in calculate expressions.
+
+2. **Calculate field formula syntax** — calculated fields must use proper XLSForm `calculate` column syntax with `${field_name}` references (e.g. `${I_FORM_FIELD1} + ${I_FORM_FIELD2}`), not prose descriptions. The spec must emit the actual XPath/XLSForm formula, not a note saying "this field is calculated."
+
+3. **Repeating visit calculate fields must use StudyEvent ID, not ItemGroup ID** — when a calculate field lives inside a repeating event (SE_COMMON or any repeat block), the scoping reference in the calculate expression must use the **StudyEvent OID** (e.g. `SE_COMMON`), NOT the ItemGroup OID (e.g. `IG_XXX`). Using ItemGroup ID for scoping in repeating events produces wrong results. Example: AEID calculate should reference `SE_COMMON` for event scoping, not `IG_AE_GROUP1`.
+
+**Impact:** Currently calculated fields in repeating event forms return 0 or evaluate incorrectly. This also breaks Playwright UAT for those forms.
 **Files to update:** `prompts.py` (form_specs prompt), `pipeline.py` (spec generation chain)
 **Added:** 2026-06-08
+**Updated:** 2026-06-09
 
 
 
