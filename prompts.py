@@ -69,9 +69,13 @@ APPLY THIS TO ALL IDENTIFIERS:
   • forms[].visits_assigned         → ["SE_SCREENING","SE_WEEK_1", ...]
   • forms[].survey[].bind__oc_itemgroup  → "DM" (short group code only;
     no dot, no plain short name convention — OC rejects values with dots in this column)
-  • forms[].survey[].name           → use the BARE field name here
-    (e.g. "SUBJID", "AETERM") — the xlsform tool constructs the full
-    Item OID `I_<FORM>_<NAME>` at build time.
+  • forms[].survey[].name           → use the FULL Item OID here,
+    including the I_<FORM>_ prefix (e.g. "I_DM_SUBJID", "I_AE_AETERM").
+    NEVER use bare names like "SUBJID" or "AETERM" — the calculate
+    expressions, relevant, and constraint columns all reference fields
+    via ${name}, so the name must be the full OID for Enketo to resolve
+    them correctly. A calculate referencing ${BRTHDAT} silently returns 0
+    because no field named BRTHDAT exists — the field is I_DM_BRTHDAT.
 
 CROSS-FORM DEPENDENCIES — full XPath expressions:
   For each cross_form_dependencies entry you MUST also provide an
@@ -321,10 +325,13 @@ RULE OC-7 — UNIVERSAL CLINICAL DATA PATTERNS (always apply when applicable)
       If a form captures both weight (kg) and height (cm), add a
       calculate row immediately after:
         type:        calculate
-        name:        BMI
+        name:        I_VS_BMI
         label:       "BMI (kg/m²)"
-        calculation: `${WEIGHT_FIELD} div (${HEIGHT_FIELD} * ${HEIGHT_FIELD} div 10000)`
+        calculation: `${I_VS_WEIGHT} div (${I_VS_HEIGHT} * ${I_VS_HEIGHT} div 10000)`
         readonly:    yes
+      NOTE: field references in calculation MUST use the full Item OID
+      with prefix (${I_VS_WEIGHT} not ${WEIGHT}). Bare names silently
+      return 0 in Enketo because no field by that name exists.
 
   7F. AE SEVERITY/SERIOUS LOGIC.
       On AE forms, if fields AESEV (grade) and AESER (serious?) exist:
@@ -789,7 +796,9 @@ SURVEY ROWS — REQUIRED FIELDS AND AGGRESSIVE POPULATION
 
 Each survey row MUST include these keys (never omit, may be empty):
     type                   (e.g. "text","integer","date","select_one X","calculate","begin group","end group")
-    name                   (bare field name, no prefix — e.g. "SUBJID", "AETERM")
+    name                   (FULL Item OID with prefix — e.g. "I_DM_SUBJID", "I_AE_AETERM")
+                           NEVER bare names like "SUBJID" — Enketo resolves ${I_DM_SUBJID},
+                           not ${SUBJID}. Bare names cause calculate fields to return 0.
     label                  (question text visible to the data entry user)
     completion_status      ("COMPLETE" | "FLAGGED" | "PLACEHOLDER")
     library_source         ("CDASH_DEFAULT" | "CDASH_STANDARD" | "PROTOCOL_SPECIFIC" | "CUSTOM")
@@ -847,12 +856,17 @@ POPULATE THESE OPTIONAL FIELDS AGGRESSIVELY — err toward inclusion:
                            Populate alongside every constraint.
 
     calculation          — XPath expression for auto-computed fields.
+                           ALL field references MUST use the full Item OID
+                           with prefix: ${I_DM_BRTHDAT} NOT ${BRTHDAT}.
+                           Bare names silently return 0 in Enketo.
                            Populate whenever a value is derivable:
-                             total score          → "${PRIMARY} + ${SECONDARY}"
-                             age-from-DOB         → "floor((today() - ${BRTHDAT}) div 365.25)"
-                             cross-form pulldata  → "pulldata('prtk05_tpt','timepoint','event',${EVENT_CF})"
+                             total score          → "${I_PHQ_PHQ1} + ${I_PHQ_PHQ2} + ${I_PHQ_PHQ3}"
+                             age-from-DOB         → "floor((today() - ${I_DM_BRTHDAT}) div 365.25)"
+                             cross-form pulldata  → "pulldata('prtk05_tpt','timepoint','event',${I_DM_EVENT_CF})"
                              cross-form instance  → full XPath as shown in
                                                      CROSS-FORM DEPENDENCIES above
+                           For repeating events: scope to StudyEvent OID
+                           (SE_COMMON), NOT ItemGroup OID (IG_AE_GROUP1).
 
     dependencies         — List of cross-form field references in dotted
                            notation: ["DEMO.SUBJID", "EX.EXSTDAT"].
