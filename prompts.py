@@ -594,35 +594,38 @@ RULE OC-9 — COMMON VISIT FOR CROSS-VISIT FORMS
   itself should still exist as long as ANY of the four forms are in scope.
 
 
-RULE OC-9a — REPEATING FORM AUTO-ID USES StudyEvent OID, NOT ItemGroup OID
+RULE OC-9a — REPEATING FORM AUTO-ID USES StudyEventRepeatKey, NOT ItemGroupRepeatKey
 
-  On every repeating form (AE, CM, DV, AESAE, MH, and any custom repeating
-  form on SE_COMMON), there is typically an auto-generated ID field
-  (e.g. AEID, CMID, DVID) that produces a unique record identifier.
+  On every form that lives on a repeating visit (any event where
+  is_repeating=true — including SE_COMMON and any other repeating event),
+  there is typically an auto-generated ID field (e.g. AEID, CMID, DVID,
+  MHID) that uniquely identifies the repeating occurrence.
 
-  The calculate expression for this ID field MUST reference the
-  StudyEvent OID (e.g. SE_COMMON), NOT the ItemGroup OID (e.g. IG_AE_GROUP1).
+  The calculate expression for this ID field MUST use @StudyEventRepeatKey
+  scoped to [@OpenClinica:Current='Yes'], NOT @ItemGroupRepeatKey.
 
-  CORRECT — scoped to StudyEvent OID:
-    name:        I_AE_AEID
+  CORRECT:
+    name:        AEID
+    type:        calculate
+    calculation: once(instance('clinicaldata')/ODM/ClinicalData/SubjectData/StudyEventData[@OpenClinica:Current='Yes']/@StudyEventRepeatKey)
+
+  INCORRECT — uses ItemGroupRepeatKey (wrong key, produces stale/incorrect value):
+    calculation: once(instance('clinicaldata')/ODM/ClinicalData/SubjectData/StudyEventData[@OpenClinica:Current='Yes']/FormData[@FormOID='F_AE']/ItemGroupData[@ItemGroupOID='IG_AE_AE']/@ItemGroupRepeatKey)
+
+  The StudyEventRepeatKey uniquely identifies the repeating visit occurrence.
+  The ItemGroupRepeatKey is a different key scoped to the item group, which
+  produces incorrect results when used as the form's primary ID.
+
+  This rule applies to ALL auto-ID fields on repeating forms:
+  AEID, CMID, DVID, SAEID, MHID, and any custom repeating-form ID field.
+
+  Note: the display companion field (AEID_CALC, CMID_CALC etc.) that shows
+  the ID to data entry staff uses type=text, readonly=yes, and references
+  the hidden calculate field:
+    name:        AEID_CALC
     type:        text
     readonly:    yes
-    calculation: once(instance('clinicaldata')/ODM/ClinicalData/SubjectData/
-                   StudyEventData[@StudyEventOID='SE_COMMON']/
-                   FormData[@FormOID='AE']/
-                   ItemGroupData[@ItemGroupOID='AE.AE']/@ItemGroupRepeatKey)
-
-  INCORRECT — scoped to ItemGroup OID (silently produces wrong value):
-    calculation: once(instance('clinicaldata')/ODM/ClinicalData/SubjectData/
-                   StudyEventData/FormData/
-                   ItemGroupData[@ItemGroupOID='IG_AE_GROUP1']/@ItemGroupRepeatKey)
-
-  The ItemGroupRepeatKey is attached to the StudyEvent occurrence, so
-  scoping by StudyEvent OID is what correctly identifies the current
-  repeating occurrence. Using ItemGroupOID produces 0 or a stale value.
-
-  This rule applies to ALL auto-ID fields on repeating forms — AEID,
-  CMID, DVID, SAEID, MHID, and any custom repeating-form ID field.
+    calculation: if(${AEID}!='', ${AEID}, 'Scheduled')
 
 
 
