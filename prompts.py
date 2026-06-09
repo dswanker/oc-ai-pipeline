@@ -594,6 +594,39 @@ RULE OC-9 — COMMON VISIT FOR CROSS-VISIT FORMS
   itself should still exist as long as ANY of the four forms are in scope.
 
 
+RULE OC-9a — REPEATING FORM AUTO-ID USES StudyEvent OID, NOT ItemGroup OID
+
+  On every repeating form (AE, CM, DV, AESAE, MH, and any custom repeating
+  form on SE_COMMON), there is typically an auto-generated ID field
+  (e.g. AEID, CMID, DVID) that produces a unique record identifier.
+
+  The calculate expression for this ID field MUST reference the
+  StudyEvent OID (e.g. SE_COMMON), NOT the ItemGroup OID (e.g. IG_AE_GROUP1).
+
+  CORRECT — scoped to StudyEvent OID:
+    name:        I_AE_AEID
+    type:        text
+    readonly:    yes
+    calculation: once(instance('clinicaldata')/ODM/ClinicalData/SubjectData/
+                   StudyEventData[@StudyEventOID='SE_COMMON']/
+                   FormData[@FormOID='AE']/
+                   ItemGroupData[@ItemGroupOID='AE.AE']/@ItemGroupRepeatKey)
+
+  INCORRECT — scoped to ItemGroup OID (silently produces wrong value):
+    calculation: once(instance('clinicaldata')/ODM/ClinicalData/SubjectData/
+                   StudyEventData/FormData/
+                   ItemGroupData[@ItemGroupOID='IG_AE_GROUP1']/@ItemGroupRepeatKey)
+
+  The ItemGroupRepeatKey is attached to the StudyEvent occurrence, so
+  scoping by StudyEvent OID is what correctly identifies the current
+  repeating occurrence. Using ItemGroupOID produces 0 or a stale value.
+
+  This rule applies to ALL auto-ID fields on repeating forms — AEID,
+  CMID, DVID, SAEID, MHID, and any custom repeating-form ID field.
+
+
+
+
 RULE OC-10 — CHOICES SHEET COMPLETE FOR EVERY REFERENCED LIST
   Every `list_name` referenced by a survey row's `type` column —
   whether `select_one X` or `select_multiple X` — MUST appear in the
