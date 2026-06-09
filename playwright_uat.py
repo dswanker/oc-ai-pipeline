@@ -58,9 +58,12 @@ def _form_entry_url(subdomain: str, subject_oid: str, event_oid: str,
     Both are captured when the user authenticates with the legacy tab open.
     """
     base = _legacy_base(subdomain)
+    # Do NOT include crfOid or enketoOpen — those cause the outer JSP to send
+    # a postMessage to study-runner-ui to auto-open the form, but in Playwright
+    # that postMessage is not received. Instead we navigate to the plain
+    # participant page and click Edit <form> directly to let Angular handle it.
     return (f"{base}/ParticipantDetailsPage?"
-            f"participantOid={subject_oid}&enketoOpen=true"
-            f"&studyEventOid={event_oid}&crfOid={form_oid}")
+            f"participantOid={subject_oid}")
 
 
 def _classify_pw_row(row_dict: dict) -> Optional[str]:
@@ -419,14 +422,9 @@ async def run_playwright_uat(
                         await page.wait_for_timeout(2000)
                         _sel = f'[title="Edit {form_abbrev}"]'
                         _pre_url = app_frame.url
-                        # Remove the overlay div that intercepts pointer events,
-                        # then use a real Playwright click so Angular Zone.js fires
-                        await app_frame.evaluate("""() => {
-                            const overlay = document.getElementById('iframe-container');
-                            if (overlay) overlay.remove();
-                            const overlay2 = document.querySelector('.iframe-container');
-                            if (overlay2) overlay2.remove();
-                        }""")
+                        # Normal Playwright click — fires real pointer events that
+                        # Angular Zone.js intercepts. The plain participant URL (no crfOid)
+                        # means no overlay is present, so no force needed.
                         await app_frame.click(edit_sel)
                         await page.wait_for_timeout(500)
                         _post_url = app_frame.url
