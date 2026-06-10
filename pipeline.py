@@ -4388,6 +4388,24 @@ async def run_pipeline(item_id):
                                "forms": [], "review_flags": {}}
                 print("Warning: Study Spec JSON not valid — using empty fallback", flush=True)
 
+            # Validate that the spec is usable — abort early if forms list is
+            # empty (means extract_json returned a wrong candidate, e.g. a
+            # single form object instead of the full spec when Claude outputs
+            # 100+ fragmented JSON blocks).  An empty-forms spec creates a
+            # broken study with 0 forms and wastes the full pipeline run.
+            _n_forms = len(struct_json.get("forms", []))
+            if _n_forms == 0:
+                _err = (
+                    "❌ Spec extraction returned 0 forms — Claude likely output "
+                    "fragmented JSON instead of the unified study spec. "
+                    "Pipeline aborted to prevent creating a broken empty study. "
+                    "Re-trigger to retry."
+                )
+                print(_err, flush=True)
+                await append_log(item_id, _err)
+                await set_status(item_id, "color_mm2h9g3m", "Build Error")
+                return
+
             # OC-9 backstop: ensure SE_COMMON exists and AE/CM/DV/AESAE
             # forms live only there. Deterministic fix-up if Claude missed it.
             struct_json = _enforce_common_visit(struct_json)

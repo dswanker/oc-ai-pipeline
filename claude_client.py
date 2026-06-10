@@ -267,6 +267,11 @@ def extract_json(text, expected_keys=None):
     print(f"extract_json: found {len(candidates)} candidate(s), "
           f"returning size={best_size} tier={best_tier}{top_keys_preview}",
           flush=True)
+    if best_tier == 0 and len(candidates) > 20:
+        print(f"extract_json: WARNING — tier=0 with {len(candidates)} candidates "
+              f"suggests Claude output fragmented JSON (many small objects) "
+              f"instead of one unified spec. Pipeline will abort if forms=0.",
+              flush=True)
 
     # B3: if the caller specified expected_keys but the best candidate didn't
     # match any of them (tier < 1), we probably have truncated output or a
