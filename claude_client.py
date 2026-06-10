@@ -16,7 +16,10 @@ import anthropic, base64, json, os, asyncio, re
 import httpx
 
 MODEL       = "claude-opus-4-7"
-MAX_TOKENS  = 64000         # for call_claude (JSON extraction). Opus 4.7
+MAX_TOKENS  = 16000         # for call_claude (JSON extraction). Opus 4.7
+                             # NOTE: spec extraction uses EXTENDED_OUTPUT_MAX_TOKENS
+                             # (see call_claude extended_output parameter)
+EXTENDED_OUTPUT_MAX_TOKENS = 96000  # Opus 4.7 + output-128k beta; headroom over ~64K limit
                             # supports up to 128K output; 64K is plenty for
                             # a rich Study Spec with per-row metadata,
                             # XPaths, and aggressive optional-field
@@ -35,7 +38,7 @@ SKILL_BETAS = [
 # ── Plain Claude call — returns text ─────────────────────────────────────────
 
 async def call_claude(prompt, pdf_bytes=None, extra_text=None, max_tokens=MAX_TOKENS,
-                      cache_prompt=True):
+                      cache_prompt=True, extended_output=False):
     """
     Call Claude with a prompt and optional PDF. Returns full text response.
     No skills, no code execution — used for JSON extraction tasks only.
@@ -81,12 +84,22 @@ async def call_claude(prompt, pdf_bytes=None, extra_text=None, max_tokens=MAX_TO
     for attempt in range(MAX_RETRIES):
         try:
             print(f"call_claude — attempt {attempt+1}, blocks: {len(content)} "
-                  f"[streaming, cache={cache_prompt}]", flush=True)
-            async with client.messages.stream(
+                  f"[streaming, cache={cache_prompt}, extended={extended_output}]", flush=True)
+            _stream_kwargs = dict(
                 model=MODEL,
                 max_tokens=max_tokens,
                 messages=[{"role": "user", "content": content}],
-            ) as stream:
+            )
+            if extended_output:
+                # output-128k-2025-02-19 beta raises the per-request output
+                # cap from 32K to 128K for Opus 4.7. Required when the study
+                # spec JSON exceeds ~64K tokens (large studies with many forms
+                # and full per-row XLSForm metadata).
+                _stream_kwargs["betas"] = ["output-128k-2025-02-19"]
+                _cm = client.beta.messages.stream(**_stream_kwargs)
+            else:
+                _cm = client.messages.stream(**_stream_kwargs)
+            async with _cm as stream:
                 response = await stream.get_final_message()
             text = response.content[0].text
             # Usage info — shows cache hit/miss

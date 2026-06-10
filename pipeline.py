@@ -38,7 +38,7 @@ from monday_client import (get_item, download_file, upload_file, set_status,
                             append_log, set_text, set_link, download_column_file,
                             list_column_filenames, COL, BOARD_ID)
 from auth_manager import AuthManager
-from claude_client  import call_claude, extract_json, run_skill
+from claude_client  import call_claude, extract_json, run_skill, EXTENDED_OUTPUT_MAX_TOKENS
 from migration_pipeline import run_migration as run_edc_migration
 from trainer_integration import (
     run_protocol_analysis_quick,
@@ -4360,8 +4360,10 @@ async def run_pipeline(item_id):
 
             struct_text = await call_claude(
                 EDC_STRUCTURE_PROMPT,
-                pdf_bytes  = _pdf_arg,
-                extra_text = "\n".join(_text_args) if _text_args else None,
+                pdf_bytes     = _pdf_arg,
+                extra_text    = "\n".join(_text_args) if _text_args else None,
+                max_tokens    = EXTENDED_OUTPUT_MAX_TOKENS,
+                extended_output = True,
             )
             try:
                 struct_json = extract_json(
