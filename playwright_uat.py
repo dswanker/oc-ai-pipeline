@@ -251,7 +251,7 @@ async def _test_one_form(
                     if _is_repeating:
                         # Repeating visit: expand common visit accordion, then
                         # find the form section by abbreviation text, click the
-                        # pi-ellipsis-v three-dot button, then click Edit.
+                        # pi-ellipsis-v three-dot button, then click Edit or Add.
                         try:
                             # Expand the accordion if collapsed
                             _n_exp = await app_frame.evaluate("""() => {
@@ -292,20 +292,29 @@ async def _test_one_form(
                             }}""")
 
                             if _clicked:
-                                await page.wait_for_timeout(500)
-                                # Click the Edit menu item
+                                await page.wait_for_timeout(800)
+                                # Click Edit or Add — first repeat instance may
+                                # show Add (no prior entry); subsequent show Edit.
                                 _edit_clicked = await app_frame.evaluate("""() => {
                                     const items = Array.from(
                                         document.querySelectorAll('.p-menuitem-link'));
+                                    // Prefer Edit, fall back to Add
                                     const edit = items.find(
                                         i => i.textContent.trim() === 'Edit');
-                                    if (edit) { edit.click(); return true; }
-                                    return false;
+                                    if (edit) { edit.click(); return 'edit'; }
+                                    const add = items.find(
+                                        i => i.textContent.trim() === 'Add');
+                                    if (add) { add.click(); return 'add'; }
+                                    return null;
                                 }""")
                                 if _edit_clicked:
-                                    print(f"[pw-uat] {fo}/{ev} three-dot → Edit clicked", flush=True)
+                                    print(f"[pw-uat] {fo}/{ev} three-dot → {_edit_clicked} clicked", flush=True)
                                 else:
-                                    print(f"[pw-uat] {fo}/{ev} Edit menu item not found", flush=True)
+                                    _menu_items = await app_frame.evaluate("""() =>
+                                        Array.from(document.querySelectorAll('.p-menuitem-link'))
+                                             .map(i => i.textContent.trim())
+                                    """)
+                                    print(f"[pw-uat] {fo}/{ev} Edit/Add not in menu: {_menu_items}", flush=True)
                             else:
                                 print(f"[pw-uat] {fo}/{ev} form-menu not found for {_fa}", flush=True)
                         except Exception as _ce:
@@ -313,10 +322,10 @@ async def _test_one_form(
 
                     else:
                         # Scheduled visit: click the form card directly.
-                        # Primary selector uses OID-derived abbreviation (F_PHQ9 → PHQ9).
-                        # Fallback: enumerate all Edit buttons and find one whose
-                        # title suffix matches a known alias (e.g. PHQ for F_PHQ9,
-                        # or the form_id from the spec passed via _fo_aliases).
+                        # The participant page shows all visits; we need to find
+                        # the Edit button for our specific form in any visible column.
+                        # Primary: exact title match. Fallback: prefix/suffix match.
+                        # Second fallback: scroll to the event section first.
                         edit_sel = f'[title="Edit {form_abbrev}"]'
                         _clicked_card = False
                         try:
@@ -350,7 +359,28 @@ async def _test_one_form(
                                     print(f"[pw-uat] {fo}/{ev} clicked fallback {_fb_sel}", flush=True)
                                     _clicked_card = True
                                 else:
-                                    print(f"[pw-uat] {fo}/{ev} no matching Edit button among {_all_abbrevs}", flush=True)
+                                    # Second fallback: scroll within the frame to find
+                                    # our form — the matrix may have the edit button
+                                    # outside the viewport.
+                                    _scrolled_match = await app_frame.evaluate(f"""() => {{
+                                        const all = Array.from(document.querySelectorAll('[title^="Edit "]'));
+                                        const fa = '{form_abbrev}'.toUpperCase();
+                                        for (const el of all) {{
+                                            const t = el.getAttribute('title').replace(/^Edit /, '').toUpperCase();
+                                            if (fa.startsWith(t) || t.startsWith(fa)) {{
+                                                el.scrollIntoView({{block:'center'}});
+                                                el.click();
+                                                return el.getAttribute('title');
+                                            }}
+                                        }}
+                                        return null;
+                                    }}""")
+                                    if _scrolled_match:
+                                        await page.wait_for_timeout(500)
+                                        print(f"[pw-uat] {fo}/{ev} scrolled+clicked {_scrolled_match}", flush=True)
+                                        _clicked_card = True
+                                    else:
+                                        print(f"[pw-uat] {fo}/{ev} no matching Edit button among {_all_abbrevs}", flush=True)
                             except Exception as _ce2:
                                 print(f"[pw-uat] {fo}/{ev} click failed: {_ce2}", flush=True)
 

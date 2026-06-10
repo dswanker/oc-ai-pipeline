@@ -1704,18 +1704,22 @@ async def _rename_board_card_titles(subdomain, board_id, board_json,
             # before declaring success or failure.
             if subdomain not in page.url or "callback" in page.url:
                 print(f"[board-rename] mid-redirect ({page.url[:60]}), "
-                      f"waiting for board URL to settle...", flush=True)
+                      f"waiting for SSO to complete then re-navigating...", flush=True)
                 try:
-                    await page.wait_for_url(
-                        f"**{subdomain}.design.openclinica.io**",
-                        timeout=15000,
-                        wait_until="networkidle",
-                    )
+                    # Wait for any openclinica.io page to settle — the SSO
+                    # callback redirects through build app before the session
+                    # cookie is written; we just need the redirect chain to stop.
+                    await page.wait_for_load_state("networkidle", timeout=15000)
+                except Exception:
+                    pass
+                # Now explicitly navigate to the board URL. The session cookie
+                # is now set so this should land directly on the designer board.
+                try:
+                    await page.goto(board_url, wait_until="networkidle", timeout=20000)
                     _landed = page.url
-                    print(f"[board-rename] settled: {_landed[:80]}", flush=True)
+                    print(f"[board-rename] re-navigated: {_landed[:80]}", flush=True)
                 except Exception as _wu:
-                    print(f"[board-rename] URL did not settle to board "
-                          f"({_wu}) — skipping rename", flush=True)
+                    print(f"[board-rename] re-navigation failed: {_wu} — skipping", flush=True)
                     return
             if "auth" in _landed or "login" in _landed:
                 print("[board-rename] redirected to auth — session may be stale",

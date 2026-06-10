@@ -540,14 +540,20 @@ RULE OC-8 — REPEATING-FORM STRUCTURAL PATTERN
   fields sharing one itemgroup ARE the repeating group. Do NOT emit
   begin_repeat or end_repeat rows, and do NOT emit a "phantom" end_group:
   OC rejects XLSForm repeat syntax with "Unmatched end statement"
-  (confirmed by manual testing, CRS-135). See
-  skills/edc-builder/references/xlsform-build-rules.md (OC-8).
+  (confirmed by manual testing, CRS-135).
 
-  The correct shape for a repeating form:
+  The correct shape for a Visit-Based (non-repeating) form:
 
-    begin group   name=<group>_GRP   relevant=${YN}='Y'   appearance=field-list
-      <data fields, each with bind::oc:itemgroup=<group>>
+    calculate     SUBJID_CF      (external, no itemgroup)
+    calculate     ICFDAT_CF      (external, no itemgroup)
+    begin group   name=DM_GRP    appearance=field-list   [NO relevant= attribute]
+      <data fields, each with bind::oc:itemgroup=DM>
     end group
+
+    CRITICAL: Visit-Based forms MUST NOT have a YN gate question (e.g. DMYN)
+    or a `relevant` attribute on the begin_group. A relevant expression that
+    evaluates false on first open will hide ALL fields — Enketo renders 0
+    questions. The group exists only for layout (appearance=field-list).
 
   Begin/end tag pairing rules (HARD REQUIREMENTS):
     - NO begin_repeat / end_repeat rows anywhere. Repetition is conveyed
@@ -555,7 +561,7 @@ RULE OC-8 — REPEATING-FORM STRUCTURAL PATTERN
     - Every begin_group MUST be closed by a matching end_group. No orphan
       end_group rows.
     - `end group` rows MUST have a BLANK name field. Never put a name
-      (e.g. "AE_GROUP_END") on them.
+      (e.g. "DM_GROUP_END") on them.
 
   Build-side safety net:
     The edc-builder balancer strips any stray begin_repeat/end_repeat and
