@@ -1153,6 +1153,114 @@ def extract_dvs_data(struct_json, forms_json):
                     check_id, form_id, field_name, field_label,
                     check, form_filename, row_idx))
 
+    # ── SE_COMMON backstop: ensure repeating forms have ≥1 directly-loadable row ──
+    # CM, DV, AESAE and other SE_COMMON forms often have NO loadable UAT rows —
+    # all their test cases are (leave blank), has_then, or visibility_gate values
+    # which the ODM filter drops. With zero ODM rows, OC creates no repeat instance,
+    # so the three-dot menu never appears in the participant timeline and Playwright
+    # can't test any validation logic for those forms.
+    #
+    # Fix: for each SE_COMMON repeating form, if no UAT row has a plain Load_Value
+    # (one that will survive the ODM filter), inject a synthetic seed row using the
+    # first free-text or select field in the form that has no constraint.
+    _FILTER_DROP = {"(leave blank)", ""}
+    _se_common_forms = set()
+    for _f in (struct_json.get("forms", []) if isinstance(struct_json, dict) else []):
+        if not isinstance(_f, dict):
+            continue
+        _fid = (_f.get("form_id") or "").upper()
+        _visits = _f.get("visits_assigned") or []
+        _is_common = any(
+            "COMMON" in str(v).upper() or "SE_COMMON" in str(v).upper()
+            for v in _visits
+        ) or _f.get("has_repeating_group") or _f.get("is_repeating")
+        if _is_common and _fid:
+            _se_common_forms.add(_fid)
+
+    # For each SE_COMMON form, check if any UAT row has a plain loadable value
+    _forms_with_load = set()
+    for _uc in uat_cases:
+        _ev = str(_uc.get("Study_Event_OID", "")).upper()
+        _fo = str(_uc.get("Form_OID", "")).upper().replace("F_", "")
+        _lv = str(_uc.get("Load_Value", "")).strip()
+        if (_fo in _se_common_forms
+                and _lv not in _FILTER_DROP
+                and "then" not in _lv.lower()
+                and "=" not in _lv.split(",")[0]):
+            _forms_with_load.add(_fo)
+
+    _missing_load = _se_common_forms - _forms_with_load
+    if _missing_load:
+        print(f"[dvs-backstop] SE_COMMON forms with no loadable ODM rows: "
+              f"{sorted(_missing_load)} — injecting seed rows", flush=True)
+
+    # Canonical seed values per CDASH domain — plain values that survive ODM filter
+    _SEED_VALUES = {
+        "CM":    [("CMTRT",  "Aspirin 500mg"),  ("CMDOSE", "500"),
+                  ("CMROUTE", "ORAL"),           ("CMDOSFRQ", "EVERY DAY")],
+        "DV":    [("DVTERM",  "Missed visit window"),
+                  ("DVCAT",   "PROTOCOL_DEVIATION")],
+        "AESAE": [("AETERM",  "Headache"),       ("AESEV",  "MILD"),
+                  ("AESER",   "N"),               ("AEACN",  "DRUG WITHDRAWN")],
+        "MH":    [("MHTERM",  "Hypertension"),   ("MHCAT",  "MEDICAL HISTORY")],
+        "AE":    [("AETERM",  "Nausea"),         ("AESEV",  "MILD"),
+                  ("AESER",   "N"),               ("AEACN",  "DRUG WITHDRAWN")],
+    }
+
+    for _fid in sorted(_missing_load):
+        _fo_oid = f"F_{_fid}"
+        _ev_oid = form_event_map.get(_fid, form_event_map.get(f"F_{_fid}", "SE_COMMON"))
+        _seeds = _SEED_VALUES.get(_fid, [])
+
+        # If no canonical seed, use the first non-calculate survey row
+        if not _seeds:
+            _form_survey = (forms.get(f"{_fid}.xlsx") or {}).get("survey") or []
+            for _sr in _form_survey:
+                if not isinstance(_sr, dict):
+                    continue
+                _stype = str(_sr.get("type", "")).lower()
+                if _stype in ("text", "integer", "decimal") and _sr.get("name"):
+                    _seeds = [(_sr["name"], "Test value")]
+                    break
+
+        for _fname, _fval in _seeds:
+            uat_counter += 1
+            _ig = field_ig_map.get(_fname, _fid)
+            _ig_oid = f"IG_{_fid}_{_ig}" if not _ig.startswith("IG_") else _ig
+            _item_oid = f"I_{_fid}_{_fname}"
+            _seed_row = {
+                "UAT Case ID":       f"UAT-{uat_counter:03d}",
+                "Status":            "Not Run",
+                "Related Check ID":  "",
+                "Scenario":          f"Seed: load {_fname} to create SE_COMMON instance",
+                "Preconditions":     f"Open {_fid} form in SE_COMMON event",
+                "Test Steps":        f"1. Enter {_fval!r} for {_fname}\n2. Save",
+                "Input Data":        _fval,
+                "Expected Result":   f"Value {_fval!r} is accepted",
+                "Actual Result":     "",
+                "Test Result":       "",
+                "Tester":            "",
+                "Execution Date":    "",
+                "Defect / Ticket":   "",
+                "Retest Needed?":    "",
+                "Priority":          "Low",
+                "Notes":             "ODM seed row — creates repeat instance for Playwright UAT",
+                "Site_OID":          "",
+                "Participant_Key":   "",
+                "Study_Event_OID":   _ev_oid,
+                "Event_Repeat_Key":  "1",
+                "Form_OID":          _fo_oid,
+                "Item_Group_OID":    _ig_oid,
+                "Item_OID":          _item_oid,
+                "Participant_ID":    "UAT-P001",
+                "Load_Order":        str(uat_counter),
+                "Load_Value":        _fval,
+            }
+            uat_cases.append(_seed_row)
+        if _seeds:
+            print(f"[dvs-backstop] {_fid}: injected {len(_seeds)} seed row(s) "
+                  f"for event {_ev_oid}", flush=True)
+
     return {
         "study_meta":          struct_json.get("study_meta", {}) if isinstance(struct_json, dict) else {},
         "protocol_extraction": protocol_extraction,

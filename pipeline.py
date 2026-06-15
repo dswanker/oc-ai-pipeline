@@ -3334,6 +3334,123 @@ def _sanitize_form_titles(spec):
     return spec
 
 
+def _ensure_required_forms(spec: dict, protocol_num: str) -> dict:
+    """Deterministically inject required infrastructure forms if Claude dropped them.
+
+    DOV (Date of Visit) must always be present in every study.  Claude
+    occasionally omits infrastructure forms when the output token budget is
+    tight — this backstop guarantees they appear without requiring a re-run.
+
+    Only injects a form if it is completely absent from forms[].
+    Idempotent — safe to call multiple times.
+    """
+    if not isinstance(spec, dict):
+        return spec
+
+    forms = spec.get("forms", [])
+    if not isinstance(forms, list):
+        return spec
+
+    existing_ids = {f.get("form_id") for f in forms if isinstance(f, dict)}
+
+    # ── DOV — Date of Visit ────────────────────────────────────────────────────
+    if "DOV" not in existing_ids:
+        _event_cf_calc = (
+            "instance('clinicaldata')/ODM/ClinicalData/SubjectData"
+            "/StudyEventData[@OpenClinica:Current='Yes']/@StudyEventOID"
+        )
+        _pid = protocol_num.lower().replace("-", "")
+        _tpt_calc = f"pulldata('{_pid}_tpt','timepoint','event',${{EVENT_CF}})"
+        dov_form = {
+            "form_id": "DOV",
+            "form_title": "Date of Visit",
+            "form_category": "INFRASTRUCTURE",
+            "cdash_domain": None,
+            "visits_assigned": ["ALL_SCHEDULED"],
+            "has_repeating_group": False,
+            "is_epro": False,
+            "arm_applicability": "ALL",
+            "library_match": {
+                "status": "CDASH_DEFAULT", "source_type": "CDASH",
+                "fields_from_library": 4, "fields_extended_from_protocol": 0,
+                "fields_from_cdash_default": 4,
+            },
+            "settings": {
+                "form_title": "Date of Visit", "form_id": "DOV",
+                "version": "1", "style": "theme-grid",
+                "namespaces": "oc=\"http://openclinica.org/xforms\"",
+                "crossform_references": "",
+            },
+            "choices": [
+                {"list_name": "NY", "label": "No",  "name": "N", "source": "STANDARD"},
+                {"list_name": "NY", "label": "Yes", "name": "Y", "source": "STANDARD"},
+            ],
+            "survey": [
+                {"type": "calculate", "name": "EVENT_CF", "label": "",
+                 "bind__oc_itemgroup": "", "calculation": _event_cf_calc,
+                 "bind__oc_external": "clinicaldata",
+                 "completion_status": "COMPLETE", "library_source": "CDASH_DEFAULT", "flag_reason": ""},
+                {"type": "calculate", "name": "TPTCALC", "label": "",
+                 "bind__oc_itemgroup": "DOV", "calculation": _tpt_calc,
+                 "completion_status": "COMPLETE", "library_source": "CDASH_DEFAULT", "flag_reason": ""},
+                {"type": "begin group", "name": "DOV_GRP", "label": "",
+                 "appearance": "field-list",
+                 "completion_status": "COMPLETE", "library_source": "CDASH_DEFAULT", "flag_reason": ""},
+                {"type": "text", "name": "DOVTPT", "label": "** Timepoint: **",
+                 "bind__oc_itemgroup": "DOV", "calculation": "${TPTCALC}", "readonly": "yes",
+                 "completion_status": "COMPLETE", "library_source": "CDASH_DEFAULT", "flag_reason": ""},
+                {"type": "select_one NY", "name": "VISYN", "label": "Was the visit done?",
+                 "bind__oc_itemgroup": "DOV", "relevant": "${TPTCALC} != 'Baseline'", "required": "yes",
+                 "completion_status": "COMPLETE", "library_source": "CDASH_DEFAULT", "flag_reason": ""},
+                {"type": "date", "name": "VISDT", "label": "Provide the date of visit.",
+                 "bind__oc_itemgroup": "DOV",
+                 "relevant": "${VISYN}='Y' or ${TPTCALC}='Baseline'", "required": "yes",
+                 "constraint": ". <= today()", "constraint_message": "Cannot be a future date.",
+                 "completion_status": "COMPLETE", "library_source": "CDASH_DEFAULT", "flag_reason": ""},
+                {"type": "text", "name": "VISNDRSN", "label": "Reason visit not done:",
+                 "bind__oc_itemgroup": "DOV", "relevant": "${VISYN}='N'", "required": "yes",
+                 "completion_status": "COMPLETE", "library_source": "CDASH_DEFAULT", "flag_reason": ""},
+                {"type": "end group", "name": "",
+                 "completion_status": "COMPLETE", "library_source": "CDASH_DEFAULT", "flag_reason": ""},
+            ],
+            "cross_form_dependencies": [],
+            "migration_status": "draft",
+            "approved_by": "", "approved_at": "", "rejected_reason": "",
+        }
+        forms.insert(0, dov_form)
+        spec["forms"] = forms
+        print("[spec-backstop] Injected missing DOV form", flush=True)
+
+    return spec
+
+
+def _validate_survey_quality(spec: dict) -> list:
+    """Check that each form has at least 1 visible (non-calculate) survey row.
+
+    Returns list of form_ids with 0 visible rows.  A form with only
+    calculate/group rows renders 0 questions in Enketo — the build succeeds
+    but the form is useless for data entry.
+    """
+    HIDDEN_TYPES = {"calculate", "begin group", "end group",
+                    "begin repeat", "end repeat"}
+    empty_forms = []
+    for f in spec.get("forms", []):
+        if not isinstance(f, dict):
+            continue
+        fid = f.get("form_id", "?")
+        survey = f.get("survey", [])
+        if not isinstance(survey, list) or len(survey) == 0:
+            continue
+        visible = [
+            r for r in survey
+            if isinstance(r, dict)
+            and str(r.get("type", "")).strip().lower().split()[0] not in HIDDEN_TYPES
+        ]
+        if len(visible) == 0:
+            empty_forms.append(fid)
+    return empty_forms
+
+
 # ── Session pre-flight (validates a saved Playwright session in ~15s) ──────────
 
 async def _validate_oc_session(subdomain: str, session_path: str) -> bool:
@@ -3621,7 +3738,7 @@ async def run_pipeline(item_id):
             await set_status(item_id, COL["pipeline_status"],
                              UAT_STATUS["loading"])
             try:
-                _uat_result = await run_uat_loader(item_id)
+                _uat_result = await run_uat_loader(item_id, fo_titles=None)
                 if _uat_result["success"]:
                     await asyncio.gather(
                         set_status(item_id, COL["pipeline_status"],
@@ -3959,6 +4076,7 @@ async def run_pipeline(item_id):
                         struct_json = _enforce_common_visit(struct_json)
                         struct_json = _backfill_migration_fields(struct_json)
                         struct_json = _sanitize_form_titles(struct_json)
+                        struct_json = _ensure_required_forms(struct_json, protocol_num)
                         # ── Conventions engine pass + three-way conflict detection (Phase C.4) ──
                         # Path X.1 is the edited-XLSX path. Three snapshots make TRUE
                         # conflict detection possible:
@@ -4100,6 +4218,7 @@ async def run_pipeline(item_id):
             struct_json = _enforce_common_visit(struct_json)
             struct_json = _backfill_migration_fields(struct_json)
             struct_json = _sanitize_form_titles(struct_json)
+            struct_json = _ensure_required_forms(struct_json, protocol_num)
             # ── Conventions engine pass (no-op until conventions/ store is populated) ─
             try:
                 from conventions_engine import apply_conventions
@@ -4217,6 +4336,7 @@ async def run_pipeline(item_id):
                     struct_json = _enforce_common_visit(struct_json)
                     struct_json = _backfill_migration_fields(struct_json)
                     struct_json = _sanitize_form_titles(struct_json)
+                    struct_json = _ensure_required_forms(struct_json, protocol_num)
                     fast_rerun = True
                     print(f"[fast-rerun] Using existing Study Spec JSON "
                           f"from monday ({len(_existing_spec)} bytes) — "
@@ -4413,6 +4533,22 @@ async def run_pipeline(item_id):
             struct_json = _enforce_common_visit(struct_json)
             struct_json = _backfill_migration_fields(struct_json)
             struct_json = _sanitize_form_titles(struct_json)
+            struct_json = _ensure_required_forms(struct_json, protocol_num)
+            # Survey quality check — abort if forms have 0 visible questions.
+            # This catches spec extraction thinning (token budget variance)
+            # before it creates a study with empty forms.
+            _empty_forms = _validate_survey_quality(struct_json)
+            if _empty_forms:
+                _sq_err = (
+                    f"❌ Survey quality check failed — {len(_empty_forms)} form(s) "
+                    f"have 0 visible questions (only calculate/group rows): "
+                    f"{_empty_forms}. Spec extraction produced thin survey arrays. "
+                    f"Re-trigger to retry with a fresh extraction."
+                )
+                print(_sq_err, flush=True)
+                await append_log(item_id, _sq_err)
+                await set_status(item_id, "color_mm2h9g3m", "Build Error")
+                return
             # ── Conventions engine pass (no-op until conventions/ store is populated) ─
             try:
                 from conventions_engine import apply_conventions
@@ -5344,7 +5480,16 @@ async def run_pipeline(item_id):
                             "UAT Loader: starting UAT data load..."
                         )
 
-                        _uat_result = await run_uat_loader(item_id)
+                        # Build form_oid → display_title map so Playwright can
+                        # find SE_COMMON accordion entries by renamed board title
+                        # (e.g. "F_AE" → "Adverse Events")
+                        _fo_titles = {
+                            f"F_{f.get('form_id', '')}": f.get("form_title", "")
+                            for f in struct_json.get("forms", [])
+                            if isinstance(f, dict) and f.get("form_id")
+                        }
+                        _uat_result = await run_uat_loader(item_id,
+                                                           fo_titles=_fo_titles)
 
                         if _uat_result["success"]:
                             # UAT load is the last step — promote to

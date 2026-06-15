@@ -1007,7 +1007,7 @@ def _stamp_dvs(dvs_bytes: bytes, stamp_map: dict) -> bytes:
 
 # ── Main entry point ──────────────────────────────────────────────────────────
 
-async def run_uat_loader(item_id: str) -> dict:
+async def run_uat_loader(item_id: str, fo_titles: dict = None) -> dict:
     """
     Execute the full UAT data loading workflow for one monday.com item.
     Loads OC session cookies from the saved Playwright storage_state file.
@@ -1340,6 +1340,7 @@ async def run_uat_loader(item_id: str) -> dict:
                 jsessionid=_jsessionid,
                 study_uuid=_study_uuid,
                 study_env_uuid=_test_env_uuid,
+                fo_titles=fo_titles or {},
             )
     except Exception as _pw_err:
         await append_log(item_id,

@@ -268,27 +268,31 @@ async def _test_one_form(
                             if _n_exp:
                                 await page.wait_for_timeout(1000)
 
-                            # Find the form-section row containing our abbreviation,
-                            # then click its .form-menu ellipsis button.
+                            # Find the form-section row containing our abbreviation
+                            # OR the renamed board title (after board rename succeeds,
+                            # the SE_COMMON accordion shows the full form_title like
+                            # "Adverse Events" rather than the OID abbreviation "AE").
                             _fa = form_abbrev
+                            _ft = (fo_titles or {}).get(fo, "")
                             _clicked = await app_frame.evaluate(f"""() => {{
-                                // Walk text nodes to find the form label
+                                // Search for abbreviation OR full display title
+                                const targets = ['{_fa}', '{_ft}'].filter(Boolean);
                                 const walker = document.createTreeWalker(
                                     document.body, NodeFilter.SHOW_TEXT);
                                 let node;
                                 while (node = walker.nextNode()) {{
-                                    if (node.textContent.trim() === '{_fa}') {{
-                                        // Walk up to find the containing section
+                                    const txt = node.textContent.trim();
+                                    if (targets.includes(txt)) {{
                                         let el = node.parentElement;
                                         for (let i = 0; i < 10; i++) {{
                                             if (!el) break;
                                             const menu = el.querySelector('.form-menu');
-                                            if (menu) {{ menu.click(); return true; }}
+                                            if (menu) {{ menu.click(); return txt; }}
                                             el = el.parentElement;
                                         }}
                                     }}
                                 }}
-                                return false;
+                                return null;
                             }}""")
 
                             if _clicked:
@@ -308,7 +312,8 @@ async def _test_one_form(
                                     return null;
                                 }""")
                                 if _edit_clicked:
-                                    print(f"[pw-uat] {fo}/{ev} three-dot → {_edit_clicked} clicked", flush=True)
+                                    print(f"[pw-uat] {fo}/{ev} three-dot "
+                                          f"(label={_clicked!r}) → {_edit_clicked}", flush=True)
                                 else:
                                     _menu_items = await app_frame.evaluate("""() =>
                                         Array.from(document.querySelectorAll('.p-menuitem-link'))
@@ -520,6 +525,7 @@ async def run_playwright_uat(
     jsessionid: str = "",
     study_uuid: str = "",
     study_env_uuid: str = "",
+    fo_titles: dict = None,
 ) -> bytes:
     """
     Run Playwright UAT. ODM has already loaded all field values.
