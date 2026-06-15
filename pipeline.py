@@ -3332,13 +3332,51 @@ def _sanitize_form_titles(spec):
                 f["form_title"] = new
             # Guard: form_title must not equal form_id — that means the model
             # returned the OID abbreviation as the display name, causing board
-            # cards to show "ICF" instead of "Informed Consent Form".
+            # cards to show "ICF" instead of "Informed Consent Form". When
+            # detected, auto-correct using a known CDASH label map.
             fid = f.get("form_id", "")
             ft = f.get("form_title", "")
             if ft and fid and ft.upper() == fid.upper():
-                print(f"[spec-sanitize] WARNING: form_title={ft!r} equals form_id={fid!r} — "
-                      f"model returned OID abbreviation as title. Board rename will have no "
-                      f"effect. Check spec extraction output quality.", flush=True)
+                _CDASH_LABELS = {
+                    "AE":    "Adverse Events",
+                    "AESAE": "Serious Adverse Events",
+                    "CM":    "Concomitant Medications",
+                    "DM":    "Demographics",
+                    "DOV":   "Date of Visit",
+                    "DS":    "Disposition",
+                    "DV":    "Protocol Deviations",
+                    "EX":    "Exposure",
+                    "ICF":   "Informed Consent",
+                    "IE":    "Inclusion/Exclusion Criteria",
+                    "LWD":   "Lost Workday",
+                    "MH":    "Medical History",
+                    "PE":    "Physical Examination",
+                    "PGIC":  "Patient Global Impression of Change",
+                    "PCS":   "Physical Component Summary",
+                    "PHQ":   "Patient Health Questionnaire",
+                    "SAT":   "Satisfaction",
+                    "SF12":  "SF-12 Health Survey",
+                    "SLEEP": "Sleep Quality",
+                    "TS":    "Trial Summary",
+                    "VS":    "Vital Signs",
+                    "WORK":  "Work Productivity",
+                    "EN":    "Enrollment",
+                    "MBB":   "Medial Branch Block",
+                    "NRS":   "Numeric Rating Scale",
+                    "ODI":   "Oswestry Disability Index",
+                }
+                corrected = _CDASH_LABELS.get(fid.upper())
+                if corrected:
+                    print(f"[spec-sanitize] AUTO-CORRECT: form_title={ft!r} == form_id — "
+                          f"replaced with known label {corrected!r}", flush=True)
+                    f["form_title"] = corrected
+                else:
+                    # Unknown form: title-case the ID as minimal improvement
+                    corrected = fid.replace("_", " ").title()
+                    print(f"[spec-sanitize] AUTO-CORRECT: form_title={ft!r} == form_id — "
+                          f"no known label, using title-cased {corrected!r}. "
+                          f"Add to _CDASH_LABELS if this form recurs.", flush=True)
+                    f["form_title"] = corrected
 
     return spec
 
