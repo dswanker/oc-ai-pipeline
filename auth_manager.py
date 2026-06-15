@@ -174,8 +174,8 @@ def render_instructions_page(token: str, email: str,
     if is_uat and clinical_host:
         clinical_step = (
             f'<li>Open this tab in your browser (keep it open): '
-            f'<a href="https://{clinical_host}/OpenClinica/MainMenu" '
-            f'target="_blank" class="designer">https://{clinical_host}/OpenClinica/MainMenu</a> '
+            f'<a href="https://{subdomain}.build.openclinica.io/#/account-study" '
+            f'target="_blank" class="designer">https://{subdomain}.build.openclinica.io/#/account-study</a> '
             f'— this captures the data entry session needed for UI testing.</li>'
         )
     else:
