@@ -1974,10 +1974,30 @@ async def create_oc_study(subdomain, struct_json, is_production=False,
                              headers=headers, json=payload)
         print(f"OC Study API: {r.status_code} {r.text[:300]}", flush=True)
         if r.status_code not in (200, 201):
-            raise RuntimeError(f"OC Study API returned {r.status_code}: {r.text[:300]}")
-        study_uuid = r.json().get("uuid", "")
-        if not study_uuid:
-            raise RuntimeError("Study created but no UUID returned")
+            # If OC says the study OID already exists (e.g. pipeline crashed
+            # before writing UUID back to Monday on a prior run), recover the
+            # existing UUID instead of failing. This handles the common case
+            # where Monday UUID column was cleared but the study still exists.
+            if r.status_code == 400 and "uniqueIdentifierNotUnique" in r.text:
+                print("[study-create] Study OID already exists in OC — "
+                      "recovering UUID from study list...", flush=True)
+                recovered = await _check_study_exists(
+                    subdomain, token, protocol_num, is_production)
+                if recovered:
+                    print(f"[study-create] Recovered existing study UUID: "
+                          f"{recovered}", flush=True)
+                    study_uuid = recovered
+                else:
+                    raise RuntimeError(
+                        f"OC says study OID exists but could not recover UUID. "
+                        f"Manual cleanup required in OC for study: {protocol_num}")
+            else:
+                raise RuntimeError(
+                    f"OC Study API returned {r.status_code}: {r.text[:300]}")
+        else:
+            study_uuid = r.json().get("uuid", "")
+            if not study_uuid:
+                raise RuntimeError("Study created but no UUID returned")
 
     designer_url = f"https://{subdomain}.design.openclinica.io"
     study_url    = f"{designer_url}/b/{study_uuid}"
