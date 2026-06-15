@@ -718,7 +718,7 @@ async def _import_odm(subdomain: str, study_oid: str,
     # Poll for job completion — poll every 2s up to 30s
     poll_url     = f"{base}/pages/auth/api/jobs/{job_uuid}/downloadFile"
     poll_cookies = {"JSESSIONID": jsessionid} if jsessionid else {}
-    poll_interval, poll_timeout = 2, 30
+    poll_interval, poll_timeout = 2, 120  # 120s for freshly published studies
     elapsed = 0
     while elapsed < poll_timeout:
         await asyncio.sleep(poll_interval)

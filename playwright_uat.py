@@ -696,6 +696,18 @@ async def run_playwright_uat(
             ls_keys = await warm_page.evaluate(
                 "() => Object.keys(localStorage).join(',')")
             print(f"[pw-uat] build app ready: {warm_page.url} | localStorage keys: {ls_keys}", flush=True)
+            # Detect Keycloak redirect — session expired during the run.
+            # If warm_page landed on auth.openclinica.io, jhi-idtoken is gone
+            # and every test will fail with no useful signal. Bail out early
+            # so the operator knows to re-authenticate before the next run.
+            if "auth.openclinica.io" in warm_page.url or "jhi-idtoken" not in ls_keys:
+                print(
+                    "[pw-uat] Session expired (landed on Keycloak or jhi-idtoken missing) "
+                    "— skipping Playwright tests. Re-authenticate via the auth link.",
+                    flush=True,
+                )
+                await warm_page.close()
+                return dvs_bytes  # return unchanged — no Pass/Fail recorded
             # Also check eu domain localStorage via the main participant page later
             eu_base = _legacy_base(subdomain).replace("/OpenClinica","")
             print(f"[pw-uat] eu base: {eu_base}", flush=True)
