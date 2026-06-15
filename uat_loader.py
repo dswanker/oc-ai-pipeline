@@ -605,9 +605,18 @@ def _build_odm_xml(study_oid: str, site_oid: str,
                     f'        <FormData FormOID="{form_oid}">'
                 )
                 for ig_oid, items in igs.items():
+                    # SE_COMMON and SE_UNSCHEDULED events use repeating
+                    # ItemGroups — OC4 requires ItemGroupRepeatKey to create
+                    # a new repeat instance. Without it OC silently discards
+                    # the ItemGroupData. Visit-Based events use non-repeating
+                    # item groups and should NOT have ItemGroupRepeatKey.
+                    ig_repeat_attr = (
+                        ' ItemGroupRepeatKey="1"' if is_common else ""
+                    )
                     lines.append(
-                        f'          <ItemGroupData ItemGroupOID="{ig_oid}" '
-                        f'TransactionType="Insert">'
+                        f'          <ItemGroupData ItemGroupOID="{ig_oid}"'
+                        f'{ig_repeat_attr}'
+                        f' TransactionType="Insert">'
                     )
                     for item_oid, val in items:
                         lines.append(

@@ -177,7 +177,10 @@ RULE OC-2b — NO `time` OR `dateTime` TYPE
 RULE OC-3 — SETTINGS FIELDS REQUIRED
   The settings sheet needs these six cells populated (per OC4 docs
   §2.4.4 Using the Form Template):
-    form_title       — human-readable name
+    form_title       — human-readable name (NEVER the same as form_id;
+                       NEVER an OID abbreviation like "ICF" or "DM";
+                       ALWAYS a full descriptive label like "Informed
+                       Consent Form" or "Demographics")
     form_id          — form OID per FORM NAMING RULES above
                        (CDASH domain or short descriptive name;
                        NEVER F_ prefix — that breaks OC upload)

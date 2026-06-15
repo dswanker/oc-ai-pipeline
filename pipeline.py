@@ -3330,6 +3330,15 @@ def _sanitize_form_titles(spec):
                       f"{orig!r} -> {new!r} (OC form-service deadlocks on '+')",
                       flush=True)
                 f["form_title"] = new
+            # Guard: form_title must not equal form_id — that means the model
+            # returned the OID abbreviation as the display name, causing board
+            # cards to show "ICF" instead of "Informed Consent Form".
+            fid = f.get("form_id", "")
+            ft = f.get("form_title", "")
+            if ft and fid and ft.upper() == fid.upper():
+                print(f"[spec-sanitize] WARNING: form_title={ft!r} equals form_id={fid!r} — "
+                      f"model returned OID abbreviation as title. Board rename will have no "
+                      f"effect. Check spec extraction output quality.", flush=True)
 
     return spec
 
