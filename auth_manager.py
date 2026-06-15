@@ -151,7 +151,12 @@ def render_instructions_page(token: str, email: str,
     clinical_host: e.g. 'cust1.eu.openclinica.io' — shown in UAT instructions
     """
     from html import escape as _esc
-    subdomain = os.environ.get("OC_DEFAULT_SUBDOMAIN", "cust1")
+    # Derive subdomain from clinical_host (e.g. "cust1.eu.openclinica.io" → "cust1")
+    # Fall back to env var only if clinical_host is not provided.
+    if clinical_host:
+        subdomain = clinical_host.split(".")[0]
+    else:
+        subdomain = os.environ.get("OC_DEFAULT_SUBDOMAIN", "cust1")
     build_url = f"https://{subdomain}.build.openclinica.io/#/account-study"
     email_esc       = _esc(email)
     token_esc       = _esc(token)

@@ -610,8 +610,15 @@ async def test_slow_forms_endpoint(
 # ─────────────────────────────────────────────────────────────────────────────
 
 @app.get("/auth")
-async def auth_page(token: str = "", context: str = "pipeline"):
-    """Render the bootstrap instructions page for a one-time auth link."""
+async def auth_page(token: str = "", context: str = "pipeline",
+                    clinical_host: str = ""):
+    """Render the bootstrap instructions page for a one-time auth link.
+
+    clinical_host is passed in the URL by pipeline.py when generating the
+    auth link — it contains the actual subdomain for THIS study (e.g.
+    'cust1.eu.openclinica.io'). We extract the subdomain from it so the
+    instructions page shows the correct dynamic URL, not a hardcoded default.
+    """
     if not token:
         return HTMLResponse("<h1>Missing token</h1>", status_code=400)
     am = AuthManager()
@@ -621,22 +628,6 @@ async def auth_page(token: str = "", context: str = "pipeline"):
             f"<h1>Auth link problem</h1><p>{error}</p>",
             status_code=400,
         )
-    # Derive clinical_host from customer_uuids.csv for UAT context
-    clinical_host = ""
-    if context == "uat":
-        import csv as _csv
-        from pathlib import Path as _Path
-        from urllib.parse import urlparse as _up
-        _csv_path = _Path(__file__).parent / "references" / "customer_uuids.csv"
-        _subdomain = os.environ.get("OC_DEFAULT_SUBDOMAIN", "cust1")
-        if _csv_path.exists():
-            with open(_csv_path, newline="") as _f:
-                for _row in _csv.DictReader(_f):
-                    if _row.get("subdomain","").lower() == _subdomain.lower():
-                        _bridge = _row.get("bridge_url","").strip()
-                        if _bridge:
-                            clinical_host = _up(_bridge).hostname or ""
-                        break
     return HTMLResponse(render_instructions_page(token, email, context, clinical_host))
 
 
