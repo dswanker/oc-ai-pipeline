@@ -604,8 +604,13 @@ def _build_odm_xml(study_oid: str, site_oid: str,
             ev_repeat_attr = (
                 ' StudyEventRepeatKey="1"' if is_common else ""
             )
+            # SE_COMMON/SE_UNSCHEDULED repeating events require
+            # TransactionType="Insert" on StudyEventData to tell OC to
+            # create a new event instance. Visit-Based events are
+            # pre-scheduled and do not need TransactionType on the event.
+            ev_tx_attr = ' TransactionType="Insert"' if is_common else ""
             lines.append(
-                f'      <StudyEventData StudyEventOID="{ev_oid}"{ev_repeat_attr}{start_attr}>'
+                f'      <StudyEventData StudyEventOID="{ev_oid}"{ev_repeat_attr}{ev_tx_attr}{start_attr}>'
             )
             for form_oid, igs in forms.items():
                 lines.append(
