@@ -85,20 +85,21 @@ def _classify_pw_row(row_dict: dict) -> Optional[str]:
 
 async def _read_field_errors(page, field_name: str) -> list[str]:
     """
-    Read visible error/constraint messages.
-    OC4 Enketo uses .invalid-required, .invalid-constraint, .question.invalid-*
+    Read visible constraint error messages from Enketo.
+    Only reads CONSTRAINT errors (.invalid-constraint), not required-field
+    validation (.invalid-required) — Enketo marks all unfilled required
+    fields as .invalid-required by default before any user interaction,
+    which would cause all constraint tests to falsely report errors.
+    Constraint errors only appear after the field value triggers a
+    constraint violation.
     """
     msgs = []
-    # Enketo validation message selectors
+    # Only read constraint errors — not required-field default invalid state
     selectors = [
-        ".invalid-required .required-message",
         ".invalid-constraint .constraint-message",
-        ".question.invalid-required",
         ".question.invalid-constraint",
-        "[class*='invalid']",
         ".alert-danger",
         ".errorMessage",
-        ".errorRequired",
     ]
     for sel in selectors:
         try:
@@ -165,24 +166,25 @@ async def _is_field_visible(page, field_name: str, form_oid: str) -> Optional[bo
     return None
 
 
-async def _fill_and_save(page, field_name: str, form_oid: str):
+async def _fill_and_save(frame, field_name: str, form_oid: str):
     """
-    For leave_blank: try to submit/close form without filling required field.
-    OC4 Enketo uses a Complete/Submit button.
+    For leave_blank: click Submit in Enketo to trigger required-field validation.
+    Must operate on the Enketo iframe frame object, not the outer page.
+    Enketo uses .form-footer submit button; OC wraps it with a specific class.
     """
-    # Try to click Complete/Submit without filling the field
+    # Try to click Complete/Submit in the Enketo iframe frame
     for sel in [
         "button:has-text('Complete')",
         "button:has-text('Submit')",
-        "button.btn-primary",
-        ".form-footer button[type='submit']",
+        ".form-footer .btn-primary",
         "button[id*='submit']",
+        "button.btn-primary",
     ]:
         try:
-            btn = await page.query_selector(sel)
+            btn = await frame.query_selector(sel)
             if btn and await btn.is_visible():
                 await btn.click()
-                await page.wait_for_timeout(2000)
+                await frame.wait_for_timeout(2000)
                 return
         except Exception:
             pass

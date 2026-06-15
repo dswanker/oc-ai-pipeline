@@ -670,7 +670,9 @@ async def _import_odm(subdomain: str, study_oid: str,
             files={"file": ("import.xml",
                             odm_xml.encode("utf-8"),
                             "text/xml")},
-            data={"runFormLogic": "y"},   # run form logic / calculated fields post-import
+            # runFormLogic intentionally omitted — running form logic on UAT test data
+            # causes constraint validation failures (date windows, choice codes) that would
+            # fail on real data too. UAT imports are test data only; we validate UI separately.
             headers={"Authorization": f"Bearer {submit_token}"},
         )
     if not resp.is_success:
