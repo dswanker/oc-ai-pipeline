@@ -597,8 +597,15 @@ def _build_odm_xml(study_oid: str, site_oid: str,
                 "" if is_common
                 else f' OpenClinica:StartDate="{UAT_VISIT_DATE}"'
             )
+            # SE_COMMON and SE_UNSCHEDULED are repeating events — OC4
+            # requires StudyEventRepeatKey to create a new event instance.
+            # Without it OC cannot place ItemGroupData into the event.
+            # Visit-Based events must NOT have this attribute.
+            ev_repeat_attr = (
+                ' StudyEventRepeatKey="1"' if is_common else ""
+            )
             lines.append(
-                f'      <StudyEventData StudyEventOID="{ev_oid}"{start_attr}>'
+                f'      <StudyEventData StudyEventOID="{ev_oid}"{ev_repeat_attr}{start_attr}>'
             )
             for form_oid, igs in forms.items():
                 lines.append(

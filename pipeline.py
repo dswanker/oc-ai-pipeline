@@ -1009,7 +1009,14 @@ def _build_board_json(struct_json):
                 # updates every card's title to the human-readable
                 # form_title ("Informed Consent").  display_title carries
                 # that value through the board JSON for the rename pass.
-                "title":         form_id,
+                # formOcoid (e.g. "F_ICF") drives the OC OID — NOT the card
+                # title. So we can set title to the human-readable form_title
+                # (e.g. "Informed Consent Form") directly at import time.
+                # The old two-step approach (import with form_id, then rename)
+                # was based on a false assumption that title drove the OID.
+                # The Meteor board-rename pass (_rename_board_card_titles) is
+                # now a no-op since display_title == title from the start.
+                "title":         form_title,
                 "display_title": form_title,
                 "listId":   list_id,
                 "formOcoid": _form_ocoid(form_id),
