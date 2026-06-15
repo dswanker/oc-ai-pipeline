@@ -197,6 +197,7 @@ async def _test_one_form(
     subdomain: str, subject_oid: str,
     study_uuid: str, study_env_uuid: str,
     col_idx: dict, now_str: str,
+    fo_titles: dict = None,
 ) -> tuple:
     """Test one form/event pair. Returns (passed, failed, skipped, row_results).
 
@@ -332,14 +333,29 @@ async def _test_one_form(
                         # Primary: exact title match. Fallback: prefix/suffix match.
                         # Second fallback: scroll to the event section first.
                         edit_sel = f'[title="Edit {form_abbrev}"]'
+                        # Also try the full display title (e.g. "Edit Date of Visit" for DOV)
+                        _form_display_title = (fo_titles or {}).get(fo, "")
+                        edit_sel_title = (f'[title="Edit {_form_display_title}"]'
+                                          if _form_display_title else None)
                         _clicked_card = False
                         try:
-                            await app_frame.wait_for_selector(edit_sel, timeout=5000)
-                            await page.wait_for_timeout(500)
-                            await app_frame.click(edit_sel)
-                            await page.wait_for_timeout(500)
-                            print(f"[pw-uat] {fo}/{ev} clicked {edit_sel}", flush=True)
-                            _clicked_card = True
+                            # Try abbreviation selector first
+                            _found_sel = None
+                            for _try_sel in [edit_sel] + ([edit_sel_title] if edit_sel_title else []):
+                                try:
+                                    await app_frame.wait_for_selector(_try_sel, timeout=3000)
+                                    _found_sel = _try_sel
+                                    break
+                                except Exception:
+                                    continue
+                            if _found_sel:
+                                await page.wait_for_timeout(500)
+                                await app_frame.click(_found_sel)
+                                await page.wait_for_timeout(500)
+                                print(f"[pw-uat] {fo}/{ev} clicked {_found_sel}", flush=True)
+                                _clicked_card = True
+                            else:
+                                raise Exception("no selector matched")
                         except Exception:
                             # Fallback: find any Edit button whose suffix is a
                             # prefix/suffix of our form_abbrev or vice versa.
@@ -666,6 +682,7 @@ async def run_playwright_uat(
                 subdomain, subject_oid,
                 study_uuid, study_env_uuid,
                 col_idx, now_str,
+                fo_titles=fo_titles,
             )
             for (fo, ev), form_rows in by_form.items()
         ]
