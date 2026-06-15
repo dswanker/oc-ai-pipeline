@@ -3737,8 +3737,35 @@ async def run_pipeline(item_id):
                   f"directly, skipping all build stages.", flush=True)
             await set_status(item_id, COL["pipeline_status"],
                              UAT_STATUS["loading"])
+            # Try to rebuild fo_titles from cached spec JSON so SE_COMMON
+            # accordion entries and display-title Edit buttons work correctly.
+            _uat_fo_titles = None
             try:
-                _uat_result = await run_uat_loader(item_id, fo_titles=None)
+                _spec_json_col = cols.get(COL["spec_json"], {})
+                _spec_assets = _spec_json_col.get("value") if _spec_json_col else None
+                if _spec_assets:
+                    import json as _json2
+                    _assets_parsed = _json2.loads(_spec_assets) if isinstance(_spec_assets, str) else _spec_assets
+                    _files = (_assets_parsed.get("files") or []) if isinstance(_assets_parsed, dict) else []
+                    if _files:
+                        _spec_url = _files[-1].get("url") or _files[-1].get("public_url") or ""
+                        if _spec_url:
+                            import aiohttp as _aio
+                            async with _aio.ClientSession() as _sess2:
+                                async with _sess2.get(_spec_url) as _r2:
+                                    if _r2.status == 200:
+                                        _spec_bytes = await _r2.read()
+                                        _sj = _json2.loads(_spec_bytes)
+                                        _uat_fo_titles = {
+                                            f"F_{f.get('form_id', '')}": f.get("form_title", "")
+                                            for f in _sj.get("forms", [])
+                                            if isinstance(f, dict) and f.get("form_id")
+                                        }
+                                        print(f"[uat-only] rebuilt fo_titles: {len(_uat_fo_titles)} forms", flush=True)
+            except Exception as _fte:
+                print(f"[uat-only] fo_titles rebuild failed (non-fatal): {_fte}", flush=True)
+            try:
+                _uat_result = await run_uat_loader(item_id, fo_titles=_uat_fo_titles)
                 if _uat_result["success"]:
                     await asyncio.gather(
                         set_status(item_id, COL["pipeline_status"],

@@ -152,10 +152,10 @@ def render_instructions_page(token: str, email: str,
     """
     from html import escape as _esc
     subdomain = os.environ.get("OC_DEFAULT_SUBDOMAIN", "cust1")
-    designer_url = f"https://{subdomain}.design.openclinica.io"
+    build_url = f"https://{subdomain}.build.openclinica.io/#/account-study"
     email_esc       = _esc(email)
     token_esc       = _esc(token)
-    designer_esc    = _esc(designer_url)
+    designer_esc    = _esc(build_url)
     clinical_esc    = _esc(f"https://{clinical_host}/OpenClinica" if clinical_host else "")
 
     is_uat = (context == "uat")
