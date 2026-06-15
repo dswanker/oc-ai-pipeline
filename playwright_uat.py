@@ -368,10 +368,15 @@ async def _test_one_form(
                                          .map(el => el.getAttribute('title').replace(/^Edit /, ''))
                                 """)
                                 _fa_upper = form_abbrev.upper()
+                                _ft_upper = _form_display_title.upper() if _form_display_title else ""
                                 _match = None
                                 for _candidate in _all_abbrevs:
                                     _cu = _candidate.upper()
-                                    # Match if one is prefix of the other (PHQ ↔ PHQ9)
+                                    # Exact match against full display title (ICF → "Informed Consent Form")
+                                    if _ft_upper and _cu == _ft_upper:
+                                        _match = _candidate
+                                        break
+                                    # Match if one is prefix of the other (PHQ ↔ PHQ9, NRS ↔ NRS Pain Intensity)
                                     if _fa_upper.startswith(_cu) or _cu.startswith(_fa_upper):
                                         _match = _candidate
                                         break

@@ -3814,6 +3814,16 @@ async def run_pipeline(item_id):
             # Try to rebuild fo_titles from cached spec JSON so SE_COMMON
             # accordion entries and display-title Edit buttons work correctly.
             _uat_fo_titles = None
+            # First try: load from upload record (written by last full run)
+            try:
+                _rec_for_ft = _read_upload_record(str(item_id))
+                _stored_titles = _rec_for_ft.get("fo_titles")
+                if _stored_titles and isinstance(_stored_titles, dict):
+                    _uat_fo_titles = _stored_titles
+                    print(f"[uat-only] fo_titles from upload record: {len(_uat_fo_titles)} forms", flush=True)
+            except Exception as _urf:
+                print(f"[uat-only] upload record fo_titles read failed (non-fatal): {_urf}", flush=True)
+            # Second try: load from spec JSON file on board (fallback)
             try:
                 _spec_json_col = cols.get(COL["spec_json"], {})
                 _spec_assets = _spec_json_col.get("value") if _spec_json_col else None
@@ -5589,6 +5599,14 @@ async def run_pipeline(item_id):
                             for f in struct_json.get("forms", [])
                             if isinstance(f, dict) and f.get("form_id")
                         }
+                        # Persist fo_titles to upload record so UAT fast-run
+                        # can rebuild them without re-running the full build.
+                        try:
+                            _rec_for_titles = _read_upload_record(str(item_id))
+                            _rec_for_titles["fo_titles"] = _fo_titles
+                            _write_upload_record(str(item_id), _rec_for_titles)
+                        except Exception as _ftte:
+                            print(f"[pipeline] fo_titles persist failed (non-fatal): {_ftte}", flush=True)
                         _uat_result = await run_uat_loader(item_id,
                                                            fo_titles=_fo_titles)
 

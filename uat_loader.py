@@ -1312,8 +1312,11 @@ async def run_uat_loader(item_id: str, fo_titles: dict = None) -> dict:
     # For each participant that was successfully created, fetch all stored
     # item values from OC via the clinical data GET endpoint, then compare
     # against Expected Result in UAT_Cases and stamp Pass/Fail.
+    # Wait for OC to propagate imported data — the job completion endpoint
+    # returns "Inserted" before the clinical data API reflects the new rows.
     clinical_data: dict = {}
     if stamp_map:
+        await asyncio.sleep(30)   # 30s propagation buffer after ODM import
         await append_log(item_id,
             "UAT Loader: reading back clinical data from OC...")
         for logical_pid, info in stamp_map.items():
