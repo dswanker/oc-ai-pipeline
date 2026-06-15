@@ -209,7 +209,7 @@ async def _test_one_form(
         passed = failed = skipped = 0
         row_results = []
         page = await context.new_page()
-        form_page = None
+        form_page = None  # kept for compatibility but no longer used
         try:
             url = _form_entry_url(subdomain, subject_oid, ev, fo,
                                   study_uuid=study_uuid,
@@ -425,21 +425,45 @@ async def _test_one_form(
                         await page.wait_for_timeout(1000)
 
                     if _form_url:
-                        form_page = await context.new_page()
-                        await form_page.goto(_form_url, timeout=30000,
-                                             wait_until="domcontentloaded")
-                        try:
-                            await form_page.wait_for_selector(".question", timeout=10000)
-                        except Exception:
-                            pass
-                        form_frame = form_page.main_frame
-                        nav_ok = True
-                        try:
-                            _q = await form_page.evaluate(
-                                "() => document.querySelectorAll('.question').length")
-                            print(f"[pw-uat] {fo}/{ev} Enketo ready questions={_q}", flush=True)
-                        except Exception:
-                            pass
+                        # Use the iframe frame that is ALREADY loaded inside
+                        # page — it has the eu.openclinica.io session cookies
+                        # via the embed mechanism. Opening _form_url in a new
+                        # page navigates to form.openclinica.io with no cookies
+                        # → blank form → questions=0. Instead find the frame
+                        # by URL in page.frames and use it directly.
+                        form_frame = None
+                        for _ff in page.frames:
+                            if _ff.url == _form_url or (
+                                'form.' in _ff.url and 'openclinica' in _ff.url
+                            ):
+                                form_frame = _ff
+                                break
+                        if form_frame is None:
+                            # Frame not yet in page.frames — wait up to 10s
+                            for _ in range(10):
+                                await page.wait_for_timeout(1000)
+                                for _ff in page.frames:
+                                    if ('form.' in _ff.url and 'openclinica' in _ff.url):
+                                        form_frame = _ff
+                                        break
+                                if form_frame:
+                                    break
+                        if form_frame:
+                            # Wait for Enketo to render questions in the frame
+                            try:
+                                await form_frame.wait_for_selector(".question", timeout=15000)
+                            except Exception:
+                                pass
+                            nav_ok = True
+                            try:
+                                _q = await form_frame.evaluate(
+                                    "() => document.querySelectorAll('.question').length")
+                                print(f"[pw-uat] {fo}/{ev} Enketo ready questions={_q}", flush=True)
+                            except Exception as _qe:
+                                print(f"[pw-uat] {fo}/{ev} question count error: {_qe}", flush=True)
+                        else:
+                            print(f"[pw-uat] {fo}/{ev} form frame not found in page.frames", flush=True)
+                            form_frame = app_frame
                     else:
                         print(f"[pw-uat] {fo}/{ev} form.eu not found", flush=True)
                         form_frame = app_frame
@@ -472,12 +496,20 @@ async def _test_one_form(
                         else:
                             actual = "No required-field error shown"
                             result = "Fail"; failed += 1
-                        if form_page and not form_page.is_closed():
-                            await form_page.reload(wait_until="domcontentloaded")
-                            try:
-                                await form_page.wait_for_selector(".question", timeout=8000)
-                            except Exception:
-                                pass
+                        # Reload the frame's page to reset form state
+                        try:
+                            if form_frame and form_frame != app_frame:
+                                _fp = form_frame.page
+                                if callable(_fp):
+                                    _fp = _fp()
+                                if _fp and not _fp.is_closed():
+                                    await _fp.reload(wait_until="domcontentloaded")
+                                    try:
+                                        await form_frame.wait_for_selector(".question", timeout=8000)
+                                    except Exception:
+                                        pass
+                        except Exception:
+                            pass
 
                     elif test_type == "constraint":
                         frame = form_frame or page
@@ -525,8 +557,7 @@ async def _test_one_form(
                     failed += 1
 
         finally:
-            if form_page and not form_page.is_closed():
-                await form_page.close()
+            # form_page removed — form_frame is now the iframe inside page
             await page.close()
 
         return passed, failed, skipped, row_results

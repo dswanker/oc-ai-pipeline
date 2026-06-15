@@ -1277,15 +1277,24 @@ async def run_uat_loader(item_id: str, fo_titles: dict = None) -> dict:
                 f"Inserted: {_inserted}, Failed: {len(_failed_rows)}"
             )
             if _failed_rows:
-                for _fr in _failed_rows[:3]:
-                    _msg  = (_fr.get("Message") or "").strip()
-                    _evt  = (_fr.get("StudyEventOID") or "").strip()
-                    _form = (_fr.get("FormOID") or "").strip()
-                    _item = (_fr.get("ItemOID") or "").strip()
+                # Group failures by (Event, Form, Message) to avoid
+                # flooding the log — log one example per unique error type
+                # plus a summary of all unique item OIDs that failed.
+                from collections import defaultdict as _dd
+                _by_type = _dd(list)
+                for _fr in _failed_rows:
+                    _key = (
+                        (_fr.get("StudyEventOID") or "").strip(),
+                        (_fr.get("FormOID") or "").strip(),
+                        (_fr.get("Message") or "").strip(),
+                    )
+                    _by_type[_key].append((_fr.get("ItemOID") or "").strip())
+                for (_evt, _form, _msg), _items in sorted(_by_type.items()):
+                    _item_list = ", ".join(sorted(set(_items))[:8])
                     await append_log(
                         item_id,
-                        f"  FAILED row — Event={_evt} Form={_form} "
-                        f"Item={_item} Message={_msg}"
+                        f"  FAILED [{len(_items)}x] Ev={_evt} Fo={_form} "
+                        f"Msg={_msg} Items={_item_list}"
                     )
         except Exception as e:
             err = f"ODM import failed for {run_key}: {e}"
