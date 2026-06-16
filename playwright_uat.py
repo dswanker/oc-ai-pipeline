@@ -313,21 +313,29 @@ async def _test_one_form(
                             }}""")
 
                             if _clicked:
-                                await page.wait_for_timeout(800)
+                                # Wait for PrimeNG to render the popup menu.
+                                # The .form-menu click is synchronous inside evaluate()
+                                # but the menu items render asynchronously — poll
+                                # until items appear (up to 3s) rather than fixed wait.
+                                _edit_clicked = None
+                                for _menu_attempt in range(6):
+                                    await page.wait_for_timeout(500)
+                                    _edit_clicked = await app_frame.evaluate("""() => {
+                                        const items = Array.from(
+                                            document.querySelectorAll('.p-menuitem-link'));
+                                        // Prefer Edit, fall back to Add
+                                        const edit = items.find(
+                                            i => i.textContent.trim() === 'Edit');
+                                        if (edit) { edit.click(); return 'edit'; }
+                                        const add = items.find(
+                                            i => i.textContent.trim() === 'Add');
+                                        if (add) { add.click(); return 'add'; }
+                                        return null;
+                                    }""")
+                                    if _edit_clicked:
+                                        break
                                 # Click Edit or Add — first repeat instance may
                                 # show Add (no prior entry); subsequent show Edit.
-                                _edit_clicked = await app_frame.evaluate("""() => {
-                                    const items = Array.from(
-                                        document.querySelectorAll('.p-menuitem-link'));
-                                    // Prefer Edit, fall back to Add
-                                    const edit = items.find(
-                                        i => i.textContent.trim() === 'Edit');
-                                    if (edit) { edit.click(); return 'edit'; }
-                                    const add = items.find(
-                                        i => i.textContent.trim() === 'Add');
-                                    if (add) { add.click(); return 'add'; }
-                                    return null;
-                                }""")
                                 if _edit_clicked:
                                     print(f"[pw-uat] {fo}/{ev} three-dot "
                                           f"(label={_clicked!r}) → {_edit_clicked}", flush=True)
@@ -336,7 +344,7 @@ async def _test_one_form(
                                         Array.from(document.querySelectorAll('.p-menuitem-link'))
                                              .map(i => i.textContent.trim())
                                     """)
-                                    print(f"[pw-uat] {fo}/{ev} Edit/Add not in menu: {_menu_items}", flush=True)
+                                    print(f"[pw-uat] {fo}/{ev} Edit/Add not in menu after 3s: {_menu_items}", flush=True)
                             else:
                                 print(f"[pw-uat] {fo}/{ev} form-menu not found for {_fa}", flush=True)
                         except Exception as _ce:
