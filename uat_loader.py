@@ -613,9 +613,12 @@ def _build_odm_xml(study_oid: str, site_oid: str,
                 f'      <StudyEventData StudyEventOID="{ev_oid}"{ev_repeat_attr}{ev_tx_attr}{start_attr}>'
             )
             for form_oid, igs in forms.items():
-                lines.append(
-                    f'        <FormData FormOID="{form_oid}">'
-                )
+                # SE_COMMON/SE_UNSCHEDULED: TransactionType="Insert" on FormData
+                # creates the form construct (instance). Without it OC returns
+                # errorCode.formMissingStudyEventConstruct for repeating-event forms.
+                # Visit-Based events have pre-existing constructs — no TX needed.
+                fo_tx = ' TransactionType="Insert"' if is_common else ''
+                lines.append(f'        <FormData FormOID="{form_oid}"{fo_tx}>')
                 for ig_oid, items in igs.items():
                     # SE_COMMON and SE_UNSCHEDULED events use repeating
                     # ItemGroups — OC4 requires ItemGroupRepeatKey to create
