@@ -296,71 +296,53 @@ async def _test_one_form(
                             #
                             # Approach: each section is a p-card or similar container with
                             # a heading AND a .form-menu button in the same Actions column.
-                            # Find every .form-menu button; for each one, walk UP to find
-                            # the section container, then look for a heading that contains
-                            # our display title (fo_titles) or abbreviation. Prefer
-                            # fo_titles match (longer, more specific) over abbrev match.
-                            _fa = form_abbrev       # e.g. "AESAE"
-                            _ft = (fo_titles or {}).get(fo, "")  # e.g. "Serious Adverse Event"
+                            # Find the form-section containing our form.
+                            # fo_titles has the exact OC board heading, e.g.:
+                            #   F_CM    -> 'Concomitant Medications'
+                            #   F_AESAE -> 'Serious Adverse Event / SADE Report'
+                            #   F_DV    -> 'Protocol Deviation'
+                            #   F_PREG  -> 'Pregnancy Report'
+                            #
+                            # Strategy: find the element whose text CONTAINS fo_titles,
+                            # then walk UP until an ancestor contains a .form-menu.
+                            # Walking up from the heading is reliable because the heading
+                            # is unique per section; walking up from the menu was failing
+                            # because the stop condition fired on the wrong div.
+                            _fa = form_abbrev
+                            _ft = (fo_titles or {}).get(fo, "")
                             _clicked = await app_frame.evaluate(f"""() => {{
-                                const abbrev = '{_fa}'.toLowerCase();
                                 const title  = '{_ft}'.toLowerCase();
+                                const abbrev = '{_fa}'.toLowerCase();
 
-                                // Score a text node: 2=title match, 1=abbrev match, 0=no match
                                 const score = (txt) => {{
                                     const t = txt.toLowerCase();
                                     if (title && t.includes(title)) return 2;
-                                    // Only use abbrev if it's 4+ chars to avoid "cm","dv" noise
-                                    if (abbrev.length >= 4 && t.includes(abbrev)) return 1;
+                                    if (abbrev.length >= 5 && t.includes(abbrev)) return 1;
                                     return 0;
                                 }};
 
-                                // For each .form-menu button, score the containing section's text
-                                const menus = Array.from(document.querySelectorAll('.form-menu'));
-                                let best = null, bestScore = 0;
-                                for (const menu of menus) {{
-                                    // Walk up to find the section container (card/row/article)
-                                    let container = menu.parentElement;
-                                    for (let i = 0; i < 15; i++) {{
-                                        if (!container) break;
-                                        const tag = container.tagName.toLowerCase();
-                                        // Stop at a meaningful container boundary
-                                        if (['section','article','li','tr','p-card',
-                                             'p-table','p-panel','div'].includes(tag) &&
-                                            container.querySelector('h1,h2,h3,h4,h5,h6,th')) {{
-                                            const headingEl = container.querySelector(
-                                                'h1,h2,h3,h4,h5,h6,th');
-                                            if (headingEl) {{
-                                                const s = score(headingEl.textContent);
-                                                if (s > bestScore) {{
-                                                    bestScore = s;
-                                                    best = {{ menu, label: headingEl.textContent.trim() }};
-                                                }}
-                                            }}
-                                            break;
-                                        }}
-                                        container = container.parentElement;
+                                // Find best-matching leaf-ish element (few children, short text)
+                                let bestEl = null, bestScore = 0, bestLabel = '';
+                                for (const el of document.querySelectorAll('*')) {{
+                                    if (el.children.length > 3) continue;
+                                    const txt = el.textContent.trim();
+                                    if (!txt || txt.length > 120) continue;
+                                    const s = score(txt);
+                                    if (s > bestScore) {{
+                                        bestScore = s; bestEl = el; bestLabel = txt;
                                     }}
                                 }}
 
-                                if (best && bestScore > 0) {{
-                                    best.menu.click();
-                                    return best.label;
-                                }}
+                                if (!bestEl || bestScore === 0) return null;
 
-                                // Fallback: find ANY heading containing our title, then
-                                // find the nearest .form-menu within its section.
-                                const allH = Array.from(document.querySelectorAll(
-                                    'h1,h2,h3,h4,h5,h6,th'));
-                                for (const h of allH) {{
-                                    if (score(h.textContent) === 0) continue;
-                                    let el = h.parentElement;
-                                    for (let i = 0; i < 15; i++) {{
-                                        if (!el) break;
-                                        const m = el.querySelector('.form-menu');
-                                        if (m) {{ m.click(); return h.textContent.trim(); }}
-                                        el = el.parentElement;
-                                    }}
+                                // Walk UP from matched heading until we reach a container
+                                // that has a .form-menu button somewhere inside it.
+                                let container = bestEl;
+                                for (let i = 0; i < 20; i++) {{
+                                    if (!container) break;
+                                    const menu = container.querySelector('.form-menu');
+                                    if (menu) {{ menu.click(); return bestLabel; }}
+                                    container = container.parentElement;
                                 }}
                                 return null;
                             }}""")
