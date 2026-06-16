@@ -1312,6 +1312,47 @@ def extract_dvs_data(struct_json, forms_json):
             print(f"[dvs-backstop] {_fid}: injected {len(_seeds)} seed row(s) "
                   f"for event {_ev_oid}", flush=True)
 
+    # ── Participant assignment: ensure no two rows overwrite the same field ──────
+    # All rows start as UAT-P001. Use greedy bin-packing: for each row, find
+    # the lowest-numbered participant that has no existing row for this
+    # (Form_OID, Item_OID, Study_Event_OID) slot. If none, create a new one.
+    # This guarantees each participant's ODM load has at most one value per
+    # field, so read-back can correctly validate each loaded value.
+    _slot_by_participant = {}   # participant_id -> set of (fo, item, ev) slots
+    _max_p = 1
+    for _uc in uat_cases:
+        _fo   = str(_uc.get("Form_OID", "") or "")
+        _item = str(_uc.get("Item_OID", "") or "")
+        _ev   = str(_uc.get("Study_Event_OID", "") or "")
+        _lv   = str(_uc.get("Load_Value", "") or "").strip()
+        # Only assign distinct participants for rows that actually load a value
+        # (leave_blank, has_then, and visibility rows are not loaded via ODM)
+        _lv_lower = _lv.lower()
+        _is_loadable = (
+            _lv
+            and _lv_lower != "(leave blank)"
+            and "then" not in _lv_lower
+            and not _lv.upper().startswith("SE_")
+        )
+        if not _is_loadable:
+            _uc["Participant_ID"] = "UAT-P001"
+            continue
+        _slot = (_fo, _item, _ev)
+        _assigned = False
+        for _pnum in range(1, _max_p + 1):
+            _pid = f"UAT-P{_pnum:03d}"
+            if _slot not in _slot_by_participant.setdefault(_pid, set()):
+                _slot_by_participant[_pid].add(_slot)
+                _uc["Participant_ID"] = _pid
+                _assigned = True
+                break
+        if not _assigned:
+            _max_p += 1
+            _pid = f"UAT-P{_max_p:03d}"
+            _slot_by_participant[_pid] = {_slot}
+            _uc["Participant_ID"] = _pid
+    print(f"[dvs] Participant assignment: {_max_p} participant(s) for {len(uat_cases)} UAT rows", flush=True)
+
     return {
         "study_meta":          struct_json.get("study_meta", {}) if isinstance(struct_json, dict) else {},
         "protocol_extraction": protocol_extraction,

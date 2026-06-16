@@ -853,13 +853,15 @@ async def run_playwright_uat(
             print(f"[pw-uat] no auth — tests will likely fail", flush=True)
         page = await context.new_page()
 
-        # Group by (form, event) to minimise navigations
+        # Group by (form, event, participant_id) — each participant needs their
+        # own navigation since their data lives on a different participant page.
         from collections import defaultdict
         by_form = defaultdict(list)
         for row, row_dict, test_type in pw_rows:
-            fo = str(row_dict.get("Form_OID") or "").strip()
-            ev = str(row_dict.get("Study_Event_OID") or "").strip()
-            by_form[(fo, ev)].append((row, row_dict, test_type))
+            fo  = str(row_dict.get("Form_OID") or "").strip()
+            ev  = str(row_dict.get("Study_Event_OID") or "").strip()
+            pid = str(row_dict.get("Participant_ID") or "UAT-P001").strip()
+            by_form[(fo, ev, pid)].append((row, row_dict, test_type))
 
         # PW_FORMS env var: comma-separated form OIDs to test (e.g. "F_DM,F_IE")
         # Leave unset to test all forms. Use for fast iteration during development.
@@ -911,12 +913,15 @@ async def run_playwright_uat(
         tasks = [
             _test_one_form(
                 context, fo, ev, form_rows,
-                subdomain, subject_oid,
+                subdomain,
+                # Use the OC OID for this participant from stamp_map;
+                # fall back to the global subject_oid for UAT-P001 or unknowns.
+                (stamp_map or {}).get(pid, {}).get("oc_oid", subject_oid) or subject_oid,
                 study_uuid, study_env_uuid,
                 col_idx, now_str,
                 fo_titles=fo_titles,
             )
-            for (fo, ev), form_rows in by_form.items()
+            for (fo, ev, pid), form_rows in by_form.items()
         ]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
