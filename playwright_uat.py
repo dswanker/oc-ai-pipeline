@@ -214,27 +214,30 @@ async def _enter_field_value(frame, field_name: str, value: str, form_oid: str):
     ]
     for sel in selectors:
         try:
+            # Short timeout per selector — don't hang 60s if field not found
             els = await frame.query_selector_all(sel)
             for el in els:
-                tag = (await el.get_attribute("type") or "").lower()
-                el_type = await el.evaluate("e => e.tagName.toLowerCase()")
-                if el_type == "select":
-                    await el.select_option(value=value)
-                    await frame.wait_for_timeout(300)
-                    return True
-                elif tag in ("radio", "checkbox"):
-                    # Click the option matching the value
-                    opt = await frame.query_selector(
-                        f"{sel}[value='{value}'], input[type='radio'][value='{value}']")
-                    if opt:
-                        await opt.click()
+                try:
+                    tag = (await el.get_attribute("type") or "").lower()
+                    el_type = await el.evaluate("e => e.tagName.toLowerCase()")
+                    if el_type == "select":
+                        await el.select_option(value=value)
                         await frame.wait_for_timeout(300)
                         return True
-                elif el_type in ("input", "textarea"):
-                    await el.triple_click()
-                    await el.type(value)
-                    await frame.wait_for_timeout(300)
-                    return True
+                    elif tag in ("radio", "checkbox"):
+                        opt = await frame.query_selector(
+                            f"{sel}[value='{value}'], input[type='radio'][value='{value}']")
+                        if opt:
+                            await opt.click()
+                            await frame.wait_for_timeout(300)
+                            return True
+                    elif el_type in ("input", "textarea"):
+                        await el.triple_click()
+                        await el.type(value)
+                        await frame.wait_for_timeout(300)
+                        return True
+                except Exception:
+                    pass
         except Exception:
             pass
     return False
@@ -679,7 +682,16 @@ async def _test_one_form(
                                 form_frame, field_name, lv, fo)
                             if _entered:
                                 await _fill_and_save(form_frame, field_name, fo)
-                            await page.wait_for_timeout(800)
+                                await page.wait_for_timeout(800)
+                            else:
+                                # Field not found — record and skip rather than
+                                # hanging on wait_for_timeout
+                                actual = f"Field {field_name} not found in DOM"
+                                result = "Fail"; failed += 1
+                                row_results.append((row, actual, result, now_str))
+                                if result == "Fail":
+                                    print(f"[pw-uat] FAIL {uid} {fo}/{item} type={test_type} actual={actual[:60]!r}", flush=True)
+                                continue
                         errors = await _read_field_errors(frame, field_name)
                         expect_error = any(x in exp for x in
                             ["Constraint fires", "error shown", "does not save"])

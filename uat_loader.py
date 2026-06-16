@@ -967,13 +967,14 @@ def _evaluate_uat_cases(
         # calculated field context markers, not loadable data values.
         is_event_oid     = lv.upper().startswith("SE_") and "_" in lv and " " not in lv
         is_visibility    = any(x in expected.upper() for x in ["VISIBLE", "HIDDEN", "RELEVANT"])
-        # is_ui_constraint: only mark as not-testable-via-ODM when the test
-        # genuinely requires Playwright to observe a UI error. "No constraint
-        # error. Form saves." happy-path rows with plain load values ARE
-        # testable via ODM read-back — the value loads and is stored = Pass.
-        # Only skip rows that expect an error to appear in the UI.
+        # is_ui_constraint: rows that expect a UI error need Playwright, not ODM.
+        # "Constraint fires" rows must NOT be loaded via ODM — loading out-of-bounds
+        # values (e.g. 101 for a 0-100 field, or a future date) overwrites prior
+        # valid loads for the same field, causing those happy-path rows to Fail.
+        # "No constraint error. Form saves." rows ARE testable via ODM read-back.
         is_ui_constraint = any(x in expected for x in [
-            "error shown", "Form does not save", "Constraint fires"])
+            "error shown", "Form does not save", "Constraint fires",
+            "Subject is ineligible"])  # eligibility constraint checks need PW
         # Calc rows with multiple inputs (ODI1=x, ODI2=y) are loaded via ODM
         # and OC computes the output with runFormLogic=y — these ARE testable
         is_pure_calc     = "Calc path" in str(row[col_idx.get("Scenario", 1) - 1].value or "")
