@@ -538,11 +538,18 @@ def _build_odm_xml(study_oid: str, site_oid: str,
                 _record_drop("visibility_gate", row, val)
                 continue  # visibility/gate rows — Playwright sets these in browser
             # Calc inputs: parse "ODI1=28, ODI2=28" into multiple items
+            # Skip if the value is a DVS backstop placeholder — loading
+            # "Test value" or "Sample text" for a date/calc field corrupts
+            # the participant's data and skews subsequent calc results.
+            _PLACEHOLDER_VALUES = {"test value", "sample text", "test", ""}
             _lv_clean = re.sub(r",\s*then\s+", ", ", val, flags=re.IGNORECASE)
             for _p in _lv_clean.split(","):
                 _p = _p.strip()
                 if "=" in _p:
                     _fname, _fval = _p.split("=", 1)
+                    if _fval.strip().lower() in _PLACEHOLDER_VALUES:
+                        _record_drop("leave_blank", row, val)
+                        continue  # placeholder — don't load garbage values
                     _fname_clean = _fname.strip()
                     _form_short = fo.replace('F_', '', 1) if fo.upper().startswith('F_') else fo
                     _expected_prefix = f"I_{_form_short}_"
@@ -956,6 +963,9 @@ def _evaluate_uat_cases(
         is_blank_case    = lv_lower == "(leave blank)"
         is_calc_case     = "=" in lv and not lv.startswith("20")  # field=value patterns
         is_multistep     = "then" in lv_lower  # multi-step setup like "ICFDAT=x, then date=y"
+        # Load values that are event OID names (e.g. "SE_TREATMENT") are
+        # calculated field context markers, not loadable data values.
+        is_event_oid     = lv.upper().startswith("SE_") and "_" in lv and " " not in lv
         is_visibility    = any(x in expected.upper() for x in ["VISIBLE", "HIDDEN", "RELEVANT"])
         # is_ui_constraint: only mark as not-testable-via-ODM when the test
         # genuinely requires Playwright to observe a UI error. "No constraint
@@ -968,6 +978,7 @@ def _evaluate_uat_cases(
         # and OC computes the output with runFormLogic=y — these ARE testable
         is_pure_calc     = "Calc path" in str(row[col_idx.get("Scenario", 1) - 1].value or "")
         not_testable = (is_blank_case or is_multistep or is_visibility or is_ui_constraint
+                        or is_event_oid
                         or (is_calc_case and not is_pure_calc))
 
         if not_testable:
