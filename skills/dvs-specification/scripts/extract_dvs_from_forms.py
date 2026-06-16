@@ -1191,7 +1191,7 @@ def extract_dvs_data(struct_json, forms_json):
                     _row = _uat_row(
                         uat_id, check_id, form_id, field_name, field_label,
                         case, form_event_map, ig_name=ig_name,
-                        oc_prefix=_form_prefix_map.get(form_oid, ""))
+                        oc_prefix=_form_prefix_map.get(f"F_{form_id}", ""))
                     _row["Load_Order"] = str(uat_counter)
                     uat_cases.append(_row)
 
