@@ -51,7 +51,8 @@ class AuthManager:
     """Manages one-time tokens and per-user browser session files."""
 
     def generate_auth_link(self, email: str, base_url: str,
-                           context: str = "pipeline") -> str:
+                           context: str = "pipeline",
+                           item_id: str = "") -> str:
         """
         Generate a one-time auth link for the given email.
 
@@ -59,11 +60,15 @@ class AuthManager:
             email:    User's OC SSO email (e.g. user@openclinica.com)
             base_url: Railway public URL with no trailing slash
             context:  'pipeline' (default) or 'uat' — controls instructions page
+            item_id:  Monday item ID — if provided, session upload will post
+                      a completion notice back to the Monday item so the user
+                      knows when auth is done and can re-trigger.
 
         Returns:
             Full /auth URL with a signed token query parameter.
         """
-        token = serializer.dumps(email, salt="auth-token")
+        payload = {"email": email, "item_id": item_id}
+        token = serializer.dumps(payload, salt="auth-token")
         params = urlencode({"token": token, "context": context})
         return f"{base_url}/auth?{params}"
 
@@ -72,23 +77,42 @@ class AuthManager:
         Validate a signed auth token and return (email, error_message).
 
         Pure signature + max-age check — no "already used" bookkeeping.
-        The same token is intentionally validated twice in the bootstrap
-        flow: once when the user lands on the /auth instructions page,
-        and again when the extension POSTs to /api/session/upload. The
-        1-hour signature window is the only liveness bound.
+        Payload may be a plain email string (legacy) or a dict with
+        {"email": ..., "item_id": ...} (current).
 
         Returns:
             (email, None) on success; (None, error_message) on failure.
         """
         try:
-            email = serializer.loads(
+            payload = serializer.loads(
                 token, salt="auth-token", max_age=TOKEN_MAX_AGE_SECONDS
             )
         except SignatureExpired:
             return None, "This auth link has expired (valid for 1 hour)"
         except BadSignature:
             return None, "Invalid auth link"
-        return email, None
+        # Support both legacy string payload and new dict payload
+        if isinstance(payload, dict):
+            return payload.get("email"), None
+        return payload, None
+
+    def validate_token_full(self, token: str) -> tuple[str | None, str | None, str]:
+        """Like validate_token but also returns item_id from the payload.
+
+        Returns:
+            (email, error_message, item_id)
+        """
+        try:
+            payload = serializer.loads(
+                token, salt="auth-token", max_age=TOKEN_MAX_AGE_SECONDS
+            )
+        except SignatureExpired:
+            return None, "This auth link has expired (valid for 1 hour)", ""
+        except BadSignature:
+            return None, "Invalid auth link", ""
+        if isinstance(payload, dict):
+            return payload.get("email"), None, payload.get("item_id", "")
+        return payload, None, ""
 
     def session_exists(self, email: str) -> bool:
         """Check if a saved Playwright session file exists for this email."""
@@ -119,7 +143,7 @@ async def handle_session_upload(token: str, storage_state) -> dict:
       failure: {"ok": False, "error": <msg>, "status": <http_status>}
     """
     am = AuthManager()
-    email, error = am.validate_token(token)
+    email, error, item_id = am.validate_token_full(token)
     if error:
         return {"ok": False, "error": error, "status": 400}
     if not isinstance(storage_state, dict) or "cookies" not in storage_state:
@@ -134,6 +158,50 @@ async def handle_session_upload(token: str, storage_state) -> dict:
     n_ls = sum(len(o.get("localStorage", [])) for o in storage_state.get("origins", []))
     print(f"[auth] wrote session for {email}: {n} cookies, {n_origins} origins, "
           f"{n_ls} localStorage keys -> {path}", flush=True)
+
+    # Post completion notice back to the Monday item so the user has a clear
+    # signal that auth is done and can re-trigger "Send to AI".
+    if item_id:
+        try:
+            import httpx as _httpx, os as _os
+            _api_key = _os.environ.get("MONDAY_API_KEY", "")
+            _board_id = _os.environ.get("MONDAY_BOARD_ID", "18409146946")
+            if _api_key:
+                _gql_log = """
+                mutation($item_id: ID!, $body: String!) {
+                    create_update(item_id: $item_id, body: $body) { id }
+                }"""
+                _body = (f"✅ OpenClinica session captured for {email}. "
+                         f"You can now trigger <b>Send to AI</b> to resume the pipeline.")
+                _r = _httpx.post(
+                    "https://api.monday.com/v2",
+                    json={"query": _gql_log, "variables": {
+                        "item_id": str(item_id), "body": _body}},
+                    headers={"Authorization": _api_key,
+                             "API-Version": "2024-01"},
+                    timeout=10,
+                )
+                _gql_status = """
+                mutation($item_id: ID!, $board_id: ID!, $col_id: String!, $val: JSON!) {
+                    change_column_value(item_id: $item_id, board_id: $board_id,
+                                       column_id: $col_id, value: $val) { id }
+                }"""
+                _httpx.post(
+                    "https://api.monday.com/v2",
+                    json={"query": _gql_status, "variables": {
+                        "item_id": str(item_id),
+                        "board_id": str(_board_id),
+                        "col_id": "color_mm2h9g3m",
+                        "val": '{"label": "Paused for Authentication — Ready to Trigger"}',
+                    }},
+                    headers={"Authorization": _api_key,
+                             "API-Version": "2024-01"},
+                    timeout=10,
+                )
+                print(f"[auth] Monday callback sent for item {item_id}", flush=True)
+        except Exception as _cb_err:
+            print(f"[auth] Monday callback failed (non-fatal): {_cb_err}", flush=True)
+
     return {"ok": True, "email": email, "cookies": n}
 
 

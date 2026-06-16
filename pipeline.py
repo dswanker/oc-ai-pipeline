@@ -2328,6 +2328,22 @@ async def create_oc_study(subdomain, struct_json, is_production=False,
                   f"{forms_publish.forms_total} uploaded; "
                   f"errors={len(forms_publish.errors)}  "
                   f"conflicts={len(forms_publish.conflicts)}", flush=True)
+            # ── SSO session expiry: fail fast with actionable message ──────
+            _sso_expired = any(
+                "appears expired" in str(e) or "stale session" in str(e).lower()
+                for e in forms_publish.errors
+            )
+            if _sso_expired:
+                _sso_msg = (
+                    "SSO session expired — re-capture required before next run. "
+                    "Visit https://oc-ai-pipeline-production.up.railway.app/auth "
+                    "in your browser and follow the login flow to restore the session."
+                )
+                print(f"[session-error] {_sso_msg}", flush=True)
+                if item_id:
+                    await append_log(item_id, f"BLOCKED: {_sso_msg}")
+                    await set_status(item_id, COL["status"], "Failed")
+                return
             for err in forms_publish.errors[:5]:
                 print(f"  form-upload error: {err}", flush=True)
             for _conf in forms_publish.conflicts[:5]:
@@ -3776,6 +3792,7 @@ async def run_pipeline(item_id):
                     _oc_email_early,
                     "https://oc-ai-pipeline-production.up.railway.app",
                     context="uat",
+                    item_id=str(item_id),
                 )
                 # Include clinical host in link so instructions page can show it
                 if _clinical_host:
