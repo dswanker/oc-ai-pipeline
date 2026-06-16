@@ -666,21 +666,20 @@ async def _test_one_form(
                         # Two sub-cases:
                         # (a) multi-step (lv has "=" or "then"): ODM pre-loaded
                         #     the value; just read the error indicator now.
-                        # (b) plain value (lv is a direct field value): enter
-                        #     the value into the field, save, then read errors.
+                        # (b) plain value: enter the value, save, read errors,
+                        #     then clear the field to reset form state (faster
+                        #     than a full page reload between tests).
                         _lv_is_plain = (
                             "then" not in lv.lower()
                             and "=" not in lv
                             and lv.lower() not in ("(leave blank)", "")
                         )
                         if _lv_is_plain and form_frame:
-                            # Enter the value directly, then submit
                             _entered = await _enter_field_value(
                                 form_frame, field_name, lv, fo)
                             if _entered:
                                 await _fill_and_save(form_frame, field_name, fo)
-                            # brief wait for Enketo to evaluate constraint
-                            await page.wait_for_timeout(1000)
+                            await page.wait_for_timeout(800)
                         errors = await _read_field_errors(frame, field_name)
                         expect_error = any(x in exp for x in
                             ["Constraint fires", "error shown", "does not save"])
@@ -698,6 +697,14 @@ async def _test_one_form(
                             else:
                                 actual = f"Unexpected constraint: {errors[0][:120]}"
                                 result = "Fail"; failed += 1
+                        # Clear field after plain-value test to reset error state
+                        # (avoids full page reload; Enketo clears constraint on empty)
+                        if _lv_is_plain and form_frame:
+                            try:
+                                await _enter_field_value(form_frame, field_name, "", fo)
+                                await page.wait_for_timeout(300)
+                            except Exception:
+                                pass
 
                     elif test_type == "visibility":
                         frame = form_frame or page
