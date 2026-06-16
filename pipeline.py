@@ -3820,7 +3820,9 @@ async def run_pipeline(item_id):
                                 .get("text") or "").strip()
         _load_uat_early = (cols.get(COL["load_dvs_uat_data"], {})
                            .get("text") or "").strip() == "v"
-        _publish_early  = (cols.get(COL["publish_to_test"], {})
+        # COL["publish_to_test"] is a button widget (button_mm3gwq70) and never
+        # reads as "v". Check the actual checkbox (boolean_mm3g2vzf) instead.
+        _publish_early  = (cols.get("boolean_mm3g2vzf", {})
                            .get("text") or "").strip() == "v"
         if _existing_uuid_early and _load_uat_early and not _publish_early:
             print(f"[uat-only] Study UUID={_existing_uuid_early!r} already "
