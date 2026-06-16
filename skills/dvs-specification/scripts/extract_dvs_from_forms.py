@@ -42,6 +42,22 @@ _BASELINE_TIMELINE = {
 }
 
 
+
+def _oc_form_prefix(form_title: str) -> str:
+    """Return the 5-character prefix OC4 uses for ItemGroup and Item OIDs.
+
+    OC4 derives ItemGroup OIDs as IG_{prefix}_{ig_name} and Item OIDs as
+    I_{prefix}_{field_name}, where prefix = first 5 alphanumeric characters
+    of the form title (uppercased, non-alphanumeric stripped).
+
+    Example: 'Adverse Events / Adverse Device Effects' -> 'ADVER'
+             'Vital Signs' -> 'VITAL'
+             'Sleep Quality (NRS and PROMIS 8a)' -> 'SLEEP'
+    """
+    cleaned = re.sub(r'[^A-Za-z0-9]', '', form_title or '').upper()
+    return cleaned[:5] if cleaned else ''
+
+
 def _date_offset(iso_date, days):
     """Return ISO date string offset by N days from given ISO date."""
     try:
@@ -964,7 +980,7 @@ def _qt_row(qt_id, check_id, message, check_type):
 
 
 def _uat_row(uat_id, check_id, form_id, field_name, field_label, case,
-             form_event_map=None, ig_name=None):
+             form_event_map=None, ig_name=None, oc_prefix=None):
     _fid_key = form_id.upper() if form_id.upper().startswith("F_") else f"F_{form_id.upper()}"
     event_oid = (form_event_map or {}).get(_fid_key, "")
     form_oid  = f"F_{form_id}" if not form_id.upper().startswith("F_") else form_id
@@ -975,16 +991,20 @@ def _uat_row(uat_id, check_id, form_id, field_name, field_label, case,
     ig_name_clean = ig_name or "MAIN"
     # OC constructs ItemGroup OIDs as IG_{form_short_name}_{ig_name} where
     # form_short_name does NOT include the F_ prefix (e.g. IG_AE_AE not IG_F_AE_AE)
-    form_short = form_oid[2:] if form_oid.upper().startswith("F_") else form_oid
+    # OC4 derives OIDs using first 5 alphanumeric chars of the form title
+    # (e.g. 'Adverse Events...' -> 'ADVER', 'Vital Signs' -> 'VITAL').
+    # oc_prefix must be supplied; fall back to form_oid[2:] for legacy safety.
+    form_short = oc_prefix or (form_oid[2:] if form_oid.upper().startswith("F_") else form_oid)
     item_group_oid = f"IG_{form_short}_{ig_name_clean}"
 
-    # Item OID: OC derives it as I_{form_short}_{fieldname}
-    # If the field_name already includes the full OID prefix (e.g. I_AE_AEYN),
-    # use it as-is to avoid double-prefix (I_AE_I_AE_AEYN).
+    # Item OID: OC derives it as I_{oc_prefix}_{fieldname}
     if field_name:
-        expected_prefix = f"I_{form_short}_"
-        if field_name.upper().startswith(expected_prefix.upper()):
-            item_oid = field_name  # already fully qualified
+        # Never double-prefix: if field_name already starts with I_{form_short}_
+        # (old format) or I_{oc_prefix}_, use as-is.
+        if re.match(rf'^I_[A-Z0-9]{{1,10}}_', field_name, re.IGNORECASE):
+            # strip old prefix and rebuild with correct one
+            stripped = re.sub(rf'^I_[A-Z0-9]{{1,10}}_', '', field_name, flags=re.IGNORECASE)
+            item_oid = f"I_{form_short}_{stripped}"
         else:
             item_oid = f"I_{form_short}_{field_name}"
     else:
@@ -1078,6 +1098,17 @@ def extract_dvs_data(struct_json, forms_json):
     # (Study_Event_OID, Form_OID) are populated for the UAT loader.
     form_event_map = _build_form_event_map(struct_json)
 
+    # Build form_id -> OC 5-char prefix mapping from struct_json form titles.
+    # OC4 derives IG and Item OIDs using first 5 alphanumeric chars of form_title.
+    _form_prefix_map = {}
+    if isinstance(struct_json, dict):
+        for _f in struct_json.get("forms", []):
+            _fid = ((_f.get("form_id") or "")).upper()
+            _ftitle = str(_f.get("form_title") or "")
+            _key = _fid if _fid.startswith("F_") else f"F_{_fid}"
+            if _fid and _ftitle:
+                _form_prefix_map[_key] = _oc_form_prefix(_ftitle)
+
     forms = forms_json.get("forms", {}) if isinstance(forms_json, dict) else {}
     for form_filename in sorted(forms.keys()):
         form_data = forms[form_filename] or {}
@@ -1147,7 +1178,8 @@ def extract_dvs_data(struct_json, forms_json):
                     uat_ids_for_this_check.append(uat_id)
                     _row = _uat_row(
                         uat_id, check_id, form_id, field_name, field_label,
-                        case, form_event_map, ig_name=ig_name)
+                        case, form_event_map, ig_name=ig_name,
+                        oc_prefix=_form_prefix_map.get(form_oid, ""))
                     _row["Load_Order"] = str(uat_counter)
                     uat_cases.append(_row)
 
@@ -1232,8 +1264,9 @@ def extract_dvs_data(struct_json, forms_json):
         for _fname, _fval in _seeds:
             uat_counter += 1
             _ig = field_ig_map.get(_fname, _fid)
-            _ig_oid = f"IG_{_fid}_{_ig}" if not _ig.startswith("IG_") else _ig
-            _item_oid = f"I_{_fid}_{_fname}"
+            _pfx = _form_prefix_map.get(f"F_{_fid}", _fid)
+            _ig_oid = f"IG_{_pfx}_{_ig}" if not _ig.startswith("IG_") else _ig
+            _item_oid = f"I_{_pfx}_{_fname}"
             _seed_row = {
                 "UAT Case ID":       f"UAT-{uat_counter:03d}",
                 "Status":            "Not Run",
