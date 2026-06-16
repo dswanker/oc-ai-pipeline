@@ -600,50 +600,62 @@ def _build_odm_xml(study_oid: str, site_oid: str,
                 "" if is_common
                 else f' OpenClinica:StartDate="{UAT_VISIT_DATE}"'
             )
-            # SE_COMMON and SE_UNSCHEDULED are repeating events — OC4
-            # requires StudyEventRepeatKey to create a new event instance.
-            # Without it OC cannot place ItemGroupData into the event.
-            # Visit-Based events must NOT have this attribute.
-            ev_repeat_attr = (
-                ' StudyEventRepeatKey="1"' if is_common else ""
-            )
-            # SE_COMMON/SE_UNSCHEDULED repeating events require
-            # TransactionType="Insert" on StudyEventData to tell OC to
-            # create a new event instance. Visit-Based events are
-            # pre-scheduled and do not need TransactionType on the event.
-            ev_tx_attr = ' TransactionType="Insert"' if is_common else ""
-            lines.append(
-                f'      <StudyEventData StudyEventOID="{ev_oid}"{ev_repeat_attr}{ev_tx_attr}{start_attr}>'
-            )
-            for form_oid, igs in forms.items():
-                # SE_COMMON/SE_UNSCHEDULED: TransactionType="Insert" on FormData
-                # creates the form construct (instance). Without it OC returns
-                # errorCode.formMissingStudyEventConstruct for repeating-event forms.
-                # Visit-Based events have pre-existing constructs — no TX needed.
-                fo_tx = ' TransactionType="Insert"' if is_common else ''
-                lines.append(f'        <FormData FormOID="{form_oid}"{fo_tx}>')
-                for ig_oid, items in igs.items():
-                    # SE_COMMON and SE_UNSCHEDULED events use repeating
-                    # ItemGroups — OC4 requires ItemGroupRepeatKey to create
-                    # a new repeat instance. Without it OC silently discards
-                    # the ItemGroupData. Visit-Based events use non-repeating
-                    # item groups and should NOT have ItemGroupRepeatKey.
-                    ig_repeat_attr = (
-                        ' ItemGroupRepeatKey="1"' if is_common else ""
-                    )
+            if is_common:
+                # ── Repeating events (SE_COMMON, SE_UNSCHEDULED) ──────────────
+                # Each form is a SEPARATE event instance with its own
+                # StudyEventRepeatKey. OC4 does not allow multiple forms
+                # under one StudyEventData for repeating events — each form
+                # occurrence is independently scheduled and must have its own
+                # event wrapper. RepeatKeys are sequential: 1, 2, 3, ...
+                se_repeat_key = 1
+                for form_oid, igs in forms.items():
                     lines.append(
-                        f'          <ItemGroupData ItemGroupOID="{ig_oid}"'
-                        f'{ig_repeat_attr}'
+                        f'      <StudyEventData StudyEventOID="{ev_oid}"'
+                        f' StudyEventRepeatKey="{se_repeat_key}"'
                         f' TransactionType="Insert">'
                     )
-                    for item_oid, val in items:
+                    # TransactionType="Insert" on FormData creates the form
+                    # construct (instance) within the new event instance.
+                    lines.append(
+                        f'        <FormData FormOID="{form_oid}" TransactionType="Insert">'
+                    )
+                    for ig_oid, items in igs.items():
+                        # Repeating ItemGroups use ItemGroupRepeatKey="1"
                         lines.append(
-                            f'            <ItemData ItemOID="{item_oid}" '
-                            f'Value="{_xml_escape(val)}"/>'
+                            f'          <ItemGroupData ItemGroupOID="{ig_oid}"'
+                            f' ItemGroupRepeatKey="1" TransactionType="Insert">'
                         )
-                    lines.append('          </ItemGroupData>')
-                lines.append('        </FormData>')
-            lines.append('      </StudyEventData>')
+                        for item_oid, val in items:
+                            lines.append(
+                                f'            <ItemData ItemOID="{item_oid}" '
+                                f'Value="{_xml_escape(val)}"/>'
+                            )
+                        lines.append('          </ItemGroupData>')
+                    lines.append('        </FormData>')
+                    lines.append('      </StudyEventData>')
+                    se_repeat_key += 1
+            else:
+                # ── Visit-Based events (SE_SCREENING, SE_TREATMENT, etc.) ──
+                # All forms share one StudyEventData wrapper. Events are
+                # pre-scheduled — no TransactionType or RepeatKey needed.
+                lines.append(
+                    f'      <StudyEventData StudyEventOID="{ev_oid}"{start_attr}>'
+                )
+                for form_oid, igs in forms.items():
+                    lines.append(f'        <FormData FormOID="{form_oid}">')
+                    for ig_oid, items in igs.items():
+                        lines.append(
+                            f'          <ItemGroupData ItemGroupOID="{ig_oid}"'
+                            f' TransactionType="Insert">'
+                        )
+                        for item_oid, val in items:
+                            lines.append(
+                                f'            <ItemData ItemOID="{item_oid}" '
+                                f'Value="{_xml_escape(val)}"/>'
+                            )
+                        lines.append('          </ItemGroupData>')
+                    lines.append('        </FormData>')
+                lines.append('      </StudyEventData>')
     lines += ['    </SubjectData>', '  </ClinicalData>', '</ODM>']
     return "\n".join(lines)
 
