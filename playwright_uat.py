@@ -286,55 +286,79 @@ async def _test_one_form(
                                 await page.wait_for_timeout(1000)
 
                             # Find the form-section containing our form.
-                            # The SE_COMMON accordion shows section headings like
-                            # "Concomitant Medications", "Serious Adverse Event / SADE Report"
-                            # etc. These often don't match form_abbrev (e.g. "CM", "AESAE")
-                            # or fo_titles exactly because the UI renders the full OC board
-                            # title including any subtitle after " / ".
+                            # The SE_COMMON page shows sections like:
+                            #   "Concomitant Medications" (F_CM)
+                            #   "Serious Adverse Event / SADE Report" (F_AESAE)
+                            #   "Protocol Deviation" (F_DV)
+                            #   "Pregnancy Report" (F_PREG)
+                            # These headings don't match form_abbrev ("CM","AESAE") and
+                            # may not match fo_titles exactly either (subtitle after " / ").
                             #
-                            # Strategy: find all section headings (h3/h4 or elements with
-                            # a .form-menu sibling nearby), then do a CONTAINS check against
-                            # both the abbreviation and the display title. This is robust
-                            # to subtitle variations like " / SADE Report".
-                            _fa = form_abbrev
-                            _ft = (fo_titles or {}).get(fo, "")
+                            # Approach: each section is a p-card or similar container with
+                            # a heading AND a .form-menu button in the same Actions column.
+                            # Find every .form-menu button; for each one, walk UP to find
+                            # the section container, then look for a heading that contains
+                            # our display title (fo_titles) or abbreviation. Prefer
+                            # fo_titles match (longer, more specific) over abbrev match.
+                            _fa = form_abbrev       # e.g. "AESAE"
+                            _ft = (fo_titles or {}).get(fo, "")  # e.g. "Serious Adverse Event"
                             _clicked = await app_frame.evaluate(f"""() => {{
-                                const targets = ['{_fa}', '{_ft}'].filter(Boolean);
-                                // Helper: does any target appear anywhere in the text?
-                                const matchesAny = (txt) => targets.some(t =>
-                                    t && txt.toLowerCase().includes(t.toLowerCase()));
+                                const abbrev = '{_fa}'.toLowerCase();
+                                const title  = '{_ft}'.toLowerCase();
 
-                                // Strategy 1: look for section heading elements whose
-                                // text contains our target, then find .form-menu in
-                                // the same section container (parent or sibling search).
-                                const headings = Array.from(document.querySelectorAll(
-                                    'h1,h2,h3,h4,h5,h6,th,[class*="title"],[class*="header"],[class*="heading"],[class*="label"]'
-                                ));
-                                for (const h of headings) {{
-                                    const htxt = h.textContent.trim();
-                                    if (!matchesAny(htxt)) continue;
-                                    // Walk up to find a container with .form-menu
-                                    let el = h.parentElement;
-                                    for (let i = 0; i < 12; i++) {{
-                                        if (!el) break;
-                                        const menu = el.querySelector('.form-menu');
-                                        if (menu) {{ menu.click(); return htxt; }}
-                                        el = el.parentElement;
+                                // Score a text node: 2=title match, 1=abbrev match, 0=no match
+                                const score = (txt) => {{
+                                    const t = txt.toLowerCase();
+                                    if (title && t.includes(title)) return 2;
+                                    // Only use abbrev if it's 4+ chars to avoid "cm","dv" noise
+                                    if (abbrev.length >= 4 && t.includes(abbrev)) return 1;
+                                    return 0;
+                                }};
+
+                                // For each .form-menu button, score the containing section's text
+                                const menus = Array.from(document.querySelectorAll('.form-menu'));
+                                let best = null, bestScore = 0;
+                                for (const menu of menus) {{
+                                    // Walk up to find the section container (card/row/article)
+                                    let container = menu.parentElement;
+                                    for (let i = 0; i < 15; i++) {{
+                                        if (!container) break;
+                                        const tag = container.tagName.toLowerCase();
+                                        // Stop at a meaningful container boundary
+                                        if (['section','article','li','tr','p-card',
+                                             'p-table','p-panel','div'].includes(tag) &&
+                                            container.querySelector('h1,h2,h3,h4,h5,h6,th')) {{
+                                            const headingEl = container.querySelector(
+                                                'h1,h2,h3,h4,h5,h6,th');
+                                            if (headingEl) {{
+                                                const s = score(headingEl.textContent);
+                                                if (s > bestScore) {{
+                                                    bestScore = s;
+                                                    best = {{ menu, label: headingEl.textContent.trim() }};
+                                                }}
+                                            }}
+                                            break;
+                                        }}
+                                        container = container.parentElement;
                                     }}
                                 }}
 
-                                // Strategy 2: fallback — text walker with contains check
-                                const walker = document.createTreeWalker(
-                                    document.body, NodeFilter.SHOW_TEXT);
-                                let node;
-                                while (node = walker.nextNode()) {{
-                                    const txt = node.textContent.trim();
-                                    if (!matchesAny(txt)) continue;
-                                    let el = node.parentElement;
-                                    for (let i = 0; i < 12; i++) {{
+                                if (best && bestScore > 0) {{
+                                    best.menu.click();
+                                    return best.label;
+                                }}
+
+                                // Fallback: find ANY heading containing our title, then
+                                // find the nearest .form-menu within its section.
+                                const allH = Array.from(document.querySelectorAll(
+                                    'h1,h2,h3,h4,h5,h6,th'));
+                                for (const h of allH) {{
+                                    if (score(h.textContent) === 0) continue;
+                                    let el = h.parentElement;
+                                    for (let i = 0; i < 15; i++) {{
                                         if (!el) break;
-                                        const menu = el.querySelector('.form-menu');
-                                        if (menu) {{ menu.click(); return txt; }}
+                                        const m = el.querySelector('.form-menu');
+                                        if (m) {{ m.click(); return h.textContent.trim(); }}
                                         el = el.parentElement;
                                     }}
                                 }}
