@@ -2895,20 +2895,48 @@ async def probe_sso_session(subdomain: str, session_path: str,
                 await page.goto(my_studies_url,
                                 wait_until="networkidle", timeout=30000)
                 await page.wait_for_timeout(2000)
-                # Live session: study cards render.
+                # Live session check: verify the Keycloak token in localStorage
+                # is present and not expired. Angular can cache study cards
+                # briefly even after token expiry (false-positive from
+                # wait_for_selector alone), so we read the token directly.
                 try:
-                    await page.wait_for_selector("a.btn-design",
-                                                 timeout=20000)
+                    token_info = await page.evaluate("""() => {
+                        const raw = localStorage.getItem('jhi-idtoken');
+                        if (!raw) return {present: false};
+                        try {
+                            const parts = raw.split('.');
+                            if (parts.length < 2) return {present: true, expired: true};
+                            const payload = JSON.parse(atob(parts[1]));
+                            const now = Math.floor(Date.now() / 1000);
+                            return {present: true, expired: payload.exp < now, exp: payload.exp, now: now};
+                        } catch(e) { return {present: true, expired: true}; }
+                    }""")
+                    if not token_info.get('present', False):
+                        print(f"[session-preflight] SSO session STALE "
+                              f"for {subdomain} (no jhi-idtoken in localStorage) "
+                              f"— will re-request auth", flush=True)
+                        return False
+                    if token_info.get('expired', True):
+                        exp = token_info.get('exp', 0)
+                        now = token_info.get('now', 0)
+                        print(f"[session-preflight] SSO session STALE "
+                              f"for {subdomain} (token expired {now - exp}s ago) "
+                              f"— will re-request auth", flush=True)
+                        return False
+                    # Token is present and not expired — confirm study cards too
+                    try:
+                        await page.wait_for_selector("a.btn-design", timeout=10000)
+                    except Exception:
+                        pass  # No cards visible but token is live — fail-open
                     print(f"[session-preflight] SSO session live for "
-                          f"{subdomain} (study cards visible)", flush=True)
+                          f"{subdomain} (token valid, cards visible)", flush=True)
                     return True
-                except Exception:
-                    # No cards. If we were bounced to Keycloak, the
-                    # session is genuinely stale -> re-auth.
+                except Exception as _probe_err:
+                    # Token check itself failed — fall back to card check
                     if await _session_expired(page):
                         print(f"[session-preflight] SSO session STALE "
-                              f"for {subdomain} (redirected to Keycloak "
-                              f"login) — will re-request auth", flush=True)
+                              f"for {subdomain} (redirected to Keycloak login) "
+                              f"— will re-request auth", flush=True)
                         return False
                     # Cards missing but not on the auth page: ambiguous
                     # (slow render, no studies, transient). Fail open so
