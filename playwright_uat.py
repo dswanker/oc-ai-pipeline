@@ -612,6 +612,15 @@ async def _test_one_form(
                                 _q = await form_frame.evaluate(
                                     "() => document.querySelectorAll('.question').length")
                                 print(f"[pw-uat] {fo}/{ev} Enketo ready questions={_q}", flush=True)
+                                try:
+                                    _sample = await form_frame.evaluate("""() => {
+                                        const els = Array.from(document.querySelectorAll('[data-name],[name]')).slice(0,4);
+                                        return els.map(e=>({dn:e.getAttribute('data-name'),n:e.getAttribute('name')}));
+                                    }""")
+                                    if _sample:
+                                        print(f"[pw-uat] {fo}/{ev} DIAG attrs: {_sample}", flush=True)
+                                except Exception:
+                                    pass
                             except Exception as _qe:
                                 print(f"[pw-uat] {fo}/{ev} question count error: {_qe}", flush=True)
                         else:
