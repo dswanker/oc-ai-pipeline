@@ -224,15 +224,29 @@ async def _test_one_form(
                 await page.goto(url, timeout=NAV_TIMEOUT, wait_until="networkidle")
                 await page.wait_for_timeout(1000)
 
-                # Find matrix frame (study-runner-ui)
+                # Find matrix frame (study-runner-ui).
+                # Visit-based events: look for [title^="Edit "] buttons.
+                # SE_COMMON/repeating events: look for the p-accordion element
+                # that holds the common-event section — it renders even when no
+                # event instance exists yet (ODM load creates instances, but the
+                # accordion is present regardless). Without this distinction,
+                # repeating forms time out after 30s because [title^="Edit "]
+                # never appears for SE_COMMON (those use three-dot menus).
+                _is_repeating_ev = 'COMMON' in ev.upper() or ev.upper().startswith('SE_REP')
                 app_frame = None
                 _elapsed = 0.0
                 while _elapsed < 30:
                     for _f in page.frames:
                         try:
-                            has_edit = await _f.evaluate(
-                                "() => !!document.querySelector('[title^=\"Edit \"]')")
-                            if has_edit:
+                            if _is_repeating_ev:
+                                # SE_COMMON: detect the accordion regardless of
+                                # whether any instances are loaded yet.
+                                has_matrix = await _f.evaluate(
+                                    "() => !!document.querySelector('.p-accordion, [class*=accordion]')")
+                            else:
+                                has_matrix = await _f.evaluate(
+                                    "() => !!document.querySelector('[title^=\"Edit \"]')")
+                            if has_matrix:
                                 app_frame = _f
                                 n = await _f.evaluate(
                                     "() => document.querySelectorAll('[title^=\"Edit \"]').length")
