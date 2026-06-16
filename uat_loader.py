@@ -957,8 +957,13 @@ def _evaluate_uat_cases(
         is_calc_case     = "=" in lv and not lv.startswith("20")  # field=value patterns
         is_multistep     = "then" in lv_lower  # multi-step setup like "ICFDAT=x, then date=y"
         is_visibility    = any(x in expected.upper() for x in ["VISIBLE", "HIDDEN", "RELEVANT"])
-        is_ui_constraint = any(x in expected for x in ["error shown", "Form does not save",
-                                                         "Constraint fires", "constraint"])
+        # is_ui_constraint: only mark as not-testable-via-ODM when the test
+        # genuinely requires Playwright to observe a UI error. "No constraint
+        # error. Form saves." happy-path rows with plain load values ARE
+        # testable via ODM read-back — the value loads and is stored = Pass.
+        # Only skip rows that expect an error to appear in the UI.
+        is_ui_constraint = any(x in expected for x in [
+            "error shown", "Form does not save", "Constraint fires"])
         # Calc rows with multiple inputs (ODI1=x, ODI2=y) are loaded via ODM
         # and OC computes the output with runFormLogic=y — these ARE testable
         is_pure_calc     = "Calc path" in str(row[col_idx.get("Scenario", 1) - 1].value or "")
