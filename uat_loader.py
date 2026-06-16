@@ -576,6 +576,15 @@ def _build_odm_xml(study_oid: str, site_oid: str,
     ev_summary = {ev: sum(len(items) for rk_d in rk_map.values() for fo_d in rk_d.values() for items in fo_d.values())
                   for ev, rk_map in events.items()}
     print(f"[odm-build] items per event: {ev_summary}", flush=True)
+    # Log per-form breakdown for SE_COMMON so we can see which repeating
+    # forms actually got loadable rows (seed rows or real values).
+    if "SE_COMMON" in events:
+        _common_fo_counts = {}
+        for _rk_d in events["SE_COMMON"].values():
+            for _fo, _ig_d in _rk_d.items():
+                _n = sum(len(v) for v in _ig_d.values())
+                _common_fo_counts[_fo] = _common_fo_counts.get(_fo, 0) + _n
+        print(f"[odm-build] SE_COMMON items per form: {_common_fo_counts}", flush=True)
     # Log drop examples for each reason
     for reason, examples in _drop_examples.items():
         print(f"[odm-build] drop/{reason} examples: {examples}", flush=True)
