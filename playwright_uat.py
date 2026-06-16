@@ -75,10 +75,16 @@ def _classify_pw_row(row_dict: dict) -> Optional[str]:
         return "leave_blank"
     if any(x in exp.upper() for x in ["VISIBLE", "HIDDEN", "RELEVANT"]):
         return "visibility"
-    # Constraint: has "then" or expected mentions Constraint/error
-    if ("then" in lv_lower or "=" in lv) and any(
-            x in exp for x in ["Constraint", "constraint", "error", "Form saves",
-                                "Form does not save", "No constraint"]):
+    # Constraint: expected result mentions a constraint or error condition.
+    # Two sub-cases:
+    # (a) multi-step: load value has "then" or "=" (field=value setup) — ODM
+    #     loads prereqs, Playwright reads the error indicator
+    # (b) plain value: load value is a direct field value (e.g. "-1", "2026-06-17",
+    #     "ZZZ_INVALID") — Playwright enters the value, saves, reads the error
+    _is_constraint_exp = any(x in exp for x in [
+        "Constraint fires", "Form does not save", "error shown",
+        "No constraint", "Form saves", "constraint"])
+    if _is_constraint_exp:
         return "constraint"
     return None
 
@@ -188,6 +194,50 @@ async def _fill_and_save(frame, field_name: str, form_oid: str):
                 return
         except Exception:
             pass
+
+
+async def _enter_field_value(frame, field_name: str, value: str, form_oid: str):
+    """
+    Enter a value into a specific field in Enketo and save.
+    Used for constraint-fires tests where ODM doesn't pre-load the value —
+    Playwright enters the value directly in the browser.
+    Handles text inputs, date inputs, select_one (radio/select), and integers.
+    """
+    fn_lower = field_name.lower()
+    selectors = [
+        f"[data-name='{field_name}']",
+        f"[data-name='{fn_lower}']",
+        f"[name='{field_name}']",
+        f"[name='{fn_lower}']",
+        f"[name*='/{field_name}']",
+        f"[data-name*='/{field_name}']",
+    ]
+    for sel in selectors:
+        try:
+            els = await frame.query_selector_all(sel)
+            for el in els:
+                tag = (await el.get_attribute("type") or "").lower()
+                el_type = await el.evaluate("e => e.tagName.toLowerCase()")
+                if el_type == "select":
+                    await el.select_option(value=value)
+                    await frame.wait_for_timeout(300)
+                    return True
+                elif tag in ("radio", "checkbox"):
+                    # Click the option matching the value
+                    opt = await frame.query_selector(
+                        f"{sel}[value='{value}'], input[type='radio'][value='{value}']")
+                    if opt:
+                        await opt.click()
+                        await frame.wait_for_timeout(300)
+                        return True
+                elif el_type in ("input", "textarea"):
+                    await el.triple_click()
+                    await el.type(value)
+                    await frame.wait_for_timeout(300)
+                    return True
+        except Exception:
+            pass
+    return False
 
 
 
@@ -613,9 +663,27 @@ async def _test_one_form(
 
                     elif test_type == "constraint":
                         frame = form_frame or page
+                        # Two sub-cases:
+                        # (a) multi-step (lv has "=" or "then"): ODM pre-loaded
+                        #     the value; just read the error indicator now.
+                        # (b) plain value (lv is a direct field value): enter
+                        #     the value into the field, save, then read errors.
+                        _lv_is_plain = (
+                            "then" not in lv.lower()
+                            and "=" not in lv
+                            and lv.lower() not in ("(leave blank)", "")
+                        )
+                        if _lv_is_plain and form_frame:
+                            # Enter the value directly, then submit
+                            _entered = await _enter_field_value(
+                                form_frame, field_name, lv, fo)
+                            if _entered:
+                                await _fill_and_save(form_frame, field_name, fo)
+                            # brief wait for Enketo to evaluate constraint
+                            await page.wait_for_timeout(1000)
                         errors = await _read_field_errors(frame, field_name)
                         expect_error = any(x in exp for x in
-                            ["Constraint fires", "constraint", "error shown", "does not save"])
+                            ["Constraint fires", "error shown", "does not save"])
                         if expect_error:
                             if errors:
                                 actual = f"Constraint: {errors[0][:120]}"
