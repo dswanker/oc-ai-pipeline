@@ -522,20 +522,9 @@ def _build_odm_xml(study_oid: str, site_oid: str,
             _drop_blank += 1
             _record_drop("leave_blank", row, val)
             continue  # required-field test — Playwright handles
-        # Drop narrative date placeholders that are human-readable descriptions,
-        # not actual loadable values (e.g. "Today's date", "Any valid date",
-        # "Sample text"). These are DVS boundary-test annotations that describe
-        # what value to use rather than the value itself — submitting them
-        # literally causes errorCode.invalidDateFormat or similar OC errors.
-        _NARRATIVE_PATTERNS = (
-            "today", "yesterday", "tomorrow", "any valid", "any past",
-            "any future", "any date", "a valid", "current date",
-            "sample text", "test value",
-        )
-        if any(p in val.lower() for p in _NARRATIVE_PATTERNS):
-            _drop_blank += 1
-            _record_drop("leave_blank", row, val)
-            continue  # narrative placeholder — not a loadable value
+        # Note: date fields now emit actual YYYY-MM-DD values from the DVS
+        # generator (_date_str helper), so narrative placeholders like
+        # "Today's date" no longer appear in Load_Value columns.
         if "then" in val.lower():
             _drop_then += 1
             _record_drop("has_then", row, val)

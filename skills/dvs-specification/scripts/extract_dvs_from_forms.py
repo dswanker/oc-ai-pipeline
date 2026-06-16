@@ -58,6 +58,18 @@ def _oc_form_prefix(form_title: str) -> str:
     return cleaned[:5] if cleaned else ''
 
 
+def _date_str(offset_days: int = 0) -> str:
+    """Return a concrete date string (YYYY-MM-DD) offset from today.
+
+    offset_days=0  -> today
+    offset_days=-1 -> yesterday
+    offset_days=1  -> tomorrow
+    offset_days=-N -> N days ago
+    """
+    import datetime as _dt
+    return (_dt.date.today() + _dt.timedelta(days=offset_days)).strftime("%Y-%m-%d")
+
+
 def _date_offset(iso_date, days):
     """Return ISO date string offset by N days from given ISO date."""
     try:
@@ -473,9 +485,9 @@ def _sample_value_for_type(row_type, choices_for_field, field_name="", ctx=None)
         return choices_for_field[0] if choices_for_field else "1"
     if t == "integer":  return "1"
     if t == "decimal":  return "1.0"
-    if t == "date":     return "Today's date"
+    if t == "date":     return _date_str(0)          # today as YYYY-MM-DD
     if t == "time":     return "12:00"
-    if t == "datetime": return "Today's date 12:00"
+    if t == "datetime": return _date_str(0) + " 12:00" # today as YYYY-MM-DD HH:MM
     return "Test value"
 
 
@@ -814,25 +826,25 @@ def _infer_test_cases(check, row, choices_for_field, ctx=None, world=None):
         if "max_date" in parts or "max_date_excl" in parts:
             return [
                 {"scenario":   "Happy path: today's date",
-                 "input_data": "Today's date",
+                 "input_data": _date_str(0),
                  "expected":   "No constraint error. Form saves."},
                 {"scenario":   "Happy path: a date in the past",
-                 "input_data": "Yesterday's date (or any past date)",
+                 "input_data": _date_str(-1),
                  "expected":   "No constraint error. Form saves."},
                 {"scenario":   "Sad path: future date",
-                 "input_data": "Tomorrow's date (any future date)",
+                 "input_data": _date_str(1),
                  "expected":   f"Constraint fires. Message: {msg_short}"},
             ]
         if "min_date" in parts or "min_date_excl" in parts:
             return [
                 {"scenario":   "Happy path: today's date",
-                 "input_data": "Today's date",
+                 "input_data": _date_str(0),
                  "expected":   "No constraint error. Form saves."},
                 {"scenario":   "Happy path: future date",
-                 "input_data": "Tomorrow's date or later",
+                 "input_data": _date_str(1),
                  "expected":   "No constraint error. Form saves."},
                 {"scenario":   "Sad path: past date",
-                 "input_data": "Yesterday's date or earlier",
+                 "input_data": _date_str(-1),
                  "expected":   f"Constraint fires. Message: {msg_short}"},
             ]
 
@@ -840,13 +852,13 @@ def _infer_test_cases(check, row, choices_for_field, ctx=None, world=None):
         days = parts["min_date_days_ago"]
         return [
             {"scenario":   f"Happy path: date within last {days} days",
-             "input_data": f"Date {days // 2} days ago",
+             "input_data": _date_str(-(days // 2)),
              "expected":   "No constraint error. Form saves."},
             {"scenario":   "Happy path: today's date",
-             "input_data": "Today's date",
+             "input_data": _date_str(0),
              "expected":   "No constraint error. Form saves."},
             {"scenario":   f"Sad path: date older than {days} days ago",
-             "input_data": f"Date {days + 10} days ago",
+             "input_data": _date_str(-(days + 10)),
              "expected":   f"Constraint fires. Message: {msg_short}"},
         ]
 
