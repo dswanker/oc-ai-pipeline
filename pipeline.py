@@ -3837,7 +3837,7 @@ async def run_pipeline(item_id):
                 _stored_titles = _rec_for_ft.get("fo_titles")
                 if _stored_titles and isinstance(_stored_titles, dict):
                     _uat_fo_titles = _stored_titles
-                    print(f"[uat-only] fo_titles from upload record: {len(_uat_fo_titles)} forms", flush=True)
+                    print(f"[uat-only] fo_titles from upload record: {len(_uat_fo_titles)} forms: {_uat_fo_titles}", flush=True)
             except Exception as _urf:
                 print(f"[uat-only] upload record fo_titles read failed (non-fatal): {_urf}", flush=True)
             # Second try: load from spec JSON file on board (fallback)
