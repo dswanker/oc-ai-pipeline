@@ -3440,7 +3440,7 @@ def _ensure_required_forms(spec: dict, protocol_num: str) -> dict:
             "form_title": "Date of Visit",
             "form_category": "INFRASTRUCTURE",
             "cdash_domain": None,
-            "visits_assigned": ["ALL_SCHEDULED"],
+            "visits_assigned": ["SE_SCREENING"],
             "has_repeating_group": False,
             "is_epro": False,
             "arm_applicability": "ALL",

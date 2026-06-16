@@ -1042,7 +1042,13 @@ def _build_form_event_map(struct_json):
                   or form.get("events")
                   or [])
         if fid and visits:
-            mapping[fid if fid.startswith('F_') else f'F_{fid}'] = visits[0]
+            # ALL_SCHEDULED is a sentinel (not a real OC4 event OID) used when
+            # DOV is assigned to every scheduled visit. Map it to SE_SCREENING
+            # so the DVS ODM column resolves to a real event OID.
+            first_visit = visits[0]
+            if first_visit == 'ALL_SCHEDULED':
+                first_visit = 'SE_SCREENING'
+            mapping[fid if fid.startswith('F_') else f'F_{fid}'] = first_visit
     if not mapping:
         print(f"[form_event_map] WARNING: no mappings built. First form sample: "
               f"{str(struct_json.get('forms', [{}])[0])[:300]}", flush=True)
