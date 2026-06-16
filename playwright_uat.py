@@ -650,6 +650,8 @@ async def _test_one_form(
                         continue
 
                     row_results.append((row, actual, result, now_str))
+                    if result == "Fail":
+                        print(f"[pw-uat] FAIL {uid} {fo}/{item} type={test_type} actual={actual[:60]!r}", flush=True)
 
                 except Exception as e:
                     print(f"[pw-uat] {uid} error: {e}", flush=True)
