@@ -349,24 +349,60 @@ async def _test_one_form(
 
                             if _clicked:
                                 # Wait for PrimeNG to render the popup menu.
-                                # The .form-menu click is synchronous inside evaluate()
-                                # but the menu items render asynchronously — poll
-                                # until items appear (up to 3s) rather than fixed wait.
+                                # On early page load, the menu can open with zero items
+                                # because PrimeNG hasn't finished mounting the component.
+                                # Strategy: check for items; if empty, dismiss the popup
+                                # (press Escape) and re-click the menu button. Repeat up
+                                # to 6 times (3s total). Re-clicking forces PrimeNG to
+                                # re-evaluate menu content after page settles.
                                 _edit_clicked = None
                                 for _menu_attempt in range(6):
                                     await page.wait_for_timeout(500)
-                                    _edit_clicked = await app_frame.evaluate("""() => {
+                                    _edit_clicked = await app_frame.evaluate(f"""() => {{
                                         const items = Array.from(
                                             document.querySelectorAll('.p-menuitem-link'));
-                                        // Prefer Edit, fall back to Add
                                         const edit = items.find(
                                             i => i.textContent.trim() === 'Edit');
-                                        if (edit) { edit.click(); return 'edit'; }
+                                        if (edit) {{ edit.click(); return 'edit'; }}
                                         const add = items.find(
                                             i => i.textContent.trim() === 'Add');
-                                        if (add) { add.click(); return 'add'; }
+                                        if (add) {{ add.click(); return 'add'; }}
+                                        // Menu is empty — dismiss it and re-find the button
+                                        // so the caller can re-click on next iteration.
+                                        const open = document.querySelector(
+                                            '.p-menu.p-component:not([style*="display: none"]),' +
+                                            '.p-tieredmenu, .p-contextmenu');
+                                        if (open) {{
+                                            // Close by clicking elsewhere
+                                            document.body.click();
+                                        }}
+                                        // Re-click the form-menu for this section
+                                        const title = '{_ft}'.toLowerCase();
+                                        const abbrev = '{_fa}'.toLowerCase();
+                                        const score = (txt) => {{
+                                            const t = txt.toLowerCase();
+                                            if (title && t.includes(title)) return 2;
+                                            if (abbrev.length >= 5 && t.includes(abbrev)) return 1;
+                                            return 0;
+                                        }};
+                                        let bestEl = null, bestScore = 0;
+                                        for (const el of document.querySelectorAll('*')) {{
+                                            if (el.children.length > 3) continue;
+                                            const txt = el.textContent.trim();
+                                            if (!txt || txt.length > 120) continue;
+                                            const s = score(txt);
+                                            if (s > bestScore) {{ bestScore = s; bestEl = el; }}
+                                        }}
+                                        if (!bestEl || bestScore === 0) return null;
+                                        let container = bestEl;
+                                        for (let i = 0; i < 20; i++) {{
+                                            if (!container) break;
+                                            const menu = container.querySelector('.form-menu');
+                                            if (menu) {{ menu.click(); return null; }}
+                                            container = container.parentElement;
+                                        }}
                                         return null;
-                                    }""")
+                                    }}""")
                                     if _edit_clicked:
                                         break
                                 # Click Edit or Add — first repeat instance may
