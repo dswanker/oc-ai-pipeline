@@ -131,18 +131,39 @@ async def _is_field_visible(page, field_name: str, form_oid: str) -> Optional[bo
     # OC4 Enketo confirmed format: name="/data/FIELDNAME" (flat) or
     # name="/data/GROUPNAME/FIELDNAME" (grouped). Use ends-with selector
     # to match both: input[name$='/FIELDNAME']
-    candidates = [
-        # Primary: ends-with /FIELDNAME — matches both flat and grouped paths
-        f"input[name$='/{field_name}'], select[name$='/{field_name}'], textarea[name$='/{field_name}']",
-        f"input[name$='/{fn_lower}'], select[name$='/{fn_lower}'], textarea[name$='/{fn_lower}']",
-        # Exact flat path fallback
-        f"[name='/data/{field_name}']",
-        f"[name='/data/{fn_lower}']",
-        # Legacy data-name (in case some forms differ)
-        f"[data-name='{field_name}']",
-        f"[data-name*='/{field_name}']",
-    ]
+    # JS-based lookup — Playwright CSS engine mishandles '/' in attribute values
+    async def _js_find_visible(frm, fname):
+        return await frm.evaluate(f"""
+            (function() {{
+                var fn = {repr(fname)};
+                var flo = fn.toLowerCase();
+                var all = document.querySelectorAll('input,select,textarea');
+                for (var i=0; i<all.length; i++) {{
+                    var n = all[i].name || '';
+                    if (n.endsWith('/'+fn) || n.endsWith('/'+flo) ||
+                        n === '/data/'+fn || n === '/data/'+flo) {{
+                        var q = all[i].closest('.question') || all[i].closest('.form-group') || all[i];
+                        var s = window.getComputedStyle(q);
+                        if (s.display === 'none' || s.visibility === 'hidden') return 'hidden';
+                        return 'visible';
+                    }}
+                }}
+                return 'notfound';
+            }})()
+        """)
+
+    candidates = ["__js__"]  # sentinel
     for sel in candidates:
+        try:
+            el = None  # unused in JS path
+            _vis = await _js_find_visible(page, field_name)
+            if _vis == 'notfound':
+                break
+            return _vis == 'visible'
+        except Exception:
+            pass
+    # fallback: original CSS approach (kept for safety)
+    for sel in [f"[name='/data/{field_name}']", f"[name='/data/{fn_lower}']"]:
         try:
             el = await page.query_selector(sel)
             if el is not None:
@@ -230,17 +251,52 @@ async def _enter_field_value(frame, field_name: str, value: str, form_oid: str):
     fn_lower = field_name.lower()
     # OC4 Enketo: name="/data/FIELDNAME" (flat) or name="/data/GRP/FIELDNAME" (grouped)
     # Use ends-with selector to match both patterns
-    selectors = [
-        f"input[name$='/{field_name}'], select[name$='/{field_name}'], textarea[name$='/{field_name}']",
-        f"input[name$='/{fn_lower}'], select[name$='/{fn_lower}'], textarea[name$='/{fn_lower}']",
-        f"[name='/data/{field_name}']",
-        f"[data-name='{field_name}']",
-        f"[data-name*='/{field_name}']",
-    ]
+    # Use JS evaluate for field lookup: Playwright's CSS engine mishandles '/'
+    # in attribute values (e.g. name$='/FIELDNAME' silently returns nothing).
+    # frame.evaluate() uses the browser's native querySelectorAll which works correctly.
+    async def _js_find_field(frm, fname):
+        return await frm.evaluate(f"""
+            (function() {{
+                var fn = {repr(fname)};
+                var flo = fn.toLowerCase();
+                var all = document.querySelectorAll('input,select,textarea');
+                for (var i=0; i<all.length; i++) {{
+                    var n = all[i].name || '';
+                    if (n.endsWith('/'+fn) || n.endsWith('/'+flo) ||
+                        n === '/data/'+fn || n === '/data/'+flo) {{
+                        return i;
+                    }}
+                }}
+                return -1;
+            }})()
+        """)
+
+    async def _js_get_el(frm, fname, idx):
+        """Get element handle by its index in document.querySelectorAll result."""
+        return await frm.evaluate_handle(f"""
+            (function() {{
+                var fn = {repr(fname)};
+                var flo = fn.toLowerCase();
+                var all = document.querySelectorAll('input,select,textarea');
+                for (var i=0; i<all.length; i++) {{
+                    var n = all[i].name || '';
+                    if (n.endsWith('/'+fn) || n.endsWith('/'+flo) ||
+                        n === '/data/'+fn || n === '/data/'+flo) {{
+                        return all[i];
+                    }}
+                }}
+                return null;
+            }})()
+        """)
+
+    selectors = ["__js__"]  # sentinel — we use JS path below
     for sel in selectors:
         try:
-            # Short timeout per selector — don't hang 60s if field not found
-            els = await frame.query_selector_all(sel)
+            # JS-based lookup to avoid Playwright CSS '/' handling bug
+            _idx = await _js_find_field(frame, field_name)
+            if _idx < 0:
+                break  # not found, fall through
+            els = [await _js_get_el(frame, field_name, _idx)]
             for el in els:
                 try:
                     tag = (await el.get_attribute("type") or "").lower()
