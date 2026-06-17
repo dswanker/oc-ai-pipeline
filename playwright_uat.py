@@ -747,8 +747,21 @@ async def _test_one_form(
                     continue
 
                 try:
+                    # Re-acquire live frame at start of every row — concurrent workers
+                    # can cause the cached form_frame to detach between DIAG2 and the
+                    # test loop. Scan page.frames for a live form. frame each time.
+                    if form_frame and form_frame != app_frame:
+                        _live = None
+                        for _ff in page.frames:
+                            if 'form.' in _ff.url and 'openclinica' in _ff.url and not _ff.is_detached():
+                                _live = _ff
+                                break
+                        if _live:
+                            form_frame = _live
+                        # else keep existing form_frame (may still work or fail gracefully)
+                    frame = form_frame if form_frame else page
+
                     if test_type == "leave_blank":
-                        frame = await _get_live_frame(page, form_frame) if form_frame else page
                         await _fill_and_save(frame, field_name, fo)
                         errors = await _read_field_errors(frame, field_name)
                         if errors:
@@ -778,7 +791,6 @@ async def _test_one_form(
                             pass
 
                     elif test_type == "constraint":
-                        frame = await _get_live_frame(page, form_frame) if form_frame else page
                         # Two sub-cases:
                         # (a) multi-step (lv has "=" or "then"): ODM pre-loaded
                         #     the value; just read the error indicator now.
@@ -832,7 +844,6 @@ async def _test_one_form(
                                 pass
 
                     elif test_type == "visibility":
-                        frame = form_frame or page
                         visible = await _is_field_visible(frame, field_name, fo)
                         expect_visible = "VISIBLE" in exp.upper()
                         if visible is None:
