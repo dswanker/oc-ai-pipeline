@@ -196,66 +196,46 @@ async def _is_field_visible(page, field_name: str, form_oid: str) -> Optional[bo
 
 async def _fill_and_save(frame, field_name: str, form_oid: str):
     """
-    For leave_blank: click Submit in Enketo to trigger required-field validation.
-    Uses pure JS to avoid stale ElementHandle issues.
+    For leave_blank: trigger Enketo required-field validation without navigating.
+    Clicking .btn-primary navigates the iframe (kills frame for subsequent tests).
+    Instead, dispatch Enketo's internal validate mechanism via JS events.
     """
-    # Pure-JS submit click — try iframe form-footer first, then outer page.
-    # OC Enketo may render the Complete button inside the iframe form-footer
-    # OR in the outer Angular page depending on form mode.
     try:
-        # First: try inside the Enketo iframe
-        clicked = await frame.evaluate("""
+        result = await frame.evaluate("""
             (function() {
-                // OC Enketo renders a form-footer with .btn-primary inside the iframe
-                var sels = [
-                    '.form-footer .btn-primary',
-                    '.form-footer button',
-                    'button.btn-primary',
-                    'button[id*="submit"]',
-                    'button'
-                ];
-                for (var s = 0; s < sels.length; s++) {
-                    var btns = document.querySelectorAll(sels[s]);
-                    for (var i = 0; i < btns.length; i++) {
-                        var b = btns[i];
-                        var txt = (b.textContent || '').trim().toLowerCase();
-                        var style = window.getComputedStyle(b);
-                        if (style.display === 'none' || style.visibility === 'hidden') continue;
-                        if (style.pointerEvents === 'none') continue;
-                        b.click();
-                        return 'iframe:' + txt;
-                    }
+                // Strategy 1: call enketo's validate() API if exposed
+                if (window.form && typeof window.form.validate === 'function') {
+                    window.form.validate();
+                    return 'enketo-validate';
                 }
-                // Count all buttons for diagnostics
-                return 'none:btns=' + document.querySelectorAll('button').length;
+                // Strategy 2: dispatch 'beforesend' event on the form — enketo
+                // listens for this and runs validate() before submission
+                var form = document.querySelector('form.or');
+                if (form) {
+                    // Trigger the checkConstraints flow by dispatching input events
+                    // on all empty required fields to mark them as invalid
+                    var inputs = form.querySelectorAll('input[data-required], input.required, [required]');
+                    inputs.forEach(function(inp) {
+                        if (!inp.value) {
+                            inp.dispatchEvent(new Event('change', {bubbles: true}));
+                            inp.dispatchEvent(new Event('blur', {bubbles: true}));
+                        }
+                    });
+                    // Dispatch validate event that enketo listens for
+                    form.dispatchEvent(new CustomEvent('enketo-validate', {bubbles: true}));
+                    // Also try the submit button's contained validate logic
+                    // by dispatching a 'submit' but with cancelable=true and
+                    // preventing the actual navigation
+                    var evt = new Event('submit', {bubbles: true, cancelable: true});
+                    var prevented = !form.dispatchEvent(evt);
+                    return 'form-events:prevented=' + prevented;
+                }
+                return 'no-form';
             })()
         """)
-        await frame.wait_for_timeout(2500)
-    except Exception as _e:
-        clicked = f'err:{_e}'
-    # Log submit result for constraint debugging
-    if not (clicked or '').startswith('iframe:'):
-        try:
-            # Also trigger Enketo validation directly via JS dispatch
-            await frame.evaluate("""
-                (function() {
-                    // Dispatch a synthetic submit event on the form element
-                    var form = document.querySelector('form.or');
-                    if (form) {
-                        form.dispatchEvent(new Event('submit', {bubbles: true, cancelable: true}));
-                        return 'form-submit-dispatched';
-                    }
-                    // Try firing validateForm if enketo instance is accessible
-                    if (window.form && typeof window.form.validate === 'function') {
-                        window.form.validate();
-                        return 'enketo-validate';
-                    }
-                    return 'no-form';
-                })()
-            """)
-            await frame.wait_for_timeout(1000)
-        except Exception:
-            pass
+        await frame.wait_for_timeout(1200)
+    except Exception:
+        pass
 
 
 async def _get_live_frame(page, cached_frame):
@@ -901,8 +881,28 @@ async def _test_one_form(
                             _entered = await _enter_field_value(
                                 frame, field_name, lv, fo)
                             if _entered:
-                                await _fill_and_save(frame, field_name, fo)
-                                await page.wait_for_timeout(800)
+                                # Trigger blur to fire Enketo constraint validation
+                                # (constraint errors fire on blur, not on submit)
+                                try:
+                                    await frame.evaluate(f"""
+                                        (function() {{
+                                            var fn = {repr(field_name)};
+                                            var flo = fn.toLowerCase();
+                                            var all = document.querySelectorAll('input,select,textarea');
+                                            for (var i = 0; i < all.length; i++) {{
+                                                var n = all[i].name || '';
+                                                if (n.endsWith('/'+fn) || n.endsWith('/'+flo) ||
+                                                    n === '/data/'+fn || n === '/data/'+flo) {{
+                                                    all[i].dispatchEvent(new Event('blur', {{bubbles:true}}));
+                                                    all[i].dispatchEvent(new Event('change', {{bubbles:true}}));
+                                                    break;
+                                                }}
+                                            }}
+                                        }})()
+                                    """)
+                                except Exception:
+                                    pass
+                                await page.wait_for_timeout(600)
                             else:
                                 # Field not found — record and skip rather than
                                 # hanging on wait_for_timeout
@@ -913,11 +913,28 @@ async def _test_one_form(
                                     print(f"[pw-uat] FAIL {uid} {fo}/{item} type={test_type} actual={actual[:60]!r}", flush=True)
                                 continue
                         else:
-                            # Multi-step constraint: ODM pre-loaded the condition value.
-                            # Enketo only evaluates constraints after a save attempt —
-                            # trigger submit so constraint errors become visible.
-                            await _fill_and_save(frame, field_name, fo)
-                            await page.wait_for_timeout(800)
+                            # Multi-step constraint: ODM pre-loaded condition value.
+                            # Trigger blur on the target field to fire constraint check.
+                            try:
+                                await frame.evaluate(f"""
+                                    (function() {{
+                                        var fn = {repr(field_name)};
+                                        var flo = fn.toLowerCase();
+                                        var all = document.querySelectorAll('input,select,textarea');
+                                        for (var i = 0; i < all.length; i++) {{
+                                            var n = all[i].name || '';
+                                            if (n.endsWith('/'+fn) || n.endsWith('/'+flo) ||
+                                                n === '/data/'+fn || n === '/data/'+flo) {{
+                                                all[i].dispatchEvent(new Event('change', {{bubbles:true}}));
+                                                all[i].dispatchEvent(new Event('blur', {{bubbles:true}}));
+                                                break;
+                                            }}
+                                        }}
+                                    }})()
+                                """)
+                            except Exception:
+                                pass
+                            await page.wait_for_timeout(600)
                         errors = await _read_field_errors(frame, field_name)
                         expect_error = any(x in exp for x in
                             ["Constraint fires", "error shown", "does not save"])
@@ -950,8 +967,20 @@ async def _test_one_form(
                         # once per form so Enketo shows/hides gated fields correctly.
                         # We use a per-form flag to avoid re-submitting every row.
                         if not _visibility_save_done:
-                            await _fill_and_save(frame, field_name, fo)
-                            await page.wait_for_timeout(800)
+                            # Trigger Enketo relevance re-evaluation via change events
+                            # on all visible inputs (no submit — that kills the frame)
+                            try:
+                                await frame.evaluate("""
+                                    (function() {
+                                        var all = document.querySelectorAll('input,select,textarea');
+                                        for (var i = 0; i < all.length; i++) {
+                                            all[i].dispatchEvent(new Event('change', {bubbles:true}));
+                                        }
+                                    })()
+                                """)
+                            except Exception:
+                                pass
+                            await page.wait_for_timeout(600)
                             _visibility_save_done = True
                         visible = await _is_field_visible(frame, field_name, fo)
                         expect_visible = "VISIBLE" in exp.upper()
