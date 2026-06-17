@@ -614,13 +614,24 @@ async def _test_one_form(
                                 print(f"[pw-uat] {fo}/{ev} Enketo ready questions={_q}", flush=True)
                                 try:
                                     _sample = await form_frame.evaluate("""() => {
-                                        const els = Array.from(document.querySelectorAll('[data-name],[name]')).slice(0,4);
-                                        return els.map(e=>({dn:e.getAttribute('data-name'),n:e.getAttribute('name')}));
+                                        // Check inputs with name attr
+                                        const byName = Array.from(document.querySelectorAll('input[name],select[name],textarea[name]')).slice(0,6);
+                                        // Check .question elements for any attr
+                                        const questions = Array.from(document.querySelectorAll('.question')).slice(0,3);
+                                        const qAttrs = questions.map(q => ({
+                                            id: q.id,
+                                            cn: q.className.substring(0,40),
+                                            dn: q.getAttribute('data-name'),
+                                            n: q.getAttribute('name'),
+                                            // first input child
+                                            inp: (q.querySelector('input,select,textarea') || {name:'?',type:'?',className:'?'}).name
+                                        }));
+                                        return {inputs: byName.map(e=>({tag:e.tagName,type:e.type,name:e.name.substring(0,40)})), questions: qAttrs};
                                     }""")
                                     if _sample:
-                                        print(f"[pw-uat] {fo}/{ev} DIAG attrs: {_sample}", flush=True)
-                                except Exception:
-                                    pass
+                                        print(f"[pw-uat] {fo}/{ev} DIAG2: {_sample}", flush=True)
+                                except Exception as _de:
+                                    print(f"[pw-uat] {fo}/{ev} DIAG2 err: {_de}", flush=True)
                             except Exception as _qe:
                                 print(f"[pw-uat] {fo}/{ev} question count error: {_qe}", flush=True)
                         else:
