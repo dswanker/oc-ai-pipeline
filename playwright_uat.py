@@ -91,19 +91,18 @@ def _classify_pw_row(row_dict: dict) -> Optional[str]:
 
 async def _read_field_errors(page, field_name: str) -> list[str]:
     """
-    Read visible constraint error messages from Enketo.
-    Only reads CONSTRAINT errors (.invalid-constraint), not required-field
-    validation (.invalid-required) — Enketo marks all unfilled required
-    fields as .invalid-required by default before any user interaction,
-    which would cause all constraint tests to falsely report errors.
-    Constraint errors only appear after the field value triggers a
-    constraint violation.
+    Read visible validation error messages from Enketo.
+    Reads both CONSTRAINT errors (.invalid-constraint) and REQUIRED errors
+    (.invalid-required) that are visible after a save attempt.
+    Enketo shows .invalid-required on all unfilled required fields by default,
+    but only makes them visible (not display:none) after a submit attempt.
     """
     msgs = []
-    # Only read constraint errors — not required-field default invalid state
     selectors = [
         ".invalid-constraint .constraint-message",
         ".question.invalid-constraint",
+        ".invalid-required .required-message",
+        ".question.invalid-required .required-message",
         ".alert-danger",
         ".errorMessage",
     ]
@@ -129,17 +128,21 @@ async def _is_field_visible(page, field_name: str, form_oid: str) -> Optional[bo
     fn_lower = field_name.lower()
     form_bare = (form_oid.replace("F_", "", 1) if form_oid.startswith("F_") else form_oid).lower()
 
-    # Enketo selectors — field name appears in data-name, name, or id attributes
+    # OC4 Enketo confirmed format: name="/data/FIELDNAME" (no data-name attr)
+    # field_name is the short name e.g. "AETERM", "BRTHDAT"
     candidates = [
-        f"[data-name='{field_name}']",
-        f"[data-name='{field_name.lower()}']",
-        f".question[data-name*='{fn_lower}']",
-        f"[name='{field_name}']",
-        f"[name='{field_name.lower()}']",
-        f"input[name*='{fn_lower}'], select[name*='{fn_lower}'], textarea[name*='{fn_lower}']",
-        # OC4 sometimes uses full item OID path
+        # Primary: /data/FIELDNAME format confirmed by diagnostic
+        f"[name='/data/{field_name}']",
+        f"[name='/data/{field_name.lower()}']",
+        # Wildcard fallbacks
         f"[name*='/{field_name}']",
+        f"[name*='/{fn_lower}']",
+        # Legacy data-name patterns (in case some forms differ)
+        f"[data-name='{field_name}']",
         f"[data-name*='/{field_name}']",
+        f".question[data-name*='{fn_lower}']",
+        # Input/select elements directly
+        f"input[name*='{fn_lower}'], select[name*='{fn_lower}'], textarea[name*='{fn_lower}']",
     ]
     for sel in candidates:
         try:
@@ -204,12 +207,13 @@ async def _enter_field_value(frame, field_name: str, value: str, form_oid: str):
     Handles text inputs, date inputs, select_one (radio/select), and integers.
     """
     fn_lower = field_name.lower()
+    # OC4 Enketo confirmed format: name="/data/FIELDNAME"
     selectors = [
+        f"input[name='/data/{field_name}'], select[name='/data/{field_name}'], textarea[name='/data/{field_name}']",
+        f"input[name='/data/{fn_lower}'], select[name='/data/{fn_lower}'], textarea[name='/data/{fn_lower}']",
+        f"input[name*='/{field_name}'], select[name*='/{field_name}'], textarea[name*='/{field_name}']",
+        f"[name='/data/{field_name}']",
         f"[data-name='{field_name}']",
-        f"[data-name='{fn_lower}']",
-        f"[name='{field_name}']",
-        f"[name='{fn_lower}']",
-        f"[name*='/{field_name}']",
         f"[data-name*='/{field_name}']",
     ]
     for sel in selectors:
