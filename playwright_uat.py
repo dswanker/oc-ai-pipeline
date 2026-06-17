@@ -747,18 +747,25 @@ async def _test_one_form(
                     continue
 
                 try:
-                    # Re-acquire live frame at start of every row — concurrent workers
-                    # can cause the cached form_frame to detach between DIAG2 and the
-                    # test loop. Scan page.frames for a live form. frame each time.
+                    # Re-acquire live frame at start of every row.
+                    # Poll up to 5s for a non-detached form. frame — the frame
+                    # may still be loading when the first row starts executing.
                     if form_frame and form_frame != app_frame:
-                        _live = None
-                        for _ff in page.frames:
-                            if 'form.' in _ff.url and 'openclinica' in _ff.url and not _ff.is_detached():
-                                _live = _ff
+                        for _retry in range(10):
+                            _live = None
+                            for _ff in page.frames:
+                                if 'form.' in _ff.url and 'openclinica' in _ff.url and not _ff.is_detached():
+                                    try:
+                                        # Verify frame is actually usable
+                                        await _ff.evaluate("1")
+                                        _live = _ff
+                                    except Exception:
+                                        pass
+                                    break
+                            if _live:
+                                form_frame = _live
                                 break
-                        if _live:
-                            form_frame = _live
-                        # else keep existing form_frame (may still work or fail gracefully)
+                            await asyncio.sleep(0.5)
                     frame = form_frame if form_frame else page
 
                     if test_type == "leave_blank":
