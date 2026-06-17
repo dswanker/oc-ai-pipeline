@@ -128,21 +128,19 @@ async def _is_field_visible(page, field_name: str, form_oid: str) -> Optional[bo
     fn_lower = field_name.lower()
     form_bare = (form_oid.replace("F_", "", 1) if form_oid.startswith("F_") else form_oid).lower()
 
-    # OC4 Enketo confirmed format: name="/data/FIELDNAME" (no data-name attr)
-    # field_name is the short name e.g. "AETERM", "BRTHDAT"
+    # OC4 Enketo confirmed format: name="/data/FIELDNAME" (flat) or
+    # name="/data/GROUPNAME/FIELDNAME" (grouped). Use ends-with selector
+    # to match both: input[name$='/FIELDNAME']
     candidates = [
-        # Primary: /data/FIELDNAME format confirmed by diagnostic
+        # Primary: ends-with /FIELDNAME — matches both flat and grouped paths
+        f"input[name$='/{field_name}'], select[name$='/{field_name}'], textarea[name$='/{field_name}']",
+        f"input[name$='/{fn_lower}'], select[name$='/{fn_lower}'], textarea[name$='/{fn_lower}']",
+        # Exact flat path fallback
         f"[name='/data/{field_name}']",
-        f"[name='/data/{field_name.lower()}']",
-        # Wildcard fallbacks
-        f"[name*='/{field_name}']",
-        f"[name*='/{fn_lower}']",
-        # Legacy data-name patterns (in case some forms differ)
+        f"[name='/data/{fn_lower}']",
+        # Legacy data-name (in case some forms differ)
         f"[data-name='{field_name}']",
         f"[data-name*='/{field_name}']",
-        f".question[data-name*='{fn_lower}']",
-        # Input/select elements directly
-        f"input[name*='{fn_lower}'], select[name*='{fn_lower}'], textarea[name*='{fn_lower}']",
     ]
     for sel in candidates:
         try:
@@ -199,6 +197,29 @@ async def _fill_and_save(frame, field_name: str, form_oid: str):
             pass
 
 
+async def _get_live_frame(page, cached_frame):
+    """
+    Re-acquire the Enketo form frame from page.frames by URL match.
+    The cached frame reference goes stale when concurrent workers share
+    the same page and navigate different participants. This returns the
+    freshest matching frame, falling back to the cached one if not found.
+    """
+    if cached_frame is None:
+        return cached_frame
+    cached_url = cached_frame.url
+    if not cached_url or 'form.' not in cached_url:
+        return cached_frame
+    # Find the frame in page.frames that matches the cached URL
+    for f in page.frames:
+        if f.url == cached_url and not f.is_detached():
+            return f
+    # If exact URL not found, try any form. frame
+    for f in page.frames:
+        if 'form.' in f.url and 'openclinica' in f.url and not f.is_detached():
+            return f
+    return cached_frame
+
+
 async def _enter_field_value(frame, field_name: str, value: str, form_oid: str):
     """
     Enter a value into a specific field in Enketo and save.
@@ -207,11 +228,11 @@ async def _enter_field_value(frame, field_name: str, value: str, form_oid: str):
     Handles text inputs, date inputs, select_one (radio/select), and integers.
     """
     fn_lower = field_name.lower()
-    # OC4 Enketo confirmed format: name="/data/FIELDNAME"
+    # OC4 Enketo: name="/data/FIELDNAME" (flat) or name="/data/GRP/FIELDNAME" (grouped)
+    # Use ends-with selector to match both patterns
     selectors = [
-        f"input[name='/data/{field_name}'], select[name='/data/{field_name}'], textarea[name='/data/{field_name}']",
-        f"input[name='/data/{fn_lower}'], select[name='/data/{fn_lower}'], textarea[name='/data/{fn_lower}']",
-        f"input[name*='/{field_name}'], select[name*='/{field_name}'], textarea[name*='/{field_name}']",
+        f"input[name$='/{field_name}'], select[name$='/{field_name}'], textarea[name$='/{field_name}']",
+        f"input[name$='/{fn_lower}'], select[name$='/{fn_lower}'], textarea[name$='/{fn_lower}']",
         f"[name='/data/{field_name}']",
         f"[data-name='{field_name}']",
         f"[data-name*='/{field_name}']",
@@ -664,7 +685,7 @@ async def _test_one_form(
 
                 try:
                     if test_type == "leave_blank":
-                        frame = form_frame or page
+                        frame = await _get_live_frame(page, form_frame) if form_frame else page
                         await _fill_and_save(frame, field_name, fo)
                         errors = await _read_field_errors(frame, field_name)
                         if errors:
@@ -689,7 +710,7 @@ async def _test_one_form(
                             pass
 
                     elif test_type == "constraint":
-                        frame = form_frame or page
+                        frame = await _get_live_frame(page, form_frame) if form_frame else page
                         # Two sub-cases:
                         # (a) multi-step (lv has "=" or "then"): ODM pre-loaded
                         #     the value; just read the error indicator now.
@@ -931,9 +952,9 @@ async def run_playwright_uat(
 
         # Run all forms in parallel — each gets its own page, capped at 4 concurrent.
         global _PW_SEMAPHORE
-        _PW_SEMAPHORE = asyncio.Semaphore(4)
+        _PW_SEMAPHORE = asyncio.Semaphore(1)  # serialized: one form at a time to avoid stale frame refs
 
-        print(f"[pw-uat] running {len(by_form)} form(s) in parallel (max 4 concurrent)", flush=True)
+        print(f"[pw-uat] running {len(by_form)} form(s) serialized (max 1 concurrent)", flush=True)
         tasks = [
             _test_one_form(
                 context, fo, ev, form_rows,
