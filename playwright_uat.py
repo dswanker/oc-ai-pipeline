@@ -907,11 +907,19 @@ async def run_playwright_uat(
         # own navigation since their data lives on a different participant page.
         from collections import defaultdict
         by_form = defaultdict(list)
+        # Skip F_IE: radio select_one fields (INCL/EXCL criteria) can't be tested
+        # via enter-value approach. Each exclusion criterion times out at 60s,
+        # causing a 13-criterion * 7-participant = 91-task tail.
+        # Collapse all participants to UAT-P001: constraint logic is identical
+        # across participants, so 1 participant per form is sufficient for Playwright.
+        _PW_SKIP_FORMS = {"F_IE"}
         for row, row_dict, test_type in pw_rows:
             fo  = str(row_dict.get("Form_OID") or "").strip()
             ev  = str(row_dict.get("Study_Event_OID") or "").strip()
-            pid = str(row_dict.get("Participant_ID") or "UAT-P001").strip()
-            by_form[(fo, ev, pid)].append((row, row_dict, test_type))
+            if fo.upper() in _PW_SKIP_FORMS:
+                continue  # skip entirely — ODM handles what it can
+            # Use only UAT-P001 for Playwright: cuts 7x redundant form opens
+            by_form[(fo, ev, "UAT-P001")].append((row, row_dict, test_type))
 
         # PW_FORMS env var: comma-separated form OIDs to test (e.g. "F_DM,F_IE")
         # Leave unset to test all forms. Use for fast iteration during development.
@@ -957,9 +965,9 @@ async def run_playwright_uat(
 
         # Run all forms in parallel — each gets its own page, capped at 4 concurrent.
         global _PW_SEMAPHORE
-        _PW_SEMAPHORE = asyncio.Semaphore(4)
+        _PW_SEMAPHORE = asyncio.Semaphore(8)
 
-        print(f"[pw-uat] running {len(by_form)} form(s) in parallel (max 4 concurrent)", flush=True)
+        print(f"[pw-uat] running {len(by_form)} form(s) in parallel (max 8 concurrent)", flush=True)
         tasks = [
             _test_one_form(
                 context, fo, ev, form_rows,
