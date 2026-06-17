@@ -295,6 +295,13 @@ async def _enter_field_value(frame, field_name: str, value: str, form_oid: str):
             # JS-based lookup to avoid Playwright CSS '/' handling bug
             _idx = await _js_find_field(frame, field_name)
             if _idx < 0:
+                # Debug: count inputs in frame to see if JS is running in the right doc
+                try:
+                    _n = await frame.evaluate("() => document.querySelectorAll('input,select,textarea').length")
+                    _url = frame.url
+                    print(f"[pw-uat] JS field lookup: {field_name} not found, frame has {_n} inputs, url={_url[:80]}", flush=True)
+                except Exception as _je:
+                    print(f"[pw-uat] JS field lookup: frame.evaluate failed: {_je}", flush=True)
                 break  # not found, fall through
             els = [await _js_get_el(frame, field_name, _idx)]
             for el in els:
