@@ -289,45 +289,76 @@ async def _enter_field_value(frame, field_name: str, value: str, form_oid: str):
             }})()
         """)
 
-    selectors = ["__js__"]  # sentinel — we use JS path below
-    for sel in selectors:
-        try:
-            # JS-based lookup to avoid Playwright CSS '/' handling bug
-            _idx = await _js_find_field(frame, field_name)
-            if _idx < 0:
-                # Debug: count inputs in frame to see if JS is running in the right doc
-                try:
-                    _n = await frame.evaluate("() => document.querySelectorAll('input,select,textarea').length")
-                    _url = frame.url
-                    print(f"[pw-uat] JS field lookup: {field_name} not found, frame has {_n} inputs, url={_url[:80]}", flush=True)
-                except Exception as _je:
-                    print(f"[pw-uat] JS field lookup: frame.evaluate failed: {_je}", flush=True)
-                break  # not found, fall through
-            els = [await _js_get_el(frame, field_name, _idx)]
-            for el in els:
-                try:
-                    tag = (await el.get_attribute("type") or "").lower()
-                    el_type = await el.evaluate("e => e.tagName.toLowerCase()")
-                    if el_type == "select":
-                        await el.select_option(value=value)
-                        await frame.wait_for_timeout(300)
-                        return True
-                    elif tag in ("radio", "checkbox"):
-                        opt = await frame.query_selector(
-                            f"{sel}[value='{value}'], input[type='radio'][value='{value}']")
-                        if opt:
-                            await opt.click()
-                            await frame.wait_for_timeout(300)
-                            return True
-                    elif el_type in ("input", "textarea"):
-                        await el.triple_click()
-                        await el.type(value)
-                        await frame.wait_for_timeout(300)
-                        return True
-                except Exception:
-                    pass
-        except Exception as _efe:
-            print(f"[pw-uat] _enter_field_value outer exception for {field_name!r}: {_efe}", flush=True)
+    # Pure-JS field entry — avoids stale ElementHandle issues.
+    # All DOM interaction happens inside a single evaluate() call in the live frame.
+    try:
+        result = await frame.evaluate(f"""
+            (function() {{
+                var fn = {repr(field_name)};
+                var flo = fn.toLowerCase();
+                var val = {repr(value)};
+                var all = document.querySelectorAll('input,select,textarea');
+                var el = null;
+                for (var i = 0; i < all.length; i++) {{
+                    var n = all[i].name || '';
+                    if (n.endsWith('/'+fn) || n.endsWith('/'+flo) ||
+                        n === '/data/'+fn || n === '/data/'+flo) {{
+                        el = all[i];
+                        break;
+                    }}
+                }}
+                if (!el) {{
+                    var cnt = all.length;
+                    return 'notfound:' + cnt;
+                }}
+                var tag = el.tagName.toLowerCase();
+                var type = (el.getAttribute('type') || '').toLowerCase();
+                if (tag === 'select') {{
+                    for (var j = 0; j < el.options.length; j++) {{
+                        if (el.options[j].value === val || el.options[j].text === val) {{
+                            el.options[j].selected = true;
+                            el.dispatchEvent(new Event('change', {{bubbles:true}}));
+                            return 'ok';
+                        }}
+                    }}
+                    return 'select-nooption';
+                }} else if (type === 'radio' || type === 'checkbox') {{
+                    // For radio: find the radio with matching value
+                    for (var k = 0; k < all.length; k++) {{
+                        var rn = all[k].name || '';
+                        var rt = (all[k].getAttribute('type') || '').toLowerCase();
+                        if ((rn.endsWith('/'+fn) || rn.endsWith('/'+flo) ||
+                             rn === '/data/'+fn || rn === '/data/'+flo) &&
+                            (rt === 'radio' || rt === 'checkbox') &&
+                            all[k].value === val) {{
+                            all[k].click();
+                            return 'ok';
+                        }}
+                    }}
+                    // Click first matching radio if no value match
+                    el.click();
+                    return 'ok';
+                }} else {{
+                    // text / date / number / textarea
+                    el.focus();
+                    el.value = '';
+                    el.value = val;
+                    el.dispatchEvent(new Event('input', {{bubbles:true}}));
+                    el.dispatchEvent(new Event('change', {{bubbles:true}}));
+                    return 'ok';
+                }}
+            }})()
+        """)
+        if result == 'ok':
+            await frame.wait_for_timeout(400)
+            return True
+        elif result and result.startswith('notfound:'):
+            cnt = result.split(':')[1]
+            _url = frame.url
+            print(f"[pw-uat] JS field lookup: {field_name} not found, frame has {cnt} inputs, url={_url[:80]}", flush=True)
+        # else: select-nooption or other issue — fall through to return False
+    except Exception as _efe:
+        print(f"[pw-uat] _enter_field_value outer exception for {field_name!r}: {_efe}", flush=True)
     return False
 
 
