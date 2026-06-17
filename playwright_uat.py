@@ -913,12 +913,17 @@ async def run_playwright_uat(
         # Collapse all participants to UAT-P001: constraint logic is identical
         # across participants, so 1 participant per form is sufficient for Playwright.
         _PW_SKIP_FORMS = {"F_IE"}
+        _skip_row_results = []
         for row, row_dict, test_type in pw_rows:
             fo  = str(row_dict.get("Form_OID") or "").strip()
             ev  = str(row_dict.get("Study_Event_OID") or "").strip()
             if fo.upper() in _PW_SKIP_FORMS:
-                continue  # skip entirely — ODM handles what it can
-            # Use only UAT-P001 for Playwright: cuts 7x redundant form opens
+                # Write "Skip" result — radio select_one fields not testable via enter-value
+                _skip_row_results.append((row, "Skipped — radio/select field not testable via Playwright", "Skip", now_str))
+                skipped += 1
+                continue
+            # Use only UAT-P001 for Playwright: constraint logic is identical
+            # across participants; 1 participant per form cuts 7x redundant opens.
             by_form[(fo, ev, "UAT-P001")].append((row, row_dict, test_type))
 
         # PW_FORMS env var: comma-separated form OIDs to test (e.g. "F_DM,F_IE")
@@ -982,6 +987,14 @@ async def run_playwright_uat(
             for (fo, ev, pid), form_rows in by_form.items()
         ]
         results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Write skip results for forms not tested via Playwright
+        for row, actual, result, date in _skip_row_results:
+            row[col_idx["Actual Result"] - 1].value = actual
+            row[col_idx["Test Result"] - 1].value = result
+            row[col_idx["Status"] - 1].value = result
+            row[col_idx["Execution Date"] - 1].value = date
+            row[col_idx["Notes"] - 1].value = "Playwright"
 
         for res in results:
             if isinstance(res, Exception):
