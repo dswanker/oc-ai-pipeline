@@ -702,7 +702,12 @@ async def _test_one_form(
                                     _fp = _fp()
                                 if _fp and not _fp.is_closed():
                                     await _fp.reload(wait_until="domcontentloaded")
+                                    # Re-acquire form_frame after reload — old reference is detached
                                     try:
+                                        for _ff in _fp.frames:
+                                            if 'form.' in _ff.url and 'openclinica' in _ff.url:
+                                                form_frame = _ff
+                                                break
                                         await form_frame.wait_for_selector(".question", timeout=8000)
                                     except Exception:
                                         pass
@@ -952,9 +957,9 @@ async def run_playwright_uat(
 
         # Run all forms in parallel — each gets its own page, capped at 4 concurrent.
         global _PW_SEMAPHORE
-        _PW_SEMAPHORE = asyncio.Semaphore(1)  # serialized: one form at a time to avoid stale frame refs
+        _PW_SEMAPHORE = asyncio.Semaphore(4)
 
-        print(f"[pw-uat] running {len(by_form)} form(s) serialized (max 1 concurrent)", flush=True)
+        print(f"[pw-uat] running {len(by_form)} form(s) in parallel (max 4 concurrent)", flush=True)
         tasks = [
             _test_one_form(
                 context, fo, ev, form_rows,
