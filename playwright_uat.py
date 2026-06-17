@@ -197,25 +197,44 @@ async def _is_field_visible(page, field_name: str, form_oid: str) -> Optional[bo
 async def _fill_and_save(frame, field_name: str, form_oid: str):
     """
     For leave_blank: click Submit in Enketo to trigger required-field validation.
-    Must operate on the Enketo iframe frame object, not the outer page.
-    Enketo uses .form-footer submit button; OC wraps it with a specific class.
+    Uses pure JS to avoid stale ElementHandle issues.
     """
-    # Try to click Complete/Submit in the Enketo iframe frame
-    for sel in [
-        "button:has-text('Complete')",
-        "button:has-text('Submit')",
-        ".form-footer .btn-primary",
-        "button[id*='submit']",
-        "button.btn-primary",
-    ]:
-        try:
-            btn = await frame.query_selector(sel)
-            if btn and await btn.is_visible():
-                await btn.click()
-                await frame.wait_for_timeout(2000)
-                return
-        except Exception:
-            pass
+    # Pure-JS submit click — find first visible primary/submit button and click it
+    try:
+        clicked = await frame.evaluate("""
+            (function() {
+                var sels = [
+                    'button.btn-primary',
+                    'button[id*="submit"]',
+                    '.form-footer button',
+                    'button'
+                ];
+                for (var s = 0; s < sels.length; s++) {
+                    var btns = document.querySelectorAll(sels[s]);
+                    for (var i = 0; i < btns.length; i++) {
+                        var b = btns[i];
+                        var txt = (b.textContent || '').trim().toLowerCase();
+                        var style = window.getComputedStyle(b);
+                        if (style.display === 'none' || style.visibility === 'hidden') continue;
+                        if (txt.includes('submit') || txt.includes('complete') ||
+                            txt.includes('save') || txt.includes('send')) {
+                            b.click();
+                            return 'clicked:' + txt;
+                        }
+                    }
+                }
+                // fallback: click first visible button in form-footer
+                var footer = document.querySelector('.form-footer');
+                if (footer) {
+                    var fb = footer.querySelector('button:not([disabled])');
+                    if (fb) { fb.click(); return 'footer-btn:' + fb.textContent.trim(); }
+                }
+                return 'none';
+            })()
+        """)
+        await frame.wait_for_timeout(1500)
+    except Exception:
+        pass
 
 
 async def _get_live_frame(page, cached_frame):
@@ -764,6 +783,7 @@ async def _test_one_form(
             except Exception as e:
                 print(f"[pw-uat] {fo}/{ev} nav failed: {e}", flush=True)
 
+            _visibility_save_done = False  # trigger Enketo relevance re-eval once per form
             for row, row_dict, test_type in form_rows:
                 uid  = str(row_dict.get("UAT Case ID") or "")
                 lv   = str(row_dict.get("Load_Value") or "").strip()
@@ -861,6 +881,12 @@ async def _test_one_form(
                                 if result == "Fail":
                                     print(f"[pw-uat] FAIL {uid} {fo}/{item} type={test_type} actual={actual[:60]!r}", flush=True)
                                 continue
+                        else:
+                            # Multi-step constraint: ODM pre-loaded the condition value.
+                            # Enketo only evaluates constraints after a save attempt —
+                            # trigger submit so constraint errors become visible.
+                            await _fill_and_save(frame, field_name, fo)
+                            await page.wait_for_timeout(800)
                         errors = await _read_field_errors(frame, field_name)
                         expect_error = any(x in exp for x in
                             ["Constraint fires", "error shown", "does not save"])
@@ -888,6 +914,14 @@ async def _test_one_form(
                                 pass
 
                     elif test_type == "visibility":
+                        # Enketo relevance formulas re-evaluate after a save attempt.
+                        # The ODM has loaded the gate-condition value; trigger submit
+                        # once per form so Enketo shows/hides gated fields correctly.
+                        # We use a per-form flag to avoid re-submitting every row.
+                        if not _visibility_save_done:
+                            await _fill_and_save(frame, field_name, fo)
+                            await page.wait_for_timeout(800)
+                            _visibility_save_done = True
                         visible = await _is_field_visible(frame, field_name, fo)
                         expect_visible = "VISIBLE" in exp.upper()
                         if visible is None:
