@@ -326,8 +326,8 @@ async def _enter_field_value(frame, field_name: str, value: str, form_oid: str):
                         return True
                 except Exception:
                     pass
-        except Exception:
-            pass
+        except Exception as _efe:
+            print(f"[pw-uat] _enter_field_value outer exception for {field_name!r}: {_efe}", flush=True)
     return False
 
 
@@ -792,9 +792,9 @@ async def _test_one_form(
                         )
                         if _lv_is_plain and form_frame:
                             _entered = await _enter_field_value(
-                                form_frame, field_name, lv, fo)
+                                frame, field_name, lv, fo)
                             if _entered:
-                                await _fill_and_save(form_frame, field_name, fo)
+                                await _fill_and_save(frame, field_name, fo)
                                 await page.wait_for_timeout(800)
                             else:
                                 # Field not found — record and skip rather than
@@ -826,7 +826,7 @@ async def _test_one_form(
                         # (avoids full page reload; Enketo clears constraint on empty)
                         if _lv_is_plain and form_frame:
                             try:
-                                await _enter_field_value(form_frame, field_name, "", fo)
+                                await _enter_field_value(frame, field_name, "", fo)
                                 await page.wait_for_timeout(300)
                             except Exception:
                                 pass
