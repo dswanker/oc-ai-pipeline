@@ -199,14 +199,19 @@ async def _fill_and_save(frame, field_name: str, form_oid: str):
     For leave_blank: click Submit in Enketo to trigger required-field validation.
     Uses pure JS to avoid stale ElementHandle issues.
     """
-    # Pure-JS submit click — find first visible primary/submit button and click it
+    # Pure-JS submit click — try iframe form-footer first, then outer page.
+    # OC Enketo may render the Complete button inside the iframe form-footer
+    # OR in the outer Angular page depending on form mode.
     try:
+        # First: try inside the Enketo iframe
         clicked = await frame.evaluate("""
             (function() {
+                // OC Enketo renders a form-footer with .btn-primary inside the iframe
                 var sels = [
+                    '.form-footer .btn-primary',
+                    '.form-footer button',
                     'button.btn-primary',
                     'button[id*="submit"]',
-                    '.form-footer button',
                     'button'
                 ];
                 for (var s = 0; s < sels.length; s++) {
@@ -216,25 +221,41 @@ async def _fill_and_save(frame, field_name: str, form_oid: str):
                         var txt = (b.textContent || '').trim().toLowerCase();
                         var style = window.getComputedStyle(b);
                         if (style.display === 'none' || style.visibility === 'hidden') continue;
-                        if (txt.includes('submit') || txt.includes('complete') ||
-                            txt.includes('save') || txt.includes('send')) {
-                            b.click();
-                            return 'clicked:' + txt;
-                        }
+                        if (style.pointerEvents === 'none') continue;
+                        b.click();
+                        return 'iframe:' + txt;
                     }
                 }
-                // fallback: click first visible button in form-footer
-                var footer = document.querySelector('.form-footer');
-                if (footer) {
-                    var fb = footer.querySelector('button:not([disabled])');
-                    if (fb) { fb.click(); return 'footer-btn:' + fb.textContent.trim(); }
-                }
-                return 'none';
+                // Count all buttons for diagnostics
+                return 'none:btns=' + document.querySelectorAll('button').length;
             })()
         """)
-        await frame.wait_for_timeout(1500)
-    except Exception:
-        pass
+        await frame.wait_for_timeout(2500)
+    except Exception as _e:
+        clicked = f'err:{_e}'
+    # Log submit result for constraint debugging
+    if not (clicked or '').startswith('iframe:'):
+        try:
+            # Also trigger Enketo validation directly via JS dispatch
+            await frame.evaluate("""
+                (function() {
+                    // Dispatch a synthetic submit event on the form element
+                    var form = document.querySelector('form.or');
+                    if (form) {
+                        form.dispatchEvent(new Event('submit', {bubbles: true, cancelable: true}));
+                        return 'form-submit-dispatched';
+                    }
+                    // Try firing validateForm if enketo instance is accessible
+                    if (window.form && typeof window.form.validate === 'function') {
+                        window.form.validate();
+                        return 'enketo-validate';
+                    }
+                    return 'no-form';
+                })()
+            """)
+            await frame.wait_for_timeout(1000)
+        except Exception:
+            pass
 
 
 async def _get_live_frame(page, cached_frame):
@@ -607,8 +628,10 @@ async def _test_one_form(
                                              .map(i => i.textContent.trim())
                                     """)
                                     print(f"[pw-uat] {fo}/{ev} Edit/Add not in menu after 3s: {_menu_items}", flush=True)
+                                    nav_ok = False  # form didn't open; skip rows
                             else:
                                 print(f"[pw-uat] {fo}/{ev} form-menu not found for {_fa}", flush=True)
+                                nav_ok = False  # form didn't open; skip rows
                         except Exception as _ce:
                             print(f"[pw-uat] {fo}/{ev} repeating click failed: {_ce}", flush=True)
 
@@ -789,7 +812,15 @@ async def _test_one_form(
                 lv   = str(row_dict.get("Load_Value") or "").strip()
                 exp  = str(row_dict.get("Expected Result") or "").strip()
                 item = str(row_dict.get("Item_OID") or "").strip()
-                field_name = item.split("_")[-1] if "_" in item else item
+                # Extract field name from item OID: "I_DOMAIN_FIELDNAME"
+                # Split on "_" with maxsplit=2, take the last part — handles
+                # compound field names like I_DEMOG_AGE_DISP → "AGE_DISP"
+                if item.count("_") >= 2:
+                    field_name = item.split("_", 2)[2]
+                elif "_" in item:
+                    field_name = item.split("_")[-1]
+                else:
+                    field_name = item
                 actual = result = ""
 
                 if not nav_ok:
