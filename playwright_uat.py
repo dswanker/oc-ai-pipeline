@@ -748,17 +748,21 @@ async def _test_one_form(
 
                 try:
                     # Re-acquire live frame at start of every row.
-                    # Poll up to 5s for a non-detached form. frame — the frame
-                    # may still be loading when the first row starts executing.
+                    # Poll up to 10s (20×0.5s) for a form frame that is both live
+                    # AND has Enketo inputs rendered (input_count > 0).
+                    # "Frame has 0 inputs" means the frame is attached but Enketo
+                    # hasn't finished rendering yet — we must wait for it.
                     if form_frame and form_frame != app_frame:
-                        for _retry in range(10):
+                        for _retry in range(20):
                             _live = None
                             for _ff in page.frames:
                                 if 'form.' in _ff.url and 'openclinica' in _ff.url and not _ff.is_detached():
                                     try:
-                                        # Verify frame is actually usable
-                                        await _ff.evaluate("1")
-                                        _live = _ff
+                                        _count = await _ff.evaluate(
+                                            "document.querySelectorAll('input').length"
+                                        )
+                                        if _count and int(_count) > 0:
+                                            _live = _ff
                                     except Exception:
                                         pass
                                     break
@@ -766,6 +770,8 @@ async def _test_one_form(
                                 form_frame = _live
                                 break
                             await asyncio.sleep(0.5)
+                        else:
+                            print(f"[pw-uat] {fo}/{ev} WARNING: form frame had 0 inputs after 10s", flush=True)
                     frame = form_frame if form_frame else page
 
                     if test_type == "leave_blank":
