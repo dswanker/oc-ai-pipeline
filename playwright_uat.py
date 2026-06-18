@@ -145,11 +145,14 @@ async def _read_field_errors(page, field_name: str) -> list[str]:
                             var style = window.getComputedStyle(p);
                             // Look for red/orange colored text (constraint indicators)
                             var color = style.color;
-                            var isRed = color.includes('rgb(') && (
-                                color.startsWith('rgb(2') || color.startsWith('rgb(1') ||
-                                color.includes('255, 0') || color.includes('220,') ||
-                                color.includes('204,') || color.includes('190,')
-                            );
+                            // Parse RGB: exclude OC brand orange rgb(244,103,0), keep true error red
+                            var m = color.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/);
+                            var isRed = false;
+                            if (m) {
+                                var r=parseInt(m[1]),g=parseInt(m[2]),b=parseInt(m[3]);
+                                var isOCOrange = (r>230 && g>80 && g<130 && b<30);
+                                isRed = (r>150 && g<100 && b<100 && !isOCOrange);
+                            }
                             // Also check parent chain for error-indicating classes
                             var hasErrorClass = false;
                             var el = p;
