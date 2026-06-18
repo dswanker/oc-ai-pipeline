@@ -893,8 +893,11 @@ async def _test_one_form(
                                                 var n = all[i].name || '';
                                                 if (n.endsWith('/'+fn) || n.endsWith('/'+flo) ||
                                                     n === '/data/'+fn || n === '/data/'+flo) {{
-                                                    all[i].dispatchEvent(new Event('blur', {{bubbles:true}}));
+                                                    all[i].focus();
+                                                    all[i].dispatchEvent(new Event('input', {{bubbles:true}}));
                                                     all[i].dispatchEvent(new Event('change', {{bubbles:true}}));
+                                                    all[i].blur();
+                                                    all[i].dispatchEvent(new Event('focusout', {{bubbles:true}}));
                                                     break;
                                                 }}
                                             }}
@@ -902,7 +905,7 @@ async def _test_one_form(
                                     """)
                                 except Exception:
                                     pass
-                                await page.wait_for_timeout(600)
+                                await page.wait_for_timeout(1500)
                             else:
                                 # Field not found — record and skip rather than
                                 # hanging on wait_for_timeout
@@ -925,8 +928,11 @@ async def _test_one_form(
                                             var n = all[i].name || '';
                                             if (n.endsWith('/'+fn) || n.endsWith('/'+flo) ||
                                                 n === '/data/'+fn || n === '/data/'+flo) {{
+                                                all[i].focus();
+                                                all[i].dispatchEvent(new Event('input', {{bubbles:true}}));
                                                 all[i].dispatchEvent(new Event('change', {{bubbles:true}}));
-                                                all[i].dispatchEvent(new Event('blur', {{bubbles:true}}));
+                                                all[i].blur();
+                                                all[i].dispatchEvent(new Event('focusout', {{bubbles:true}}));
                                                 break;
                                             }}
                                         }}
@@ -934,7 +940,7 @@ async def _test_one_form(
                                 """)
                             except Exception:
                                 pass
-                            await page.wait_for_timeout(600)
+                            await page.wait_for_timeout(1500)
                         errors = await _read_field_errors(frame, field_name)
                         expect_error = any(x in exp for x in
                             ["Constraint fires", "error shown", "does not save"])
@@ -980,7 +986,7 @@ async def _test_one_form(
                                 """)
                             except Exception:
                                 pass
-                            await page.wait_for_timeout(600)
+                            await page.wait_for_timeout(1500)
                             _visibility_save_done = True
                         visible = await _is_field_visible(frame, field_name, fo)
                         expect_visible = "VISIBLE" in exp.upper()
