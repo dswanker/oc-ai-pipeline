@@ -89,6 +89,8 @@ def _classify_pw_row(row_dict: dict) -> Optional[str]:
     return None
 
 
+_read_field_errors_diag_logged = set()
+
 async def _read_field_errors(page, field_name: str) -> list[str]:
     """
     Read visible validation error messages from Enketo.
@@ -116,6 +118,58 @@ async def _read_field_errors(page, field_name: str) -> list[str]:
                         msgs.append(txt)
         except Exception:
             pass
+
+    # Diagnostic: if no errors found, dump DOM state for the field
+    # so we can see what Enketo actually renders after our events
+    if not msgs and field_name not in _read_field_errors_diag_logged:
+        _read_field_errors_diag_logged.add(field_name)
+        try:
+            diag = await page.evaluate(f"""
+                (function() {{
+                    var fn = {repr(field_name)};
+                    var flo = fn.toLowerCase();
+                    // 1. Find the question container for this field
+                    var q = null;
+                    var all = document.querySelectorAll('.question');
+                    for (var i = 0; i < all.length; i++) {{
+                        var dn = all[i].getAttribute('data-name') || '';
+                        var inp = all[i].querySelector('input,select,textarea');
+                        if (dn.includes(fn) || dn.includes(flo) ||
+                            (inp && (inp.name||'').includes(fn))) {{
+                            q = all[i]; break;
+                        }}
+                    }}
+                    // 2. Get all classes on .question divs and constraint-related elements
+                    var classes = [];
+                    document.querySelectorAll('.question').forEach(function(el) {{
+                        el.classList.forEach(function(c) {{ if (classes.indexOf(c)<0) classes.push(c); }});
+                    }});
+                    // 3. Check if .invalid-constraint exists at all (hidden or not)
+                    var anyConstraint = document.querySelectorAll('.invalid-constraint').length;
+                    var anyRequired = document.querySelectorAll('.invalid-required').length;
+                    var constraintMsg = document.querySelectorAll('.constraint-message').length;
+                    var reqMsg = document.querySelectorAll('.required-message').length;
+                    // 4. Check for OC-specific error classes
+                    var alertDanger = document.querySelectorAll('.alert-danger').length;
+                    var hasError = document.querySelectorAll('.has-error,.error,.is-invalid').length;
+                    return JSON.stringify({{
+                        field: fn,
+                        questionFound: !!q,
+                        questionClasses: q ? Array.from(q.classList) : [],
+                        allQuestionClasses: classes.slice(0,30),
+                        anyInvalidConstraint: anyConstraint,
+                        anyInvalidRequired: anyRequired,
+                        constraintMsgEls: constraintMsg,
+                        requiredMsgEls: reqMsg,
+                        alertDanger: alertDanger,
+                        hasError: hasError
+                    }});
+                }})()
+            """)
+            print(f"[pw-uat] DOM-DIAG field={field_name}: {{diag}}", flush=True)
+        except Exception as _de:
+            print(f"[pw-uat] DOM-DIAG error: {{_de}}", flush=True)
+
     return msgs
 
 
