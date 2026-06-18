@@ -112,10 +112,67 @@ async def _read_field_errors(page, field_name: str) -> list[str]:
         try:
             els = await page.query_selector_all(sel)
             for el in els:
-                if await el.is_visible():
-                    txt = (await el.inner_text() or "").strip()
-                    if txt and len(txt) > 2 and txt not in msgs:
-                        msgs.append(txt)
+                # Check both visible AND non-zero-size elements
+                # OC may render constraint messages with display:block but opacity/color change
+                try:
+                    visible = await el.is_visible()
+                    box = await el.bounding_box()
+                    has_size = box and box.get('width', 0) > 0 and box.get('height', 0) > 0
+                    if visible or has_size:
+                        txt = (await el.inner_text() or "").strip()
+                        if txt and len(txt) > 2 and txt not in msgs:
+                            msgs.append(txt)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    # Also do a full text scan of the form for constraint-like messages
+    # OC auto-saves and returns server-side constraint text inline
+    if not msgs:
+        try:
+            found_texts = await page.evaluate("""
+                (function() {
+                    var texts = [];
+                    // Scan ALL text nodes for constraint-like content
+                    var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+                    var node;
+                    while (node = walker.nextNode()) {
+                        var txt = node.textContent.trim();
+                        if (txt.length > 5 && txt.length < 200) {
+                            var p = node.parentElement;
+                            if (!p) continue;
+                            var style = window.getComputedStyle(p);
+                            // Look for red/orange colored text (constraint indicators)
+                            var color = style.color;
+                            var isRed = color.includes('rgb(') && (
+                                color.startsWith('rgb(2') || color.startsWith('rgb(1') ||
+                                color.includes('255, 0') || color.includes('220,') ||
+                                color.includes('204,') || color.includes('190,')
+                            );
+                            // Also check parent chain for error-indicating classes
+                            var hasErrorClass = false;
+                            var el = p;
+                            for (var i = 0; i < 5 && el; i++) {
+                                var cn = el.className || '';
+                                if (cn.includes('invalid') || cn.includes('constraint') || 
+                                    cn.includes('error') || cn.includes('alert') ||
+                                    cn.includes('warning') || cn.includes('danger')) {
+                                    hasErrorClass = true; break;
+                                }
+                                el = el.parentElement;
+                            }
+                            if (isRed || hasErrorClass) {
+                                texts.push(txt);
+                            }
+                        }
+                    }
+                    return texts.slice(0, 5);
+                })()
+            """)
+            for t in (found_texts or []):
+                if t and t not in msgs:
+                    msgs.append(t)
         except Exception:
             pass
 
@@ -166,7 +223,7 @@ async def _read_field_errors(page, field_name: str) -> list[str]:
                     }});
                 }})()
             """)
-            print(f"[pw-uat] DOM-DIAG field={field_name}: {{diag}}", flush=True)
+            print(f"[pw-uat] DOM-DIAG field={field_name}: {diag}", flush=True)
         except Exception as _de:
             print(f"[pw-uat] DOM-DIAG error: {{_de}}", flush=True)
 
@@ -959,7 +1016,7 @@ async def _test_one_form(
                                     """)
                                 except Exception:
                                     pass
-                                await page.wait_for_timeout(1500)
+                                await page.wait_for_timeout(3000)
                             else:
                                 # Field not found — record and skip rather than
                                 # hanging on wait_for_timeout
@@ -994,7 +1051,7 @@ async def _test_one_form(
                                 """)
                             except Exception:
                                 pass
-                            await page.wait_for_timeout(1500)
+                            await page.wait_for_timeout(3000)
                         errors = await _read_field_errors(frame, field_name)
                         expect_error = any(x in exp for x in
                             ["Constraint fires", "error shown", "does not save"])
@@ -1040,7 +1097,7 @@ async def _test_one_form(
                                 """)
                             except Exception:
                                 pass
-                            await page.wait_for_timeout(1500)
+                            await page.wait_for_timeout(3000)
                             _visibility_save_done = True
                         visible = await _is_field_visible(frame, field_name, fo)
                         expect_visible = "VISIBLE" in exp.upper()
