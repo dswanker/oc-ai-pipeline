@@ -952,7 +952,7 @@ async def _test_one_form(
 
                     if test_type == "leave_blank":
                         await _fill_and_save(frame, field_name, fo)
-                        errors = await _read_field_errors(frame, field_name)
+                        errors = await _read_field_errors(page, field_name)
                         if errors:
                             actual = f"Error: {errors[0][:120]}"
                             result = "Pass"; passed += 1
@@ -1055,7 +1055,7 @@ async def _test_one_form(
                             except Exception:
                                 pass
                             await page.wait_for_timeout(3000)
-                        errors = await _read_field_errors(frame, field_name)
+                        errors = await _read_field_errors(page, field_name)
                         expect_error = any(x in exp for x in
                             ["Constraint fires", "error shown", "does not save"])
                         if expect_error:
