@@ -138,11 +138,19 @@ def run_qa_checks(form, build_log):
             parts = t.split(' ', 1)
             if len(parts) > 1:
                 referenced_lists.add(parts[1].strip())
-    missing_lists = referenced_lists - defined_lists
+    # yn is auto-templated by build_xlsforms._ensure_referenced_choice_lists
+    # and will always be injected before the form is written. Excluding it
+    # from the QA gate prevents false FAIL on forms that legitimately use
+    # select_one yn without defining it in the spec choices array.
+    AUTO_TEMPLATED = {'yn'}
+    missing_lists = (referenced_lists - defined_lists) - AUTO_TEMPLATED
+    yn_auto = 'yn' in (referenced_lists - defined_lists)
+    detail = (f"Missing lists: {', '.join(sorted(missing_lists))}" if missing_lists
+              else f"{len(defined_lists)} list(s) defined"
+                   + (" (yn auto-templated)" if yn_auto else ""))
     results.append(("choices_complete",
                     "PASS" if not missing_lists else "FAIL",
-                    f"Missing lists: {', '.join(missing_lists)}" if missing_lists
-                    else f"{len(defined_lists)} list(s) defined"))
+                    detail))
 
     # required_cols
     bad_rows = [r.get('name','?') for r in survey
