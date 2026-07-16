@@ -848,8 +848,15 @@ async def _get_oc_token(subdomain, is_production=False):
     (the single customer-facing environment).
     """
     import httpx
-    username = os.environ.get("OC_API_USERNAME", "").strip()
-    password = os.environ.get("OC_API_PASSWORD", "").strip()
+    # Per-subdomain credential override (e.g. SSO-only customers like Miami
+    # need a dedicated service account since the global account can't
+    # authenticate against their instance). Falls back to the global
+    # OC_API_USERNAME/PASSWORD for everyone else.
+    subdomain_key = subdomain.upper().replace("-", "_")
+    username = (os.environ.get(f"OC_API_USERNAME_{subdomain_key}", "").strip()
+                or os.environ.get("OC_API_USERNAME", "").strip())
+    password = (os.environ.get(f"OC_API_PASSWORD_{subdomain_key}", "").strip()
+                or os.environ.get("OC_API_PASSWORD", "").strip())
     if not username or not password:
         raise ValueError("OC_API_USERNAME or OC_API_PASSWORD not set")
     url = f"https://{subdomain}.build.openclinica.io/user-service/api/oauth/token"
