@@ -839,15 +839,103 @@ def run_calendaring_rules(struct_json, forms_json):
 
 # ── OpenClinica Study Service API ─────────────────────────────────────────────
 
-async def _get_oc_token(subdomain, is_production=False):
+def _extract_session_token(session_path, key="jhi-authenticationtoken"):
+    """Pull a token out of a saved Playwright storage-state file's
+    localStorage. Returns None if the file doesn't exist, is unparseable,
+    or lacks the key."""
+    import json as _json_tok
+    from pathlib import Path as _Path
+    p = _Path(session_path)
+    if not p.exists():
+        return None
+    try:
+        state = _json_tok.loads(p.read_text())
+    except Exception:
+        return None
+    for origin in state.get("origins", []):
+        for item in origin.get("localStorage", []):
+            if item.get("name") == key:
+                return (item.get("value") or "").strip().strip('"')
+    return None
+
+
+def _decode_jwt_claims(token):
+    """Return the claims dict from a JWT, or None if undecodable."""
+    import json as _json_tok, base64 as _b64_tok
+    try:
+        payload = token.split(".")[1]
+        payload += "=" * (-len(payload) % 4)
+        return _json_tok.loads(_b64_tok.urlsafe_b64decode(payload))
+    except Exception:
+        return None
+
+
+async def _get_oc_token(subdomain, is_production=False, oc_email=None):
     """
-    Get OC auth token via user-service password grant.
+    Get an OC auth Bearer token.
+
+    Preferred path: pull the token from the assigned person's saved SSO
+    session (captured via the /auth link + browser extension flow), the
+    same token driving Playwright form publishing. Confirmed 2026-07-28
+    that this token (`jhi-authenticationtoken`) is a functional drop-in
+    for study-service/rule-service REST calls — same Keycloak client
+    (`studymanager`), same audience, and it carries the real named user's
+    identity rather than a shared bot account.
+
+    Falls back to the legacy password-grant service account
+    (OC_API_USERNAME/PASSWORD) only when no oc_email is provided or no
+    valid session exists for it — this fallback is temporary during the
+    Stream A/B rollout (see docs/OC_AUTH_REFACTOR_PLAN.md) and every use
+    of it is logged loudly so it's obvious when it can be removed.
 
     Note: `is_production` is retained for logging/monday-column compatibility
     but no longer affects the URL — all OC traffic goes to openclinica.io
     (the single customer-facing environment).
     """
     import httpx
+
+    if oc_email:
+        session_path = f"/data/browser_sessions/{oc_email}.json"
+        token = _extract_session_token(session_path)
+        if token:
+            claims = _decode_jwt_claims(token)
+            if claims:
+                # Sanity check: the session file is keyed by email only,
+                # not email+subdomain — if this person's most recent SSO
+                # login was for a *different* subdomain, this token's
+                # issuer realm won't match, and using it would fail
+                # against the wrong Keycloak realm. Fail clearly here
+                # rather than let it surface as a confusing 401 downstream.
+                iss = claims.get("iss", "")
+                if subdomain.lower() in iss.lower():
+                    import time as _time_tok
+                    exp = claims.get("exp", 0)
+                    if exp > _time_tok.time() + 120:  # >2 min of validity left
+                        print(f"[oc-auth] using session-derived token for "
+                              f"{oc_email} on {subdomain}", flush=True)
+                        return token
+                    else:
+                        print(f"[oc-auth] session token for {oc_email} on "
+                              f"{subdomain} is expired/near-expiry — "
+                              f"falling back to legacy grant this call "
+                              f"(Stream B will handle proactive refresh)",
+                              flush=True)
+                else:
+                    print(f"[oc-auth] session token for {oc_email} is for a "
+                          f"different realm ({iss}) than requested "
+                          f"({subdomain}) — falling back to legacy grant",
+                          flush=True)
+        else:
+            print(f"[oc-auth] no session token found for {oc_email} at "
+                  f"{session_path} — falling back to legacy grant", flush=True)
+
+    # ── Legacy fallback: password-grant service account ────────────────
+    # TEMPORARY during Stream A/B rollout — remove once session-derived
+    # tokens are confirmed reliable across real runs, then also remove
+    # OC_API_USERNAME/OC_API_PASSWORD from Railway.
+    print(f"[oc-auth] LEGACY password-grant path used for {subdomain} "
+          f"(oc_email={oc_email!r}) — this should become rare/zero once "
+          f"Stream A/B are fully rolled out", flush=True)
     # Per-subdomain credential override (e.g. SSO-only customers like Miami
     # need a dedicated service account since the global account can't
     # authenticate against their instance). Falls back to the global
