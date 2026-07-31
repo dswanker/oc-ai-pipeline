@@ -952,6 +952,11 @@ async def _test_one_form(
 
                     if test_type == "leave_blank":
                         await _fill_and_save(frame, field_name, fo)
+                        try:
+                            _fs = await frame.evaluate("({u:window.location.href,i:document.querySelectorAll('input').length,q:document.querySelectorAll('.question').length,ic:document.querySelectorAll('.invalid-constraint').length})")
+                            print(f"[pw-uat] FSTATE leave_blank {field_name}: {_fs}", flush=True)
+                        except Exception as _fse:
+                            print(f"[pw-uat] FSTATE err: {_fse}", flush=True)
                         errors = await _read_field_errors(frame, field_name)
                         if errors:
                             actual = f"Error: {errors[0][:120]}"
@@ -1055,6 +1060,11 @@ async def _test_one_form(
                             except Exception:
                                 pass
                             await page.wait_for_timeout(5000)
+                        try:
+                            _fs2 = await frame.evaluate("({u:window.location.href,i:document.querySelectorAll('input').length,q:document.querySelectorAll('.question').length,ic:document.querySelectorAll('.invalid-constraint').length})")
+                            print(f"[pw-uat] FSTATE constraint {field_name}: {_fs2}", flush=True)
+                        except Exception as _fse2:
+                            print(f"[pw-uat] FSTATE err: {_fse2}", flush=True)
                         errors = await _read_field_errors(frame, field_name)
                         expect_error = any(x in exp for x in
                             ["Constraint fires", "error shown", "does not save"])
