@@ -1024,7 +1024,7 @@ async def _test_one_form(
                                     """)
                                 except Exception:
                                     pass
-                                await page.wait_for_timeout(5000)
+                                await page.wait_for_timeout(1500)
                             else:
                                 # Field not found — record and skip rather than
                                 # hanging on wait_for_timeout
@@ -1059,7 +1059,7 @@ async def _test_one_form(
                                 """)
                             except Exception:
                                 pass
-                            await page.wait_for_timeout(5000)
+                            await page.wait_for_timeout(1500)
                         try:
                             _fs2 = await frame.evaluate("({u:window.location.href,i:document.querySelectorAll('input').length,q:document.querySelectorAll('.question').length,ic:document.querySelectorAll('.invalid-constraint').length})")
                             print(f"[pw-uat] FSTATE constraint {field_name}: {_fs2}", flush=True)
@@ -1110,7 +1110,7 @@ async def _test_one_form(
                                 """)
                             except Exception:
                                 pass
-                            await page.wait_for_timeout(5000)
+                            await page.wait_for_timeout(1500)
                             _visibility_save_done = True
                         visible = await _is_field_visible(frame, field_name, fo)
                         expect_visible = "VISIBLE" in exp.upper()
@@ -1285,7 +1285,7 @@ async def run_playwright_uat(
                 f"{build_base}/#/account-study",
                 timeout=30000, wait_until="networkidle"
             )
-            await warm_page.wait_for_timeout(5000)
+            await warm_page.wait_for_timeout(1500)
             # Log localStorage keys to diagnose jhi-idtoken presence
             ls_keys = await warm_page.evaluate(
                 "() => Object.keys(localStorage).join(',')")
