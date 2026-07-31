@@ -952,7 +952,7 @@ async def _test_one_form(
 
                     if test_type == "leave_blank":
                         await _fill_and_save(frame, field_name, fo)
-                        errors = await _read_field_errors(page, field_name)
+                        errors = await _read_field_errors(frame, field_name)
                         if errors:
                             actual = f"Error: {errors[0][:120]}"
                             result = "Pass"; passed += 1
@@ -1019,7 +1019,7 @@ async def _test_one_form(
                                     """)
                                 except Exception:
                                     pass
-                                await page.wait_for_timeout(3000)
+                                await page.wait_for_timeout(5000)
                             else:
                                 # Field not found — record and skip rather than
                                 # hanging on wait_for_timeout
@@ -1054,8 +1054,8 @@ async def _test_one_form(
                                 """)
                             except Exception:
                                 pass
-                            await page.wait_for_timeout(3000)
-                        errors = await _read_field_errors(page, field_name)
+                            await page.wait_for_timeout(5000)
+                        errors = await _read_field_errors(frame, field_name)
                         expect_error = any(x in exp for x in
                             ["Constraint fires", "error shown", "does not save"])
                         if expect_error:
@@ -1100,7 +1100,7 @@ async def _test_one_form(
                                 """)
                             except Exception:
                                 pass
-                            await page.wait_for_timeout(3000)
+                            await page.wait_for_timeout(5000)
                             _visibility_save_done = True
                         visible = await _is_field_visible(frame, field_name, fo)
                         expect_visible = "VISIBLE" in exp.upper()
@@ -1275,7 +1275,7 @@ async def run_playwright_uat(
                 f"{build_base}/#/account-study",
                 timeout=30000, wait_until="networkidle"
             )
-            await warm_page.wait_for_timeout(3000)
+            await warm_page.wait_for_timeout(5000)
             # Log localStorage keys to diagnose jhi-idtoken presence
             ls_keys = await warm_page.evaluate(
                 "() => Object.keys(localStorage).join(',')")
