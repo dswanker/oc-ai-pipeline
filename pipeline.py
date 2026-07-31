@@ -4860,6 +4860,7 @@ async def run_pipeline(item_id):
                               flush=True)
                         matches = await retrieve_examples(
                             quick_analysis, k=TRAINER_K, reserve_same_sponsor=True,
+                            same_sponsor_only=True,
                         )
                         if matches:
                             block = format_examples_block(

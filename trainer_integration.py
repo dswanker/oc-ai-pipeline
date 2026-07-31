@@ -51,6 +51,14 @@ if TYPE_CHECKING:  # pragma: no cover
 
 # ─── Module-level config ─────────────────────────────────────────────────
 
+# Data-isolation controls for same_sponsor_only retrieval (see
+# retrieve_examples docstring). When filtering client-side to same-sponsor
+# only, over-fetch this multiple of k from the trainer so a genuine match
+# ranked below the raw top-k by pure similarity isn't lost, capped so a
+# single retrieval call can't request an unbounded amount of data.
+_SAME_SPONSOR_OVERFETCH = 10
+_SAME_SPONSOR_MAX_FETCH = 50
+
 
 def _trainer_url() -> str:
     """Read trainer URL from env. Defaults to localhost for local dev."""
@@ -174,6 +182,7 @@ async def retrieve_examples(
     *,
     k: int = 3,
     reserve_same_sponsor: bool = True,
+    same_sponsor_only: bool = False,
     http_client: "httpx.AsyncClient | None" = None,
 ) -> list[dict[str, Any]]:
     """
@@ -187,7 +196,25 @@ async def retrieve_examples(
             we'll attempt to reserve slot 1 for a same-sponsor match.
             Implemented at format-time, not query-time — we still ask
             the trainer for the top-k by similarity. Reordering happens
-            in `format_examples_block`.
+            in `format_examples_block`. Ignored (irrelevant) when
+            `same_sponsor_only=True`, since every returned match is
+            already same-sponsor in that mode.
+        same_sponsor_only: HARD data-isolation restriction (added
+            2026-07-28) — when True and `analysis['sponsor']` is set,
+            matches from any OTHER sponsor are discarded entirely
+            rather than merely deprioritized. Since the trainer's
+            /retrieve endpoint has no server-side sponsor filter (it
+            returns pure top-k by similarity across the whole corpus,
+            mixing all past customers), this over-fetches a larger
+            candidate pool (k * _SAME_SPONSOR_OVERFETCH, capped at
+            _SAME_SPONSOR_MAX_FETCH) and filters client-side, so a
+            genuine same-sponsor match ranked below the raw top-k by
+            pure similarity isn't lost just because it wasn't in the
+            first k results. If `analysis['sponsor']` is empty/missing,
+            this has no effect (falls through to normal top-k
+            behavior) — sponsor identity must be known to filter by it.
+            If no same-sponsor matches exist at all, returns [] rather
+            than silently falling back to cross-sponsor examples.
         http_client: Injectable for tests. If None, a fresh one is
             created and closed inside this function.
 
@@ -198,8 +225,17 @@ async def retrieve_examples(
     if not analysis:
         return []
 
+    _sponsor_filter = (
+        _normalize_sponsor(analysis.get("sponsor"))
+        if same_sponsor_only else ""
+    )
+    _fetch_k = (
+        min(k * _SAME_SPONSOR_OVERFETCH, _SAME_SPONSOR_MAX_FETCH)
+        if (same_sponsor_only and _sponsor_filter) else k
+    )
+
     url = f"{_trainer_url()}/retrieve"
-    payload = {"analysis": analysis, "k": int(k)}
+    payload = {"analysis": analysis, "k": int(_fetch_k)}
 
     # Lazy httpx import so the module imports cleanly in environments
     # without httpx (notably some unit-test sandboxes). Real callers
@@ -278,6 +314,20 @@ async def retrieve_examples(
     for m in matches:
         if isinstance(m, dict) and m.get("pair_hash"):
             out.append(m)
+
+    # Hard data-isolation filter — see docstring. Drops every match that
+    # isn't the same sponsor, then truncates to the originally-requested
+    # k. Only applied when same_sponsor_only=True AND we actually have a
+    # sponsor to filter by; otherwise this is a no-op and behavior is
+    # unchanged from before this filter existed.
+    if same_sponsor_only and _sponsor_filter:
+        _before = len(out)
+        out = [m for m in out
+               if _normalize_sponsor(m.get("sponsor")) == _sponsor_filter][:k]
+        print(f"[trainer] same_sponsor_only filter: {_before} candidate(s) "
+              f"from over-fetch -> {len(out)} same-sponsor match(es) kept",
+              flush=True)
+
     print(f"[trainer] retrieved {len(out)} examples from {url}", flush=True)
     return out
 
