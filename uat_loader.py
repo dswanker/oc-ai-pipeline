@@ -98,12 +98,20 @@ _TOKEN_CACHE: dict[str, tuple[str, float]] = {}
 _TOKEN_CACHE_TTL_S = 1200  # 20 minutes
 
 
-async def _get_oc_token(subdomain: str) -> str:
+async def _get_oc_token(subdomain: str, oc_email: str = None) -> str:
     """Return a cached OC OAuth bearer token, refreshing if older than 20 min.
 
     OC tokens are valid for ~24 hours but the token endpoint rate-limits
     (HTTP 429) if called more than ~10 times in quick succession. Caching
     avoids redundant fetches within a single pipeline run.
+
+    Mirrors pipeline.py's _get_oc_token (session-derived token first, then
+    per-subdomain service account override — no global fallback as of
+    Stage 3, 2026-07-28). Imports pipeline.py's token-extraction helpers
+    locally (not at module level) to avoid a circular import — pipeline.py
+    imports this module at load time, so a top-level import back would
+    fail; deferring it until this function actually runs sidesteps that,
+    same trick main.py already uses for its own local pipeline imports.
     """
     import time
     import os
@@ -113,17 +121,31 @@ async def _get_oc_token(subdomain: str) -> str:
         if time.monotonic() - fetched_at < _TOKEN_CACHE_TTL_S:
             return token_str
 
-    # Per-subdomain credential override (e.g. SSO-only customers like Miami
-    # need a dedicated service account since the global account can't
-    # authenticate against their instance). Falls back to the global
-    # OC_API_USERNAME/PASSWORD for everyone else.
+    if oc_email:
+        from pipeline import _extract_session_token, _decode_jwt_claims
+        session_path = f"/data/browser_sessions/{oc_email}.json"
+        token = _extract_session_token(session_path)
+        if token:
+            claims = _decode_jwt_claims(token)
+            if claims:
+                iss = claims.get("iss", "")
+                if subdomain.lower() in iss.lower():
+                    exp = claims.get("exp", 0)
+                    if exp > time.time() + 120:  # >2 min of validity left
+                        _TOKEN_CACHE[subdomain] = (token, time.monotonic())
+                        return token
+
+    # Per-subdomain service account override — intentional, not legacy.
+    # Some subdomains (e.g. Miami) need their own dedicated credential;
+    # there is no global OC_API_USERNAME/PASSWORD fallback anymore.
     subdomain_key = subdomain.upper().replace("-", "_")
-    username = (os.environ.get(f"OC_API_USERNAME_{subdomain_key}", "").strip()
-                or os.environ.get("OC_API_USERNAME", "").strip())
-    password = (os.environ.get(f"OC_API_PASSWORD_{subdomain_key}", "").strip()
-                or os.environ.get("OC_API_PASSWORD", "").strip())
+    username = os.environ.get(f"OC_API_USERNAME_{subdomain_key}", "").strip()
+    password = os.environ.get(f"OC_API_PASSWORD_{subdomain_key}", "").strip()
     if not username or not password:
-        raise ValueError("OC_API_USERNAME or OC_API_PASSWORD not set in env")
+        raise ValueError(
+            f"No valid SSO session for {oc_email!r} on {subdomain}, and no "
+            f"OC_API_USERNAME_{subdomain_key}/OC_API_PASSWORD_{subdomain_key} "
+            f"per-subdomain override configured.")
     url = (f"https://{subdomain}.build.openclinica.io"
            f"/user-service/api/oauth/token")
     async with httpx.AsyncClient(timeout=30) as client:
@@ -139,7 +161,7 @@ async def _get_oc_token(subdomain: str) -> str:
     return token_str
 
 
-async def _get_test_env_uuid(subdomain: str, study_uuid: str) -> tuple:
+async def _get_test_env_uuid(subdomain: str, study_uuid: str, oc_email: str = None) -> tuple:
     """
     GET /api/studies/{studyUuid}/study-environments
     Returns (test_env_uuid, test_study_oid) for environmentName == 'TEST'.
@@ -148,7 +170,7 @@ async def _get_test_env_uuid(subdomain: str, study_uuid: str) -> tuple:
     """
     url = (f"{_study_service_base(subdomain)}/api/studies"
            f"/{study_uuid}/study-environments")
-    token = await _get_oc_token(subdomain)
+    token = await _get_oc_token(subdomain, oc_email=oc_email)
     async with httpx.AsyncClient(timeout=30) as client:
         resp = await client.get(url,
                                 headers={"Authorization": f"Bearer {token}"})
@@ -169,6 +191,7 @@ async def _get_test_env_uuid(subdomain: str, study_uuid: str) -> tuple:
 async def _wait_for_test_available(
     subdomain: str, study_uuid: str,
     timeout_s: int = 60, interval_s: int = 5,
+    oc_email: str = None,
 ) -> None:
     """Poll study-environments until the TEST environment status == 'AVAILABLE'.
 
@@ -184,7 +207,7 @@ async def _wait_for_test_available(
     deadline = asyncio.get_event_loop().time() + timeout_s
     last_status = "(not seen)"
     while True:
-        token = await _get_oc_token(subdomain)
+        token = await _get_oc_token(subdomain, oc_email=oc_email)
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.get(
                 url, headers={"Authorization": f"Bearer {token}"})
@@ -212,7 +235,8 @@ async def _wait_for_test_available(
 
 
 async def _create_site(subdomain: str, test_env_uuid: str,
-                        site_name: str, site_oid: str) -> str:
+                        site_name: str, site_oid: str,
+                        oc_email: str = None) -> str:
     """
     POST /api/study-environments/{studyEnvironmentUuid}/sites
     Returns the created site OID.
@@ -220,7 +244,7 @@ async def _create_site(subdomain: str, test_env_uuid: str,
     """
     url = (f"{_study_service_base(subdomain)}/api/study-environments"
            f"/{test_env_uuid}/sites")
-    token = await _get_oc_token(subdomain)
+    token = await _get_oc_token(subdomain, oc_email=oc_email)
     today = datetime.date.today().isoformat()
     payload = {
         "name":                  site_name,
@@ -684,7 +708,7 @@ def _build_odm_xml(study_oid: str, site_oid: str,
 
 
 async def _import_odm(subdomain: str, study_oid: str,
-                       odm_xml: str) -> dict:
+                       odm_xml: str, oc_email: str = None) -> dict:
     """POST ODM XML to OC4 Clinical Data Import API and poll the async job.
 
     Per How_and_When_to_Use_APIs.pdf (page 9):
@@ -709,7 +733,7 @@ async def _import_odm(subdomain: str, study_oid: str,
     submit_url = f"{base}/pages/auth/api/clinicaldata/import/xml"
 
     # ── Step 1: Submit the ODM XML and capture the job UUID ───────────────
-    submit_token = await _get_oc_token(subdomain)
+    submit_token = await _get_oc_token(subdomain, oc_email=oc_email)
     async with httpx.AsyncClient(timeout=60) as client:
         resp = await client.post(
             submit_url,
@@ -765,7 +789,7 @@ async def _import_odm(subdomain: str, study_oid: str,
         await asyncio.sleep(poll_interval)
         elapsed += poll_interval
         try:
-            poll_token = await _get_oc_token(subdomain)
+            poll_token = await _get_oc_token(subdomain, oc_email=oc_email)
             async with httpx.AsyncClient(timeout=15) as client:
                 pr = await client.get(
                     poll_url,
@@ -1129,7 +1153,7 @@ async def run_uat_loader(item_id: str, fo_titles: dict = None) -> dict:
     await append_log(item_id, "UAT Loader: locating TEST environment...")
     try:
         test_env_uuid, test_env_oid = await _get_test_env_uuid(
-            subdomain, study_uuid
+            subdomain, study_uuid, oc_email=oc_email
         )
         result["test_env_uuid"] = test_env_uuid
     except Exception as e:
@@ -1146,7 +1170,7 @@ async def run_uat_loader(item_id: str, fo_titles: dict = None) -> dict:
     try:
         _sites_url = (f"{_study_service_base(subdomain)}/api/study-environments"
                       f"/{test_env_uuid}/sites")
-        _tok2 = await _get_oc_token(subdomain)
+        _tok2 = await _get_oc_token(subdomain, oc_email=oc_email)
         async with httpx.AsyncClient(timeout=30) as _hc:
             _sr = await _hc.get(_sites_url, headers={"Authorization": f"Bearer {_tok2}"})
         if _sr.is_success:
@@ -1164,7 +1188,7 @@ async def run_uat_loader(item_id: str, fo_titles: dict = None) -> dict:
         await append_log(item_id, f"UAT Loader: creating site '{site_name}'...")
         try:
             created_site_oid = await _create_site(
-                subdomain, test_env_uuid, site_name, site_oid
+                subdomain, test_env_uuid, site_name, site_oid, oc_email=oc_email
             )
             result["site_oid"] = created_site_oid
             await append_log(item_id, f"UAT Loader: site created → {created_site_oid}")
@@ -1180,7 +1204,7 @@ async def run_uat_loader(item_id: str, fo_titles: dict = None) -> dict:
         "UAT Loader: activating TEST environment → AVAILABLE...")
     try:
         from pipeline import _activate_test_environment
-        await _activate_test_environment(subdomain, study_uuid)
+        await _activate_test_environment(subdomain, study_uuid, oc_email=oc_email)
         await append_log(item_id, "UAT Loader: TEST environment activated")
     except Exception as e:
         result["errors"].append(f"TEST environment activation failed: {e}")
@@ -1214,12 +1238,13 @@ async def run_uat_loader(item_id: str, fo_titles: dict = None) -> dict:
     await append_log(item_id, "UAT Loader: waiting for TEST environment to be AVAILABLE...")
     try:
         await _wait_for_test_available(subdomain, study_uuid,
-                                       timeout_s=60, interval_s=5)
+                                       timeout_s=60, interval_s=5,
+                                       oc_email=oc_email)
     except Exception as e:
         result["errors"].append(f"TEST environment not AVAILABLE: {e}")
         return result
 
-    token = await _get_oc_token(subdomain)
+    token = await _get_oc_token(subdomain, oc_email=oc_email)
     stamp_map = {}
 
     # ── Pass 1: Create ALL participants first ─────────────────────────────
@@ -1293,7 +1318,7 @@ async def run_uat_loader(item_id: str, fo_titles: dict = None) -> dict:
             # ODM validated
             # Submit full ODM in one call — no batching needed
             import_result = await _import_odm(
-                subdomain, study_oid, odm_xml_full
+                subdomain, study_oid, odm_xml_full, oc_email=oc_email
             )
             log_csv = import_result.get("log", "")
             ins  = sum(1 for ln in log_csv.splitlines() if ",Inserted," in ln)
@@ -1408,7 +1433,7 @@ async def run_uat_loader(item_id: str, fo_titles: dict = None) -> dict:
             await append_log(item_id,
                 "UAT Loader: running Playwright UAT for UI-only cases...")
             # Get fresh token + jsessionid for Playwright auth
-            _pw_token = await _get_oc_token(subdomain)
+            _pw_token = await _get_oc_token(subdomain, oc_email=oc_email)
             # Collect jsessionid from ODM imports — it's an active OC session
             _jsessionid = ""
             for _imp in result.get("odm_imports", []):

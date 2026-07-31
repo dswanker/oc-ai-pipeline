@@ -882,11 +882,13 @@ async def _get_oc_token(subdomain, is_production=False, oc_email=None):
     (`studymanager`), same audience, and it carries the real named user's
     identity rather than a shared bot account.
 
-    Falls back to the legacy password-grant service account
-    (OC_API_USERNAME/PASSWORD) only when no oc_email is provided or no
-    valid session exists for it — this fallback is temporary during the
-    Stream A/B rollout (see docs/OC_AUTH_REFACTOR_PLAN.md) and every use
-    of it is logged loudly so it's obvious when it can be removed.
+    Falls back to a per-subdomain service account
+    (OC_API_USERNAME_{SUBDOMAIN}/PASSWORD_{SUBDOMAIN}) only when no
+    oc_email is provided or no valid session exists for it. As of Stage 3
+    (2026-07-28) there is no global bot-account fallback — every
+    subdomain either works via session-derived tokens or needs its own
+    dedicated override (see docs/OC_AUTH_REFACTOR_PLAN.md; Miami is the
+    current example of a subdomain that needs one).
 
     Note: `is_production` is retained for logging/monday-column compatibility
     but no longer affects the URL — all OC traffic goes to openclinica.io
@@ -917,36 +919,43 @@ async def _get_oc_token(subdomain, is_production=False, oc_email=None):
                     else:
                         print(f"[oc-auth] session token for {oc_email} on "
                               f"{subdomain} is expired/near-expiry — "
-                              f"falling back to legacy grant this call "
-                              f"(Stream B will handle proactive refresh)",
+                              f"trying per-subdomain service account "
+                              f"this call (Stream B will handle proactive "
+                              f"refresh)",
                               flush=True)
                 else:
                     print(f"[oc-auth] session token for {oc_email} is for a "
                           f"different realm ({iss}) than requested "
-                          f"({subdomain}) — falling back to legacy grant",
-                          flush=True)
+                          f"({subdomain}) — trying per-subdomain service "
+                          f"account", flush=True)
         else:
             print(f"[oc-auth] no session token found for {oc_email} at "
-                  f"{session_path} — falling back to legacy grant", flush=True)
+                  f"{session_path} — trying per-subdomain service account",
+                  flush=True)
 
-    # ── Legacy fallback: password-grant service account ────────────────
-    # TEMPORARY during Stream A/B rollout — remove once session-derived
-    # tokens are confirmed reliable across real runs, then also remove
-    # OC_API_USERNAME/OC_API_PASSWORD from Railway.
-    print(f"[oc-auth] LEGACY password-grant path used for {subdomain} "
-          f"(oc_email={oc_email!r}) — this should become rare/zero once "
-          f"Stream A/B are fully rolled out", flush=True)
-    # Per-subdomain credential override (e.g. SSO-only customers like Miami
-    # need a dedicated service account since the global account can't
-    # authenticate against their instance). Falls back to the global
-    # OC_API_USERNAME/PASSWORD for everyone else.
+    # ── Per-subdomain service account fallback ──────────────────────────
+    # Stage 3 (2026-07-28): the GLOBAL OC_API_USERNAME/OC_API_PASSWORD
+    # bot-account fallback has been removed — confirmed across multiple
+    # real runs that session-derived tokens (above) are the reliable
+    # primary path. What remains is intentional, not legacy: some
+    # subdomains (e.g. Miami) have their own dedicated service account
+    # (OC_API_USERNAME_{SUBDOMAIN}/PASSWORD_{SUBDOMAIN}) because their
+    # instance genuinely needs it — this is a real, necessary mechanism
+    # for those subdomains, not a fallback-for-everyone safety net.
+    print(f"[oc-auth] session-derived token unavailable for {subdomain} "
+          f"(oc_email={oc_email!r}) — trying per-subdomain service "
+          f"account override", flush=True)
     subdomain_key = subdomain.upper().replace("-", "_")
-    username = (os.environ.get(f"OC_API_USERNAME_{subdomain_key}", "").strip()
-                or os.environ.get("OC_API_USERNAME", "").strip())
-    password = (os.environ.get(f"OC_API_PASSWORD_{subdomain_key}", "").strip()
-                or os.environ.get("OC_API_PASSWORD", "").strip())
+    username = os.environ.get(f"OC_API_USERNAME_{subdomain_key}", "").strip()
+    password = os.environ.get(f"OC_API_PASSWORD_{subdomain_key}", "").strip()
     if not username or not password:
-        raise ValueError("OC_API_USERNAME or OC_API_PASSWORD not set")
+        raise RuntimeError(
+            f"No valid SSO session for {oc_email!r} on {subdomain}, and no "
+            f"OC_API_USERNAME_{subdomain_key}/OC_API_PASSWORD_{subdomain_key} "
+            f"per-subdomain override is configured in Railway. Needs "
+            f"re-authentication via the /auth link — or, if {subdomain} "
+            f"genuinely requires a dedicated service account (like Miami "
+            f"does), that override needs to be added to Railway.")
     url = f"https://{subdomain}.build.openclinica.io/user-service/api/oauth/token"
     print(f"Getting OC auth token from {url}", flush=True)
     async with httpx.AsyncClient(timeout=30) as c:
