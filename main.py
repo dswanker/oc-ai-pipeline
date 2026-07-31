@@ -58,6 +58,46 @@ CREATE_STUDY_CHECKBOX = "boolean_mm2nbn5c"   # "Would you like AI to create Stud
 PUBLISH_TEST_CHECKBOX = "boolean_mm3g2vzf"   # "Publish to Test" checkbox
 LOAD_UAT_CHECKBOX     = "boolean_mm3gxe49"   # "Load UAT Test Data"
 
+# ── Stream B: proactive background session refresh ─────────────────────────
+# (docs/OC_AUTH_REFACTOR_PLAN.md). Runs independently of any pipeline run so
+# saved SSO sessions stay alive for weeks instead of going idle between
+# studies — the goal is people re-authenticating rarely, not per-study.
+SESSION_REFRESH_INTERVAL_S = int(
+    os.environ.get("SESSION_REFRESH_INTERVAL_S", 6 * 3600))  # default 6h
+
+
+async def _session_refresh_loop():
+    from pathlib import Path as _Path
+    from pipeline import _refresh_and_persist_session
+
+    sessions_dir = _Path("/data/browser_sessions")
+    while True:
+        await asyncio.sleep(SESSION_REFRESH_INTERVAL_S)
+        try:
+            if not sessions_dir.exists():
+                continue
+            session_files = list(sessions_dir.glob("*.json"))
+            print(f"[session-refresh-loop] checking {len(session_files)} "
+                  f"saved session(s)", flush=True)
+            for sf in session_files:
+                try:
+                    await _refresh_and_persist_session(str(sf))
+                except Exception as exc:
+                    print(f"[session-refresh-loop] {sf.name}: unexpected "
+                          f"error ({exc}) — non-fatal, continuing",
+                          flush=True)
+        except Exception as exc:
+            print(f"[session-refresh-loop] cycle failed (non-fatal): "
+                  f"{exc}", flush=True)
+
+
+@app.on_event("startup")
+async def _start_session_refresh_loop():
+    asyncio.create_task(_session_refresh_loop())
+    print(f"[session-refresh-loop] started, interval="
+          f"{SESSION_REFRESH_INTERVAL_S}s", flush=True)
+
+
 @app.get("/health")
 async def health():
     return {"status": "ok"}

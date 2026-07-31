@@ -958,6 +958,149 @@ async def _get_oc_token(subdomain, is_production=False, oc_email=None):
     return r.text.strip()
 
 
+async def _refresh_and_persist_session(session_path):
+    """
+    Stream B — proactive session refresh (docs/OC_AUTH_REFACTOR_PLAN.md).
+
+    Attempt silent Keycloak re-auth (prompt=none) using a saved session's
+    cookies, using the SAME implicit-flow mechanism as _session_keepalive —
+    but unlike keepalive (which only logs alive/dead), this actually parses
+    the refreshed access_token/id_token out of the redirect and writes them
+    back into the session file's localStorage, extending its usable life
+    without any human action.
+
+    Why this works without a real browser: the silent-auth request uses
+    OIDC implicit flow (`response_type=id_token token`), so Keycloak's
+    final redirect carries the tokens in the URL FRAGMENT
+    (.../signin-callback.html#id_token=...&access_token=...). A browser
+    would never transmit that fragment in a subsequent request — but we
+    don't need to make one. httpx parses the fragment as a normal URL
+    component from the Location header text itself, so it's directly
+    readable from the response's final URL.
+
+    Subdomain/realm is derived from the EXISTING token's `iss` claim
+    (https://auth.openclinica.io/auth/realms/{subdomain}) — session files
+    are keyed by email only, not email+subdomain, so this avoids needing
+    a separate email→subdomain index.
+
+    Returns True if the session is refreshed or still comfortably valid,
+    False if the underlying Keycloak SSO session is dead and genuine
+    re-authentication (the /auth link flow) is needed.
+    """
+    import httpx, json as _json, base64 as _b64, time as _t
+    from urllib.parse import parse_qs
+    from pathlib import Path as _Path
+
+    p = _Path(session_path)
+    if not p.exists():
+        return False
+    try:
+        state = _json.loads(p.read_text())
+    except Exception as exc:
+        print(f"[session-refresh] {session_path}: could not read/parse "
+              f"session file ({exc})", flush=True)
+        return False
+
+    cookies = {c["name"]: c["value"] for c in state.get("cookies", [])}
+    origins = state.get("origins", [])
+
+    existing_token = ""
+    for o in origins:
+        for ls in o.get("localStorage", []):
+            if (ls.get("name") in ("jhi-authenticationtoken", "jhi-idtoken")
+                    and not existing_token):
+                existing_token = (ls.get("value") or "").strip().strip('"')
+    if not existing_token or existing_token.count(".") < 2:
+        print(f"[session-refresh] {session_path}: no usable existing "
+              f"token found — skipping (needs initial /auth capture)",
+              flush=True)
+        return False
+
+    try:
+        payload = existing_token.split(".")[1]
+        payload += "=" * (-len(payload) % 4)
+        claims = _json.loads(_b64.urlsafe_b64decode(payload))
+    except Exception as exc:
+        print(f"[session-refresh] {session_path}: could not decode "
+              f"existing token ({exc})", flush=True)
+        return False
+
+    iss = (claims.get("iss") or "").rstrip("/")
+    if not iss:
+        return False
+    subdomain = iss.rstrip("/").split("/")[-1]
+    if not subdomain:
+        return False
+
+    # If the current token still has plenty of life left, skip the network
+    # round-trip this cycle — refresh well before it's actually needed.
+    exp = claims.get("exp", 0)
+    if exp > _t.time() + 3600:  # >1h of validity remaining
+        return True
+
+    sa_url = (f"{iss}/protocol/openid-connect/auth"
+              f"?client_id=studymanager"
+              f"&redirect_uri=https://{subdomain}.build.openclinica.io"
+              f"/signin-callback.html"
+              f"&response_type=id_token%20token"
+              f"&scope=openid%20profile"
+              f"&prompt=none"
+              f"&state=refresh{int(_t.time())}"
+              f"&nonce=refresh{int(_t.time())}")
+
+    try:
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as kc:
+            r = await kc.get(sa_url, cookies=cookies)
+    except Exception as exc:
+        print(f"[session-refresh] {session_path}: silent-auth request "
+              f"failed ({exc})", flush=True)
+        return False
+
+    final_url = str(r.url)
+    if "access_token" not in final_url:
+        print(f"[session-refresh] {session_path}: session appears dead "
+              f"(landed at {final_url[:100]}) — needs real re-auth via "
+              f"the /auth link", flush=True)
+        return False
+
+    params = parse_qs(r.url.fragment)
+    new_access_token = (params.get("access_token") or [None])[0]
+    new_id_token = (params.get("id_token") or [None])[0]
+
+    if not new_access_token:
+        print(f"[session-refresh] {session_path}: silent-auth landed on "
+              f"signin-callback but no access_token in fragment — "
+              f"cannot refresh (fragment format may have changed)",
+              flush=True)
+        return False
+
+    updated = False
+    for o in origins:
+        for ls in o.get("localStorage", []):
+            if ls.get("name") == "jhi-authenticationtoken":
+                ls["value"] = new_access_token
+                updated = True
+            elif ls.get("name") == "jhi-idtoken" and new_id_token:
+                ls["value"] = new_id_token
+
+    if not updated:
+        print(f"[session-refresh] {session_path}: no "
+              f"jhi-authenticationtoken entry found to overwrite",
+              flush=True)
+        return False
+
+    try:
+        p.write_text(_json.dumps(state))
+    except Exception as exc:
+        print(f"[session-refresh] {session_path}: refresh succeeded but "
+              f"write-back failed ({exc})", flush=True)
+        return False
+
+    print(f"[session-refresh] {session_path}: refreshed and persisted "
+          f"for realm {subdomain}", flush=True)
+    return True
+
+
 async def _check_study_exists(subdomain, token, protocol_num, is_production=False):
     import httpx
     url = f"https://{subdomain}.build.openclinica.io/study-service/api/studies"
