@@ -4537,7 +4537,19 @@ async def run_pipeline(item_id):
                 print("Customer conventions: none provided", flush=True)
             if oc_zip:
                 oc_file_type = _detect_oc_standard_type(oc_zip)
+                _OC_STD_CHAR_CAP = 150_000  # context-budget safety cap
                 if oc_file_type == 'ODM_XML':
+                    try:
+                        oc_std_text = oc_zip.decode('utf-8', errors='replace')
+                    except Exception as _oc_xml_exc:
+                        oc_std_text = ''
+                        print(f"Warning: could not decode oc_standard ODM XML: "
+                              f"{_oc_xml_exc}", flush=True)
+                    if len(oc_std_text) > _OC_STD_CHAR_CAP:
+                        print(f"Warning: oc_standard ODM XML is "
+                              f"{len(oc_std_text):,} chars — truncating to "
+                              f"{_OC_STD_CHAR_CAP:,} for context budget", flush=True)
+                        oc_std_text = oc_std_text[:_OC_STD_CHAR_CAP] + "\n...[TRUNCATED]..."
                     extra_parts.append(
                         "Customer OpenClinica Study ODM XML attached — use as Priority 1 "
                         "(most authoritative source; reflects what customer has built in OC). "
@@ -4547,13 +4559,35 @@ async def run_pipeline(item_id):
                         "non-visit-dependent forms like AE and CM rather than per-module "
                         "events; (b) FormDef/ItemGroupDef/ItemDef to use as form templates; "
                         "(c) CodeLists as choice list baselines; "
-                        "(d) existing OIDs as the naming convention to follow."
+                        "(d) existing OIDs as the naming convention to follow.\n\n"
+                        "=== Customer ODM XML ===\n" + oc_std_text
                     )
-                else:
+                elif oc_file_type == 'XLSFORM_ZIP':
+                    import json as _json_oc
+                    try:
+                        oc_forms_data = _read_zip_xlsforms(oc_zip)
+                        oc_std_text = _json_oc.dumps(oc_forms_data, indent=2, default=str)
+                    except Exception as _oc_zip_exc:
+                        oc_std_text = ''
+                        print(f"Warning: could not parse oc_standard XLSForm ZIP: "
+                              f"{_oc_zip_exc}", flush=True)
+                    if len(oc_std_text) > _OC_STD_CHAR_CAP:
+                        print(f"Warning: oc_standard XLSForm ZIP text is "
+                              f"{len(oc_std_text):,} chars — truncating to "
+                              f"{_OC_STD_CHAR_CAP:,} for context budget", flush=True)
+                        oc_std_text = oc_std_text[:_OC_STD_CHAR_CAP] + "\n...[TRUNCATED]..."
                     extra_parts.append(
                         "Customer OC4 XLSForm Standards (ZIP) attached — use as Priority 1 "
-                        "(most authoritative source; reflects what customer has built in OC)."
+                        "(most authoritative source; reflects what customer has built in OC). "
+                        "Each entry below is one existing XLSForm (survey/choices/settings "
+                        "sheets) — use these as form templates, follow existing field names "
+                        "and OIDs where applicable, and match the naming conventions shown.\n\n"
+                        "=== Customer XLSForm Standards ===\n" + oc_std_text
                     )
+                else:
+                    print(f"Warning: oc_standard file ({len(oc_zip)} bytes) is neither "
+                          f"a recognizable ODM XML nor an XLSForm ZIP — skipping, "
+                          f"nothing injected into the build prompt.", flush=True)
             if crf_pdf:
                 extra_parts.append(
                     "Customer CRF Library (PDF) attached — use as Priority 2 "
