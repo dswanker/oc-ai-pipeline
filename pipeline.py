@@ -1999,7 +1999,8 @@ async def create_oc_study(subdomain, struct_json, is_production=False,
     4. Import board.json via study designer API
     """
     import httpx
-    token    = await _get_oc_token(subdomain, is_production=is_production)
+    token    = await _get_oc_token(subdomain, is_production=is_production,
+                                    oc_email=oc_email)
     headers  = {"Authorization": f"Bearer {token}",
                  "Content-Type": "application/json"}
     base_url = f"https://{subdomain}.build.openclinica.io"
@@ -2577,6 +2578,7 @@ async def _get_study_environment_uuid(
     env_name="Test",
     is_production=False,
     token=None,
+    oc_email=None,
 ):
     """GET /api/studies/{study_uuid}/study-environments and return
     (env_uuid, oid) for the entry whose environmentName matches env_name
@@ -2590,7 +2592,8 @@ async def _get_study_environment_uuid(
     """
     import httpx
     if token is None:
-        token = await _get_oc_token(subdomain, is_production=is_production)
+        token = await _get_oc_token(subdomain, is_production=is_production,
+                                     oc_email=oc_email)
     url = (f"https://{subdomain}.build.openclinica.io"
            f"/study-service/api/studies/{study_uuid}/study-environments")
     async with httpx.AsyncClient(timeout=30) as c:
@@ -2636,6 +2639,7 @@ async def _publish_study_version(
     description=None,
     is_production=False,
     token=None,
+    oc_email=None,
 ):
     """POST /api/studies/{study_uuid}/study-versions.
 
@@ -2647,7 +2651,8 @@ async def _publish_study_version(
     """
     import httpx
     if token is None:
-        token = await _get_oc_token(subdomain, is_production=is_production)
+        token = await _get_oc_token(subdomain, is_production=is_production,
+                                     oc_email=oc_email)
     url = (f"https://{subdomain}.build.openclinica.io"
            f"/study-service/api/studies/{study_uuid}/study-versions")
     body = {"studyEnvironmentUuid": study_environment_uuid}
@@ -2685,7 +2690,7 @@ async def _publish_study_version(
         )
 
 
-async def _activate_test_environment(subdomain, study_uuid):
+async def _activate_test_environment(subdomain, study_uuid, oc_email=None):
     """Activate the TEST environment after publish by PUTting the full
     StudyEnvironmentDTO with status="AVAILABLE".
 
@@ -2701,7 +2706,8 @@ async def _activate_test_environment(subdomain, study_uuid):
     Uses Bearer token via _get_oc_token (same pattern as publish_to_test).
     """
     import httpx
-    token = await _get_oc_token(subdomain, is_production=False)
+    token = await _get_oc_token(subdomain, is_production=False,
+                                 oc_email=oc_email)
     headers = {
         "Authorization": f"Bearer {token}",
         "Content-Type":  "application/json",
@@ -2749,7 +2755,8 @@ async def _activate_test_environment(subdomain, study_uuid):
         return {"status_code": r.status_code, "body": r.text[:300]}
 
 
-async def publish_calendaring_rules(subdomain, study_uuid, cal_zip_bytes, is_production=False):
+async def publish_calendaring_rules(subdomain, study_uuid, cal_zip_bytes,
+                                     is_production=False, oc_email=None):
     """POST validated calendaring rules to the OC4 rule-service.
 
     Idempotent — GETs existing rules first and skips any whose name already
@@ -2766,7 +2773,8 @@ async def publish_calendaring_rules(subdomain, study_uuid, cal_zip_bytes, is_pro
         f"https://{subdomain}.build.openclinica.io"
         f"/rule-service/api/studies/{study_uuid}/rules"
     )
-    token = await _get_oc_token(subdomain, is_production=is_production)
+    token = await _get_oc_token(subdomain, is_production=is_production,
+                                 oc_email=oc_email)
     headers = {
         "Authorization": f"Bearer {token}",
         "Content-Type":  "application/json",
@@ -2884,6 +2892,7 @@ async def publish_to_test(item_id, uploaded_oids=None):
     # verify attempt is skipped and we fall through to marking Failed.
     oc_subdomain = ""
     study_uuid   = ""
+    oc_email     = ""
 
     try:
         # 1. Show we're working on it
@@ -2895,6 +2904,7 @@ async def publish_to_test(item_id, uploaded_oids=None):
         cols = {cv["id"]: cv for cv in (item.get("column_values") or [])}
         oc_subdomain = (cols.get(COL["oc_subdomain"], {}).get("text") or "").strip()
         study_uuid   = (cols.get(COL["study_uuid"],   {}).get("text") or "").strip()
+        oc_email     = (cols.get(COL["oc_email"],     {}).get("text") or "").strip()
 
         if not oc_subdomain:
             raise RuntimeError(
@@ -2908,10 +2918,16 @@ async def publish_to_test(item_id, uploaded_oids=None):
 
         await append_log(item_id, f"Publish to Test: study_uuid={study_uuid}")
 
+        # 3b. Resolve OC auth token once — session-derived (per oc_email)
+        # with legacy password-grant fallback, threaded into every helper
+        # below so this whole flow uses one consistent identity.
+        token = await _get_oc_token(oc_subdomain, is_production=False,
+                                     oc_email=oc_email)
+
         # 4. Resolve env uuid + oid via /study-environments
         env_uuid, oid = await _get_study_environment_uuid(
             oc_subdomain, study_uuid,
-            env_name="Test", is_production=False,
+            env_name="Test", is_production=False, token=token,
         )
         await append_log(item_id,
             f"Publish to Test: env_uuid={env_uuid}  oid={oid!r}")
@@ -2933,7 +2949,7 @@ async def publish_to_test(item_id, uploaded_oids=None):
         # Both block publish; both get reported in the AI Run Log.
         try:
             _board_id = await _get_board_id(
-                oc_subdomain, study_uuid, is_production=False)
+                oc_subdomain, study_uuid, is_production=False, token=token)
 
             # Expected OIDs (from spec) — best-effort. If the spec
             # download or parse fails we just skip the missing-from-
@@ -2966,7 +2982,7 @@ async def publish_to_test(item_id, uploaded_oids=None):
             _missing_from_board: list = []
             if _expected_oid_to_name:
                 _board_oids = await _get_board_form_oids(
-                    oc_subdomain, _board_id, is_production=False)
+                    oc_subdomain, _board_id, is_production=False, token=token)
                 if _board_oids is not None:
                     # Board cards carry the F_-prefixed OID (e.g. F_SLEEP)
                     # that OC stores; the spec uses the bare OID (SLEEP).
@@ -2982,7 +2998,7 @@ async def publish_to_test(item_id, uploaded_oids=None):
             # Missing-version check (existing helper, unchanged sig).
             _all_versions_ok, _missing_versions = (
                 await _check_board_form_versions(
-                    oc_subdomain, _board_id, is_production=False))
+                    oc_subdomain, _board_id, is_production=False, token=token))
 
             # Trust just-uploaded OIDs: if the caller told us which
             # forms the publisher uploaded in this session, suppress
@@ -3066,6 +3082,7 @@ async def publish_to_test(item_id, uploaded_oids=None):
             oc_subdomain, study_uuid, env_uuid,
             version_name=version_name,
             is_production=False,
+            token=token,
         )
         await append_log(item_id,
             f"Publish to Test: success — version={version_name}  "
@@ -3091,7 +3108,7 @@ async def publish_to_test(item_id, uploaded_oids=None):
                       "OC study status before marking Failed...", flush=True)
                 await asyncio.sleep(30)
                 try:
-                    _token = await _get_oc_token(oc_subdomain)
+                    _token = await _get_oc_token(oc_subdomain, oc_email=oc_email)
                     _ver_url = (f"https://{oc_subdomain}.build.openclinica.io"
                                 f"/study-service/api/studies/{study_uuid}")
                     async with _httpx.AsyncClient(timeout=30) as _c:
@@ -3167,6 +3184,7 @@ async def load_dvs_uat_data(item_id):
         oc_subdomain = (cols.get(COL["oc_subdomain"], {}).get("text") or "").strip()
         study_uuid   = (cols.get(COL["study_uuid"],   {}).get("text") or "").strip()
         study_oid    = (cols.get(COL["study_oid"],    {}).get("text") or "").strip()
+        oc_email     = (cols.get(COL["oc_email"],     {}).get("text") or "").strip()
 
         if not oc_subdomain:
             raise RuntimeError(
@@ -3234,7 +3252,8 @@ async def load_dvs_uat_data(item_id):
 
             # Reuse the existing helper for OC auth — same token issuer
             # publish_to_test uses, so the Test environment is consistent.
-            token = await _get_oc_token(oc_subdomain, is_production=False)
+            token = await _get_oc_token(oc_subdomain, is_production=False,
+                                         oc_email=oc_email)
             client = OpenClinicaClient(
                 base_url=f"https://{oc_subdomain}.build.openclinica.io",
                 auth_token=token,
@@ -5706,7 +5725,8 @@ async def run_pipeline(item_id):
                             await append_log(item_id, "Calendaring publish skipped — no calendaring output found on board.")
                         else:
                             _cal_summary = await publish_calendaring_rules(
-                                oc_subdomain, _study_uuid_for_cal, _cal_zip
+                                oc_subdomain, _study_uuid_for_cal, _cal_zip,
+                                oc_email=oc_email
                             )
                             _msg = (
                                 f"Calendaring rules published: "
