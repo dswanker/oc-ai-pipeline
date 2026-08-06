@@ -545,6 +545,57 @@ async def run_gap_analysis_and_hub_upsert(
 
 # ── Public entry point ───────────────────────────────────────────────────────
 
+def _sanitize_odm_xml(xml_bytes: bytes, source_name: str = "") -> bytes:
+    """
+    Pre-parse sanitizer for common vendor ODM export issues.
+    Runs BEFORE validation so fixable files don't hard-fail.
+
+    Handles:
+    1. BOM stripping (UTF-8 BOM 0xEF BB BF)
+    2. Windows-1252 / Latin-1 bytes in UTF-8 declared files
+    3. Bare & not followed by valid entity name (e.g. "R&D" -> "R&amp;D")
+    4. Control characters (0x00-0x08, 0x0B, 0x0C, 0x0E-0x1F) invalid in XML
+    5. Null bytes
+    """
+    import re as _re
+
+    # 1. Strip BOM
+    if xml_bytes.startswith(b"\xef\xbb\xbf"):
+        xml_bytes = xml_bytes[3:]
+        print(f"[MIGRATION] sanitize: stripped UTF-8 BOM from {source_name}", flush=True)
+
+    # 2. Detect encoding declaration
+    head = xml_bytes[:200].decode("ascii", errors="ignore").lower()
+    declared_utf8 = "utf-8" in head or "utf8" in head
+
+    # 3. Decode — try UTF-8 first, fall back to latin-1 (never fails)
+    try:
+        text = xml_bytes.decode("utf-8")
+    except UnicodeDecodeError:
+        text = xml_bytes.decode("latin-1")
+        # Fix encoding declaration to match
+        text = _re.sub('encoding=([\"\'])(utf-8|UTF-8)\\1', 'encoding="UTF-8"', text)
+        print(f"[MIGRATION] sanitize: decoded as latin-1 (UTF-8 failed) for {source_name}", flush=True)
+
+    orig_len = len(text)
+
+    # 4. Remove null bytes and invalid XML control characters
+    # XML 1.0 allows: #x9 | #xA | #xD | #x20-#xD7FF | #xE000-#xFFFD
+    text = _re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', text)
+
+    # 5. Fix bare & not part of a valid entity or char reference
+    # Valid: &amp; &lt; &gt; &apos; &quot; &#123; &#xAB;
+    # Invalid: bare & not followed by [a-zA-Z#] and ending with ;
+    text = _re.sub(r'&(?!(?:amp|lt|gt|apos|quot|#[0-9]+|#x[0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]*);)', '&amp;', text)
+
+    fixed = len(text) != orig_len or text != xml_bytes.decode("utf-8", errors="replace")
+    if fixed:
+        print(f"[MIGRATION] sanitize: applied fixes to {source_name} "
+              f"(orig={orig_len} chars, fixed={len(text)} chars)", flush=True)
+
+    return text.encode("utf-8")
+
+
 async def run_migration(
     item_id,
     *,
@@ -622,6 +673,9 @@ async def run_migration(
             "source_system": None, "validation": None,
             "stats": {}, "spec_json_bytes": None,
         }
+
+    # 2b. Sanitize XML before validation — fix common iMedNet/vendor export issues
+    xml_bytes = _sanitize_odm_xml(xml_bytes, source_name)
 
     # 3. Validate
     report = validate_odm(xml_bytes)
