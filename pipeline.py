@@ -704,6 +704,8 @@ def run_dvs_xlsx(struct_json, forms_json):
 
     protocol = (struct_json.get("study_meta", {}).get("protocol_number")
                 or "STUDY")
+    import re as _re
+    protocol = _re.sub(r'[/\\:*?"<>|]', '-', protocol).strip()
 
     # Mechanical extraction — walks every survey row in every form and
     # emits the 4 DVS content arrays in the shape build_dvs expects.
