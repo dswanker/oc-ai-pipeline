@@ -577,6 +577,37 @@ def parse_odm_metadata(xml_bytes: bytes) -> dict:
         items       = _parse_items(mdv)
         codelists   = _parse_codelists(mdv)
 
+        # iMedNet Define-XML: no FormDef/StudyEventDef — ItemGroupDef IS the form.
+        # Synthesize one form per ItemGroupDef and one catch-all event.
+        if not forms and item_groups and source_system in ("iMedNet", "UNKNOWN"):
+            warnings.append(
+                "No FormDef found — promoting each ItemGroupDef to a synthetic "
+                "form (iMedNet Define-XML / Dataset-XML pattern)."
+            )
+            for ig in item_groups:
+                forms.append({
+                    "oid":             ig["oid"],
+                    "name":            ig["name"] or ig["oid"],
+                    "repeating":       ig["repeating"],
+                    "description":     ig.get("description", ""),
+                    "alias":           "",
+                    "item_group_refs": [ig["oid"]],
+                    "vendor":          ig.get("vendor", {}),
+                })
+                # Ensure item_group has a self-referencing item_refs if empty
+                if not ig["item_refs"]:
+                    ig["item_refs"] = [{"oid": f"{ig['oid']}.record_id",
+                                        "mandatory": False, "order": 1}]
+            if not events:
+                events.append({
+                    "oid":        "SE_STUDY",
+                    "name":       "Study",
+                    "repeating":  False,
+                    "event_type": "Scheduled",
+                    "form_refs":  [f["oid"] for f in forms],
+                    "vendor":     {},
+                })
+
     measurement_units = _parse_measurement_units(study_el)
 
     # Integrity checks
