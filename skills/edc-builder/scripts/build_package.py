@@ -75,13 +75,18 @@ def build_package(spec_data, build_log, forms_dir, csv_dir,
 
     meta     = spec_data.get('study_meta', {})
     protocol = meta.get('protocol_number', 'STUDY')
+    # Sanitize protocol for use in filenames — remove path-unsafe chars
+    # e.g. 'KAR-0025 OPTIMUM (UAT / Training)' has '/' which becomes a
+    # path separator and causes FileNotFoundError
+    import re as _re
+    protocol_safe = _re.sub(r'[/\\:*?"<>|]', '-', protocol).strip()
     study_id = meta.get('study_id', 'study')
     today    = datetime.date.today().strftime('%Y%m%d')
     today_hr = datetime.date.today().strftime('%d %b %Y')
 
-    zip_name = f"{protocol}_EDC_Build_{today}.zip"
+    zip_name = f"{protocol_safe}_EDC_Build_{today}.zip"
     zip_path = os.path.join(output_dir, zip_name)
-    folder   = f"{protocol}_EDC_Build_{today}"
+    folder   = f"{protocol_safe}_EDC_Build_{today}"
 
     # Build attention items text
     attention = []

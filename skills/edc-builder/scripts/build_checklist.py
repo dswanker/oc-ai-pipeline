@@ -241,6 +241,8 @@ def build_checklist_pdf(spec_data, build_log, output_path):
     forms  = spec_data.get('forms', [])
     today  = datetime.date.today().strftime('%d %b %Y')
     protocol = meta.get('protocol_number', '')
+    import re as _re
+    protocol = _re.sub(r'[/\\:*?"<>|]', '-', protocol).strip()
     study_id = meta.get('study_id', '')
 
     # Count summary stats
