@@ -167,14 +167,62 @@ def _extract_odm_xml(raw: bytes, source_name: str = "") -> bytes:
     if raw[:4] == ZIP_MAGIC:
         with zipfile.ZipFile(io.BytesIO(raw)) as zf:
             xml_entries = [n for n in zf.namelist()
-                           if n.lower().endswith(".xml") and not n.endswith("/")]
+                           if n.lower().endswith(".xml") and not n.endswith("/")
+                           and not n.startswith("__MACOSX")]
             if not xml_entries:
                 raise ValueError(f"ZIP '{source_name}' contains no .xml file")
-            # Pick the largest XML entry — for vendor exports that bundle a
-            # tiny manifest + the real metadata XML, the larger one is the
-            # ODM. Stable tiebreak by name.
+
+            # iMedNet ZIPs bundle the real form XMLs alongside large raw
+            # data exports (svu_data_value_log.xml = 36MB audit log).
+            # Priority: define.xml > ODM-tagged XMLs > non-data XMLs > largest
+            SKIP_PREFIXES = (
+                "svu_data_value", "svu_annotation", "svu_record",
+                "svu_patient", "svu_participation", "svu_login",
+                "svu_esignature", "svu_inventory", "svu_coding",
+                "svu_linked", "svu_double", "svu_triggered",
+                "svu_visit", "svu_site", "svu_study",
+                "download_details", "study_personnel", "study_essential",
+                "study_settings", "study_team",
+            )
+            def _skip(name):
+                n = name.lower().split("/")[-1]
+                return any(n.startswith(p) for p in SKIP_PREFIXES)
+
+            # 1. define.xml
+            defines = [n for n in xml_entries
+                       if n.lower().split("/")[-1] == "define.xml"]
+            if defines:
+                chosen = defines[0]
+                print(f"[MIGRATION] ZIP: chose define.xml from {len(xml_entries)} entries",
+                      flush=True)
+                return zf.read(chosen)
+
+            # 2. Non-skipped XMLs that start with <ODM
+            candidates = [n for n in xml_entries if not _skip(n)]
+            for name in sorted(candidates,
+                               key=lambda n: zf.getinfo(n).file_size,
+                               reverse=True):
+                sample = zf.open(name).read(500)
+                sample_stripped = sample.lstrip(b"\xef\xbb\xbf").lstrip()
+                if sample_stripped[:4] in (b"<ODM", b"<?xm"):
+                    if b"<ODM" in sample or b"ODMVersion" in sample:
+                        chosen = name
+                        print(f"[MIGRATION] ZIP: chose ODM file '{chosen}' "
+                              f"from {len(xml_entries)} entries", flush=True)
+                        return zf.read(chosen)
+
+            # 3. Largest non-skipped
+            non_skip = [n for n in xml_entries if not _skip(n)]
+            if non_skip:
+                non_skip.sort(key=lambda n: (-zf.getinfo(n).file_size, n))
+                chosen = non_skip[0]
+                print(f"[MIGRATION] ZIP: fallback largest non-skip '{chosen}'", flush=True)
+                return zf.read(chosen)
+
+            # 4. Largest overall
             xml_entries.sort(key=lambda n: (-zf.getinfo(n).file_size, n))
             chosen = xml_entries[0]
+            print(f"[MIGRATION] ZIP: last-resort largest '{chosen}'", flush=True)
             return zf.read(chosen)
 
     raise ValueError(
@@ -584,14 +632,44 @@ def _sanitize_odm_xml(xml_bytes: bytes, source_name: str = "") -> bytes:
     text = _re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', text)
 
     # 5. Fix bare & not part of a valid entity or char reference
-    # Valid: &amp; &lt; &gt; &apos; &quot; &#123; &#xAB;
-    # Invalid: bare & not followed by [a-zA-Z#] and ending with ;
     text = _re.sub(r'&(?!(?:amp|lt|gt|apos|quot|#[0-9]+|#x[0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]*);)', '&amp;', text)
 
-    fixed = len(text) != orig_len or text != xml_bytes.decode("utf-8", errors="replace")
-    if fixed:
-        print(f"[MIGRATION] sanitize: applied fixes to {source_name} "
-              f"(orig={orig_len} chars, fixed={len(text)} chars)", flush=True)
+    # 6. Fix bare < inside XML attribute values e.g. Value="Van < o4."
+    # Use a state-machine approach to avoid regex quoting issues
+    def _fix_lt_in_attrs(s):
+        out = []
+        i = 0
+        n = len(s)
+        while i < n:
+            ch = s[i]
+            if ch == '=' and i + 1 < n and s[i+1] in ('"', "'"):
+                q = s[i+1]
+                j = i + 2
+                val_chars = []
+                while j < n and s[j] != q:
+                    if s[j] == '<':
+                        val_chars.append('&lt;')
+                    else:
+                        val_chars.append(s[j])
+                    j += 1
+                out.append('=')
+                out.append(q)
+                out.extend(val_chars)
+                if j < n:
+                    out.append(q)
+                i = j + 1
+            else:
+                out.append(ch)
+                i += 1
+        return ''.join(out)
+    text = _fix_lt_in_attrs(text)
+
+    # 7. Remove Unicode replacement chars (invalid UTF-8 bytes decoded as U+FFFD)
+    text = text.replace('\ufffd', '')
+
+    fixes = len(text) != orig_len
+    print(f"[MIGRATION] sanitize: {'fixes applied' if fixes else 'no fixes needed'} "
+          f"for {source_name or 'input'} ({orig_len}->{len(text)} chars)", flush=True)
 
     return text.encode("utf-8")
 
