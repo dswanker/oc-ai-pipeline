@@ -180,6 +180,10 @@ def _detect_vendor(root: ET.Element, raw_xml: bytes) -> tuple[str, str]:
         return "Veeva Vault CDMS", attrs.get("SourceSystemVersion", "")
     if "imednet" in originator:
         return "iMedNet", attrs.get("SourceSystemVersion", "")
+    # iMedNet also exports with Originator='MedNet' and SourceSystem='iMedNet'
+    source_system_attr = attrs.get("SourceSystem", "").lower()
+    if "imednet" in source_system_attr or (originator == "mednet" and source_system_attr):
+        return "iMedNet", attrs.get("SourceSystemVersion", "")
 
     # Fallback: sniff namespaces in raw XML
     raw_head = raw_xml[:2000].decode("utf-8", errors="ignore").lower()

@@ -569,9 +569,13 @@ def run_study_spec_files(struct_json, customer_subdomain="", migration_source=No
         traceback.print_exc()
     protocol = (struct_json.get("study_meta", {}).get("protocol_number")
                 or "STUDY")
+    # Sanitize protocol name for use in file paths — remove/replace chars
+    # that would be interpreted as path separators or are otherwise unsafe
+    import re as _re
+    protocol_safe = _re.sub(r'[/\\:*?"<>|]', '-', protocol).strip()
     with tempfile.TemporaryDirectory() as tmp:
-        pdf_path  = os.path.join(tmp, f"{protocol}_Study_Specification.pdf")
-        xlsx_path = os.path.join(tmp, f"{protocol}_Study_Specification.xlsx")
+        pdf_path  = os.path.join(tmp, f"{protocol_safe}_Study_Specification.pdf")
+        xlsx_path = os.path.join(tmp, f"{protocol_safe}_Study_Specification.xlsx")
         build_edc_pdf(struct_json, pdf_path)
         build_edc_xlsx(struct_json, xlsx_path)
         return {
@@ -592,8 +596,10 @@ def run_protocol_summary_pdf(pricing_json, struct_json=None):
 
     protocol = (pricing_json.get("study_meta", {}).get("protocol_number")
                 or "STUDY")
+    import re as _re
+    protocol_safe = _re.sub(r'[/\\:*?"<>|]', '-', protocol).strip()
     with tempfile.TemporaryDirectory() as tmp:
-        pdf_path = os.path.join(tmp, f"{protocol}_Protocol_Summary.pdf")
+        pdf_path = os.path.join(tmp, f"{protocol_safe}_Protocol_Summary.pdf")
         build_pricing_pdf(pricing_json, pdf_path, struct_json=struct_json)
         return open(pdf_path, "rb").read()
 
@@ -607,6 +613,8 @@ def run_edc_build(struct_json):
 
     protocol = (struct_json.get("study_meta", {}).get("protocol_number")
                 or "STUDY")
+    import re as _re
+    protocol = _re.sub(r'[/\\:*?"<>|]', '-', protocol).strip()
     build_log = {
         'forms_built':         [],
         'forms_skipped':       [],
