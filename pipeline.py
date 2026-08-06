@@ -5104,9 +5104,13 @@ async def run_pipeline(item_id):
                     print(f"Chain A complete — pdf:{len(spec_files['pdf'])} bytes "
                           f"xlsx:{len(spec_files['xlsx'])} bytes", flush=True)
                 except Exception as e:
+                    import traceback as _tb
+                    tb_str = _tb.format_exc()
                     print(f"Chain A error: {e}", flush=True)
-                    traceback.print_exc()
-                    await append_log(item_id, f"Study Spec file generation error: {e}")
+                    print(tb_str, flush=True)
+                    # Include traceback tail in Monday log for diagnosis
+                    tb_tail = '\n'.join(tb_str.strip().splitlines()[-8:])
+                    await append_log(item_id, f"Study Spec file generation error: {e}\n{tb_tail}")
 
             # ── Chain B: Protocol Summary JSON → PDF + Quote ───────────────────
             async def chain_b():
