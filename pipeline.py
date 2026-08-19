@@ -4578,6 +4578,7 @@ async def run_pipeline(item_id):
         _migration_post_build_state: dict | None = None
         _study_path_label = (cols.get(COL["study_path_label"]) or {}).get("text", "") or ""
         _is_migration_label = _study_path_label.strip().lower() == "migration"
+        _is_existing_build_label = _study_path_label.strip().lower() == "existing build"
         if struct_json is None and _is_migration_label:
             if not source_edc_export_bytes:
                 msg = ("Migration label set but no file on Source EDC "
@@ -4650,7 +4651,11 @@ async def run_pipeline(item_id):
         # or is testing with a migration file on a non-migration row.  Letting
         # the pipeline fall through silently to Protocol Analysis here is what
         # caused the VAX1001-copy → PrTK05 data-corruption incident.  Fail hard.
-        if struct_json is None and source_edc_export_bytes and not _is_migration_label:
+        # Excludes _is_existing_build_label too — Path BX legitimately uses
+        # the same Source EDC Export column for its (optional) ODM XML, and
+        # must not be caught by a guard written before that path existed.
+        if (struct_json is None and source_edc_export_bytes
+                and not _is_migration_label and not _is_existing_build_label):
             _odm_msg = (
                 "FAILED: Source EDC Export file found but Study Path Label is "
                 f"'{_study_path_label or '(empty)'}', not 'Migration'. "
@@ -4658,6 +4663,62 @@ async def run_pipeline(item_id):
             )
             print(f"Path M GUARD (label mismatch): {_odm_msg}", flush=True)
             await append_log(item_id, _odm_msg)
+            await set_status(item_id, COL["pipeline_status"], STATUS["failed"])
+            return
+
+        # ── Path BX: Existing Build (deterministic, no AI calls) ───────────────
+        # Routing trigger: label__1 must read "Existing Build". Customer
+        # already has a built OC4 study — no protocol to read, no study to
+        # create. forms_json/event placement come from build_input (the
+        # XLSForm ZIP) plus, optionally, source_edc_export (an ODM XML of
+        # the SAME build, used only for its <FormRef> structure — never
+        # for constraint/relevant/calculation logic, which real OC4 ODM
+        # exports don't carry; confirmed against GON001/VAC096 exports).
+        if struct_json is None and _is_existing_build_label:
+            if not edited_build_zip:
+                msg = ("'Existing Build' label set but no file on Build Input "
+                       "column — upload the EDC Build ZIP and re-trigger.")
+                print(f"Path BX FAIL: {msg}", flush=True)
+                await append_log(item_id, msg)
+                await set_status(item_id, COL["pipeline_status"], STATUS["failed"])
+                return
+
+            await append_log(item_id, "Existing Build detected — running deterministic path (no AI calls).")
+            print("Path BX: running deterministic build from Existing Build ZIP", flush=True)
+            from deterministic_build import build_forms_json_from_zip, build_event_form_map
+
+            forms_json = build_forms_json_from_zip(edited_build_zip)
+            event_map, unplaced = build_event_form_map(
+                forms_json, odm_xml_bytes=source_edc_export_bytes or None)
+
+            if unplaced:
+                await append_log(item_id,
+                    f"Existing Build: {len(unplaced)} form(s) could not be "
+                    f"auto-placed on an event — "
+                    f"{[u['filename'] for u in unplaced]}. DVS/spec will omit "
+                    f"these until placement is confirmed.")
+
+            struct_json = {
+                "study_meta": {"protocol_number": protocol_num},
+                "forms": [
+                    {"form_id": fid, "form_title": fid, "visits_assigned": [eoid]}
+                    for fid, eoid in event_map.items()
+                ],
+            }
+            fast_rerun = True
+            print(f"Path BX: struct_json built — {len(struct_json['forms'])} "
+                  f"forms placed, {len(unplaced)} unplaced", flush=True)
+
+        # ── Guard: Build ZIP present but label is not "Existing Build" ─────────
+        if (struct_json is None and edited_build_zip
+                and not _is_migration_label and not _is_existing_build_label):
+            _bx_msg = (
+                "FAILED: Build Input file found but Study Path Label is "
+                f"'{_study_path_label or '(empty)'}', not 'Existing Build'. "
+                "Set the label column to 'Existing Build' and re-trigger."
+            )
+            print(f"Path BX GUARD (label mismatch): {_bx_msg}", flush=True)
+            await append_log(item_id, _bx_msg)
             await set_status(item_id, COL["pipeline_status"], STATUS["failed"])
             return
 
