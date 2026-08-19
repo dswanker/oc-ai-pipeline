@@ -4408,6 +4408,7 @@ async def run_pipeline(item_id):
         needs_analysis = (
             _want("protocol specification") or _want("protocol summary")
             or _want("price quote") or _want("study build zip")
+            or _want("dvs")
             or (create_study and oc_subdomain)
         )
 
@@ -5146,6 +5147,20 @@ async def run_pipeline(item_id):
         if struct_json and not struct_json.get("scheduling"):
             struct_json = _extract_scheduling_block(struct_json)
 
+        # ── Guard: struct_json ready but no valid output selected ─────────────
+        # Without this, a mismatched/invalid Desired Outputs selection (e.g. a
+        # label the code doesn't recognize) leaves needs_analysis False and
+        # the pipeline silently does nothing — status sits wherever it was,
+        # no Failed, no Complete, no signal anything happened. Fail loud
+        # instead, matching the guard pattern used by Path M / Path BX above.
+        if struct_json and not needs_analysis:
+            await set_status(item_id, COL["pipeline_status"], STATUS["failed"])
+            await append_log(item_id,
+                "FAILED: No valid output was selected, so nothing ran. "
+                "Select an output (Study build ZIP, DVS, Protocol specification, "
+                "Protocol summary, Price quote, etc.) on this item and re-trigger.")
+            return
+
         # ── Launch parallel chains if struct_json is available ────────────────
         if struct_json and needs_analysis:
             await set_status(item_id, COL["pipeline_status"], STATUS["build_pricing_running"])
@@ -5354,7 +5369,7 @@ async def run_pipeline(item_id):
             edc_build_event = asyncio.Event()
 
             async def chain_c():
-                if not _want("study build zip"):
+                if not (_want("study build zip") or _want("dvs")):
                     edc_build_event.set()   # not running — unblock chain_e
                     return
                 print("Chain C: EDC Build starting...", flush=True)
@@ -5449,7 +5464,7 @@ async def run_pipeline(item_id):
                         await append_log(item_id, f"EDC Build error: {e}")
                         raise   # B6: propagate to chain_c
 
-                if build_zip_holder[0] and not suppress_uploads:
+                if build_zip_holder[0] and not suppress_uploads and _want("study build zip"):
                     await upload_file(item_id, COL["edc_build"],
                                       f"{protocol_num}_EDC_Build_{version}.zip",
                                       build_zip_holder[0])
@@ -5457,6 +5472,12 @@ async def run_pipeline(item_id):
                 elif build_zip_holder[0] and suppress_uploads:
                     print("EDC Build complete (preview-only mode — zip not uploaded)",
                           flush=True)
+                elif build_zip_holder[0]:
+                    # DVS-only run ("dvs" selected, "study build zip" not) —
+                    # zip was built as DVS's input but wasn't requested as
+                    # an output artifact, so don't upload/expose it.
+                    print("EDC Build complete (DVS-only mode — zip not uploaded, "
+                          "'study build zip' not requested)", flush=True)
 
                 # DVS — skip when called as a silent prerequisite for Build Preview
                 if suppress_uploads:
