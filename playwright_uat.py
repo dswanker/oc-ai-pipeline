@@ -1249,12 +1249,20 @@ async def run_playwright_uat(
         # own navigation since their data lives on a different participant page.
         from collections import defaultdict
         by_form = defaultdict(list)
-        # Skip F_IE: radio select_one fields (INCL/EXCL criteria) can't be tested
-        # via enter-value approach. Each exclusion criterion times out at 60s,
-        # causing a 13-criterion * 7-participant = 91-task tail.
-        # Collapse all participants to UAT-P001: constraint logic is identical
-        # across participants, so 1 participant per form is sufficient for Playwright.
-        _PW_SKIP_FORMS = {"F_IE"}
+        # Skip F_IE by default: radio select_one fields (INCL/EXCL criteria)
+        # used to be untestable via enter-value, causing a 13-criterion *
+        # 7-participant = 91-task timeout tail. As of commit 79163c7,
+        # _enter_field_value's pure-JS rewrite added real radio-click
+        # support, and the 1-participant-per-form collapse below already
+        # cuts the tail to 13 regardless — but this has never been
+        # re-tested against a real F_IE form since that fix landed. Set
+        # PW_TEST_F_IE=1 to opt in and confirm it actually works before
+        # removing this skip permanently.
+        _test_f_ie = os.environ.get("PW_TEST_F_IE", "").strip() == "1"
+        _PW_SKIP_FORMS = set() if _test_f_ie else {"F_IE"}
+        if _test_f_ie:
+            print("[pw-uat] PW_TEST_F_IE=1 — F_IE radio fields will be tested "
+                  "(not auto-skipped)", flush=True)
         _skip_row_results = []
         for row, row_dict, test_type in pw_rows:
             fo  = str(row_dict.get("Form_OID") or "").strip()

@@ -4212,9 +4212,15 @@ async def run_pipeline(item_id):
             "build preview",           # Chain E
         }
         def _want(label):
-            if fast_rerun and label.lower() in _FAST_RERUN_SKIP:
+            _explicit = label.lower() in output_selections
+            # fast_rerun's skip is a default-mode optimization (don't
+            # regenerate already-good docs when the user didn't ask for
+            # them). An explicit output selection always wins over it —
+            # otherwise selecting "Study Specification" on an edited-XLSX
+            # rerun silently produces no PDF/XLSX at all.
+            if fast_rerun and label.lower() in _FAST_RERUN_SKIP and not _explicit:
                 return False
-            return run_all or label.lower() in output_selections
+            return run_all or _explicit
         print(f"Output requested: {output_raw!r} | run_all={run_all}", flush=True)
 
         create_study_val = cols.get(COL["create_study"], {}).get("value")
@@ -4710,8 +4716,11 @@ async def run_pipeline(item_id):
             struct_json = {
                 "study_meta": {"protocol_number": protocol_num},
                 "forms": [
-                    {"form_id": fid, "form_title": fid, "visits_assigned": [eoid]}
-                    for fid, eoid in event_map.items()
+                    # event_map values are already a list of event OIDs
+                    # (a form can legitimately live at multiple events —
+                    # see deterministic_build.build_event_form_map).
+                    {"form_id": fid, "form_title": fid, "visits_assigned": eoids}
+                    for fid, eoids in event_map.items()
                 ],
             }
             fast_rerun = True
