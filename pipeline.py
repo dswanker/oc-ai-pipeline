@@ -4324,9 +4324,6 @@ async def run_pipeline(item_id):
             Returns bytes on success, or None when the column is empty / the
             content can't be resolved. Callers must tolerate None.
             """
-            if edited_spec_xlsx:
-                return None  # Skip — Path A already gives us struct via XLSX
-
             col_entry = cols.get(COL["protocol"], {})
             raw_value = col_entry.get("value")
 
@@ -4414,6 +4411,13 @@ async def run_pipeline(item_id):
 
         # ── Steps 1-2: Study Specification ────────────────────────────────────
         struct_json = None
+        # Only True once Step 1 (fresh Claude protocol analysis) actually
+        # runs — distinguishes "protocol_bytes happened to be fetched as a
+        # fallback" from "protocol_bytes was the real source of struct_json".
+        # Gates the trainer-corpus pending-row hook further below so editing
+        # a Study Spec XLSX and rerunning doesn't spawn trainer rows just
+        # because the protocol was fetched defensively.
+        _struct_from_fresh_protocol_analysis = False
 
         # Holds NOTES_FOR_AI content extracted from the edited XLSX — injected
         # into the prompt so Claude understands what the reviewer changed and why.
@@ -4696,8 +4700,12 @@ async def run_pipeline(item_id):
                 await append_log(item_id,
                     f"Existing Build: {len(unplaced)} form(s) could not be "
                     f"auto-placed on an event — "
-                    f"{[u['filename'] for u in unplaced]}. DVS/spec will omit "
-                    f"these until placement is confirmed.")
+                    f"{[u['filename'] for u in unplaced]}. DVS checks for "
+                    f"these forms are NOT affected and will be complete. "
+                    f"Only their UAT test cases will have a blank Study "
+                    f"Event OID, which will need manual placement (via the "
+                    f"Mapping Review link) before UAT data load will work "
+                    f"for those forms specifically.")
 
             struct_json = {
                 "study_meta": {"protocol_number": protocol_num},
@@ -4958,6 +4966,7 @@ async def run_pipeline(item_id):
                     print(f"Trainer retrieval failed: {_trainer_exc} — continuing without examples",
                           flush=True)
 
+            _struct_from_fresh_protocol_analysis = True
             print("Step 1: Claude extracting Study Spec JSON...", flush=True)
             # Start session keepalive — pings OC designer every 60s while Claude
             # works (7-10 min) so the Keycloak token doesn't expire before upload.
@@ -5096,7 +5105,7 @@ async def run_pipeline(item_id):
             # logic in /pending-row prevents duplicates. The new row sits in
             # "Awaiting Build Completion" status until a human uploads the
             # final form definitions.
-            if trainer_on and protocol_bytes:
+            if trainer_on and protocol_bytes and _struct_from_fresh_protocol_analysis:
                 try:
                     sponsor_hint = (struct_json.get("study_meta", {})
                                     .get("sponsor")
