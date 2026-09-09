@@ -36,7 +36,8 @@ from openpyxl.utils import get_column_letter
 
 from monday_client import (get_item, download_file, upload_file, set_status,
                             append_log, set_text, set_link, download_column_file,
-                            list_column_filenames, COL, BOARD_ID)
+                            download_all_column_files, list_column_filenames,
+                            COL, BOARD_ID)
 from auth_manager import AuthManager
 from claude_client  import call_claude, extract_json, run_skill, EXTENDED_OUTPUT_MAX_TOKENS
 from migration_pipeline import run_migration as run_edc_migration
@@ -435,6 +436,70 @@ def _detect_oc_standard_type(file_bytes):
     except Exception:
         pass
     return 'UNKNOWN'
+
+
+def _files_to_text(files: list, label: str = "") -> str:
+    """
+    Convert a list of (filename, bytes) tuples to a single readable text block.
+    Supports: CSV, TSV, TXT, XLSX/XLS, DOCX, PDF, XML, JSON, MD.
+    """
+    import io as _io
+    parts = []
+    for fname, data in files:
+        ext = (fname.rsplit(".", 1)[-1].lower()) if "." in fname else ""
+        text = None
+        try:
+            if ext in ("csv", "tsv", "txt", "md"):
+                text = data.decode("utf-8", errors="replace")
+            elif ext in ("xlsx", "xls"):
+                import openpyxl as _opx
+                wb = _opx.load_workbook(_io.BytesIO(data), data_only=True, read_only=True)
+                sheet_parts = []
+                for sh in wb.worksheets:
+                    rows = []
+                    for row in sh.iter_rows(values_only=True):
+                        vals = [str(c) if c is not None else "" for c in row]
+                        if any(v.strip() for v in vals):
+                            rows.append(",".join(vals))
+                    if rows:
+                        sheet_parts.append("[Sheet: " + sh.title + "]\n" + "\n".join(rows))
+                text = "\n\n".join(sheet_parts)
+            elif ext in ("docx",):
+                try:
+                    import docx as _docx
+                    doc = _docx.Document(_io.BytesIO(data))
+                    text = "\n".join(p.text for p in doc.paragraphs if p.text.strip())
+                except ImportError:
+                    import zipfile as _zf, re as _re
+                    with _zf.ZipFile(_io.BytesIO(data)) as z:
+                        xml = z.read("word/document.xml").decode("utf-8", errors="replace")
+                    text = " ".join(_re.findall(r"<w:t[^>]*>([^<]+)</w:t>", xml))
+            elif ext == "pdf":
+                try:
+                    import pdfplumber as _pp
+                    with _pp.open(_io.BytesIO(data)) as pdf:
+                        text = "\n".join(p.extract_text() or "" for p in pdf.pages)
+                except ImportError:
+                    text = "[PDF: " + fname + " — install pdfplumber to extract text]"
+            elif ext in ("xml", "json"):
+                text = data.decode("utf-8", errors="replace")
+            else:
+                try:
+                    text = data.decode("utf-8", errors="replace")
+                except Exception:
+                    text = "[Binary file: " + fname + " — cannot extract text]"
+        except Exception as _e:
+            text = "[Error reading " + fname + ": " + str(_e) + "]"
+
+        if text and text.strip():
+            parts.append("--- " + fname + " ---\n" + text.strip())
+        else:
+            parts.append("--- " + fname + " ---\n[Empty or unreadable]")
+
+    if not parts:
+        return ""
+    header = ("=== " + label + " ===\n") if label else ""
+    return header + "\n\n".join(parts)
 
 
 def _read_zip_xlsforms(zip_bytes):
@@ -4392,20 +4457,26 @@ async def run_pipeline(item_id):
         # previous code used the column's `.text` URL which is a Monday
         # `protected_static/...` link that returns HTTP 406 to bearer-token
         # requests, silently dropping the customer's library inputs.
-        protocol_bytes, crf_pdf, oc_zip = await asyncio.gather(
+        _proto_result, _crf_files, _oc_files = await asyncio.gather(
             _get_protocol_doc(),
-            download_column_file(item_id, COL["crf_library"]),
-            download_column_file(item_id, COL["oc_standard"]),
+            download_all_column_files(item_id, COL["crf_library"]),
+            download_all_column_files(item_id, COL["oc_standard"]),
         )
+        protocol_bytes = _proto_result
+        # Keep legacy single-file vars for existing code that references them
+        crf_pdf  = _crf_files[0][1] if _crf_files else None   # compat shim
+        oc_zip   = _oc_files[0][1]  if _oc_files  else None   # compat shim
         _proto_desc = (
             f"{len(protocol_bytes):,} bytes PDF" if protocol_bytes and
             not protocol_bytes.startswith(b"%%DOCX_TEXT%%")
             else f"{len(protocol_bytes) - 14:,} chars text (Word doc)"
             if protocol_bytes else "0 bytes"
         )
+        _crf_desc = ", ".join(n for n, _ in _crf_files) if _crf_files else "none"
+        _oc_desc  = ", ".join(n for n, _ in _oc_files)  if _oc_files  else "none"
         print(f"Protocol: {_proto_desc} | "
-              f"CRF: {len(crf_pdf) if crf_pdf else 0} | "
-              f"OC ZIP: {len(oc_zip) if oc_zip else 0}", flush=True)
+              f"CRF files ({len(_crf_files)}): {_crf_desc} | "
+              f"OC files ({len(_oc_files)}): {_oc_desc}", flush=True)
 
         # ── Determine if analysis/chains are needed ───────────────────────────
         needs_analysis = (
@@ -4883,64 +4954,104 @@ async def run_pipeline(item_id):
                     f"injected into Study Spec generation.")
             else:
                 print("Customer conventions: none provided", flush=True)
-            if oc_zip:
-                oc_file_type = _detect_oc_standard_type(oc_zip)
-                _OC_STD_CHAR_CAP = 150_000  # context-budget safety cap
-                if oc_file_type == 'ODM_XML':
-                    try:
-                        oc_std_text = oc_zip.decode('utf-8', errors='replace')
-                    except Exception as _oc_xml_exc:
-                        oc_std_text = ''
-                        print(f"Warning: could not decode oc_standard ODM XML: "
-                              f"{_oc_xml_exc}", flush=True)
-                    if len(oc_std_text) > _OC_STD_CHAR_CAP:
-                        print(f"Warning: oc_standard ODM XML is "
-                              f"{len(oc_std_text):,} chars — truncating to "
-                              f"{_OC_STD_CHAR_CAP:,} for context budget", flush=True)
-                        oc_std_text = oc_std_text[:_OC_STD_CHAR_CAP] + "\n...[TRUNCATED]..."
+            # ── Priority sources for form/question construction ──────────────────
+            # The protocol is always read first. Then:
+            #
+            # For each form the protocol defines:
+            #   - If protocol specifies the questions on that form → use them.
+            #   - If protocol only names the form (not its questions) →
+            #       Priority 1: Customer OC4 Standards (what they've built before).
+            #       Priority 2: Customer CRF Standards (field/question definitions
+            #                   from their iMedNet/competitor source or library).
+            #   - If neither source covers a form → use CDASH defaults.
+            #
+            # This means CRF Standards fill gaps the protocol leaves AND gaps
+            # the OC4 Standards don't cover — they are never ignored.
+
+            _CHAR_CAP = 150_000  # per-source context budget
+
+            # ── Customer OC4 Standards (Priority 1 supplemental) ──────────────
+            if _oc_files:
+                oc_parts = []
+                for _oc_fname, _oc_data in _oc_files:
+                    _oc_ftype = _detect_oc_standard_type(_oc_data)
+                    if _oc_ftype == 'ODM_XML':
+                        try:
+                            _oc_text = _oc_data.decode('utf-8', errors='replace')
+                        except Exception as _e:
+                            print(f"Warning: could not decode OC standard ODM XML "
+                                  f"'{_oc_fname}': {_e}", flush=True)
+                            _oc_text = ''
+                        if _oc_text:
+                            oc_parts.append(
+                                "[ODM XML: " + _oc_fname + "]\n" +
+                                _oc_text[:_CHAR_CAP] +
+                                ("\n...[TRUNCATED]..." if len(_oc_text) > _CHAR_CAP else "")
+                            )
+                    elif _oc_ftype == 'XLSFORM_ZIP':
+                        import json as _json_oc
+                        try:
+                            _oc_forms = _read_zip_xlsforms(_oc_data)
+                            _oc_text = _json_oc.dumps(_oc_forms, indent=2, default=str)
+                        except Exception as _e:
+                            print(f"Warning: could not parse OC standard XLSForm ZIP "
+                                  f"'{_oc_fname}': {_e}", flush=True)
+                            _oc_text = ''
+                        if _oc_text:
+                            oc_parts.append(
+                                "[XLSForm ZIP: " + _oc_fname + "]\n" +
+                                _oc_text[:_CHAR_CAP] +
+                                ("\n...[TRUNCATED]..." if len(_oc_text) > _CHAR_CAP else "")
+                            )
+                    else:
+                        # Use generic file-to-text for Word, CSV, PDF, etc.
+                        _oc_text = _files_to_text([(_oc_fname, _oc_data)])
+                        if _oc_text:
+                            oc_parts.append(_oc_text[:_CHAR_CAP])
+
+                if oc_parts:
+                    oc_combined = "\n\n".join(oc_parts)
                     extra_parts.append(
-                        "Customer OpenClinica Study ODM XML attached — use as Priority 1 "
-                        "(most authoritative source; reflects what customer has built in OC). "
-                        "Extract: (a) StudyEventDef structure to understand the customer's "
-                        "schedule-of-events pattern — note any StudyEventDef with "
-                        "Type='Common' which indicates the customer uses a Common event for "
-                        "non-visit-dependent forms like AE and CM rather than per-module "
-                        "events; (b) FormDef/ItemGroupDef/ItemDef to use as form templates; "
-                        "(c) CodeLists as choice list baselines; "
-                        "(d) existing OIDs as the naming convention to follow.\n\n"
-                        "=== Customer ODM XML ===\n" + oc_std_text
+                        "CUSTOMER OC4 STANDARDS — Priority 1 supplemental source.\n"
+                        "These are forms the customer has previously built in OpenClinica 4.\n"
+                        "HOW TO USE: For any form the protocol names but does not fully specify "
+                        "(i.e. the protocol does not list the individual questions/fields), "
+                        "use these OC4 standards as your primary reference for field names, "
+                        "OIDs, codelists, and constraints. Match naming conventions exactly.\n\n"
+                        + oc_combined
                     )
-                elif oc_file_type == 'XLSFORM_ZIP':
-                    import json as _json_oc
-                    try:
-                        oc_forms_data = _read_zip_xlsforms(oc_zip)
-                        oc_std_text = _json_oc.dumps(oc_forms_data, indent=2, default=str)
-                    except Exception as _oc_zip_exc:
-                        oc_std_text = ''
-                        print(f"Warning: could not parse oc_standard XLSForm ZIP: "
-                              f"{_oc_zip_exc}", flush=True)
-                    if len(oc_std_text) > _OC_STD_CHAR_CAP:
-                        print(f"Warning: oc_standard XLSForm ZIP text is "
-                              f"{len(oc_std_text):,} chars — truncating to "
-                              f"{_OC_STD_CHAR_CAP:,} for context budget", flush=True)
-                        oc_std_text = oc_std_text[:_OC_STD_CHAR_CAP] + "\n...[TRUNCATED]..."
-                    extra_parts.append(
-                        "Customer OC4 XLSForm Standards (ZIP) attached — use as Priority 1 "
-                        "(most authoritative source; reflects what customer has built in OC). "
-                        "Each entry below is one existing XLSForm (survey/choices/settings "
-                        "sheets) — use these as form templates, follow existing field names "
-                        "and OIDs where applicable, and match the naming conventions shown.\n\n"
-                        "=== Customer XLSForm Standards ===\n" + oc_std_text
-                    )
+                    print(f"OC4 Standards: {len(_oc_files)} file(s) injected "
+                          f"({sum(len(d) for _,d in _oc_files):,} bytes total)", flush=True)
                 else:
-                    print(f"Warning: oc_standard file ({len(oc_zip)} bytes) is neither "
-                          f"a recognizable ODM XML nor an XLSForm ZIP — skipping, "
-                          f"nothing injected into the build prompt.", flush=True)
-            if crf_pdf:
-                extra_parts.append(
-                    "Customer CRF Library (PDF) attached — use as Priority 2 "
-                    "(fallback for any forms not found in the Priority 1 source)."
-                )
+                    print("OC4 Standards: files present but no extractable text", flush=True)
+            else:
+                print("OC4 Standards: none provided", flush=True)
+
+            # ── Customer CRF Standards (Priority 2 supplemental) ──────────────
+            if _crf_files:
+                crf_text = _files_to_text(_crf_files, label="Customer CRF Standards")
+                if crf_text:
+                    if len(crf_text) > _CHAR_CAP:
+                        print(f"Warning: CRF Standards text is {len(crf_text):,} chars "
+                              f"— truncating to {_CHAR_CAP:,}", flush=True)
+                        crf_text = crf_text[:_CHAR_CAP] + "\n...[TRUNCATED]..."
+                    extra_parts.append(
+                        "CUSTOMER CRF STANDARDS — Priority 2 supplemental source.\n"
+                        "These are the customer's field/question definitions from their "
+                        "existing CRF library or source EDC system.\n"
+                        "HOW TO USE: For any form or field NOT covered by the protocol AND "
+                        "NOT covered by the Customer OC4 Standards above, use these CRF "
+                        "Standards as your reference. Every question listed here for a given "
+                        "form MUST appear in that form's output — do not drop questions "
+                        "from this source unless the protocol explicitly excludes them.\n\n"
+                        + crf_text
+                    )
+                    print(f"CRF Standards: {len(_crf_files)} file(s) injected "
+                          f"({sum(len(d) for _,d in _crf_files):,} bytes total)", flush=True)
+                else:
+                    print("CRF Standards: files present but no extractable text", flush=True)
+            else:
+                print("CRF Standards: none provided", flush=True)
             # ─── Trainer retrieval: fetch similar past pairs as few-shot examples ──
             # Gated on TRAINER_URL presence (trainer_enabled). When the trainer
             # is wired up, retrieval runs on every pipeline pass; otherwise it

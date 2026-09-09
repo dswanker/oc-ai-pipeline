@@ -327,6 +327,86 @@ async def download_column_file(item_id, col_id):
     return None
 
 
+async def download_all_column_files(item_id, col_id):
+    """
+    Download ALL files from a monday.com file column.
+    Returns list of (filename, bytes) tuples. Empty list if none.
+    """
+    q = """
+    query($i:[ID!]) {
+      items(ids:$i) {
+        column_values {
+          id
+          ... on FileValue {
+            files {
+              ... on FileAssetValue {
+                asset_id
+                name
+              }
+            }
+          }
+        }
+      }
+    }
+    """
+    async with httpx.AsyncClient(timeout=30) as c:
+        r = await c.post(MONDAY_API_URL, headers=get_headers(),
+                         json={"query": q, "variables": {"i": [item_id]}})
+    resp = r.json()
+    items = resp.get("data", {}).get("items", [])
+    if not items:
+        return []
+
+    target_files = []
+    for cv in items[0].get("column_values", []):
+        if cv.get("id") != col_id:
+            continue
+        files = cv.get("files", [])
+        # Deduplicate by asset_id (Monday duplicates entries when files
+        # are re-uploaded — keep first occurrence of each asset_id)
+        seen = set()
+        for f in files:
+            aid = f.get("asset_id")
+            name = f.get("name", "")
+            if aid and aid not in seen:
+                seen.add(aid)
+                target_files.append((aid, name))
+        break
+
+    if not target_files:
+        return []
+
+    # Fetch all public URLs in one API call
+    asset_ids = [aid for aid, _ in target_files]
+    asset_q = "query($ids:[ID!]!){assets(ids:$ids){id public_url}}"
+    async with httpx.AsyncClient(timeout=30) as c:
+        ar = await c.post(MONDAY_API_URL, headers=get_headers(),
+                          json={"query": asset_q,
+                                "variables": {"ids": asset_ids}})
+    url_map = {
+        a["id"]: a.get("public_url")
+        for a in ar.json().get("data", {}).get("assets", [])
+    }
+
+    # Download all files concurrently
+    results = []
+    async def _dl(aid, name):
+        url = url_map.get(str(aid)) or url_map.get(int(aid) if isinstance(aid, str) else aid)
+        if not url:
+            return
+        data = await download_file(url)
+        if data:
+            results.append((name, data))
+
+    import asyncio as _asyncio
+    await _asyncio.gather(*[_dl(aid, name) for aid, name in target_files])
+    # Restore original order
+    order = {aid: i for i, (aid, _) in enumerate(target_files)}
+    results.sort(key=lambda x: order.get(
+        next((aid for aid, name in target_files if name == x[0]), 0), 999))
+    return results
+
+
 async def list_column_filenames(item_id, col_id):
     """
     Return a list of filenames (str) attached to a monday.com file column.
