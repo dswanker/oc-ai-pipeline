@@ -3977,8 +3977,9 @@ def _apply_crf_standards(struct_json: dict, crf_files: list, oc_files: list) -> 
                               added_for_form +
                               survey[insert_idx:])
             total_added += len(added_for_form)
+            injected_names = [r["name"].split("_")[-1] for r in added_for_form]
             print(f"[crf-standards] {form_id}: injected {len(added_for_form)} missing "
-                  f"fields: {[f['variable_name'] for f in required_fields if f['variable_name'].upper() not in set(r['name'].split('_')[-1].upper() for r in survey)[:1] or True][:6]}",
+                  f"fields: {injected_names[:10]}",
                   flush=True)
 
     if total_added:
