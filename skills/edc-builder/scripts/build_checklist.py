@@ -142,7 +142,7 @@ def run_qa_checks(form, build_log):
     # and will always be injected before the form is written. Excluding it
     # from the QA gate prevents false FAIL on forms that legitimately use
     # select_one yn without defining it in the spec choices array.
-    AUTO_TEMPLATED = {'yn'}
+    AUTO_TEMPLATED = {'yn', 'yes_no'}  # yes_no also treated as standard list
     missing_lists = (referenced_lists - defined_lists) - AUTO_TEMPLATED
     yn_auto = 'yn' in (referenced_lists - defined_lists)
     detail = (f"Missing lists: {', '.join(sorted(missing_lists))}" if missing_lists

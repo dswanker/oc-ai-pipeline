@@ -3906,7 +3906,7 @@ def _crf_variable_type_to_xlsform(vtype: str) -> str:
     """
     vtype_lower = vtype.lower().strip()
     if "checkbox" in vtype_lower:
-        return "select_one yes_no"
+        return "select_one yn"  # yn is auto-templated by edc-builder (Y/N)
     if "radio" in vtype_lower:
         return "select_one"
     if "dropdown" in vtype_lower:
