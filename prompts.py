@@ -174,6 +174,39 @@ RULE OC-2b — NO `time` OR `dateTime` TYPE
   A date+time is `text` with a `YYYY-MM-DD HH:MM` constraint. (The
   edc-builder also coerces any stray time/dateTime to text as a safety net.)
 
+RULE OC-2c — CHECKBOX FIELDS MUST BE INCLUDED AS select_multiple OR boolean
+  When Customer CRF Standards or OC4 Standards list a field with type
+  "Checkbox", "checkbox", or equivalent — do NOT omit it. Checkbox fields
+  are mandatory data collection items, not optional UI decorations.
+  Map them to XLSForm as follows:
+  - A SINGLE checkbox (yes/no) → type: "select_one yes_no" or "boolean"
+  - A GROUP of related checkboxes that form a multi-select question →
+    type: "select_multiple <list_name>"  (one row covers all options)
+  - Independent checkboxes that each capture a separate concept →
+    one row per checkbox, each as "select_one yes_no"
+  When in doubt about grouping, treat each checkbox as independent:
+    type: select_one yes_no
+    name: I_<FORM>_<VARNAME>
+    label: <label from source>
+  NEVER silently drop a Checkbox field. If you are uncertain how to
+  represent it, include it as select_one yes_no — that is always valid.
+
+RULE OC-2d — CRF STANDARDS ARE MANDATORY FIELD LISTS, NOT SUGGESTIONS
+  When CUSTOMER CRF STANDARDS or CUSTOMER OC4 STANDARDS are provided
+  in your context, the Variable Names listed for each form are REQUIRED.
+  Every variable in the standards for a given form MUST appear in that
+  form's survey output — with the exact Variable Name as the field OID
+  suffix (e.g. Variable Name "AETERM" → name "I_AE_AETERM").
+  The label MUST match the Label column from the standards exactly.
+  Do NOT:
+  - Omit any variable from the standards
+  - Rename variables from the standards
+  - Merge multiple standard variables into one field
+  - Substitute a similar-sounding field from CDASH defaults
+  You MAY add additional fields beyond the standards (e.g. CDASH required
+  fields the standards don't include), but you must include ALL standard
+  fields first. Field order should follow the Sequence column if present.
+
 RULE OC-3 — SETTINGS FIELDS REQUIRED
   The settings sheet needs these six cells populated (per OC4 docs
   §2.4.4 Using the Form Template):

@@ -3765,6 +3765,232 @@ def _sanitize_form_titles(spec):
     return spec
 
 
+def _parse_crf_standards_questions(crf_files: list) -> dict:
+    """
+    Parse CRF Standards files and return a dict mapping:
+      form_name (uppercase) -> list of field dicts with keys:
+        variable_name, label, variable_type, sequence
+    Supports QUESTIONS.csv format (iMedNet export) and similar tabular formats.
+    Returns empty dict if no parseable data found.
+    """
+    import csv as _csv, io as _io
+    form_fields = {}  # form_name -> [{variable_name, label, variable_type, sequence}]
+
+    for fname, data in crf_files:
+        ext = (fname.rsplit(".", 1)[-1].lower()) if "." in fname else ""
+        if ext not in ("csv", "tsv", "txt"):
+            continue
+        try:
+            text = data.decode("utf-8", errors="replace")
+            sep = "\t" if ext == "tsv" else ","
+            reader = _csv.DictReader(_io.StringIO(text), delimiter=sep)
+            headers = [h.strip() for h in (reader.fieldnames or [])]
+            if not headers:
+                continue
+
+            # Detect column names — handle variations
+            def _col(candidates):
+                for c in candidates:
+                    for h in headers:
+                        if h.strip().lower() == c.lower():
+                            return h
+                return None
+
+            form_col    = _col(["Form", "form", "FORM", "FormName"])
+            var_col     = _col(["Variable Name", "variable_name", "VariableName",
+                                "Variable", "Field Name", "fieldname", "Name"])
+            label_col   = _col(["Label", "label", "Question", "question", "Field Label"])
+            type_col    = _col(["Variable Type", "variable_type", "VariableType",
+                                "Type", "Field Type", "DataType"])
+            seq_col     = _col(["Sequence", "sequence", "Order", "order",
+                                "Position", "Seq"])
+
+            if not form_col or not var_col:
+                print(f"[crf-standards] {fname}: could not detect Form/Variable columns "
+                      f"(headers: {headers[:6]})", flush=True)
+                continue
+
+            for row in reader:
+                form = (row.get(form_col) or "").strip().upper()
+                var  = (row.get(var_col)  or "").strip()
+                if not form or not var:
+                    continue
+                label   = (row.get(label_col,  "") or "").strip() if label_col  else var
+                vtype   = (row.get(type_col,   "") or "").strip() if type_col   else ""
+                try:
+                    seq = int((row.get(seq_col, "") or "0").strip()) if seq_col else 999
+                except ValueError:
+                    seq = 999
+
+                if form not in form_fields:
+                    form_fields[form] = []
+                form_fields[form].append({
+                    "variable_name": var,
+                    "label":         label or var,
+                    "variable_type": vtype,
+                    "sequence":      seq,
+                })
+
+        except Exception as _e:
+            print(f"[crf-standards] Error parsing {fname}: {_e}", flush=True)
+            continue
+
+    # Sort each form's fields by sequence
+    for form in form_fields:
+        form_fields[form].sort(key=lambda x: x["sequence"])
+
+    return form_fields
+
+
+def _crf_variable_type_to_xlsform(vtype: str) -> str:
+    """Map iMedNet/generic variable type to XLSForm type."""
+    vtype_lower = vtype.lower().strip()
+    if "checkbox" in vtype_lower:
+        return "select_multiple"
+    if "radio" in vtype_lower:
+        return "select_one"
+    if "dropdown" in vtype_lower:
+        return "select_one"
+    if "date" in vtype_lower or "time" in vtype_lower:
+        return "date"
+    if "text" in vtype_lower:
+        return "text"
+    if "integer" in vtype_lower or "whole" in vtype_lower:
+        return "integer"
+    if "decimal" in vtype_lower or "numeric" in vtype_lower or "float" in vtype_lower:
+        return "decimal"
+    if "file" in vtype_lower or "upload" in vtype_lower:
+        return "file"
+    return "text"  # safe default
+
+
+def _apply_crf_standards(struct_json: dict, crf_files: list, oc_files: list) -> dict:
+    """
+    Deterministic post-processing step: ensure every field in CRF Standards
+    (QUESTIONS.csv etc.) is present in the corresponding form in struct_json.
+
+    For each form in struct_json whose form_id matches a form in CRF Standards:
+    1. Build a set of variable names already in the form's survey rows.
+    2. For any variable in CRF Standards NOT in the survey → insert it.
+    3. Do NOT remove fields Claude added (they may be valid additions).
+    4. Preserve Claude's ordering; append missing fields at the end of the
+       appropriate item group.
+
+    This makes field enumeration deterministic when CRF Standards are provided.
+    """
+    if not crf_files and not oc_files:
+        return struct_json
+
+    # Parse CRF Standards (QUESTIONS.csv etc.)
+    crf_questions = _parse_crf_standards_questions(crf_files)
+    if not crf_questions:
+        print("[crf-standards] No structured question data found in CRF files — "
+              "skipping deterministic injection", flush=True)
+        return struct_json
+
+    total_added = 0
+    for form in struct_json.get("forms", []):
+        form_id = (form.get("form_id") or "").upper()
+        if not form_id:
+            continue
+
+        # Match form to CRF standards entry — exact first, then prefix match
+        crf_form_key = None
+        if form_id in crf_questions:
+            crf_form_key = form_id
+        else:
+            # Try matching without suffixes (AE matches AESAE prefix etc.)
+            for k in crf_questions:
+                if k == form_id or form_id.startswith(k) or k.startswith(form_id):
+                    crf_form_key = k
+                    break
+
+        if not crf_form_key:
+            continue
+
+        required_fields = crf_questions[crf_form_key]
+        survey = form.get("survey", [])
+
+        # Build set of variable names already in survey (by name field)
+        existing_names = set()
+        for row in survey:
+            name = (row.get("name") or "").strip()
+            if name:
+                # name may be full OID like I_AE_AETERM — extract field portion
+                parts = name.split("_")
+                if len(parts) >= 3:
+                    existing_names.add("_".join(parts[2:]).upper())
+                existing_names.add(name.upper())
+                # Also add bare last segment for simple matching
+                existing_names.add(parts[-1].upper())
+
+        # Find the last data row's itemgroup to use for injected fields
+        last_itemgroup = "AE"  # fallback
+        for row in reversed(survey):
+            ig = row.get("bind__oc_itemgroup") or row.get("bind_oc_itemgroup") or ""
+            if ig:
+                last_itemgroup = ig
+                break
+
+        # Find insertion point — after last non-group/calculate row
+        insert_idx = len(survey)
+        for i in range(len(survey) - 1, -1, -1):
+            t = survey[i].get("type", "")
+            if t not in ("end group", "end repeat"):
+                insert_idx = i + 1
+                break
+
+        added_for_form = []
+        for field in required_fields:
+            var_name = field["variable_name"].upper()
+            # Check if this field already exists in survey
+            if (var_name in existing_names or
+                    f"I_{form_id}_{var_name}" in existing_names):
+                continue
+
+            # Build a minimal survey row for this field
+            xls_type = _crf_variable_type_to_xlsform(field["variable_type"])
+
+            # For select_multiple/select_one, reference a list named after the variable
+            list_name = f"{form_id.lower()}_{var_name.lower()}"
+            if xls_type in ("select_one", "select_multiple"):
+                xls_type_str = f"{xls_type} {list_name}"
+            else:
+                xls_type_str = xls_type
+
+            full_name = f"I_{form_id}_{var_name}"
+            new_row = {
+                "type":                 xls_type_str,
+                "name":                 full_name,
+                "label":                field["label"],
+                "bind__oc_itemgroup":   last_itemgroup,
+                "required":             "no",
+                "_source":              "crf_standards_injection",
+            }
+            added_for_form.append(new_row)
+            existing_names.add(var_name)
+            existing_names.add(full_name.upper())
+
+        if added_for_form:
+            # Insert before the final end group/end repeat markers
+            form["survey"] = (survey[:insert_idx] +
+                              added_for_form +
+                              survey[insert_idx:])
+            total_added += len(added_for_form)
+            print(f"[crf-standards] {form_id}: injected {len(added_for_form)} missing "
+                  f"fields: {[f['variable_name'] for f in required_fields if f['variable_name'].upper() not in set(r['name'].split('_')[-1].upper() for r in survey)[:1] or True][:6]}",
+                  flush=True)
+
+    if total_added:
+        print(f"[crf-standards] Total fields injected across all forms: {total_added}",
+              flush=True)
+    else:
+        print("[crf-standards] All CRF Standards fields already present in spec",
+              flush=True)
+
+    return struct_json
+
+
 def _ensure_required_forms(spec: dict, protocol_num: str) -> dict:
     """Deterministically inject required infrastructure forms if Claude dropped them.
 
@@ -5166,6 +5392,11 @@ async def run_pipeline(item_id):
             struct_json = _backfill_migration_fields(struct_json)
             struct_json = _sanitize_form_titles(struct_json)
             struct_json = _ensure_required_forms(struct_json, protocol_num)
+            # Deterministic CRF Standards injection — ensure every field from
+            # QUESTIONS.csv (and equivalent CRF/OC4 standard files) is present
+            # in the corresponding form. Runs after Claude extraction so it
+            # fills gaps without removing anything Claude correctly added.
+            struct_json = _apply_crf_standards(struct_json, _crf_files, _oc_files)
             # Survey quality check — abort if forms have 0 visible questions.
             # This catches spec extraction thinning (token budget variance)
             # before it creates a study with empty forms.
