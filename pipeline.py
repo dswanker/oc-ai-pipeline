@@ -3765,6 +3765,63 @@ def _sanitize_form_titles(spec):
     return spec
 
 
+def _parse_crf_standards_choices(crf_files: list) -> dict:
+    """
+    Parse CHOICES.csv from CRF Standards files.
+    Returns dict: (form_upper, var_upper) -> [(safe_name, display_label), ...]
+    """
+    import csv as _csv, io as _io, re as _re
+    choices = {}
+
+    for fname, data in crf_files:
+        ext = (fname.rsplit(".", 1)[-1].lower()) if "." in fname else ""
+        if ext not in ("csv", "tsv", "txt"):
+            continue
+        try:
+            text = data.decode("utf-8", errors="replace")
+            sep = "	" if ext == "tsv" else ","
+            reader = _csv.DictReader(_io.StringIO(text), delimiter=sep)
+            headers = [h.strip() for h in (reader.fieldnames or [])]
+            if not headers:
+                continue
+
+            def _col(candidates):
+                for c in candidates:
+                    for h in headers:
+                        if h.strip().lower() == c.lower():
+                            return h
+                return None
+
+            form_col  = _col(["Form", "form", "FORM"])
+            var_col   = _col(["Variable Name", "variable_name", "VariableName",
+                               "Variable", "Field Name"])
+            text_col  = _col(["Choice Text", "choice_text", "ChoiceText",
+                               "Label", "label", "Display", "Text"])
+            value_col = _col(["Choice Value", "choice_value", "ChoiceValue",
+                               "Value", "Code", "code"])
+
+            if not form_col or not var_col or not text_col:
+                continue
+
+            for row in reader:
+                form = (row.get(form_col) or "").strip().upper()
+                var  = (row.get(var_col)  or "").strip().upper()
+                txt  = (row.get(text_col) or "").strip()
+                val  = (row.get(value_col, "") or "").strip() if value_col else ""
+                if not form or not var or not txt:
+                    continue
+                safe = val if val else txt
+                safe = _re.sub(r"[^a-zA-Z0-9_]", "_", safe).lower().strip("_")
+                if not safe or safe[0].isdigit():
+                    safe = "c_" + safe
+                choices.setdefault((form, var), []).append((safe, txt))
+
+        except Exception:
+            continue
+
+    return choices
+
+
 def _parse_crf_standards_questions(crf_files: list) -> dict:
     """
     Parse CRF Standards files and return a dict mapping:
@@ -3843,10 +3900,13 @@ def _parse_crf_standards_questions(crf_files: list) -> dict:
 
 
 def _crf_variable_type_to_xlsform(vtype: str) -> str:
-    """Map iMedNet/generic variable type to XLSForm type."""
+    """Map iMedNet/generic variable type to XLSForm type string.
+    Checkbox: standalone boolean in iMedNet -> select_one yes_no (no list needed).
+    Radio/Dropdown: select_one with list name from CHOICES.csv.
+    """
     vtype_lower = vtype.lower().strip()
     if "checkbox" in vtype_lower:
-        return "select_multiple"
+        return "select_one yes_no"
     if "radio" in vtype_lower:
         return "select_one"
     if "dropdown" in vtype_lower:
@@ -3861,7 +3921,7 @@ def _crf_variable_type_to_xlsform(vtype: str) -> str:
         return "decimal"
     if "file" in vtype_lower or "upload" in vtype_lower:
         return "file"
-    return "text"  # safe default
+    return "text"
 
 
 def _apply_crf_standards(struct_json: dict, crf_files: list, oc_files: list) -> dict:
@@ -3961,12 +4021,20 @@ def _apply_crf_standards(struct_json: dict, crf_files: list, oc_files: list) -> 
                 list_name = f"{form_id.lower()}_{var_name.lower()}"
                 xls_type_str = f"{xls_type} {list_name}"
                 # Inject choices from CHOICES.csv if available
+                # spec choices is a LIST of {list_name, name, label} dicts
                 choice_key = (form_id, var_name)
                 if choice_key in crf_choices:
-                    form.setdefault("choices", {})[list_name] = [
-                        {"name": cn, "label": cl}
-                        for cn, cl in crf_choices[choice_key]
-                    ]
+                    existing_choices = form.setdefault("choices", [])
+                    existing_list_names = {c.get("list_name") for c in existing_choices
+                                           if isinstance(c, dict)}
+                    if list_name not in existing_list_names:
+                        for cn, cl in crf_choices[choice_key]:
+                            existing_choices.append({
+                                "list_name": list_name,
+                                "name":      cn,
+                                "label":     cl,
+                                "source":    "crf_standards_injection",
+                            })
             else:
                 xls_type_str = xls_type
 
