@@ -3951,10 +3951,21 @@ def _apply_crf_standards(struct_json: dict, crf_files: list, oc_files: list) -> 
             # Build a minimal survey row for this field
             xls_type = _crf_variable_type_to_xlsform(field["variable_type"])
 
-            # For select_multiple/select_one, reference a list named after the variable
-            list_name = f"{form_id.lower()}_{var_name.lower()}"
-            if xls_type in ("select_one", "select_multiple"):
+            # Determine XLSForm type string and handle choice lists
+            # Checkbox -> select_one yes_no (yes_no list always present)
+            # Radio/Dropdown -> select_one <list_name> with choices from CHOICES.csv
+            if xls_type == "select_one yes_no":
+                xls_type_str = "select_one yes_no"
+            elif xls_type in ("select_one", "select_multiple"):
+                list_name = f"{form_id.lower()}_{var_name.lower()}"
                 xls_type_str = f"{xls_type} {list_name}"
+                # Inject choices from CHOICES.csv if available
+                choice_key = (form_id, var_name)
+                if choice_key in crf_choices:
+                    form.setdefault("choices", {})[list_name] = [
+                        {"name": cn, "label": cl}
+                        for cn, cl in crf_choices[choice_key]
+                    ]
             else:
                 xls_type_str = xls_type
 
