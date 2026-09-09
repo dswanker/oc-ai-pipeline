@@ -3881,8 +3881,9 @@ def _apply_crf_standards(struct_json: dict, crf_files: list, oc_files: list) -> 
     if not crf_files and not oc_files:
         return struct_json
 
-    # Parse CRF Standards (QUESTIONS.csv etc.)
+    # Parse CRF Standards (QUESTIONS.csv etc.) and CHOICES.csv
     crf_questions = _parse_crf_standards_questions(crf_files)
+    crf_choices   = _parse_crf_standards_choices(crf_files)
     if not crf_questions:
         print("[crf-standards] No structured question data found in CRF files — "
               "skipping deterministic injection", flush=True)
