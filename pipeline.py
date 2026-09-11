@@ -2284,6 +2284,11 @@ async def create_oc_study(subdomain, struct_json, is_production=False,
                      "not applicable": "OTHER_NON_IND", "n/a": "OTHER_NON_IND",
                      "na": "OTHER_NON_IND", "none": "OTHER_NON_IND",
                      "other": "OTHER_NON_IND", "observational": "OTHER_NON_IND"}
+        # Always clamp to a valid value regardless of what Claude extracted
+        _raw_phase = str(meta.get("study_phase", "")).lower().strip()
+        _mapped_phase = phase_map.get(_raw_phase, "OTHER_NON_IND")
+        _final_phase = _clamp_phase(_mapped_phase)
+        print(f"[study-create] phase: raw={_raw_phase!r} mapped={_mapped_phase!r} final={_final_phase!r}", flush=True)
         today      = _dt.date.today().isoformat()
         dur_months = int(meta.get("total_study_duration_months", 24) or 24)
         end_date   = (_dt.date.today().replace(
@@ -2297,10 +2302,7 @@ async def create_oc_study(subdomain, struct_json, is_production=False,
             "uniqueIdentifier":   protocol_num[:30],
             "type":               type_map.get(str(meta.get("type","")).lower(),
                                                "INTERVENTIONAL"),
-            "phase":              _clamp_phase(
-                                    phase_map.get(
-                                        str(meta.get("study_phase","")).lower().strip(),
-                                        "OTHER_NON_IND")),
+            "phase":              _final_phase,
             "expectedStartDate":  today,
             "expectedEndDate":    end_date,
             "expectedEnrollment": int(meta.get("expected_enrollment", 0) or 0),
@@ -2309,10 +2311,6 @@ async def create_oc_study(subdomain, struct_json, is_production=False,
             "collectPersonId":    "ALWAYS",
         }
 
-        _phase_val = payload["phase"]
-        print(f"[study-create] study_phase raw={meta.get('study_phase','')!r} "
-              f"→ phase_map={phase_map.get(str(meta.get('study_phase','')).lower().strip(),'(no match)')!r} "
-              f"→ final={_phase_val!r}", flush=True)
         async with httpx.AsyncClient(timeout=60) as c:
             r = await c.post(f"{base_url}/study-service/api/studies",
                              headers=headers, json=payload)
