@@ -6203,7 +6203,8 @@ async def run_pipeline(item_id):
                             if "EDC_Build" in name and name.endswith(".zip"):
                                 edc_zip_url = (asset.get("public_url")
                                                or asset.get("url"))
-                                break
+                                # no break — keep iterating to get the LAST
+                                # (most recent) EDC build zip
                         if not edc_zip_url:
                             print("Chain D: no EDC build ZIP asset found on "
                                   "item — form publish will be skipped",
