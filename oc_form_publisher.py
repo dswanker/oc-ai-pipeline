@@ -1374,8 +1374,10 @@ class FormPublisher:
                                         # Board OID is F_-prefixed (OC's
                                         # stored OID); xlsx filenames are
                                         # bare — strip F_ to match the stem.
+                                        import re as _re_xlsx
+                                        _lookup_oid = _re_xlsx.sub(r'_\d+$', '', pre_oid or oid)
                                         xlsx_path = xlsx_map.get(
-                                            _strip_form_oid_prefix(pre_oid or oid))
+                                            _strip_form_oid_prefix(_lookup_oid))
                                         if not xlsx_path:
                                             print(f"[publisher] Skipping "
                                                   f"{form_name} "
