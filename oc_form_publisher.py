@@ -2942,6 +2942,19 @@ async def probe_sso_session(subdomain: str, session_path: str,
                         await page.wait_for_selector("a.btn-design", timeout=10000)
                     except Exception:
                         pass  # No cards visible but token is live — fail-open
+                    # Save the refreshed browser state back to disk so
+                    # Chain D's oc-auth code finds a valid token when it
+                    # reads the session file directly (without Playwright).
+                    # Angular may have silently refreshed the token during
+                    # navigation — capturing the updated state here ensures
+                    # the on-disk file matches what the browser has.
+                    try:
+                        await context.storage_state(path=session_path)
+                        print(f"[session-preflight] saved refreshed session "
+                              f"state to {session_path}", flush=True)
+                    except Exception as _save_err:
+                        print(f"[session-preflight] session state save failed: "
+                              f"{_save_err}", flush=True)
                     print(f"[session-preflight] SSO session live for "
                           f"{subdomain} (token valid, cards visible)", flush=True)
                     return True
