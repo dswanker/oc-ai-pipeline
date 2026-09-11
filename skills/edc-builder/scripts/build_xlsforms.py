@@ -394,13 +394,6 @@ def _normalize_survey_rows(rows):
         t = str(r.get('type', '') or '').strip().lower()
         if t in END_TYPES:
             r['name'] = ''
-        # OC rule: type=calculate rows MUST NOT have readonly=yes.
-        # OC rejects with "cannot be defined as type=calculate and readonly
-        # — this element will never be visible on the form."
-        # type=calculate is always a hidden background field; readonly is
-        # only valid on visible fields (type=text/integer/date/etc.).
-        if t == 'calculate' and str(r.get('readonly', '') or '').strip().lower() == 'yes':
-            r['readonly'] = ''
         normalized.append(r)
 
     _BEGIN_TYPES = {
