@@ -193,6 +193,18 @@ def _build_customer_conventions_block(conventions: dict) -> str:
     return "\n".join(lines)
 
 
+_VALID_PHASES = {"PHASEI", "PHASEII", "PHASEIII", "PHASEIV", "OTHER_NON_IND"}
+
+def _clamp_phase(value):
+    """Ensure the phase value is one the OC Study Service API accepts.
+    Any unrecognised value falls back to OTHER_NON_IND and is logged."""
+    if value in _VALID_PHASES:
+        return value
+    print(f"[study-create] WARNING: invalid phase {value!r} — "
+          f"clamping to OTHER_NON_IND", flush=True)
+    return "OTHER_NON_IND"
+
+
 def _xl_header_row(ws, headers, bg="1B3A6B", fg="FFFFFF"):
     fill = PatternFill("solid", fgColor=bg)
     font = Font(name="Arial", bold=True, color=fg, size=10)
@@ -2268,7 +2280,10 @@ async def create_oc_study(subdomain, struct_json, is_production=False,
         phase_map = {"phase i": "PHASEI", "phase 1": "PHASEI",
                      "phase ii": "PHASEII", "phase 2": "PHASEII",
                      "phase iii": "PHASEIII", "phase 3": "PHASEIII",
-                     "phase iv": "PHASEIV", "phase 4": "PHASEIV"}
+                     "phase iv": "PHASEIV", "phase 4": "PHASEIV",
+                     "not applicable": "OTHER_NON_IND", "n/a": "OTHER_NON_IND",
+                     "na": "OTHER_NON_IND", "none": "OTHER_NON_IND",
+                     "other": "OTHER_NON_IND", "observational": "OTHER_NON_IND"}
         today      = _dt.date.today().isoformat()
         dur_months = int(meta.get("total_study_duration_months", 24) or 24)
         end_date   = (_dt.date.today().replace(
@@ -2282,8 +2297,10 @@ async def create_oc_study(subdomain, struct_json, is_production=False,
             "uniqueIdentifier":   protocol_num[:30],
             "type":               type_map.get(str(meta.get("type","")).lower(),
                                                "INTERVENTIONAL"),
-            "phase":              phase_map.get(str(meta.get("study_phase","")).lower().strip(),
-                                               "OTHER_NON_IND"),
+            "phase":              _clamp_phase(
+                                    phase_map.get(
+                                        str(meta.get("study_phase","")).lower().strip(),
+                                        "OTHER_NON_IND")),
             "expectedStartDate":  today,
             "expectedEndDate":    end_date,
             "expectedEnrollment": int(meta.get("expected_enrollment", 0) or 0),
