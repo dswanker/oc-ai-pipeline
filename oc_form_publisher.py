@@ -730,6 +730,7 @@ class FormPublisher:
                     # files) because the board is authoritative; an xlsx
                     # without a matching board form gets logged + skipped.
                     xlsx_map = {p.stem.upper(): p for p in xlsx_paths}
+                    print(f"[publisher] xlsx_map keys ({len(xlsx_map)}): {sorted(xlsx_map.keys())[:10]}", flush=True)
                     # Track OIDs uploaded this session so we don't re-upload
                     # the same form definition when it appears in multiple
                     # events. OC propagates version visibility slowly — the
