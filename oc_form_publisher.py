@@ -2804,65 +2804,21 @@ class FormPublisher:
         # Convert slug to study ID format: 'crs-135' → 'CRS-135'
         study_name = study_slug.replace("-", "-").upper()
 
-        my_studies_url = f"https://{subdomain}.build.openclinica.io/#/account-study"
-        print(f"[auth-sso] navigating to My Studies via build app: {my_studies_url}",
-              flush=True)
-        print(f"[auth-sso] looking for study card matching: {study_name!r}",
+        # Navigate directly to the study board URL — the session is already
+        # live (preflight confirmed it). Going via My Studies and clicking a
+        # Design button is fragile: the card text rarely matches study_name
+        # and the fallback (first button) clicks the wrong study.
+        print(f"[auth-sso] navigating directly to study board: {study_url}",
               flush=True)
 
         try:
-            await page.goto(my_studies_url, wait_until="networkidle", timeout=30000)
-            await page.wait_for_timeout(2000)
-
-            # Wait for study cards (Design buttons) to appear
-            await page.wait_for_selector("a.btn-design", timeout=20000)
-            print("[auth-sso] My Studies page loaded — study cards visible",
-                  flush=True)
-
-            # Find the Design button for the matching study.
-            # Each card has div.ngx-ellipsis-inner containing the study ID text.
-            # We walk up from each a.btn-design to its card container and check
-            # if any ngx-ellipsis-inner text matches our study name.
-            design_btn = await page.evaluate_handle("""(studyName) => {
-                const btns = Array.from(document.querySelectorAll('a.btn-design'));
-                // Try to find matching study card
-                for (const btn of btns) {
-                    // Walk up to card container (typically 5-6 levels)
-                    let el = btn;
-                    for (let i = 0; i < 8; i++) {
-                        el = el.parentElement;
-                        if (!el) break;
-                        const names = el.querySelectorAll('div.ngx-ellipsis-inner');
-                        for (const n of names) {
-                            if (n.textContent.trim() === studyName) {
-                                return btn;
-                            }
-                        }
-                    }
-                }
-                // Fallback: first Design button (top-left = most recent study)
-                return btns.length > 0 ? btns[0] : null;
-            }""", study_name)
-
-            # Check we got a valid element handle
-            is_null = await page.evaluate("el => el === null", design_btn)
-            if is_null:
-                print("[auth-sso] no Design buttons found on My Studies page",
-                      flush=True)
-                return False
-
-            # Log which study we're clicking into
-            btn_href = await page.evaluate("el => el.href || ''", design_btn)
-            print(f"[auth-sso] clicking Design button: {btn_href}", flush=True)
-
-            # Click Design — this triggers the SSO redirect chain into designer
-            await design_btn.click()
+            await page.goto(study_url, wait_until="domcontentloaded", timeout=30000)
 
             # Wait for designer board to fully load
             await page.wait_for_selector(
                 self.AUTH_SUCCESS_SELECTOR, timeout=30000)
             print(f"oc_form_publisher: authenticated as {self.user_email} "
-                  f"via build app → designer redirect chain", flush=True)
+                  f"via direct board navigation", flush=True)
             return True
 
         except Exception as e:
