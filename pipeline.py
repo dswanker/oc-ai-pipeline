@@ -2803,7 +2803,7 @@ async def create_oc_study(subdomain, struct_json, is_production=False,
                 print(f"[session-error] {_sso_msg}", flush=True)
                 if item_id:
                     await append_log(item_id, f"BLOCKED: {_sso_msg}")
-                    await set_status(item_id, COL["status"], "Failed")
+                    await set_status(item_id, COL["pipeline_status"], STATUS["failed"])
                 return
             for err in forms_publish.errors[:5]:
                 print(f"  form-upload error: {err}", flush=True)
@@ -4577,7 +4577,7 @@ async def run_pipeline(item_id):
                 _auth_link = _am.generate_auth_link(
                     _oc_email_early,
                     "https://oc-ai-pipeline-production.up.railway.app",
-                    context="uat",
+                    context="pipeline",
                     item_id=str(item_id),
                 )
                 # Include clinical host in link so instructions page can show it
