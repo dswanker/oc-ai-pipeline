@@ -2125,6 +2125,98 @@ async def _rename_board_card_titles(subdomain, board_id, board_json,
             await browser.close()
 
 
+async def _register_forms_with_service(subdomain, board_id, study_uuid,
+                                       session_path, is_production,
+                                       token=None):
+    """Call Meteor getForm for every unique card on the board.
+
+    importStudy creates board cards but does NOT register them with the
+    form-service. Without this step the form panel opens but file upload
+    is silently rejected. The UI calls getForm when a user types a form
+    name into '+ Add a form'. Signature confirmed 2026-09-11:
+        Meteor.call('getForm', bucketUuid, cardTitle, bearerToken, cb)
+
+    bucketUuid is the study UUID (same value used to create the study).
+    """
+    from playwright.async_api import async_playwright
+
+    print(f"[getForm] registering forms for board {board_id} "
+          f"(study {study_uuid})", flush=True)
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        try:
+            ctx  = await browser.new_context(storage_state=session_path)
+            page = await ctx.new_page()
+
+            board_url = (f"https://{subdomain}.design.openclinica.io"
+                         f"/b/{board_id}")
+            await page.goto(board_url, wait_until="domcontentloaded",
+                            timeout=60000)
+            await page.wait_for_timeout(3000)
+
+            try:
+                await page.wait_for_selector(".js-minicard", timeout=30000)
+            except Exception:
+                print("[getForm] board did not load — skipping", flush=True)
+                return
+
+            # Get bearer token from sessionStorage (oidc.user key)
+            bearer = await page.evaluate("""() => {
+                try {
+                    const k = Object.keys(sessionStorage)
+                        .find(k => k.startsWith('oidc.user'));
+                    return k ? JSON.parse(sessionStorage.getItem(k))
+                                 .access_token : null;
+                } catch(e) { return null; }
+            }""")
+
+            if not bearer:
+                print("[getForm] could not get bearer token — skipping",
+                      flush=True)
+                return
+
+            # Get all unique card titles from Meteor
+            cards = await page.evaluate(f"""() => {{
+                try {{
+                    const seen = new Set();
+                    return Cards.find({{boardId: '{board_id}',
+                                       archived: {{$ne: true}}}})
+                        .fetch()
+                        .filter(c => {{
+                            if (!c.title || seen.has(c.title)) return false;
+                            seen.add(c.title);
+                            return true;
+                        }})
+                        .map(c => c.title);
+                }} catch(e) {{ return []; }}
+            }}""")
+
+            print(f"[getForm] {len(cards)} unique card titles to register",
+                  flush=True)
+
+            ok = fail = 0
+            for title in cards:
+                result = await page.evaluate(
+                    """([bucket, t, tok]) => new Promise((res, rej) => {
+                        Meteor.call('getForm', bucket, t, tok,
+                            (err, r) => err ? rej(err.message||String(err))
+                                            : res(r));
+                    })""",
+                    [study_uuid, title, bearer]
+                )
+                ok += 1
+                print(f"[getForm] ✓ {title}", flush=True)
+                await page.wait_for_timeout(800)
+
+            print(f"[getForm] complete — ✓{ok} registered  ✗{fail} failed",
+                  flush=True)
+        except Exception as e:
+            print(f"[getForm] error: {e}", flush=True)
+        finally:
+            await browser.close()
+
+
 async def _import_board(subdomain, board_id, board_json, is_production, token=None):
     """
     Import the board.json into the study designer.
@@ -2539,8 +2631,29 @@ async def create_oc_study(subdomain, struct_json, is_production=False,
             else:
                 print("[board-rename] skipped — no usable session",
                       flush=True)
-            # Prefer the import response's board-id+slug URL — the
-            # Playwright form-upload flow needs THAT to render the designer.
+
+            # ── getForm registration ──────────────────────────────────────
+            # importStudy creates board cards but does NOT register them
+            # with the form-service (the step the UI calls "Add a form").
+            # Without this, the form panel opens but the file upload is
+            # rejected silently — 0/N uploads succeed.
+            # Fix: call Meteor.call('getForm', bucketUuid, cardTitle, token)
+            # for every unique card title after import. This is the exact
+            # call the OC designer UI makes when a user clicks "+ Add a form"
+            # and types a name. Confirmed working 2026-09-11.
+            _gf_session = (f"/data/browser_sessions/{oc_email}.json"
+                           if oc_email else "")
+            if _gf_session and os.path.exists(_gf_session):
+                try:
+                    await _register_forms_with_service(
+                        subdomain, board_id, study_uuid,
+                        _gf_session, is_production)
+                except Exception as _gfe:
+                    print(f"[getForm] registration failed (non-fatal): "
+                          f"{_gfe}", flush=True)
+            else:
+                print("[getForm] skipped — no usable session", flush=True)
+            # Prefer the import response's board-id+slug URL
             # The UUID-based study_url we built above just redirects to the
             # studies list. Fall back to study_url unchanged if the response
             # didn't include a usable URL.
