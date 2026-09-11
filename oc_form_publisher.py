@@ -1601,7 +1601,21 @@ class FormPublisher:
                                                 _bucket_key = (_oid_label
                                                                if _oid_label in _bucket_forms_by_name
                                                                else oid)
-                                                if _bucket_key in _bucket_forms_by_name:
+                                                # Only reuse bucket if this OID is
+                                                # confirmed versioned (already uploaded
+                                                # this session or pre-existing in OC).
+                                                # If not versioned, the form may have a
+                                                # poisoned partial registration from a
+                                                # prior failed upload — fall through to
+                                                # getForm to re-register fresh.
+                                                _oc_confirmed = (
+                                                    oid in confirmed_versioned_oids
+                                                    or (oid or '').upper() in {
+                                                        x.upper() for x in
+                                                        confirmed_versioned_oids}
+                                                )
+                                                if (_bucket_key in _bucket_forms_by_name
+                                                        and _oc_confirmed):
                                                     _existing_bf = (
                                                         _bucket_forms_by_name[_bucket_key])
                                                     _gf_ocoid = (
