@@ -1,0 +1,52 @@
+{
+  "id": "validation.calculate_type_no_readonly",
+  "title": "type=calculate rows must not have readonly=yes",
+  "kind": "structured",
+  "scope": "global",
+  "status": "active",
+  "natural_key": "calculate_type_no_readonly",
+  "description": "Any survey row with type=calculate must NOT have readonly=yes. OC rejects the form with \"Element [name] cannot be defined as type=calculate and readonly. This element will never be visible on the form.\" type=calculate is always hidden; readonly is only valid on visible fields. Remove readonly from all type=calculate rows.",
+  "rationale": "OC form validator treats type=calculate + readonly as a hard error. These fields are background computations consumed by other expressions \u2014 they are never rendered to the data-entry user, so readonly is semantically meaningless and syntactically forbidden. The companion convention (validate.calculate_requires_readonly) enforces readonly=yes on non-calculate types with calculations; this convention is the inverse guard for calculate types.",
+  "target": "field",
+  "applies_when": {
+    "all_of": [
+      {
+        "field.type": {
+          "equals": "calculate"
+        }
+      },
+      {
+        "field.readonly": {
+          "equals": "yes"
+        }
+      }
+    ]
+  },
+  "effect": {
+    "ensure": {
+      "field.readonly": ""
+    },
+    "flag": {
+      "category": "review_flags.calculate_readonly_stripped",
+      "message": "Field ${field.name} on ${form.form_id} had type=calculate with readonly=yes \u2014 readonly stripped. type=calculate rows are hidden background computations; OC rejects readonly on them."
+    }
+  },
+  "created_at": "2026-09-11T00:00:00Z",
+  "created_by": "system:bug_fix",
+  "source": "OC form validator error: cannot be defined as type=calculate and readonly",
+  "tags": [
+    "validation",
+    "calculate",
+    "readonly",
+    "platform_requirement"
+  ],
+  "history": [
+    {
+      "at": "2026-09-11T00:00:00Z",
+      "by": "system:bug_fix",
+      "action": "created",
+      "status": "active",
+      "note": "Created to complement validation.calculate_requires_readonly. Confirmed OC rejection on Detroit DS New: ECONSENT ACKNOWLEDGE_CALC and BIOIVTONC ORG_SITE_CALC both had type=calculate + readonly=yes."
+    }
+  ]
+}
