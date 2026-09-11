@@ -5742,6 +5742,30 @@ async def run_pipeline(item_id):
 
         # ── Launch parallel chains if struct_json is available ────────────────
         if struct_json and needs_analysis:
+            # ── Apply conventions BEFORE chains launch ────────────────────────
+            # conventions_engine mutates struct_json in place (e.g. enforcing
+            # readonly=yes on calculated fields per §29). Chains A and C both
+            # read struct_json concurrently — running apply_conventions inside
+            # Chain A's thread executor creates a race where Chain C may read
+            # un-patched rows before Chain A's thread has written them, causing
+            # ECONSENT / BIOIVTONC uploads to fail with "cannot have calculation
+            # without readonly". Run once here, synchronously, before any chain.
+            try:
+                from conventions_engine import apply_conventions as _apply_conv
+                _apply_conv(
+                    spec=struct_json,
+                    study_id=struct_json.get("study_meta", {}).get("protocol_number", "UNKNOWN"),
+                    customer_subdomain=oc_subdomain,
+                    migration_source=None,
+                )
+                _conv_applied = struct_json.get("study_meta", {}).get("conventions_engine_applied", [])
+                print(f"conventions_engine: applied {len(_conv_applied)} conventions", flush=True)
+            except Exception as _conv_ex:
+                print(f"conventions_engine FAILED — continuing without conventions: {_conv_ex}", flush=True)
+                import traceback as _conv_tb
+                _conv_tb.print_exc()
+            # ─────────────────────────────────────────────────────────────────
+
             await set_status(item_id, COL["pipeline_status"], STATUS["build_pricing_running"])
             await append_log(item_id, "Chains A (spec files), B (summary+quote), C (build+DVS), D (OC study) starting in parallel.")
 
