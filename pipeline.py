@@ -2309,6 +2309,10 @@ async def create_oc_study(subdomain, struct_json, is_production=False,
             "collectPersonId":    "ALWAYS",
         }
 
+        _phase_val = payload["phase"]
+        print(f"[study-create] study_phase raw={meta.get('study_phase','')!r} "
+              f"→ phase_map={phase_map.get(str(meta.get('study_phase','')).lower().strip(),'(no match)')!r} "
+              f"→ final={_phase_val!r}", flush=True)
         async with httpx.AsyncClient(timeout=60) as c:
             r = await c.post(f"{base_url}/study-service/api/studies",
                              headers=headers, json=payload)
@@ -6705,3 +6709,4 @@ async def generate_gmail_auth_link(monday_user_id: str,
     except Exception as e:
         print(f"generate_gmail_auth_link failed for {monday_user_id}: {e}",
               flush=True)
+# force rebuild Thu Sep 10 21:21:16 MDT 2026
