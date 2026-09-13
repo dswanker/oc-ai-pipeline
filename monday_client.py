@@ -54,6 +54,12 @@ COL = {
     "services_discount":     "numeric_mm2n41x7",
     # Output selection
     "output_requested":  "dropdown_mm2nc7d4",
+    # EDC design standard (added 2026-09-13) — dropdown column, values:
+    # "Standard" (default) | "OMOP CDM". Governs whether the OMOP-CDM
+    # coding pass (omop_coding._apply_omop_coding) runs on the spec
+    # before build. STANDARD is a no-op for every existing customer;
+    # only studies that explicitly select OMOP CDM are affected.
+    "edc_design_standard": "dropdown_mm75cbtp",
     # Design change intake columns (added 2026-06-02)
     "spec_xlsx_working":  "file_mm2gjqgx",     # Protocol Specification (xlsx) — read/write by design-change-intake
     "change_transcripts": "file_mm3tntz9",     # Change Request Transcripts — source text files

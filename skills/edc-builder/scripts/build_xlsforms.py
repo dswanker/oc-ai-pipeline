@@ -1192,6 +1192,20 @@ def build_all_xlsforms(spec_data, output_dir, build_log):
     build_log.setdefault('validation_results', [])
     build_log.setdefault('forms_excluded', [])
 
+    # edc_design_standard=OMOP_CDM support: omop_coding._apply_omop_coding
+    # (run earlier, in pipeline.py's transform chain) stamps any external
+    # vocabulary CSVs it referenced (e.g. select_one_from_file rxnorm_cm.csv)
+    # onto spec_data["_omop_vocab_files"] = {filename: csv_string}. Write
+    # them into output_dir so they land in the package next to the .xlsx
+    # that references them — OC4 requires the two files to be uploaded
+    # together (see "Select_One From File" in the OC4 Reference Guide).
+    # No-op (empty dict) for every study on the STANDARD design path.
+    for _vocab_filename, _vocab_csv in (spec_data.get("_omop_vocab_files") or {}).items():
+        with open(os.path.join(output_dir, _vocab_filename), "w", newline="") as _vf:
+            _vf.write(_vocab_csv)
+        build_log.setdefault('omop_vocab_files', []).append(_vocab_filename)
+        print(f"[edc-builder] wrote OMOP vocab file: {_vocab_filename}", flush=True)
+
     # Track form_ids to handle variants (same form_id, different designs)
     seen_form_ids = {}
 

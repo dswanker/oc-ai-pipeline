@@ -53,6 +53,7 @@ from prompts        import (
     DVS_TRANSLATE_PROMPT,
 )
 from uat_loader import run_uat_loader, UAT_STATUS
+from omop_coding import _apply_omop_coding
 
 SKILLS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'skills')
 
@@ -4754,8 +4755,18 @@ async def run_pipeline(item_id):
         # prevents duplicate corpus rows.
         trainer_on = trainer_enabled()
 
+        # edc_design_standard: "Standard" (default) or "OMOP CDM".
+        # Normalize to the two values omop_coding._apply_omop_coding
+        # expects. Any missing/unrecognized value falls back to
+        # STANDARD — this must never silently change behavior for
+        # studies that don't have the column set.
+        _design_std_raw = (cols.get(COL.get("edc_design_standard", ""), {})
+                                .get("text", "") or "").strip().upper()
+        edc_design_standard = "OMOP_CDM" if _design_std_raw == "OMOP CDM" else "STANDARD"
+
         print(f"Create OC Study: {create_study} | Subdomain: {oc_subdomain} | "
-              f"Production: {oc_production} | Trainer enabled: {trainer_on}",
+              f"Production: {oc_production} | Trainer enabled: {trainer_on} | "
+              f"EDC Design Standard: {edc_design_standard}",
               flush=True)
 
         # ── Early OAuth check (saves chains A-E on first-time auth) ──────────
@@ -5010,6 +5021,7 @@ async def run_pipeline(item_id):
                         struct_json = _backfill_migration_fields(struct_json)
                         struct_json = _sanitize_form_titles(struct_json)
                         struct_json = _ensure_required_forms(struct_json, protocol_num)
+                        struct_json = _apply_omop_coding(struct_json, edc_design_standard)
                         # ── Conventions engine pass + three-way conflict detection (Phase C.4) ──
                         # Path X.1 is the edited-XLSX path. Three snapshots make TRUE
                         # conflict detection possible:
@@ -5153,6 +5165,7 @@ async def run_pipeline(item_id):
             struct_json = _backfill_migration_fields(struct_json)
             struct_json = _sanitize_form_titles(struct_json)
             struct_json = _ensure_required_forms(struct_json, protocol_num)
+            struct_json = _apply_omop_coding(struct_json, edc_design_standard)
             # ── Conventions engine pass (no-op until conventions/ store is populated) ─
             try:
                 from conventions_engine import apply_conventions
@@ -5338,6 +5351,7 @@ async def run_pipeline(item_id):
                     struct_json = _backfill_migration_fields(struct_json)
                     struct_json = _sanitize_form_titles(struct_json)
                     struct_json = _ensure_required_forms(struct_json, protocol_num)
+                    struct_json = _apply_omop_coding(struct_json, edc_design_standard)
                     fast_rerun = True
                     print(f"[fast-rerun] Using existing Study Spec JSON "
                           f"from monday ({len(_existing_spec)} bytes) — "
@@ -5611,6 +5625,7 @@ async def run_pipeline(item_id):
             struct_json = _backfill_migration_fields(struct_json)
             struct_json = _sanitize_form_titles(struct_json)
             struct_json = _ensure_required_forms(struct_json, protocol_num)
+            struct_json = _apply_omop_coding(struct_json, edc_design_standard)
             # Deterministic CRF Standards injection — ensure every field from
             # QUESTIONS.csv (and equivalent CRF/OC4 standard files) is present
             # in the corresponding form. Runs after Claude extraction so it
