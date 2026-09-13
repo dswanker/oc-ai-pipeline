@@ -1229,54 +1229,42 @@ class FormPublisher:
                                     oid = ((await oid_el.input_value()).upper()
                                            if oid_el else "")
 
-                                    # ── Suffix-normalisation ──────────────
-                                    # OC appends a numeric suffix to a form
-                                    # OID when a new definition is registered
-                                    # for an already-used name (e.g. re-runs
-                                    # produce F_AE_2130, then F_AE_4675).
-                                    # The canonical OID must be clean
-                                    # (F_AE), so if the panel returns a
-                                    # suffixed value we rewrite the card's
-                                    # formOcoid in minimongo back to the
-                                    # clean OID before getForm / uploadVersion
-                                    # run.  Without this, every re-run
-                                    # compounds the suffix.
-                                    import re as _re_oid
-                                    _oid_clean = _re_oid.sub(
-                                        r'_\d+$', '', oid)
-                                    if _oid_clean and _oid_clean != oid:
-                                        print(
-                                            f"[publisher] suffix-normalise "
-                                            f"{form_name}: {oid!r} → "
-                                            f"{_oid_clean!r} — rewriting "
-                                            f"card formOcoid in minimongo",
-                                            flush=True)
-                                        try:
-                                            await page.evaluate(
-                                                """([cardId, cleanOid]) => {
-                                                    Meteor.call(
-                                                        '/cards/update',
-                                                        {_id: cardId},
-                                                        {$set: {
-                                                            formOcoid: cleanOid,
-                                                            dateLastActivity: {
-                                                                $date: Date.now()
-                                                            }
-                                                        }},
-                                                        {}
-                                                    );
-                                                }""",
-                                                [card['card_id'], _oid_clean]
-                                            )
-                                            oid = _oid_clean
-                                        except Exception as _sne:
-                                            print(
-                                                f"[publisher] suffix-normalise "
-                                                f"card rewrite failed for "
-                                                f"{form_name}: {_sne}",
-                                                flush=True)
-                                            # Keep suffixed oid — better than
-                                            # crashing; suffix guard will log.
+                                    # ── Suffix-normalisation: REMOVED 2026-09-13 ──
+                                    # This step (added 2026-06-05, commit
+                                    # 9c494a1) unconditionally stripped a
+                                    # form's numeric suffix and repointed the
+                                    # card to the bare name, assuming the bare
+                                    # name is always a real, already-registered
+                                    # form-service identity. That assumption is
+                                    # false whenever the bare name is
+                                    # permanently claimed by an unrelated old
+                                    # study for the same customer (form-service
+                                    # OIDs are scoped per-customer, not
+                                    # per-study, and there is no delete/archive
+                                    # API to free a name) -- in that case this
+                                    # step disconnects the card from the ONLY
+                                    # real, versioned form record it has, on
+                                    # EVERY run, producing "No form version
+                                    # defined for Form X" at publish time even
+                                    # though the DDP-layer upload succeeded.
+                                    # The correct fix for the ORIGINAL problem
+                                    # this was meant to solve (suffix growing
+                                    # across repeated re-runs) already exists
+                                    # and predates this step: see the Layer-1
+                                    # sibling-card propagation logic in the
+                                    # batch/set-default phase below
+                                    # (_uploaded_form_by_base), added
+                                    # 2026-06-01 commit ad41770, which
+                                    # repoints every sibling card to whatever
+                                    # OID+version was ACTUALLY uploaded this
+                                    # session rather than a regex-guessed bare
+                                    # name. That mechanism handles this
+                                    # correctly and doesn't share this failure
+                                    # mode. See scripts/fix_suffix_normalise_damage.py
+                                    # for the one-off correction applied to
+                                    # BioIVT Precision (PRECISIO_NEW) after
+                                    # this bug produced 18 permanently
+                                    # unpublishable forms.
 
                                     # (2)+(3) Per-card minimongo diagnostics:
                                     # the event (list) type/repeating flag and
