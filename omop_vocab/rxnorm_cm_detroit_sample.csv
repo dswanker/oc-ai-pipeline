@@ -1,0 +1,178 @@
+name,label
+RXTEST-00001,Hydroxychloroquine
+RXTEST-00002,Prednisone
+RXTEST-00003,Methylprednisolone
+RXTEST-00004,Azathioprine
+RXTEST-00005,Mycophenolate mofetil
+RXTEST-00006,Cyclophosphamide
+RXTEST-00007,Belimumab
+RXTEST-00008,Anifrolumab
+RXTEST-00009,Rituximab
+RXTEST-00010,Methotrexate (lupus)
+RXTEST-00011,Voclosporin
+RXTEST-00012,Tacrolimus
+RXTEST-00013,Methotrexate
+RXTEST-00014,Leflunomide
+RXTEST-00015,Sulfasalazine
+RXTEST-00016,Hydroxychloroquine (RA)
+RXTEST-00017,Etanercept
+RXTEST-00018,Adalimumab
+RXTEST-00019,Infliximab
+RXTEST-00020,Golimumab
+RXTEST-00021,Certolizumab pegol
+RXTEST-00022,Abatacept
+RXTEST-00023,Tocilizumab
+RXTEST-00024,Sarilumab
+RXTEST-00025,Rituximab (RA)
+RXTEST-00026,Tofacitinib
+RXTEST-00027,Baricitinib
+RXTEST-00028,Upadacitinib
+RXTEST-00029,Prednisone (RA)
+RXTEST-00030,Topical corticosteroids
+RXTEST-00031,Calcipotriene
+RXTEST-00032,Tazarotene
+RXTEST-00033,Methotrexate (psoriasis)
+RXTEST-00034,Cyclosporine (psoriasis)
+RXTEST-00035,Acitretin
+RXTEST-00036,Apremilast
+RXTEST-00037,Adalimumab (psoriasis)
+RXTEST-00038,Etanercept (psoriasis)
+RXTEST-00039,Infliximab (psoriasis)
+RXTEST-00040,Ustekinumab
+RXTEST-00041,Secukinumab
+RXTEST-00042,Ixekizumab
+RXTEST-00043,Brodalumab
+RXTEST-00044,Guselkumab
+RXTEST-00045,Risankizumab
+RXTEST-00046,Tildrakizumab
+RXTEST-00047,Carboplatin
+RXTEST-00048,Cisplatin
+RXTEST-00049,Paclitaxel
+RXTEST-00050,Docetaxel
+RXTEST-00051,Doxorubicin
+RXTEST-00052,Cyclophosphamide (oncology)
+RXTEST-00053,Gemcitabine
+RXTEST-00054,Fluorouracil
+RXTEST-00055,Leucovorin
+RXTEST-00056,Oxaliplatin
+RXTEST-00057,Irinotecan
+RXTEST-00058,Etoposide
+RXTEST-00059,Bevacizumab
+RXTEST-00060,Trastuzumab
+RXTEST-00061,Pertuzumab
+RXTEST-00062,Pembrolizumab
+RXTEST-00063,Nivolumab
+RXTEST-00064,Atezolizumab
+RXTEST-00065,Ipilimumab
+RXTEST-00066,Tamoxifen
+RXTEST-00067,Letrozole
+RXTEST-00068,Anastrozole
+RXTEST-00069,Enzalutamide
+RXTEST-00070,Abiraterone
+RXTEST-00071,Leuprolide
+RXTEST-00072,Imatinib
+RXTEST-00073,Erlotinib
+RXTEST-00074,Osimertinib
+RXTEST-00075,Sunitinib
+RXTEST-00076,Sorafenib
+RXTEST-00077,Palbociclib
+RXTEST-00078,Olaparib
+RXTEST-00079,Rituximab (oncology)
+RXTEST-00080,Vincristine
+RXTEST-00081,Bleomycin
+RXTEST-00082,Remdesivir
+RXTEST-00083,Nirmatrelvir/ritonavir
+RXTEST-00084,Molnupiravir
+RXTEST-00085,Dexamethasone (covid)
+RXTEST-00086,Tocilizumab (covid)
+RXTEST-00087,Baricitinib (covid)
+RXTEST-00088,Bamlanivimab
+RXTEST-00089,Casirivimab/imdevimab
+RXTEST-00090,Sotrovimab
+RXTEST-00091,Tixagevimab/cilgavimab
+RXTEST-00092,Heparin
+RXTEST-00093,Enoxaparin
+RXTEST-00094,Aspirin
+RXTEST-00095,Clopidogrel
+RXTEST-00096,Atorvastatin
+RXTEST-00097,Rosuvastatin
+RXTEST-00098,Lisinopril
+RXTEST-00099,Losartan
+RXTEST-00100,Amlodipine
+RXTEST-00101,Metoprolol
+RXTEST-00102,Carvedilol
+RXTEST-00103,Furosemide
+RXTEST-00104,Hydrochlorothiazide
+RXTEST-00105,Spironolactone
+RXTEST-00106,Metformin
+RXTEST-00107,Insulin glargine
+RXTEST-00108,Insulin lispro
+RXTEST-00109,Glipizide
+RXTEST-00110,Sitagliptin
+RXTEST-00111,Empagliflozin
+RXTEST-00112,Levothyroxine
+RXTEST-00113,Omeprazole
+RXTEST-00114,Pantoprazole
+RXTEST-00115,Famotidine
+RXTEST-00116,Sucralfate
+RXTEST-00117,Gabapentin
+RXTEST-00118,Pregabalin
+RXTEST-00119,Duloxetine
+RXTEST-00120,Sertraline
+RXTEST-00121,Escitalopram
+RXTEST-00122,Trazodone
+RXTEST-00123,Mirtazapine
+RXTEST-00124,Melatonin
+RXTEST-00125,Zolpidem
+RXTEST-00126,Alprazolam
+RXTEST-00127,Lorazepam
+RXTEST-00128,Clonazepam
+RXTEST-00129,Acetaminophen
+RXTEST-00130,Ibuprofen
+RXTEST-00131,Naproxen
+RXTEST-00132,Tramadol
+RXTEST-00133,Oxycodone
+RXTEST-00134,Hydrocodone/acetaminophen
+RXTEST-00135,Morphine ER
+RXTEST-00136,Fentanyl patch
+RXTEST-00137,Warfarin
+RXTEST-00138,Apixaban
+RXTEST-00139,Rivaroxaban
+RXTEST-00140,Vitamin D3
+RXTEST-00141,Vitamin B12
+RXTEST-00142,Folic acid
+RXTEST-00143,Calcium carbonate
+RXTEST-00144,Multivitamin
+RXTEST-00145,Docusate
+RXTEST-00146,Senna
+RXTEST-00147,Polyethylene glycol
+RXTEST-00148,Loperamide
+RXTEST-00149,Cetirizine
+RXTEST-00150,Loratadine
+RXTEST-00151,Diphenhydramine
+RXTEST-00152,Albuterol
+RXTEST-00153,Fluticasone/salmeterol
+RXTEST-00154,Montelukast
+RXTEST-00155,Prednisone (general)
+RXTEST-00156,Allopurinol
+RXTEST-00157,Colchicine
+RXTEST-00158,Ondansetron
+RXTEST-00159,Metoclopramide
+RXTEST-00160,Meclizine
+RXTEST-00161,Sumatriptan
+RXTEST-00162,Topiramate
+RXTEST-00163,Levetiracetam
+RXTEST-00164,Phenytoin
+RXTEST-00165,Carprofen (canine)
+RXTEST-00166,Meloxicam (veterinary)
+RXTEST-00167,Gabapentin (veterinary)
+RXTEST-00168,Trazodone (veterinary)
+RXTEST-00169,Tramadol (veterinary)
+RXTEST-00170,Prednisolone (veterinary)
+RXTEST-00171,Amoxicillin/clavulanate (veterinary)
+RXTEST-00172,Cephalexin (veterinary)
+RXTEST-00173,Enrofloxacin (veterinary)
+RXTEST-00174,Metronidazole (veterinary)
+RXTEST-00175,Furosemide (veterinary)
+RXTEST-00176,Pimobendan
+RXTEST-00177,Doxycycline (veterinary)

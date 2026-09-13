@@ -1,0 +1,100 @@
+name,label
+SNOMEDTEST-00001,"Alzheimer disease, early onset"
+SNOMEDTEST-00002,"Alzheimer disease, late onset"
+SNOMEDTEST-00003,Mild cognitive impairment
+SNOMEDTEST-00004,Vascular dementia
+SNOMEDTEST-00005,Mixed dementia
+SNOMEDTEST-00006,Dementia with Lewy bodies
+SNOMEDTEST-00007,Subjective cognitive decline
+SNOMEDTEST-00008,"Multiple sclerosis, relapsing-remitting"
+SNOMEDTEST-00009,"Multiple sclerosis, secondary progressive"
+SNOMEDTEST-00010,"Multiple sclerosis, primary progressive"
+SNOMEDTEST-00011,Clinically isolated syndrome
+SNOMEDTEST-00012,Neuromyelitis optica spectrum disorder
+SNOMEDTEST-00013,Optic neuritis
+SNOMEDTEST-00014,Amyotrophic lateral sclerosis
+SNOMEDTEST-00015,Progressive muscular atrophy
+SNOMEDTEST-00016,Primary lateral sclerosis
+SNOMEDTEST-00017,Progressive bulbar palsy
+SNOMEDTEST-00018,Parkinson disease
+SNOMEDTEST-00019,Progressive supranuclear palsy
+SNOMEDTEST-00020,Multiple system atrophy
+SNOMEDTEST-00021,Corticobasal degeneration
+SNOMEDTEST-00022,Drug-induced parkinsonism
+SNOMEDTEST-00023,Essential tremor
+SNOMEDTEST-00024,"Frontotemporal dementia, behavioral variant"
+SNOMEDTEST-00025,"Primary progressive aphasia, semantic variant"
+SNOMEDTEST-00026,"Primary progressive aphasia, nonfluent variant"
+SNOMEDTEST-00027,Corticobasal syndrome
+SNOMEDTEST-00028,Essential hypertension
+SNOMEDTEST-00029,Type 2 diabetes mellitus
+SNOMEDTEST-00030,Type 1 diabetes mellitus
+SNOMEDTEST-00031,Hyperlipidemia
+SNOMEDTEST-00032,Hypothyroidism
+SNOMEDTEST-00033,Hyperthyroidism
+SNOMEDTEST-00034,Obesity
+SNOMEDTEST-00035,"Chronic kidney disease, stage 3"
+SNOMEDTEST-00036,"Chronic kidney disease, stage 4"
+SNOMEDTEST-00037,Coronary artery disease
+SNOMEDTEST-00038,Congestive heart failure
+SNOMEDTEST-00039,Atrial fibrillation
+SNOMEDTEST-00040,Chronic obstructive pulmonary disease
+SNOMEDTEST-00041,Asthma
+SNOMEDTEST-00042,Obstructive sleep apnea
+SNOMEDTEST-00043,Major depressive disorder
+SNOMEDTEST-00044,Generalized anxiety disorder
+SNOMEDTEST-00045,Insomnia disorder
+SNOMEDTEST-00046,Osteoarthritis
+SNOMEDTEST-00047,Osteoporosis
+SNOMEDTEST-00048,Gastroesophageal reflux disease
+SNOMEDTEST-00049,Peptic ulcer disease
+SNOMEDTEST-00050,Irritable bowel syndrome
+SNOMEDTEST-00051,Chronic constipation
+SNOMEDTEST-00052,"Anemia, unspecified"
+SNOMEDTEST-00053,Iron deficiency anemia
+SNOMEDTEST-00054,Vitamin B12 deficiency
+SNOMEDTEST-00055,Vitamin D deficiency
+SNOMEDTEST-00056,Peripheral neuropathy
+SNOMEDTEST-00057,Diabetic neuropathy
+SNOMEDTEST-00058,Migraine without aura
+SNOMEDTEST-00059,Migraine with aura
+SNOMEDTEST-00060,Tension-type headache
+SNOMEDTEST-00061,"Epilepsy, focal"
+SNOMEDTEST-00062,"Epilepsy, generalized"
+SNOMEDTEST-00063,"Seizure disorder, unspecified"
+SNOMEDTEST-00064,Urinary tract infection
+SNOMEDTEST-00065,Benign prostatic hyperplasia
+SNOMEDTEST-00066,Urinary incontinence
+SNOMEDTEST-00067,Deep vein thrombosis
+SNOMEDTEST-00068,Pulmonary embolism
+SNOMEDTEST-00069,"Stroke, ischemic"
+SNOMEDTEST-00070,"Stroke, hemorrhagic"
+SNOMEDTEST-00071,Transient ischemic attack
+SNOMEDTEST-00072,Traumatic brain injury
+SNOMEDTEST-00073,"Breast cancer, invasive ductal carcinoma"
+SNOMEDTEST-00074,"Breast cancer, invasive lobular carcinoma"
+SNOMEDTEST-00075,"Prostate cancer, adenocarcinoma"
+SNOMEDTEST-00076,"Non-small cell lung cancer, adenocarcinoma"
+SNOMEDTEST-00077,"Non-small cell lung cancer, squamous cell"
+SNOMEDTEST-00078,Small cell lung cancer
+SNOMEDTEST-00079,"Colorectal cancer, adenocarcinoma"
+SNOMEDTEST-00080,Pancreatic adenocarcinoma
+SNOMEDTEST-00081,"Ovarian cancer, high-grade serous"
+SNOMEDTEST-00082,Endometrial cancer
+SNOMEDTEST-00083,Cervical cancer
+SNOMEDTEST-00084,"Bladder cancer, urothelial carcinoma"
+SNOMEDTEST-00085,Renal cell carcinoma
+SNOMEDTEST-00086,Hepatocellular carcinoma
+SNOMEDTEST-00087,Cholangiocarcinoma
+SNOMEDTEST-00088,Gastric adenocarcinoma
+SNOMEDTEST-00089,Esophageal adenocarcinoma
+SNOMEDTEST-00090,Head and neck squamous cell carcinoma
+SNOMEDTEST-00091,"Melanoma, cutaneous"
+SNOMEDTEST-00092,"Non-Hodgkin lymphoma, diffuse large B-cell"
+SNOMEDTEST-00093,"Non-Hodgkin lymphoma, follicular"
+SNOMEDTEST-00094,Hodgkin lymphoma
+SNOMEDTEST-00095,Multiple myeloma
+SNOMEDTEST-00096,Chronic lymphocytic leukemia
+SNOMEDTEST-00097,Acute myeloid leukemia
+SNOMEDTEST-00098,Glioblastoma
+SNOMEDTEST-00099,"Thyroid cancer, papillary"

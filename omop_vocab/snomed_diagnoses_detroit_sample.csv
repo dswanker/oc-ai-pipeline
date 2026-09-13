@@ -1,0 +1,73 @@
+name,label
+SNOMEDTEST-00001,Systemic lupus erythematosus
+SNOMEDTEST-00002,Lupus nephritis
+SNOMEDTEST-00003,Cutaneous lupus erythematosus
+SNOMEDTEST-00004,Drug-induced lupus
+SNOMEDTEST-00005,Antiphospholipid syndrome
+SNOMEDTEST-00006,"Rheumatoid arthritis, seropositive"
+SNOMEDTEST-00007,"Rheumatoid arthritis, seronegative"
+SNOMEDTEST-00008,Rheumatoid nodules
+SNOMEDTEST-00009,Felty syndrome
+SNOMEDTEST-00010,Plaque psoriasis
+SNOMEDTEST-00011,Guttate psoriasis
+SNOMEDTEST-00012,Psoriatic arthritis
+SNOMEDTEST-00013,Inverse psoriasis
+SNOMEDTEST-00014,Pustular psoriasis
+SNOMEDTEST-00015,Erythrodermic psoriasis
+SNOMEDTEST-00016,"Breast cancer, invasive ductal carcinoma"
+SNOMEDTEST-00017,"Prostate cancer, adenocarcinoma"
+SNOMEDTEST-00018,"Non-small cell lung cancer, adenocarcinoma"
+SNOMEDTEST-00019,"Colorectal cancer, adenocarcinoma"
+SNOMEDTEST-00020,Pancreatic adenocarcinoma
+SNOMEDTEST-00021,"Ovarian cancer, high-grade serous"
+SNOMEDTEST-00022,"Bladder cancer, urothelial carcinoma"
+SNOMEDTEST-00023,Renal cell carcinoma
+SNOMEDTEST-00024,Hepatocellular carcinoma
+SNOMEDTEST-00025,"Non-Hodgkin lymphoma, diffuse large B-cell"
+SNOMEDTEST-00026,Multiple myeloma
+SNOMEDTEST-00027,"Melanoma, cutaneous"
+SNOMEDTEST-00028,"Thyroid cancer, papillary"
+SNOMEDTEST-00029,Head and neck squamous cell carcinoma
+SNOMEDTEST-00030,Gastric adenocarcinoma
+SNOMEDTEST-00031,"COVID-19, confirmed"
+SNOMEDTEST-00032,"COVID-19, suspected"
+SNOMEDTEST-00033,Post-acute sequelae of COVID-19
+SNOMEDTEST-00034,COVID-19 pneumonia
+SNOMEDTEST-00035,Acute respiratory distress syndrome
+SNOMEDTEST-00036,Essential hypertension
+SNOMEDTEST-00037,Type 2 diabetes mellitus
+SNOMEDTEST-00038,Type 1 diabetes mellitus
+SNOMEDTEST-00039,Hyperlipidemia
+SNOMEDTEST-00040,Hypothyroidism
+SNOMEDTEST-00041,Obesity
+SNOMEDTEST-00042,"Chronic kidney disease, stage 3"
+SNOMEDTEST-00043,Coronary artery disease
+SNOMEDTEST-00044,Congestive heart failure
+SNOMEDTEST-00045,Atrial fibrillation
+SNOMEDTEST-00046,Chronic obstructive pulmonary disease
+SNOMEDTEST-00047,Asthma
+SNOMEDTEST-00048,Major depressive disorder
+SNOMEDTEST-00049,Generalized anxiety disorder
+SNOMEDTEST-00050,Osteoarthritis
+SNOMEDTEST-00051,Osteoporosis
+SNOMEDTEST-00052,Gastroesophageal reflux disease
+SNOMEDTEST-00053,"Anemia, unspecified"
+SNOMEDTEST-00054,Iron deficiency anemia
+SNOMEDTEST-00055,Peripheral neuropathy
+SNOMEDTEST-00056,Migraine without aura
+SNOMEDTEST-00057,Urinary tract infection
+SNOMEDTEST-00058,Deep vein thrombosis
+SNOMEDTEST-00059,Pulmonary embolism
+SNOMEDTEST-00060,"Stroke, ischemic"
+SNOMEDTEST-00061,Canine hip dysplasia
+SNOMEDTEST-00062,Canine osteoarthritis
+SNOMEDTEST-00063,Feline chronic kidney disease
+SNOMEDTEST-00064,Canine congestive heart failure
+SNOMEDTEST-00065,Feline hyperthyroidism
+SNOMEDTEST-00066,Canine diabetes mellitus
+SNOMEDTEST-00067,Feline diabetes mellitus
+SNOMEDTEST-00068,Canine atopic dermatitis
+SNOMEDTEST-00069,Feline asthma
+SNOMEDTEST-00070,Canine lymphoma
+SNOMEDTEST-00071,Feline lymphoma
+SNOMEDTEST-00072,Canine mast cell tumor

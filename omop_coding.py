@@ -158,7 +158,37 @@ def _apply_omop_coding(struct_json, edc_design_standard, vocab_dir=None):
 
     struct_json.setdefault("_omop_vocab_files", {})
 
-    for target in OMOP_CODED_FIELDS:
+    # TEST MODE: pick the large sample vocab set for the study currently
+    # being processed, based on study_id/protocol_number. These are NOT
+    # verified real RxNorm/SNOMED codes -- see build_sample_vocabs.py.
+    # They exist purely so BioIVT can see the search()/select_one_from_file
+    # UX at realistic scale before real vocabulary review happens. Falls
+    # back to the small verified sets (rxnorm_cm.csv, snomed_diagnoses.csv)
+    # for any study_id that doesn't match either sample set.
+    _study_id = str(
+        (struct_json.get("study_meta") or {}).get("study_id")
+        or (struct_json.get("study_meta") or {}).get("protocol_number")
+        or ""
+    ).upper()
+    if "PRECISIO" in _study_id or "CARLSBAD" in _study_id:
+        _sample_suffix = "_carlsbad_sample"
+    elif "DETROIT" in _study_id:
+        _sample_suffix = "_detroit_sample"
+    else:
+        _sample_suffix = None
+
+    active_fields = OMOP_CODED_FIELDS
+    if _sample_suffix:
+        active_fields = []
+        for target in OMOP_CODED_FIELDS:
+            base, ext = target["vocab_csv_filename"].rsplit(".", 1)
+            sample_name = f"{base}{_sample_suffix}.{ext}"
+            if os.path.exists(os.path.join(vocab_dir, sample_name)):
+                active_fields.append({**target, "vocab_csv_filename": sample_name})
+            else:
+                active_fields.append(target)
+
+    for target in active_fields:
         vocab_path = os.path.join(vocab_dir, target["vocab_csv_filename"])
         if not os.path.exists(vocab_path):
             print(f"[omop-coding] WARNING: {vocab_path} not found — "
