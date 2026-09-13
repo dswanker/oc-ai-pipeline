@@ -38,7 +38,52 @@ OMOP_CODED_FIELDS = [
         "vocab_csv_filename": "rxnorm_cm.csv",
         "appearance": "minimal",
     },
+    {
+        "form_id": "MH",
+        "field_name": "DONDIAG",
+        "vocab_csv_filename": "snomed_diagnoses.csv",
+        "appearance": "minimal",
+    },
 ]
+
+# snomed_diagnoses.csv: 7 verified SNOMED-mapped DONDIAG (Detroit) values,
+# sourced from BioIVT_Data_Mapping_Workbook_v3.xlsx (Diagnoses sheet,
+# Status=MAPPED, Vocabulary=SNOMED, real Concept/Code value present).
+# This is a SMALL, HONEST PARTIAL vocabulary, not a general diagnosis
+# coding solution.
+#
+# Of 103 substantive Diagnoses-sheet rows: 24 are Status=MAPPED, but 7 of
+# those have no actual Concept/Code value (vocabulary named, code blank).
+# Of the 17 usable rows, 10 are Carlsbad diagnosis_*/type fields (not
+# wired here — Carlsbad has no single free-text diagnosis field today).
+# The remaining 70 rows are Status="NLP NEEDED" — real NLP/clinical
+# review work that has not been done. Nothing here fabricates a code for
+# those.
+#
+# DONDIAG becomes a searchable picklist of 7 real terms. Anything a
+# donor's actual diagnosis doesn't match has nowhere to go — there's no
+# "Other / Not Listed" escape hatch in this pass (same limitation as
+# CMTRT). Worth deciding before go-live whether to add one.
+DIAGNOSES_EXCLUDED_FROM_THIS_PASS = {
+    "mapped_but_no_code_value": [
+        "Donor diagnosis status (Ongoing/New/Past/Recurrent)",
+        "Histology grade (Well/Mod/Poorly diff.)",
+        "Nottingham grade (I/II/III)",
+    ],
+    "mapped_but_not_detroit_dondiag": [
+        "Alzheimer disease", "Multiple sclerosis", "ALS",
+        "Parkinsons disease", "Progressive supranuclear palsy",
+        "Frontotemporal dementia", "Mild cognitive impairment",
+        "Cancer type Breast", "Cancer type Prostate", "Cancer type Lung/NSCLC",
+    ],
+    "needs_nlp_not_done": (
+        "70 of 103 Diagnoses-sheet rows, marked 'NLP NEEDED'. Free-text "
+        "DONDIAG values across both studies are varied enough that "
+        "mapping to SNOMED requires real NLP/clinical review, not a "
+        "lookup. Don't assume coverage beyond the 7 in "
+        "snomed_diagnoses.csv."
+    ),
+}
 
 # Rows from the mapping workbook that are NOT included in the CSV this
 # pass ships, and why — kept here so nobody re-derives this later without

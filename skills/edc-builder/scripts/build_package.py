@@ -168,6 +168,20 @@ def build_package(spec_data, build_log, forms_dir, csv_dir,
                     zf.write(os.path.join(forms_dir, fname),
                              f"{folder}/forms/{fname}")
 
+        # forms/ (OMOP vocab CSVs) — build_xlsforms.py writes any
+        # _omop_vocab_files (e.g. rxnorm_cm.csv) into forms_dir, alongside
+        # the .xlsx that references them via select_one_from_file, because
+        # that's the directory oc_form_publisher's real OC4 upload globs
+        # for sibling CSVs. The loop above only picks up .xlsx, so these
+        # vocab CSVs were silently absent from this convenience zip even
+        # though the real OC4 upload (a separate code path) picks them up
+        # correctly from the same directory. Package them explicitly here
+        # so the human-facing zip matches what actually gets uploaded.
+        for _vocab_filename in (spec_data.get("_omop_vocab_files") or {}).keys():
+            _vocab_path = os.path.join(forms_dir, _vocab_filename)
+            if os.path.exists(_vocab_path):
+                zf.write(_vocab_path, f"{folder}/forms/{_vocab_filename}")
+
         # csv/
         if os.path.isdir(csv_dir):
             for fname in sorted(os.listdir(csv_dir)):
