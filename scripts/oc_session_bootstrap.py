@@ -26,6 +26,14 @@ Examples:
     python scripts/oc_session_bootstrap.py user@co.io acme \\
         --out /Volumes/railway-data/browser_sessions/user@co.io.json
 
+    # Push directly to Railway instead of manual file transfer — grab
+    # the one-time token from the /auth?token=... link on the paused
+    # Monday item (works whether or not the pipeline is currently
+    # paused-for-auth; token is single-use but this doesn't consume it
+    # via the /auth page, only via the upload itself):
+    python scripts/oc_session_bootstrap.py dswanker@openclinica.com bioIVT \\
+        --push --token eyJlbWFpbCI6...
+
 Requires: playwright + chromium (already in the project's deps; run
 `playwright install chromium` if it's not on this machine yet).
 
@@ -34,6 +42,13 @@ Notes:
    If Google SSO completes but the script reports "did not detect auth",
    inspect the visible browser — if you ARE on OC, the selector is wrong
    and needs updating in oc_form_publisher.py.
+ - --push bypasses the OC Session Capture Chrome extension entirely.
+   That extension only captures localStorage from openclinica.io tabs
+   that happen to be OPEN in Chrome at the moment you click "Capture" —
+   if the tab holding jhi-idtoken isn't open right then, it's silently
+   dropped with no error. This script's Playwright context captures
+   every origin actually visited during THIS login, so it doesn't have
+   that failure mode.
 """
 import argparse
 import asyncio
@@ -46,8 +61,35 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from oc_form_publisher import FormPublisher  # noqa: E402
 
+RAILWAY_BASE = "https://oc-ai-pipeline-production.up.railway.app"
 
-async def bootstrap(email: str, subdomain: str, host: str, out_path: Path) -> None:
+
+async def push_to_railway(token: str, storage_state: dict) -> None:
+    import httpx
+    resp = httpx.post(
+        f"{RAILWAY_BASE}/api/session/upload",
+        json={"token": token, "storage_state": storage_state},
+        timeout=30,
+    )
+    if resp.status_code != 200:
+        print(f"❌ Railway rejected the upload: {resp.status_code} {resp.text}",
+              file=sys.stderr)
+        sys.exit(3)
+    result = resp.json()
+    if not result.get("ok"):
+        print(f"❌ Railway reported failure: {result.get('error')}",
+              file=sys.stderr)
+        sys.exit(3)
+    n_origins = len(storage_state.get("origins", []))
+    n_ls = sum(len(o.get("localStorage", [])) for o in storage_state.get("origins", []))
+    print(f"✅ Pushed to Railway for {result.get('email', '?')}: "
+          f"{len(storage_state.get('cookies', []))} cookies, "
+          f"{n_origins} origin(s), {n_ls} localStorage key(s).")
+    print("   Return to Monday and re-trigger 'Send to AI'.")
+
+
+async def bootstrap(email: str, subdomain: str, host: str, out_path: Path,
+                     push: bool, token: str) -> None:
     sso_url    = f"https://{subdomain}.{host}/#/ocstafflogin"
     timeout_ms = FormPublisher.MANUAL_LOGIN_TIMEOUT_MS
     timeout_s  = timeout_ms // 1000
@@ -92,6 +134,14 @@ async def bootstrap(email: str, subdomain: str, host: str, out_path: Path) -> No
             await browser.close()
 
     print(f"✅ Saved session to {out_path}")
+
+    if push:
+        import json
+        with open(out_path) as f:
+            storage_state = json.load(f)
+        await push_to_railway(token, storage_state)
+        return
+
     print()
     print("Next steps — upload to the Railway volume:")
     print(f"   1. In Railway dashboard, ensure /data is a Volume mounted "
@@ -100,6 +150,9 @@ async def bootstrap(email: str, subdomain: str, host: str, out_path: Path) -> No
           f"/data/browser_sessions/{email}.json")
     print(f"      (via `railway ssh` + `cat >`, scp, S3 sync, or whatever "
           f"transfer mechanism you use.)")
+    print()
+    print("   Or just rerun with --push --token <one-time-code> to skip "
+          "all of this and push directly.")
 
 
 def main() -> None:
@@ -114,14 +167,30 @@ def main() -> None:
                              "(default: ./sessions/{email}.json)")
     parser.add_argument("--host", default="design.openclinica.io",
                         help="OC host suffix (default: design.openclinica.io)")
+    parser.add_argument("--push", action="store_true",
+                        help="Push the captured session directly to Railway's "
+                             "/api/session/upload instead of saving locally "
+                             "for manual transfer. Requires --token.")
+    parser.add_argument("--token", default="",
+                        help="One-time auth token — the value of the "
+                             "token= query param from the /auth?token=... "
+                             "link posted on the paused Monday item. "
+                             "Required when using --push.")
     args = parser.parse_args()
+
+    if args.push and not args.token:
+        print("❌ --push requires --token <one-time-code> (copy it from "
+              "the /auth?token=... link on the Monday item).",
+              file=sys.stderr)
+        sys.exit(2)
 
     out_path = Path(args.out) if args.out else Path("sessions") / f"{args.email}.json"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     if out_path.exists():
         print(f"⚠️  Overwriting existing session at {out_path}")
 
-    asyncio.run(bootstrap(args.email, args.subdomain, args.host, out_path))
+    asyncio.run(bootstrap(args.email, args.subdomain, args.host, out_path,
+                          args.push, args.token))
 
 
 if __name__ == "__main__":
