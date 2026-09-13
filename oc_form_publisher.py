@@ -1795,9 +1795,36 @@ class FormPublisher:
                                                     session_uploaded_oids.add(pre_oid)
                                                 continue
                                             # ─────────────────────────────────────────────
+                                            # edc_design_standard=OMOP_CDM support: if this
+                                            # form's directory (the "forms/" folder inside
+                                            # the extracted EDC build zip) also contains a
+                                            # vocab CSV (e.g. rxnorm_cm.csv, written by
+                                            # build_xlsforms.py's build_all_xlsforms next to
+                                            # the .xlsx that references it via
+                                            # select_one_from_file), select both files
+                                            # together — matching OC4's documented pattern
+                                            # for long choice lists (Study Designer's own
+                                            # upload dialog accepts a multi-file selection
+                                            # the same way). Only the timepoint/labranges
+                                            # CSVs live elsewhere (a separate "csv/" folder),
+                                            # so any CSV sitting beside the .xlsx here is
+                                            # safe to assume is a vocab file for this form.
+                                            _sibling_csvs = sorted(
+                                                p for p in xlsx_path.parent.glob("*.csv")
+                                            )
+                                            _upload_paths = [str(xlsx_path)] + [
+                                                str(p) for p in _sibling_csvs
+                                            ]
+                                            if _sibling_csvs:
+                                                print(
+                                                    f"[publisher] {form_name}: "
+                                                    f"attaching vocab file(s) "
+                                                    f"{[p.name for p in _sibling_csvs]} "
+                                                    f"alongside {xlsx_path.name}",
+                                                    flush=True)
                                             await page.set_input_files(
                                                 'input.js-design-form-input',
-                                                str(xlsx_path))
+                                                _upload_paths)
                                             # 1500ms settle: enough for the
                                             # browser to begin processing the
                                             # upload and for most uploadVersion
