@@ -32,25 +32,34 @@ import io
 #
 # NOTE (2026-09-14): appearance="minimal" was previously used here on the
 # unverified assumption that it gives type-ahead filtering. Confirmed live
-# on OC4 (screenshot from real form render) that "minimal" only renders a
-# compact dropdown + scrollable radio list -- there is no text input to
-# type into at all. Standard ODK/Enketo XForms convention for live
-# search-as-you-type on select_one_from_file is appearance="autocomplete".
-# Switched below. Still not independently verified against OC4's own
-# Reference Guide wording -- confirm on next live render before relying
-# on it further.
+# on OC4 (screenshot of real form render) that "minimal" alone only renders
+# a compact dropdown + scrollable radio list -- no text input to type into.
+# A follow-up fix tried appearance="autocomplete" alone, which broke
+# publish-to-test with a generic OC4 "errorCode.boardTransformError" --
+# i.e. "autocomplete" alone is not a value OC4's board/publish transform
+# accepts.
+#
+# CONFIRMED against the official OpenClinica Reference Guide
+# ("Referencing Long Lists" section, docs.openclinica.com/oc4/
+# building-forms-and-studies/oc4-design-study/
+# oc4-design-study-using-the-form-template/), verbatim:
+#   "OpenClinica recommends that any items that reference long lists are
+#    defined with minimal autocomplete in the appearance column. In the
+#    form, this filters list choices in the dropdown list as you type."
+# The correct value is the two-word compound "minimal autocomplete",
+# not "minimal" alone and not "autocomplete" alone. Set below.
 OMOP_CODED_FIELDS = [
     {
         "form_id": "CM",
         "field_name": "CMTRT",
         "vocab_csv_filename": "rxnorm_cm.csv",
-        "appearance": "autocomplete",
+        "appearance": "minimal autocomplete",
     },
     {
         "form_id": "MH",
         "field_name": "DONDIAG",
         "vocab_csv_filename": "snomed_diagnoses.csv",
-        "appearance": "autocomplete",
+        "appearance": "minimal autocomplete",
     },
 ]
 
