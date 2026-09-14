@@ -28,21 +28,29 @@ import io
 
 # ── The only thing that changes per target field ────────────────────────
 # Each entry: which form/field to recode, which vocab CSV to reference,
-# and the appearance to use (OC4's documented pattern for long lists:
-# see "Referencing Long Lists" / "Select_One From File" in the OC4
-# Reference Guide — appearance=minimal gives type-ahead filtering).
+# and the appearance to use for select_one_from_file long-list fields.
+#
+# NOTE (2026-09-14): appearance="minimal" was previously used here on the
+# unverified assumption that it gives type-ahead filtering. Confirmed live
+# on OC4 (screenshot from real form render) that "minimal" only renders a
+# compact dropdown + scrollable radio list -- there is no text input to
+# type into at all. Standard ODK/Enketo XForms convention for live
+# search-as-you-type on select_one_from_file is appearance="autocomplete".
+# Switched below. Still not independently verified against OC4's own
+# Reference Guide wording -- confirm on next live render before relying
+# on it further.
 OMOP_CODED_FIELDS = [
     {
         "form_id": "CM",
         "field_name": "CMTRT",
         "vocab_csv_filename": "rxnorm_cm.csv",
-        "appearance": "minimal",
+        "appearance": "autocomplete",
     },
     {
         "form_id": "MH",
         "field_name": "DONDIAG",
         "vocab_csv_filename": "snomed_diagnoses.csv",
-        "appearance": "minimal",
+        "appearance": "autocomplete",
     },
 ]
 
