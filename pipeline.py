@@ -4213,127 +4213,6 @@ def _apply_crf_standards(struct_json: dict, crf_files: list, oc_files: list) -> 
         print("[crf-standards] All CRF Standards fields already present in spec",
               flush=True)
 
-    # ── Phase 2: Create forms that exist in CRF Standards but not in spec ────
-    # Claude only builds forms it finds in the protocol. Forms in QUESTIONS.csv
-    # that the protocol doesn't explicitly mention are silently missing.
-    # Synthesize minimal form entries for them so all CRF Standards forms are built.
-    existing_form_ids = {
-        (f.get("form_id") or "").upper()
-        for f in struct_json.get("forms", [])
-    }
-
-    # Also check aliases (form OID may differ from QUESTIONS.csv form name)
-    # Build a map of existing form_id -> form for alias matching
-    existing_forms_by_id = {
-        (f.get("form_id") or "").upper(): f
-        for f in struct_json.get("forms", [])
-    }
-
-    # Find common event (SE_COMMON) for placing non-visit forms
-    common_event_oid = None
-    for ev in struct_json.get("events", []):
-        if (ev.get("repeating") or
-                "common" in (ev.get("name") or "").lower() or
-                "COMMON" in (ev.get("oid") or "")):
-            common_event_oid = ev.get("oid")
-            break
-
-    forms_created = []
-    for form_id_upper, fields in crf_questions.items():
-        if not fields:
-            continue
-
-        # Check if this form already exists (exact or prefix match)
-        already_exists = form_id_upper in existing_form_ids
-        if not already_exists:
-            for eid in existing_form_ids:
-                if eid.startswith(form_id_upper) or form_id_upper.startswith(eid):
-                    already_exists = True
-                    break
-
-        if already_exists:
-            continue
-
-        # Build survey rows from QUESTIONS.csv fields
-        survey_rows = []
-        for field in fields:
-            var_name = field["variable_name"].upper()
-            xls_type = _crf_variable_type_to_xlsform(field["variable_type"])
-            choice_key = (form_id_upper, var_name)
-
-            if xls_type == "select_one yn":
-                xls_type_str = "select_one yn"
-            elif xls_type in ("select_one", "select_multiple"):
-                if choice_key in crf_choices:
-                    list_name = f"{form_id_upper.lower()}_{var_name.lower()}"
-                    xls_type_str = f"{xls_type} {list_name}"
-                else:
-                    xls_type_str = "text"
-            else:
-                xls_type_str = xls_type
-
-            survey_rows.append({
-                "type":               xls_type_str,
-                "name":               f"I_{form_id_upper}_{var_name}",
-                "label":              field["label"],
-                "bind__oc_itemgroup": form_id_upper,
-                "required":           "no",
-                "_source":            "crf_standards_new_form",
-            })
-
-        # Build choices for this form
-        form_choices = []
-        seen_lists = set()
-        for field in fields:
-            var_name = field["variable_name"].upper()
-            xls_type = _crf_variable_type_to_xlsform(field["variable_type"])
-            if xls_type not in ("select_one", "select_multiple"):
-                continue
-            choice_key = (form_id_upper, var_name)
-            if choice_key not in crf_choices:
-                continue
-            list_name = f"{form_id_upper.lower()}_{var_name.lower()}"
-            if list_name in seen_lists:
-                continue
-            seen_lists.add(list_name)
-            for cn, cl in crf_choices[choice_key]:
-                form_choices.append({
-                    "list_name": list_name,
-                    "name":      cn,
-                    "label":     cl,
-                    "source":    "crf_standards_injection",
-                })
-
-        # Synthesize the form entry
-        new_form = {
-            "form_id":          form_id_upper,
-            "form_title":       form_id_upper.replace("_", " ").title(),
-            "repeating":        False,
-            "description":      f"Auto-generated from CRF Standards ({form_id_upper})",
-            "survey":           survey_rows,
-            "choices":          form_choices,
-            "visits_assigned":  [],
-            "_source":          "crf_standards_new_form",
-        }
-        struct_json.setdefault("forms", []).append(new_form)
-
-        # Add to SE_COMMON or first event if not already placed
-        if common_event_oid:
-            for ev in struct_json.get("events", []):
-                if ev.get("oid") == common_event_oid:
-                    form_refs = ev.setdefault("form_refs", [])
-                    if form_id_upper not in form_refs:
-                        form_refs.append(form_id_upper)
-                    break
-
-        forms_created.append(form_id_upper)
-        print(f"[crf-standards] Created new form {form_id_upper} "
-              f"({len(survey_rows)} fields) from CRF Standards", flush=True)
-
-    if forms_created:
-        print(f"[crf-standards] Created {len(forms_created)} new forms: "
-              f"{forms_created}", flush=True)
-
     return struct_json
 
 
@@ -5062,26 +4941,43 @@ async def run_pipeline(item_id):
                     merged_pdf = pdf_parts[0][1]
                 else:
                     try:
-                        import fitz  # PyMuPDF
-                        merged = fitz.open()
+                        # Use pypdf (installed) to merge PDFs properly
+                        from pypdf import PdfWriter, PdfReader
+                        import io as _io
+                        writer = PdfWriter()
+                        total_pages = 0
                         for pname, pbytes in pdf_parts:
-                            src = fitz.open(stream=pbytes, filetype="pdf")
-                            merged.insert_pdf(src)
-                            src.close()
-                        merged_pdf = merged.tobytes(garbage=4, deflate=True)
-                        merged.close()
+                            try:
+                                reader = PdfReader(_io.BytesIO(pbytes))
+                                for page in reader.pages:
+                                    writer.add_page(page)
+                                total_pages += len(reader.pages)
+                                print(
+                                    f"Protocol merge: added {len(reader.pages)} pages "
+                                    f"from '{pname}'",
+                                    flush=True,
+                                )
+                            except Exception as _page_err:
+                                print(
+                                    f"Protocol merge: could not read '{pname}': "
+                                    f"{_page_err} — skipping",
+                                    flush=True,
+                                )
+                        buf = _io.BytesIO()
+                        writer.write(buf)
+                        merged_pdf = buf.getvalue()
                         print(
-                            f"Protocol: merged {len(pdf_parts)} PDFs → "
+                            f"Protocol: merged {len(pdf_parts)} PDFs "
+                            f"({total_pages} pages total) → "
                             f"{len(merged_pdf):,} bytes",
                             flush=True,
                         )
-                    except ImportError:
-                        # fitz not available — concatenate raw bytes
-                        # (imperfect but avoids silent data loss)
+                    except Exception as _merge_err:
+                        # Last resort — concatenate raw bytes
                         merged_pdf = b"".join(p for _, p in pdf_parts)
                         print(
-                            "Protocol: PyMuPDF not available — "
-                            "concatenating PDF bytes (may not render correctly)",
+                            f"Protocol: PDF merge failed ({_merge_err}) — "
+                            f"concatenating raw bytes (may not render correctly)",
                             flush=True,
                         )
                 # If there are also text-only docs, append them as a note
