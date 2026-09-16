@@ -4158,11 +4158,10 @@ def _apply_crf_standards(struct_json: dict, crf_files: list, oc_files: list) -> 
                 xls_type_str = "select_one yes_no"
             elif xls_type in ("select_one", "select_multiple"):
                 list_name = f"{form_id.lower()}_{var_name.lower()}"
-                xls_type_str = f"{xls_type} {list_name}"
-                # Inject choices from CHOICES.csv if available
-                # spec choices is a LIST of {list_name, name, label} dicts
                 choice_key = (form_id, var_name)
                 if choice_key in crf_choices:
+                    # Choices defined — use select type and inject list
+                    xls_type_str = f"{xls_type} {list_name}"
                     existing_choices = form.setdefault("choices", [])
                     existing_list_names = {c.get("list_name") for c in existing_choices
                                            if isinstance(c, dict)}
@@ -4174,6 +4173,12 @@ def _apply_crf_standards(struct_json: dict, crf_files: list, oc_files: list) -> 
                                 "label":     cl,
                                 "source":    "crf_standards_injection",
                             })
+                else:
+                    # No choices in CHOICES.csv — fall back to text to
+                    # avoid QA failure from missing choice list
+                    xls_type_str = "text"
+                    print(f"[crf-standards] {form_id}.{var_name}: no choices "
+                          f"defined — injecting as text", flush=True)
             else:
                 xls_type_str = xls_type
 
