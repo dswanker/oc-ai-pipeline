@@ -647,6 +647,21 @@ Before finalising the CRF list, apply every rule in
 - DV — Protocol Deviation Log — ongoing
 - SPELIG — Sponsor Eligibility Review — screening only
 
+**CRITICAL — Non-CDASH schedule rows MUST become CUSTOM forms:**
+Every row in the Schedule of Activities that does not map to a standard CDASH
+domain still requires a form. Do NOT drop these rows. Map them as CUSTOM forms:
+- "Research sample collection" → form_id: SMPL, category: CUSTOM
+- "Study team review" / "Clinical assessment" → form_id: STREV, category: CUSTOM
+- "Invasive procedures" → form_id: INVA, category: CUSTOM
+- "Imaging / Radiology" → form_id: IMG, category: CUSTOM
+- "Hospital admission" → form_id: HOSP, category: CUSTOM
+- "30-day follow-up / Survival / Death" → form_id: SURV, category: CUSTOM
+- "Healthcare utilization" → form_id: HRU, category: CUSTOM
+- "Randomization" → form_id: RAND, category: CUSTOM
+- "Screen failure" → form_id: SF, category: CUSTOM
+
+The completeness check in Step 2b must flag any schedule row not mapped to a form.
+
 **Form Category Taxonomy — apply exactly:**
 
 | Category | When to use | Examples |

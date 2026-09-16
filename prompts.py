@@ -35,25 +35,45 @@ OUTPUT FORMAT — READ CAREFULLY:
     values (especially survey row labels and flag_reason text) rather
     than omitting required structure keys.
 
-RULE PROTOCOL-1 — FRAGMENTED SCHEDULE TABLE RECOVERY
-  PDF text extraction often destroys the column structure of Schedule of
-  Activities/Assessments tables, producing a vertical stream of cell fragments.
-  When this happens:
-  1. Extract EVERY procedure name visible in the fragment stream as a form.
-  2. Cross-reference Section 7/8 (Study Assessments and Procedures) narrative
-     body text — it is more readable and lists the same procedures in prose.
-  3. When multiple protocol documents are provided (basket + sub-protocols),
-     UNION all procedures across all documents. If a procedure appears in ANY
-     document, include it as a form. Do not limit to one document.
-  4. For the Karius OPTIMUM study specifically, the Schedule of Activities
-     lists: eligibility review, informed consent, demographics, medical history,
-     randomization (Cohort B), research sample collection, study team review,
-     concomitant medications, usual care laboratory testing, invasive procedures,
-     imaging/radiology, vital signs, height, weight, adverse events, hospital
-     admission, discharge/survival status, and healthcare utilization data.
-     Every one of these is a distinct form requirement.
-  This rule applies whenever the extracted schedule text shows procedure names
-  without clear visit column alignment.
+RULE PROTOCOL-1 — EVERY SCHEDULE ROW IS A FORM
+  Every row in a Schedule of Activities/Assessments table represents a distinct
+  data collection requirement and MUST become at least one form in the output.
+  Do NOT drop, merge, or skip any row because it lacks a CDASH domain.
+
+  CUSTOM form mapping for common non-CDASH schedule rows:
+  - "Review eligibility criteria" / "Eligibility criteria" → IE (CDASH)
+  - "Informed consent" / "Consent process"             → ICF (CUSTOM)
+  - "Demographics"                                      → DM (CDASH)
+  - "Medical history"                                   → MH (CDASH)
+  - "Randomization"                                     → RAND (CUSTOM)
+  - "Research sample collection" / "Sample collection"  → SMPL (CUSTOM)
+  - "Study team review" / "Clinical assessment"         → STREV (CUSTOM)
+  - "Concomitant medications"                           → CM (CDASH)
+  - "Usual care laboratory testing" / "Lab testing"     → LB (CDASH)
+  - "Invasive procedures"                               → INVA (CUSTOM)
+  - "Imaging" / "Radiology"                             → IMG (CUSTOM)
+  - "Vital signs" (including height/weight if same row) → VS (CDASH)
+  - "Height" and/or "Weight" as separate rows           → add to VS or create ANTHR
+  - "Adverse event review and evaluation"               → AE (CDASH_SAFETY)
+  - "Serious adverse events" / "SAE"                    → AESAE (CDASH_SAFETY)
+  - "Hospital admission" / "Hospitalization"            → HOSP (CUSTOM)
+  - "30-day follow-up" / "Survival" / "Death"           → SURV (CUSTOM)
+  - "Discharge" / "Disposition"                         → DS (CDASH)
+  - "Healthcare utilization" / "Resource utilization"   → HRU (CUSTOM)
+  - "Protocol deviation"                                → DV (CDASH)
+  - "Date of visit" / "Visit date"                      → DOV (INFRASTRUCTURE)
+  - "Screen failure"                                    → SF (CUSTOM)
+
+  For basket/master + sub-protocol structures: UNION all rows across ALL
+  supplied documents. If a row appears in ANY document (basket or sub-protocol),
+  include it. Sub-protocol-specific rows (e.g., Randomization in Cohort B only)
+  should still become forms — set arm_applicability appropriately.
+
+  NEVER omit a schedule row because:
+  - It lacks a CDASH domain (create a CUSTOM form)
+  - It says "data entry if completed as usual care" (still needs a form)
+  - It only appears at one visit (still a valid form)
+  - It seems operational (INFRASTRUCTURE forms are still required)
 
 ════════════════════════════════════════════════════════════════════════════
 OPENCLINICA OID NAMING CONVENTIONS  (CRITICAL)
