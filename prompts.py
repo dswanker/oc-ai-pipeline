@@ -35,6 +35,26 @@ OUTPUT FORMAT — READ CAREFULLY:
     values (especially survey row labels and flag_reason text) rather
     than omitting required structure keys.
 
+RULE PROTOCOL-1 — FRAGMENTED SCHEDULE TABLE RECOVERY
+  PDF text extraction often destroys the column structure of Schedule of
+  Activities/Assessments tables, producing a vertical stream of cell fragments.
+  When this happens:
+  1. Extract EVERY procedure name visible in the fragment stream as a form.
+  2. Cross-reference Section 7/8 (Study Assessments and Procedures) narrative
+     body text — it is more readable and lists the same procedures in prose.
+  3. When multiple protocol documents are provided (basket + sub-protocols),
+     UNION all procedures across all documents. If a procedure appears in ANY
+     document, include it as a form. Do not limit to one document.
+  4. For the Karius OPTIMUM study specifically, the Schedule of Activities
+     lists: eligibility review, informed consent, demographics, medical history,
+     randomization (Cohort B), research sample collection, study team review,
+     concomitant medications, usual care laboratory testing, invasive procedures,
+     imaging/radiology, vital signs, height, weight, adverse events, hospital
+     admission, discharge/survival status, and healthcare utilization data.
+     Every one of these is a distinct form requirement.
+  This rule applies whenever the extracted schedule text shows procedure names
+  without clear visit column alignment.
+
 ════════════════════════════════════════════════════════════════════════════
 OPENCLINICA OID NAMING CONVENTIONS  (CRITICAL)
 ════════════════════════════════════════════════════════════════════════════

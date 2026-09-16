@@ -576,6 +576,36 @@ For each assessment row × visit column:
 - Check whether field set changes across visits (= new unique CRF)
 - Check whether arm differences create distinct form designs
 
+**CRITICAL — Fragmented PDF Table Extraction:**
+Clinical protocol PDFs often use complex multi-column tables for the Schedule
+of Activities/Assessments. When the PDF text extraction collapses these columns
+into a vertical stream of disconnected fragments (e.g., you see procedure names
+listed one per line with no clear visit column structure), apply this rule:
+
+  1. Identify EVERY procedure/assessment name you can see in the fragment stream
+     — treat each unique named item as a data collection requirement.
+  2. If visit assignment cannot be determined from the fragments, assign the form
+     to ALL visits by default (conservative approach — better to over-assign than
+     miss a form entirely).
+  3. Cross-reference the narrative body text (Study Assessments and Procedures
+     section, Section 7 or 8) — it often lists the same assessments in prose
+     form and is more readable than the extracted table.
+  4. For basket/master + sub-protocol structures: each sub-protocol document may
+     define the same schedule. Read ALL protocol documents and union their form
+     lists — if a procedure appears in ANY of the supplied documents, include it.
+
+**Basket / Master Protocol + Sub-Protocol structure:**
+When multiple protocol documents are provided (e.g., a master/basket protocol
+plus cohort-specific sub-protocols), treat them as a single unified study:
+  - The master protocol defines the core schedule applicable to ALL cohorts.
+  - Sub-protocols add cohort-specific assessments (e.g., Randomization for
+    one cohort only).
+  - UNION all unique assessments across all documents — every procedure found
+    in any document must be represented as a form.
+  - Forms that appear only in specific cohorts should have arm_applicability
+    set to the relevant cohort arm (or BOTH if unclear).
+  - Do NOT limit form extraction to only what appears in one document.
+
 Common CDASH domain mappings:
 - Demographics → DM (always separate from MH)
 - Medical History → MH (always separate from DM)
