@@ -35,45 +35,53 @@ OUTPUT FORMAT — READ CAREFULLY:
     values (especially survey row labels and flag_reason text) rather
     than omitting required structure keys.
 
-RULE PROTOCOL-1 — EVERY SCHEDULE ROW IS A FORM
+RULE PROTOCOL-1 — EVERY SCHEDULE ROW IS A FORM (UNIVERSAL)
+  This rule applies to every protocol, every customer, every therapeutic area.
+
   Every row in a Schedule of Activities/Assessments table represents a distinct
   data collection requirement and MUST become at least one form in the output.
-  Do NOT drop, merge, or skip any row because it lacks a CDASH domain.
+  Do NOT drop, merge, or skip any row for any reason.
 
-  CUSTOM form mapping for common non-CDASH schedule rows:
-  - "Review eligibility criteria" / "Eligibility criteria" → IE (CDASH)
-  - "Informed consent" / "Consent process"             → ICF (CUSTOM)
-  - "Demographics"                                      → DM (CDASH)
-  - "Medical history"                                   → MH (CDASH)
-  - "Randomization"                                     → RAND (CUSTOM)
-  - "Research sample collection" / "Sample collection"  → SMPL (CUSTOM)
-  - "Study team review" / "Clinical assessment"         → STREV (CUSTOM)
-  - "Concomitant medications"                           → CM (CDASH)
-  - "Usual care laboratory testing" / "Lab testing"     → LB (CDASH)
-  - "Invasive procedures"                               → INVA (CUSTOM)
-  - "Imaging" / "Radiology"                             → IMG (CUSTOM)
-  - "Vital signs" (including height/weight if same row) → VS (CDASH)
-  - "Height" and/or "Weight" as separate rows           → add to VS or create ANTHR
-  - "Adverse event review and evaluation"               → AE (CDASH_SAFETY)
-  - "Serious adverse events" / "SAE"                    → AESAE (CDASH_SAFETY)
-  - "Hospital admission" / "Hospitalization"            → HOSP (CUSTOM)
-  - "30-day follow-up" / "Survival" / "Death"           → SURV (CUSTOM)
-  - "Discharge" / "Disposition"                         → DS (CDASH)
-  - "Healthcare utilization" / "Resource utilization"   → HRU (CUSTOM)
-  - "Protocol deviation"                                → DV (CDASH)
-  - "Date of visit" / "Visit date"                      → DOV (INFRASTRUCTURE)
-  - "Screen failure"                                    → SF (CUSTOM)
+  CDASH rows — map to the standard domain:
+  - Eligibility criteria / I/E review → IE
+  - Demographics → DM
+  - Medical history → MH
+  - Concomitant medications → CM
+  - Laboratory / lab testing → LB
+  - Vital signs / Height / Weight → VS (combine height+weight into VS unless
+    the protocol places them at different visits)
+  - Adverse events → AE (CDASH_SAFETY if repeating log with CTCAE grading)
+  - Serious adverse events → AESAE (CDASH_SAFETY)
+  - Disposition / discharge → DS
+  - Protocol deviation → DV
+  - Drug/treatment administration → EX
 
-  For basket/master + sub-protocol structures: UNION all rows across ALL
-  supplied documents. If a row appears in ANY document (basket or sub-protocol),
-  include it. Sub-protocol-specific rows (e.g., Randomization in Cohort B only)
-  should still become forms — set arm_applicability appropriately.
+  Non-CDASH rows — create CUSTOM forms with short descriptive uppercase names:
+  - Informed consent → ICF
+  - Randomization → RAND (or use sponsor abbreviation from protocol)
+  - Sample / specimen / blood collection → use sponsor name or SMPL/BIOSP
+  - Study team review / clinical assessment / case review → STREV or CASREV
+  - Invasive procedures performed → INVA or PROC
+  - Imaging / radiology / scan → IMG or RAD
+  - Hospital admission / hospitalization → HOSP
+  - Survival status / death / mortality → SURV or MORT
+  - Follow-up (30-day, 90-day, long-term) → FU or FU{N} (e.g. FU30)
+  - Healthcare utilization / resource use / billing codes → HRU
+  - Screen failure → SF
+  - PRO / ePRO / patient diary → one form per instrument (e.g. EQ5D, PGIC)
+  - Device reading / ECG / spirometry → DEV or instrument name (ECG, PFT)
+  - Any other named procedure → create a CUSTOM form using the procedure name
 
-  NEVER omit a schedule row because:
-  - It lacks a CDASH domain (create a CUSTOM form)
-  - It says "data entry if completed as usual care" (still needs a form)
-  - It only appears at one visit (still a valid form)
-  - It seems operational (INFRASTRUCTURE forms are still required)
+  For basket / master + sub-protocol structures: UNION all rows across ALL
+  supplied documents. Every row in every document becomes a form. Rows that
+  appear only in specific sub-protocols get arm_applicability set accordingly.
+
+  NEVER omit a row because:
+  - It has no CDASH domain → create CUSTOM
+  - It is footnoted as "if applicable" or "if completed as usual care" → still a form
+  - It only appears at one visit → still a form
+  - It seems operational → INFRASTRUCTURE forms are required
+  - It is a sub-protocol-specific row → still a form with appropriate arm
 
 ════════════════════════════════════════════════════════════════════════════
 OPENCLINICA OID NAMING CONVENTIONS  (CRITICAL)

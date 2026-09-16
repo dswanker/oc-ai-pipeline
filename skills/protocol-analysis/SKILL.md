@@ -647,20 +647,45 @@ Before finalising the CRF list, apply every rule in
 - DV — Protocol Deviation Log — ongoing
 - SPELIG — Sponsor Eligibility Review — screening only
 
-**CRITICAL — Non-CDASH schedule rows MUST become CUSTOM forms:**
-Every row in the Schedule of Activities that does not map to a standard CDASH
-domain still requires a form. Do NOT drop these rows. Map them as CUSTOM forms:
-- "Research sample collection" → form_id: SMPL, category: CUSTOM
-- "Study team review" / "Clinical assessment" → form_id: STREV, category: CUSTOM
-- "Invasive procedures" → form_id: INVA, category: CUSTOM
-- "Imaging / Radiology" → form_id: IMG, category: CUSTOM
-- "Hospital admission" → form_id: HOSP, category: CUSTOM
-- "30-day follow-up / Survival / Death" → form_id: SURV, category: CUSTOM
-- "Healthcare utilization" → form_id: HRU, category: CUSTOM
-- "Randomization" → form_id: RAND, category: CUSTOM
-- "Screen failure" → form_id: SF, category: CUSTOM
+**CRITICAL — Every schedule row becomes a form. No exceptions.**
 
-The completeness check in Step 2b must flag any schedule row not mapped to a form.
+This is a universal rule that applies to every protocol, every customer, every
+therapeutic area:
+
+  EVERY row in the Schedule of Activities/Assessments table MUST map to at
+  least one form in the output. A row without a CDASH domain is NOT a reason
+  to drop it — it becomes a CUSTOM form.
+
+Common non-CDASH row types and how to handle them (use descriptive uppercase
+short names following the same FORM NAMING RULES as all other forms):
+
+  Procedure-type rows (data collected by site staff):
+  - Sample / specimen collection → e.g. SMPL, BIOSP, SPECCOL
+  - Study team / clinical review → e.g. STREV, CASREV, CLINREV
+  - Invasive procedures performed → e.g. INVA, PROC
+  - Imaging / radiology → e.g. IMG, RAD
+  - Device readings → e.g. DEV, ECG (ECG has no CDASH domain but is common)
+
+  Operational / event-triggered rows:
+  - Randomization → e.g. RAND
+  - Hospitalization / hospital admission → e.g. HOSP
+  - Discharge / disposition → DS (CDASH) or DISCH
+  - Survival status / death → e.g. SURV, DEATH
+  - 30-day / long-term follow-up → e.g. FU, FU30
+  - Healthcare resource utilization → e.g. HRU
+  - Screen failure → e.g. SF, SCRFL
+  - Protocol deviation → DV (CDASH)
+  - Healthcare utilization / billing codes → e.g. HRU
+
+  PRO / ePRO instruments:
+  - Any patient-reported outcome instrument → one CUSTOM form per instrument
+
+The form_id should be a short (≤8 char) descriptive uppercase name that
+reflects the procedure. Follow the sponsor's own abbreviations from the
+protocol where provided.
+
+The completeness check in Step 2b must flag any schedule row not mapped to
+at least one form. Zero unmapped rows is the required outcome.
 
 **Form Category Taxonomy — apply exactly:**
 
