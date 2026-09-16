@@ -4834,69 +4834,54 @@ async def run_pipeline(item_id):
             return
 
         # ── Download inputs in parallel ───────────────────────────────────────
+        _protocol_extra_texts = []  # text from non-PDF protocol docs
         async def _get_protocol_doc():
             """
-            Download the protocol document from the protocol column ONLY.
+            Download ALL protocol documents from the protocol column.
 
-            Reads exclusively from COL["protocol"] (no whole-item asset scan).
-            Supports:
-              - PDF: returned as-is.
-              - Word (.docx / .doc): converted to PDF via LibreOffice when
-                possible; otherwise extracted as text and returned with the
-                ``%%DOCX_TEXT%%`` marker so callers can pass it as
-                ``extra_text`` instead of ``pdf_bytes``.
-              - Google Doc / Drive link (URL in the column rather than an
-                uploaded file): exported as PDF.
+            Supports multiple files — each is processed independently and the
+            results are combined. Convention: files are returned in upload order
+            (oldest first, newest last). Claude is instructed that later
+            documents supersede earlier ones on any conflicting content, which
+            matches the standard protocol amendment convention.
 
-            Returns bytes on success, or None when the column is empty / the
-            content can't be resolved. Callers must tolerate None.
+            Supports per file:
+              - PDF: returned as-is (merged via PyMuPDF if multiple PDFs).
+              - Word (.docx/.doc): converted to PDF or extracted as text.
+              - Google Doc/Drive link in column text: exported as PDF.
+
+            Returns:
+              - Combined PDF bytes if any PDF documents present (PDFs merged,
+                Word docs converted and appended).
+              - %%DOCX_TEXT%%-prefixed UTF-8 text if only text-extractable
+                docs present.
+              - None if column is empty or nothing could be resolved.
             """
             col_entry = cols.get(COL["protocol"], {})
             raw_value = col_entry.get("value")
 
-            # 1. Uploaded-file case (asset on the column).
+            all_files = []  # list of (fname, bytes) in upload order
+
+            # 1. Uploaded files — download all, not just the last
             if raw_value:
                 try:
                     parsed = json.loads(raw_value)
                 except (ValueError, TypeError):
                     parsed = {}
-                files = parsed.get("files") if isinstance(parsed, dict) else None
-                if files:
-                    body = await download_column_file(item_id, COL["protocol"])
-                    if not body:
-                        return None
-                    fname = (files[-1].get("name") or "").lower()
+                files_meta = parsed.get("files") if isinstance(parsed, dict) else None
+                if files_meta:
+                    # Download all files concurrently
+                    proto_all = await download_all_column_files(
+                        item_id, COL["protocol"]
+                    )
+                    all_files.extend(proto_all)
+                    print(
+                        f"Protocol column: {len(all_files)} file(s) — "
+                        + ", ".join(n for n, _ in all_files),
+                        flush=True,
+                    )
 
-                    # PDF magic or .pdf extension → pass through.
-                    if body.startswith(b"%PDF-") or fname.endswith(".pdf"):
-                        return body
-
-                    # ZIP magic (.docx/.xlsx OOXML) or .docx/.doc extension
-                    # → try LibreOffice, fall back to extracted text.
-                    if body.startswith(b"PK\x03\x04") or \
-                       fname.endswith((".docx", ".doc")):
-                        print(f"Converting Word doc: {fname or '<unnamed>'}",
-                              flush=True)
-                        pdf = await asyncio.get_event_loop().run_in_executor(
-                            None,
-                            lambda: _convert_to_pdf(body, fname or "protocol.docx"),
-                        )
-                        if pdf:
-                            return pdf
-                        text = await asyncio.get_event_loop().run_in_executor(
-                            None, lambda: _extract_docx_as_text(body),
-                        )
-                        if text:
-                            return b"%%DOCX_TEXT%%" + text.encode("utf-8")
-                        return None
-
-                    # Anything else (no recognisable header) — accept the
-                    # bytes verbatim and let Claude decide.
-                    return body
-
-            # 2. Link case — Monday file columns can also carry a URL
-            # (e.g. Google Doc / Drive share link). Detect a docs/drive URL
-            # in the column's `.text` and fetch the PDF export.
+            # 2. Google Doc / Drive link in column text
             link_text = (col_entry.get("text") or "").strip()
             if link_text and ("docs.google.com" in link_text or
                               "drive.google.com" in link_text):
@@ -4904,7 +4889,90 @@ async def run_pipeline(item_id):
                 if export_url:
                     print(f"Exporting Google Doc as PDF: {link_text[:80]}",
                           flush=True)
-                    return await download_file(export_url) or None
+                    gdoc_bytes = await download_file(export_url)
+                    if gdoc_bytes:
+                        all_files.append(("google_doc.pdf", gdoc_bytes))
+
+            if not all_files:
+                return None
+
+            # Process each file into either PDF bytes or text
+            pdf_parts = []   # list of PDF bytes in order
+            text_parts = []  # list of extracted text strings in order
+
+            for fname, body in all_files:
+                fname_lower = (fname or "").lower()
+
+                if body.startswith(b"%PDF-") or fname_lower.endswith(".pdf"):
+                    pdf_parts.append((fname, body))
+
+                elif (body.startswith(b"PK\x03\x04") or
+                      fname_lower.endswith((".docx", ".doc"))):
+                    print(f"Converting Word doc: {fname}", flush=True)
+                    pdf = await asyncio.get_event_loop().run_in_executor(
+                        None,
+                        lambda b=body, f=fname: _convert_to_pdf(b, f),
+                    )
+                    if pdf:
+                        pdf_parts.append((fname, pdf))
+                    else:
+                        text = await asyncio.get_event_loop().run_in_executor(
+                            None, lambda b=body: _extract_docx_as_text(b),
+                        )
+                        if text:
+                            text_parts.append(f"=== {fname} ===\n{text}")
+                else:
+                    # Try as plain text fallback
+                    try:
+                        text = body.decode("utf-8", errors="replace")
+                        text_parts.append(f"=== {fname} ===\n{text}")
+                    except Exception:
+                        pdf_parts.append((fname, body))  # pass verbatim
+
+            # Merge all PDFs into one document (preserves page order,
+            # newest doc appended last so Claude reads it latest)
+            if pdf_parts:
+                if len(pdf_parts) == 1:
+                    merged_pdf = pdf_parts[0][1]
+                else:
+                    try:
+                        import fitz  # PyMuPDF
+                        merged = fitz.open()
+                        for pname, pbytes in pdf_parts:
+                            src = fitz.open(stream=pbytes, filetype="pdf")
+                            merged.insert_pdf(src)
+                            src.close()
+                        merged_pdf = merged.tobytes(garbage=4, deflate=True)
+                        merged.close()
+                        print(
+                            f"Protocol: merged {len(pdf_parts)} PDFs → "
+                            f"{len(merged_pdf):,} bytes",
+                            flush=True,
+                        )
+                    except ImportError:
+                        # fitz not available — concatenate raw bytes
+                        # (imperfect but avoids silent data loss)
+                        merged_pdf = b"".join(p for _, p in pdf_parts)
+                        print(
+                            "Protocol: PyMuPDF not available — "
+                            "concatenating PDF bytes (may not render correctly)",
+                            flush=True,
+                        )
+                # If there are also text-only docs, append them as a note
+                if text_parts:
+                    # Return PDF — text_parts will be added to extra_parts
+                    # below via _protocol_extra_text
+                    _protocol_extra_texts.extend(text_parts)
+                return merged_pdf
+
+            # No PDFs — return all text combined
+            if text_parts:
+                combined = (
+                    "PROTOCOL DOCUMENTS (in chronological order — later documents "
+                    "supersede earlier ones where content conflicts):\n\n"
+                    + "\n\n".join(text_parts)
+                )
+                return b"%%DOCX_TEXT%%" + combined.encode("utf-8")
 
             return None
 
@@ -5395,6 +5463,18 @@ async def run_pipeline(item_id):
             await append_log(item_id, "Protocol Analysis started.")
 
             extra_parts = []
+
+            # Multi-protocol document conflict resolution instruction
+            if _proto_file_count > 1:
+                extra_parts.append(
+                    f"NOTE: {_proto_file_count} protocol documents were provided "
+                    f"(e.g., original protocol + amendment(s)). They are presented "
+                    f"in chronological order — the LAST document supersedes earlier "
+                    f"ones wherever content conflicts. This follows standard protocol "
+                    f"amendment convention. Apply the most recent definition for any "
+                    f"field, form, visit, or criterion that differs across documents."
+                )
+
             if ai_instructions_block:
                 extra_parts.insert(0, ai_instructions_block.strip())
             if reviewer_notes_block:
@@ -5413,6 +5493,11 @@ async def run_pipeline(item_id):
                     f"injected into Study Spec generation.")
             else:
                 print("Customer conventions: none provided", flush=True)
+            # Text from non-PDF protocol docs (e.g. Word docs that couldn't
+            # be converted to PDF) appended to extra_parts for Claude
+            if _protocol_extra_texts:
+                extra_parts.extend(_protocol_extra_texts)
+
             # ── Priority sources for form/question construction ──────────────────
             # The protocol is always read first. Then:
             #
