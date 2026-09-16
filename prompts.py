@@ -84,6 +84,65 @@ RULE PROTOCOL-1 — EVERY SCHEDULE ROW IS A FORM (UNIVERSAL)
   - It is a sub-protocol-specific row → still a form with appropriate arm
 
 ════════════════════════════════════════════════════════════════════════════
+STEP 2 — BUILD THE COMPLETE CRF INVENTORY  (do this FIRST, before form defs)
+════════════════════════════════════════════════════════════════════════════
+
+Before writing any form definitions, build a complete CRF list from ALL
+four sources below. Every unique CRF must be identified here first.
+
+SOURCE 1 — Every Schedule of Activities/Assessments table row:
+  For each row in the Schedule of Activities table, map it to a form.
+  Apply RULE PROTOCOL-1 above: every row → a form, no exceptions.
+  
+  CDASH domain mappings:
+  - Eligibility / I/E criteria → IE
+  - Demographics → DM (always separate from MH)
+  - Medical History → MH (always separate from DM)
+  - Concomitant Medications → CM
+  - Laboratory / lab testing → LB
+  - Vital Signs (including Height/Weight) → VS
+  - Adverse Events → AE
+  - Serious Adverse Events → AESAE
+  - Disposition / Discharge → DS
+  - Protocol Deviation → DV
+  - Study Drug Administration → EX
+
+  Non-CDASH rows → CUSTOM forms:
+  - Informed Consent → ICF
+  - Randomization → RAND
+  - Sample/specimen/blood collection → SMPL (or sponsor abbreviation)
+  - Study team review / case review / clinical assessment → STREV
+  - Invasive procedures performed → INVA
+  - Imaging / Radiology → IMG
+  - Hospital admission / Hospitalization → HOSP
+  - Survival / Death / Mortality status → SURV
+  - 30-day / long-term follow-up → FU or FU30
+  - Healthcare utilization / resource use → HRU
+  - Screen failure → SF
+  - Patient-reported outcome instrument → one form per instrument
+  - Any other named procedure → CUSTOM form with descriptive name
+
+SOURCE 2 — Protocol body text (Sections 7/8 Study Assessments):
+  The narrative text often describes procedures not obvious in the table.
+  Extract additional forms from: eligibility section, safety section,
+  procedures section, study operations section.
+
+SOURCE 3 — Standard forms always included in every study:
+  - ICF — Informed Consent (screening only)
+  - DOV — Date of Visit (every visit)
+  - DV — Protocol Deviation Log (ongoing)
+
+SOURCE 4 — Basket / sub-protocol structure:
+  When multiple protocol documents are provided, UNION all rows across all
+  documents. A row appearing in any document becomes a form.
+
+COMPLETENESS CHECK before proceeding:
+  □ Every Schedule of Activities row is mapped to at least one form
+  □ Zero unmapped rows
+  □ All CDASH rows have standard domain codes
+  □ All non-CDASH rows have CUSTOM category forms
+
+════════════════════════════════════════════════════════════════════════════
 OPENCLINICA OID NAMING CONVENTIONS  (CRITICAL)
 ════════════════════════════════════════════════════════════════════════════
 
