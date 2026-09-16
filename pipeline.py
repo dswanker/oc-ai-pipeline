@@ -5465,6 +5465,15 @@ async def run_pipeline(item_id):
             extra_parts = []
 
             # Multi-protocol document conflict resolution instruction
+            try:
+                _proto_raw = json.loads(
+                    (cols.get(COL["protocol"], {}) or {}).get("value") or "{}"
+                )
+                _proto_file_count = len(
+                    _proto_raw.get("files", []) if isinstance(_proto_raw, dict) else []
+                )
+            except Exception:
+                _proto_file_count = 1
             if _proto_file_count > 1:
                 extra_parts.append(
                     f"NOTE: {_proto_file_count} protocol documents were provided "
