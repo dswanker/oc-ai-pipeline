@@ -5530,18 +5530,24 @@ async def run_pipeline(item_id):
                 extra_parts.extend(_protocol_extra_texts)
 
             # ── Priority sources for form/question construction ──────────────────
-            # The protocol is always read first. Then:
+            # The protocol is always read first and is the SOLE authority on
+            # which forms exist. Only forms found in the protocol are built.
             #
-            # For each form the protocol defines:
-            #   - If protocol specifies the questions on that form → use them.
-            #   - If protocol only names the form (not its questions) →
-            #       Priority 1: Customer OC4 Standards (what they've built before).
-            #       Priority 2: Customer CRF Standards (field/question definitions
-            #                   from their iMedNet/competitor source or library).
-            #   - If neither source covers a form → use CDASH defaults.
+            # For the FIELDS/QUESTIONS within each protocol-defined form:
+            #   - If protocol fully specifies the fields → use them exactly.
+            #   - If protocol names the form but not its fields →
+            #       Priority 1: Customer OC4 Standards — find matching form
+            #                   and use its field definitions.
+            #       Priority 2: Customer CRF Standards — find matching form
+            #                   in this library and use its field definitions.
+            #       Priority 3: CDASH defaults — only if no match in either
+            #                   standards source above.
             #
-            # This means CRF Standards fill gaps the protocol leaves AND gaps
-            # the OC4 Standards don't cover — they are never ignored.
+            # CRITICAL: CRF Standards are a customer-wide library covering
+            # many studies and TAs. Only use entries that MATCH a form already
+            # identified in the protocol. Never add forms from CRF Standards
+            # that are not in the protocol. Never use CRF Standards fields
+            # for a form if the protocol already specifies that form's fields.
 
             _CHAR_CAP = 150_000  # per-source context budget
 
@@ -5588,11 +5594,18 @@ async def run_pipeline(item_id):
                     oc_combined = "\n\n".join(oc_parts)
                     extra_parts.append(
                         "CUSTOMER OC4 STANDARDS — Priority 1 supplemental source.\n"
-                        "These are forms the customer has previously built in OpenClinica 4.\n"
-                        "HOW TO USE: For any form the protocol names but does not fully specify "
-                        "(i.e. the protocol does not list the individual questions/fields), "
-                        "use these OC4 standards as your primary reference for field names, "
-                        "OIDs, codelists, and constraints. Match naming conventions exactly.\n\n"
+                        "These are forms this customer has previously built in OpenClinica 4 "
+                        "across all their studies.\n"
+                        "HOW TO USE:\n"
+                        "  1. The PROTOCOL determines which forms exist. Do not add forms from "
+                        "here that are not in the protocol.\n"
+                        "  2. For each form identified in the protocol: if the protocol does not "
+                        "fully specify the fields, find a matching form here by name or domain "
+                        "and use its field definitions (names, OIDs, codelists, constraints).\n"
+                        "  3. Only use fields from a matching form — do not pull fields from "
+                        "unrelated forms in this library.\n"
+                        "  4. If no matching form exists here, fall through to Customer CRF "
+                        "Standards (Priority 2).\n\n"
                         + oc_combined
                     )
                     print(f"OC4 Standards: {len(_oc_files)} file(s) injected "
@@ -5612,13 +5625,21 @@ async def run_pipeline(item_id):
                         crf_text = crf_text[:_CHAR_CAP] + "\n...[TRUNCATED]..."
                     extra_parts.append(
                         "CUSTOMER CRF STANDARDS — Priority 2 supplemental source.\n"
-                        "These are the customer's field/question definitions from their "
-                        "existing CRF library or source EDC system.\n"
-                        "HOW TO USE: For any form or field NOT covered by the protocol AND "
-                        "NOT covered by the Customer OC4 Standards above, use these CRF "
-                        "Standards as your reference. Every question listed here for a given "
-                        "form MUST appear in that form's output — do not drop questions "
-                        "from this source unless the protocol explicitly excludes them.\n\n"
+                        "This is the customer's CRF library covering many studies and "
+                        "therapeutic areas — NOT specific to this protocol.\n"
+                        "HOW TO USE:\n"
+                        "  1. The PROTOCOL determines which forms exist. Do not add forms from "
+                        "this library that are not in the protocol.\n"
+                        "  2. For each form identified in the protocol: if the protocol does not "
+                        "fully specify the fields AND no match was found in OC4 Standards, "
+                        "find a matching form here by name or domain and use its field "
+                        "definitions.\n"
+                        "  3. Only use fields from a form that matches a protocol form — "
+                        "never pull in fields from forms not mentioned in the protocol.\n"
+                        "  4. For any matching form: every field listed here MUST appear in "
+                        "the output for that form.\n"
+                        "  5. If no matching form exists here either, fall back to CDASH "
+                        "defaults for that form's fields.\n\n"
                         + crf_text
                     )
                     print(f"CRF Standards: {len(_crf_files)} file(s) injected "
