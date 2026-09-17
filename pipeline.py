@@ -4020,8 +4020,14 @@ def _parse_crf_standards_questions(crf_files: list) -> dict:
 
                 if form not in form_fields:
                     form_fields[form] = []
+                import re as _re2
+                var_safe = _re2.sub(r'[^A-Za-z0-9_-]', '_', var).strip('_')
+                if not var_safe:
+                    continue  # skip rows with entirely invalid names
+                if var_safe[0].isdigit():
+                    var_safe = 'F_' + var_safe
                 form_fields[form].append({
-                    "variable_name": var,
+                    "variable_name": var_safe,
                     "label":         label or var,
                     "variable_type": vtype,
                     "sequence":      seq,
@@ -4182,7 +4188,16 @@ def _apply_crf_standards(struct_json: dict, crf_files: list, oc_files: list) -> 
             else:
                 xls_type_str = xls_type
 
-            full_name = f"I_{form_id}_{var_name}"
+            # Sanitize field name — XLSForm names must start with letter/underscore
+            # and contain only letters, digits, underscores, hyphens, periods.
+            # QUESTIONS.csv may have names like "HIDE + CLEAR" — strip invalid chars.
+            import re as _re
+            var_name_safe = _re.sub(r'[^A-Za-z0-9_-]', '_', var_name).strip('_')
+            if not var_name_safe or var_name_safe[0].isdigit():
+                var_name_safe = 'F_' + var_name_safe
+            if not var_name_safe:
+                continue  # skip entirely unnameable fields
+            full_name = f"I_{form_id}_{var_name_safe}"
             new_row = {
                 "type":                 xls_type_str,
                 "name":                 full_name,
