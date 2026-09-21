@@ -434,6 +434,175 @@ _UNSUPPORTED_TYPE_COERCION = {
 }
 
 
+# ── Canonical constraint message library ─────────────────────────────────────
+# Maps constraint expressions (or fragments) to the single approved message.
+# Checked in order — first match wins. Keys are lowercased constraint strings.
+# This ensures Claude's variation ("Future dates are not allowed.",
+# "Date cannot be in the future.", "Date must not be in the future.", etc.)
+# all produce the identical message in the final XLSForm.
+_CANONICAL_CONSTRAINT_MESSAGES = [
+    # Future date
+    {
+        "constraint_patterns": [". <= today()", "<=today()", ". <=today()"],
+        "message": "Date cannot be in the future.",
+    },
+    # Past date (must be in the past)
+    {
+        "constraint_patterns": [". < today()", "<today()", ". <today()"],
+        "message": "Date must be in the past.",
+    },
+    # Date not before study start / consent / ICF date
+    {
+        "constraint_patterns": [
+            ">= ${icfdat}", ">=${icfdat}",
+            ">= ${icf_date}", ">=${icf_date}",
+            ">= ${consentdate}", ">=${consentdate}",
+        ],
+        "message": "Date must be on or after the date of informed consent.",
+    },
+    # End date must be on or after start date
+    {
+        "constraint_patterns": [
+            ">= ${", ". >= ${",   # generic "on or after another date field"
+        ],
+        "message": "End date must be on or after start date.",
+        "require_also": ["<= today()", "today()"],  # only when ALSO has future check
+        "skip_if_message_set": True,  # only apply when no other rule matched
+    },
+    # Required field (used in required_message)
+    {
+        "required_patterns": ["required", "mandatory", "must be completed",
+                               "this field is required", "field is required"],
+        "message": "This field is required.",
+        "is_required_message": True,
+    },
+    # Integer range
+    {
+        "constraint_patterns": [". >= 0 and . <=", ". >= 0 and . <="],
+        "message": "Value must be within the valid range.",
+        "skip_if_message_set": True,
+    },
+    # Ineligible subject
+    {
+        "constraint_patterns": ["= 'Y'", "= 'N'"],
+        "message": "Subject is ineligible if this criterion is not met.",
+        "skip_if_message_set": True,
+    },
+]
+
+
+def _normalize_constraint_messages(rows, form_id=''):
+    """
+    Standardize constraint_message and required_message values across all
+    survey rows. Claude generates slight variations run to run:
+      "Future dates are not allowed."
+      "Date cannot be in the future."
+      "Date must not be in the future."
+    This function maps them all to the single canonical message from
+    _CANONICAL_CONSTRAINT_MESSAGES, based on the constraint expression.
+
+    Never overwrites a message that already matches the canonical form.
+    Logs any normalizations made.
+    """
+    normalized = []
+    for row in rows:
+        r = dict(row)
+        constraint = str(r.get('constraint', '') or '').strip()
+        c_msg = str(r.get('constraint_message', '') or '').strip()
+        req_msg = str(r.get('required_message', '') or '').strip()
+        constraint_lower = constraint.lower()
+
+        changed = False
+
+        # Check constraint_message normalization
+        if constraint:
+            for rule in _CANONICAL_CONSTRAINT_MESSAGES:
+                if rule.get('is_required_message'):
+                    continue
+                patterns = rule.get('constraint_patterns', [])
+                canonical = rule['message']
+                # Skip if already canonical
+                if c_msg == canonical:
+                    break
+                # Check if constraint matches any pattern
+                matched = any(p.lower() in constraint_lower for p in patterns)
+                if matched:
+                    if rule.get('skip_if_message_set') and c_msg:
+                        continue
+                    if c_msg and c_msg != canonical:
+                        r['constraint_message'] = canonical
+                        changed = True
+                    elif not c_msg:
+                        r['constraint_message'] = canonical
+                        changed = True
+                    break
+
+        # Check required_message normalization
+        if req_msg:
+            for rule in _CANONICAL_CONSTRAINT_MESSAGES:
+                if not rule.get('is_required_message'):
+                    continue
+                canonical = rule['message']
+                if req_msg == canonical:
+                    break
+                patterns = rule.get('required_patterns', [])
+                if any(p.lower() in req_msg.lower() for p in patterns):
+                    r['required_message'] = canonical
+                    changed = True
+                    break
+
+        if changed:
+            normalized.append(r.get('name', '(unnamed)'))
+        rows_out = r if not hasattr(rows, 'append') else r
+        _ = rows_out
+    
+    # Rebuild properly
+    out = []
+    norm_count = 0
+    for row in rows:
+        r = dict(row)
+        constraint = str(r.get('constraint', '') or '').strip()
+        c_msg = str(r.get('constraint_message', '') or '').strip()
+        constraint_lower = constraint.lower()
+
+        if constraint:
+            for rule in _CANONICAL_CONSTRAINT_MESSAGES:
+                if rule.get('is_required_message'):
+                    continue
+                patterns = rule.get('constraint_patterns', [])
+                canonical = rule['message']
+                if c_msg == canonical:
+                    break
+                matched = any(p.lower() in constraint_lower for p in patterns)
+                if matched:
+                    if rule.get('skip_if_message_set') and c_msg:
+                        continue
+                    if c_msg != canonical:
+                        r['constraint_message'] = canonical
+                        norm_count += 1
+                    break
+
+        req_msg = str(r.get('required_message', '') or '').strip()
+        if req_msg:
+            for rule in _CANONICAL_CONSTRAINT_MESSAGES:
+                if not rule.get('is_required_message'):
+                    continue
+                canonical = rule['message']
+                if req_msg != canonical:
+                    patterns = rule.get('required_patterns', [])
+                    if any(p.lower() in req_msg.lower() for p in patterns):
+                        r['required_message'] = canonical
+                        norm_count += 1
+                        break
+
+        out.append(r)
+
+    if norm_count:
+        print(f"[edc-builder] {form_id}: normalized {norm_count} constraint/required "
+              f"message(s) to canonical form", flush=True)
+    return out
+
+
 def _coerce_unsupported_types(rows, form_id='', build_log=None):
     """Convert OC-unsupported temporal types (`time`, `dateTime`) to `text`
     with a format-validation constraint.
@@ -1028,6 +1197,7 @@ def build_single_xlsform(form_data, output_path, build_log):
                 })
     # OC rejects XLSForm `time`/`dateTime`; represent them as text+constraint.
     survey = _coerce_unsupported_types(survey, form_id, build_log)
+    survey = _normalize_constraint_messages(survey, form_id)
 
     placeholders_in_form = []
     for row_i, row in enumerate(survey, start=2):
