@@ -496,6 +496,43 @@ def _files_to_text(files: list, label: str = "") -> str:
                     text = "[PDF: " + fname + " — install pdfplumber to extract text]"
             elif ext in ("xml", "json"):
                 text = data.decode("utf-8", errors="replace")
+            elif ext == "zip":
+                # Recursively extract and process files inside the ZIP
+                import zipfile as _zf, io as _zio
+                try:
+                    inner_parts = []
+                    with _zf.ZipFile(_zio.BytesIO(data)) as zf:
+                        for inner_name in zf.namelist():
+                            if inner_name.endswith('/'):
+                                continue  # skip directories
+                            inner_bytes = zf.read(inner_name)
+                            inner_ext = (inner_name.rsplit(".", 1)[-1].lower()) if "." in inner_name else ""
+                            inner_text = None
+                            if inner_ext in ("csv", "tsv", "txt", "md"):
+                                inner_text = inner_bytes.decode("utf-8", errors="replace")
+                            elif inner_ext in ("xlsx", "xls"):
+                                import openpyxl as _opx2
+                                wb2 = _opx2.load_workbook(_zio.BytesIO(inner_bytes),
+                                                          data_only=True, read_only=True)
+                                sp = []
+                                for sh in wb2.worksheets:
+                                    rows = []
+                                    for row in sh.iter_rows(values_only=True):
+                                        vals = [str(c) if c is not None else "" for c in row]
+                                        if any(v.strip() for v in vals):
+                                            rows.append(",".join(vals))
+                                    if rows:
+                                        sp.append("[Sheet: " + sh.title + chr(10) + chr(10).join(rows))
+                                inner_text = "\n\n".join(sp) if sp else None
+                            elif inner_ext in ("xml", "json"):
+                                inner_text = inner_bytes.decode("utf-8", errors="replace")
+                            if inner_text and inner_text.strip():
+                                inner_parts.append("--- " + inner_name + " ---" + chr(10) + inner_text.strip())
+                    NL2 = chr(10) + chr(10)
+                    text = NL2.join(inner_parts) if inner_parts else None
+
+                except Exception as _ze:
+                    text = "[ZIP error: " + fname + ": " + str(_ze) + "]"
             else:
                 try:
                     text = data.decode("utf-8", errors="replace")
@@ -3972,7 +4009,23 @@ def _parse_crf_standards_questions(crf_files: list) -> dict:
     import csv as _csv, io as _io
     form_fields = {}  # form_name -> [{variable_name, label, variable_type, sequence}]
 
-    for fname, data in crf_files:
+    # Expand ZIPs inline before parsing choices
+    _expanded_cho = []
+    for _fn, _fd in crf_files:
+        _ext2 = (_fn.rsplit(".", 1)[-1].lower()) if "." in _fn else ""
+        if _ext2 == "zip":
+            import zipfile as _zf2, io as _io2
+            try:
+                with _zf2.ZipFile(_io2.BytesIO(_fd)) as _zf2obj:
+                    for _inner in _zf2obj.namelist():
+                        if not _inner.endswith("/"):
+                            _expanded_cho.append((_inner, _zf2obj.read(_inner)))
+            except Exception as _ze2:
+                print(f"[crf-choices] could not unzip {_fn}: {_ze2}", flush=True)
+        else:
+            _expanded_cho.append((_fn, _fd))
+
+    for fname, data in _expanded_cho:
         ext = (fname.rsplit(".", 1)[-1].lower()) if "." in fname else ""
         if ext not in ("csv", "tsv", "txt"):
             continue
