@@ -132,7 +132,7 @@ def tmp_repo_root(tmp_path: Path) -> Path:
     # Copy the real schema files into tmp so version + JSON Schema
     # validation work against this temp repo root.
     real_root = Path(__file__).resolve().parent.parent.parent
-    real_schema_dir = real_root / "conventions" / "schema"
+    real_schema_dir = real_root / "conventions_engine" / "conventions" / "schema"
 
     tmp_schema = tmp_path / "conventions" / "schema"
     tmp_schema.mkdir(parents=True)
@@ -152,7 +152,7 @@ def repo_root_with_real_fixtures(tmp_path: Path, fixtures_dir: Path) -> Path:
     load). For loader-specific tests.
     """
     real_root = Path(__file__).resolve().parent.parent.parent
-    real_schema_dir = real_root / "conventions" / "schema"
+    real_schema_dir = real_root / "conventions_engine" / "conventions" / "schema"
 
     tmp_schema = tmp_path / "conventions" / "schema"
     tmp_schema.mkdir(parents=True)
