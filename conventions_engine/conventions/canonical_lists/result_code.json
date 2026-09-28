@@ -1,0 +1,11 @@
+{
+  "list_name": "canon_result_code",
+  "multi_select": false,
+  "description": "No CDASH standard governs a generic Positive/Negative/Unknown result flag -- this is sponsor-defined per protocol. Detroit's LUPUS form (12 fields: RESARTH, RESDR, RESER1, RESER2, RESHD1, RESMR, RESND1, RESND2, RESOU, RESPH, RESRD1A, RESRD2) and RA form (5 fields: ARTH_RES, MORNSTIFF_RES, RADI_RES, RHEUM_RES, SYMMJOI_RES) independently defined the identical list under two different names (result, rares). Pure deduplication within Detroit, not a Precision/Detroit cross-study case.",
+  "source": "No CDASH standard exists; consolidating identical existing values found within Detroit's own spec",
+  "choices": [
+    {"name": "1", "label": "Positive", "cdash_code": null, "is_extension": false},
+    {"name": "0", "label": "Negative", "cdash_code": null, "is_extension": false},
+    {"name": "U", "label": "Unknown", "cdash_code": null, "is_extension": false}
+  ]
+}

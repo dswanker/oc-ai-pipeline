@@ -1,0 +1,11 @@
+{
+  "list_name": "canon_canine_breed",
+  "multi_select": false,
+  "description": "No CDASH standard applies (veterinary breed, not a human-subject domain). Detroit's VET form defined the identical Labrador/Poodle/Other list twice under different names for a single-select field (tb0hg85) and a multi-select field (dd7q). Pure deduplication -- both fields keep their own select_one/select_multiple type, only the underlying list is unified.",
+  "source": "No CDASH standard exists; consolidating identical existing values found within Detroit's own spec",
+  "choices": [
+    {"name": "labrador", "label": "Labrador", "cdash_code": null, "is_extension": false},
+    {"name": "poodle", "label": "Poodle", "cdash_code": null, "is_extension": false},
+    {"name": "other", "label": "Other", "cdash_code": null, "is_extension": false}
+  ]
+}

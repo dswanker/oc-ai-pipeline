@@ -1,0 +1,31 @@
+{
+  "id": "customer.bioivt.result_code_canonical_list",
+  "title": "BioIVT LUPUS/RA result fields use a shared canonical list (deduplication only, no CDASH standard)",
+  "kind": "structured",
+  "scope": "customer",
+  "scope_id": "bioIVT",
+  "status": "active",
+  "natural_key": "bioivt_result_code_canonical_list",
+  "description": "Points every field currently typed select_one result or select_one rares at the shared canon_result_code list. This is a within-Detroit duplication, not a Precision/Detroit case: Detroit's LUPUS form (12 fields) and RA form (5 fields) independently defined the identical Positive/Negative/Unknown list under two different names. Targeted by field.type rather than field.name since the 17 field names have no common naming pattern.",
+  "rationale": "BioIVT canonical-code-list-library project. No CDASH codelist governs a generic result flag -- sponsor-defined. Values already identical (1/0/U -> Positive/Negative/Unknown), pure deduplication.",
+  "target": "field",
+  "applies_when": {
+    "field.type": { "in": ["select_one result", "select_one rares"] }
+  },
+  "effect": {
+    "use_canonical_list": "result_code"
+  },
+  "created_at": "2026-09-28T00:00:00Z",
+  "created_by": "human:dswanker",
+  "source": "BioIVT_DataMastering_FeasibilityReport.docx Option C recommendation; canonical-code-list-library plan step 1c",
+  "tags": ["bioivt", "result_code", "canonical_list", "step_1c"],
+  "history": [
+    {
+      "at": "2026-09-28T00:00:00Z",
+      "by": "human:dswanker",
+      "action": "created",
+      "status": "active",
+      "note": "First convention targeted by field.type rather than field.name, since LUPUS/RA result field names have no shared pattern. Verified all 17 target fields are select_one (no select_multiple cardinality conflict) before writing this."
+    }
+  ]
+}
