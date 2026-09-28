@@ -1,0 +1,17 @@
+{
+  "list_name": "canon_cm_freq",
+  "multi_select": false,
+  "description": "CDASH CMDOSFRQ (C78419) -- Concomitant Medication Dosing Frequency per Interval. All 8 official CDISC submission values included, plus 1 sponsor extension (weekly / QW) that Precision actively uses but which is not in the official C78419 subset. The codelist is CDISC-marked extensible, so adding this is standard practice, not a deviation. See is_extension flag per choice.",
+  "source": "NCI EVS CDISC CDASH Controlled Terminology, CMDOSFRQ C78419, fetched 2026-09-28 from https://evs.nci.nih.gov/ftp1/CDISC/SDTM/CDASH%20Terminology.pdf",
+  "choices": [
+    {"name": "bid", "label": "Twice daily", "cdash_code": "BID", "is_extension": false},
+    {"name": "prn", "label": "As needed", "cdash_code": "PRN", "is_extension": false},
+    {"name": "qd", "label": "Once daily", "cdash_code": "QD", "is_extension": false},
+    {"name": "qid", "label": "Four times daily", "cdash_code": "QID", "is_extension": false},
+    {"name": "qm", "label": "Monthly", "cdash_code": "QM", "is_extension": false},
+    {"name": "qod", "label": "Every other day", "cdash_code": "QOD", "is_extension": false},
+    {"name": "tid", "label": "Three times daily", "cdash_code": "TID", "is_extension": false},
+    {"name": "unknown", "label": "Unknown", "cdash_code": "UNKNOWN", "is_extension": false},
+    {"name": "qw", "label": "Weekly", "cdash_code": "QW", "is_extension": true}
+  ]
+}

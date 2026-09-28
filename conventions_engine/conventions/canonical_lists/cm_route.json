@@ -1,0 +1,22 @@
+{
+  "list_name": "canon_cm_route",
+  "multi_select": false,
+  "description": "CDASH CMROUTE (C78420) -- Concomitant Medication Route of Administration. All 12 official CDISC submission values included, plus 2 sponsor extensions (intravenous, other) that BioIVT's studies actively use but which are not in the official C78420 subset. The codelist is CDISC-marked extensible, so adding these is standard practice, not a deviation. See is_extension flag per choice.",
+  "source": "NCI EVS CDISC CDASH Controlled Terminology, CMROUTE C78420, fetched 2026-09-28 from https://evs.nci.nih.gov/ftp1/CDISC/SDTM/CDASH%20Terminology.pdf",
+  "choices": [
+    {"name": "intralesional", "label": "Intralesional", "cdash_code": "INTRALESIONAL", "is_extension": false},
+    {"name": "intramuscular", "label": "Intramuscular", "cdash_code": "INTRAMUSCULAR", "is_extension": false},
+    {"name": "intraocular", "label": "Intraocular", "cdash_code": "INTRAOCULAR", "is_extension": false},
+    {"name": "intraperitoneal", "label": "Intraperitoneal", "cdash_code": "INTRAPERITONEAL", "is_extension": false},
+    {"name": "nasal", "label": "Nasal", "cdash_code": "NASAL", "is_extension": false},
+    {"name": "oral", "label": "Oral", "cdash_code": "ORAL", "is_extension": false},
+    {"name": "rectal", "label": "Rectal", "cdash_code": "RECTAL", "is_extension": false},
+    {"name": "respiratory_inhalation", "label": "Respiratory (Inhalation)", "cdash_code": "RESPIRATORY (INHALATION)", "is_extension": false},
+    {"name": "subcutaneous", "label": "Subcutaneous", "cdash_code": "SUBCUTANEOUS", "is_extension": false},
+    {"name": "topical", "label": "Topical", "cdash_code": "TOPICAL", "is_extension": false},
+    {"name": "transdermal", "label": "Transdermal", "cdash_code": "TRANSDERMAL", "is_extension": false},
+    {"name": "vaginal", "label": "Vaginal", "cdash_code": "VAGINAL", "is_extension": false},
+    {"name": "intravenous", "label": "Intravenous", "cdash_code": "INTRAVENOUS", "is_extension": true},
+    {"name": "other", "label": "Other", "cdash_code": "OTHER", "is_extension": true}
+  ]
+}

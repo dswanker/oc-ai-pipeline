@@ -1,0 +1,31 @@
+{
+  "id": "customer.bioivt.cm_route_canonical_list",
+  "title": "BioIVT CMROUTE fields use the shared canonical CDASH CMROUTE list",
+  "kind": "structured",
+  "scope": "customer",
+  "scope_id": "bioIVT",
+  "status": "active",
+  "natural_key": "bioivt_cm_route_canonical_list",
+  "description": "Points every field named CMROUTE across BioIVT studies at the shared canon_cm_route canonical choice list (CDASH C78420, plus two documented sponsor extensions: intravenous, other). Replaces both studies' abbreviated, mismatched route codes (Precision used SC, Detroit used SC_R for the same route) with the governed, full-word CDASH submission values.",
+  "rationale": "BioIVT Data Mastering project, Option C recommendation. Dan's standing rule for BioIVT: when two studies disagree and CDASH has a standard, apply the CDASH standard regardless of what either study currently does. CMROUTE has an official CDASH codelist (C78420) but neither study's current abbreviated codes (ORAL, IV, IM, SC/SC_R, TOP, INH) match the real CDISC submission values, which are full words. Applying the standard here changes values in both studies, not just the one that disagreed (Detroit's SC_R) -- confirmed with Dan in chat (2026-09-28, 'go with 2') before writing this file.",
+  "target": "field",
+  "applies_when": {
+    "field.name": "CMROUTE"
+  },
+  "effect": {
+    "use_canonical_list": "cm_route"
+  },
+  "created_at": "2026-09-28T00:00:00Z",
+  "created_by": "human:dswanker",
+  "source": "NCI EVS CDISC CDASH Controlled Terminology CMROUTE C78420; canonical-code-list-library plan step 1c",
+  "tags": ["bioivt", "cm_route", "canonical_list", "cdash", "step_1c"],
+  "history": [
+    {
+      "at": "2026-09-28T00:00:00Z",
+      "by": "human:dswanker",
+      "action": "created",
+      "status": "active",
+      "note": "Second BioIVT customer-scoped convention. Converts both studies' route codes to the full CDASH submission-value vocabulary, not just the values that disagreed between studies."
+    }
+  ]
+}

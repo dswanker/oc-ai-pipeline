@@ -1,0 +1,31 @@
+{
+  "id": "customer.bioivt.cm_freq_canonical_list",
+  "title": "BioIVT CMDOSFRQ fields use the shared canonical CDASH CMDOSFRQ list",
+  "kind": "structured",
+  "scope": "customer",
+  "scope_id": "bioIVT",
+  "status": "active",
+  "natural_key": "bioivt_cm_freq_canonical_list",
+  "description": "Points every field named CMDOSFRQ across BioIVT studies at the shared canon_cm_freq canonical choice list (CDASH C78419, plus one documented sponsor extension: weekly/QW). Replaces both studies' abbreviated codes with the governed, full-word CDASH submission values, and gives Detroit the two values it was previously missing (four-times-daily, weekly).",
+  "rationale": "BioIVT Data Mastering project, Option C recommendation. Dan's standing rule for BioIVT: when two studies disagree and CDASH has a standard, apply the CDASH standard regardless of what either study currently does. CMDOSFRQ has an official CDASH codelist (C78419) but neither study's current abbreviated codes (QD, BID, TID, QID, QW, PRN) match the real CDISC submission values, which are full words. Confirmed with Dan in chat (2026-09-28, 'go with 2') before writing this file.",
+  "target": "field",
+  "applies_when": {
+    "field.name": "CMDOSFRQ"
+  },
+  "effect": {
+    "use_canonical_list": "cm_freq"
+  },
+  "created_at": "2026-09-28T00:00:00Z",
+  "created_by": "human:dswanker",
+  "source": "NCI EVS CDISC CDASH Controlled Terminology CMDOSFRQ C78419; canonical-code-list-library plan step 1c",
+  "tags": ["bioivt", "cm_freq", "canonical_list", "cdash", "step_1c"],
+  "history": [
+    {
+      "at": "2026-09-28T00:00:00Z",
+      "by": "human:dswanker",
+      "action": "created",
+      "status": "active",
+      "note": "Third BioIVT customer-scoped convention. Also closes the coverage gap where Detroit was missing QID and QW that Precision had."
+    }
+  ]
+}
