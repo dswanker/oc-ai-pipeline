@@ -114,6 +114,54 @@ def load_scope(repo_root: Path, scope: str, scope_id: str = ""
     return _load_scope_dir(scope_dir, schema)
 
 
+def load_canonical_lists(repo_root: Path) -> Tuple[Dict[str, Any], List[LoadError]]:
+    """Load the shared canonical choice-list library.
+
+    Distinct from the four convention scopes (global/customer/vendor/
+    study) — these are plain value-set data files, not conventions,
+    and carry no cascade/precedence semantics of their own. A field
+    either references one via the `use_canonical_list` effect
+    directive or it doesn't; there's no "customer overrides canonical
+    list" concept (a customer wanting different values for e.g. race
+    would instead define its own list and reference that name).
+
+    Each file at conventions/canonical_lists/<name>.json must have:
+        {"list_name": "<xlsform list_name>", "choices": [...],
+         "multi_select": bool (optional, default false)}
+
+    Returns a dict keyed by filename stem (the name a convention's
+    `use_canonical_list` payload refers to), plus any load errors —
+    malformed files are skipped and surfaced as review_flags the same
+    way convention load errors are, rather than crashing the build.
+    """
+    lists_dir = repo_root / "conventions" / "canonical_lists"
+    out: Dict[str, Any] = {}
+    errors: List[LoadError] = []
+
+    if not lists_dir.exists():
+        return out, errors
+
+    for path in sorted(lists_dir.glob("*.json")):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                record = json.load(f)
+        except (OSError, json.JSONDecodeError) as e:
+            errors.append(LoadError(path=str(path), reason=f"parse error: {e}"))
+            continue
+
+        missing = [k for k in ("list_name", "choices") if k not in record]
+        if missing:
+            errors.append(LoadError(path=str(path), reason=f"missing required fields: {missing}"))
+            continue
+        if not isinstance(record["choices"], list) or not record["choices"]:
+            errors.append(LoadError(path=str(path), reason="'choices' must be a non-empty list"))
+            continue
+
+        out[path.stem] = record
+
+    return out, errors
+
+
 def load_all(repo_root: Path, customer_subdomain: str, study_id: str,
              migration_source: str = ""
              ) -> Dict[str, Any]:

@@ -1,0 +1,15 @@
+{
+  "list_name": "canon_race",
+  "multi_select": true,
+  "description": "CDASH-standard RACE categories (SDTM RACE controlled terminology). Multi-select per CDASH guidance -- subjects may report more than one race.",
+  "source": "CDASH v2.1 RACE domain",
+  "choices": [
+    {"name": "american_indian_or_alaska_native", "label": "American Indian or Alaska Native", "cdash_code": "AMERICAN INDIAN OR ALASKA NATIVE"},
+    {"name": "asian", "label": "Asian", "cdash_code": "ASIAN"},
+    {"name": "black_or_african_american", "label": "Black or African American", "cdash_code": "BLACK OR AFRICAN AMERICAN"},
+    {"name": "native_hawaiian_or_other_pacific_islander", "label": "Native Hawaiian or Other Pacific Islander", "cdash_code": "NATIVE HAWAIIAN OR OTHER PACIFIC ISLANDER"},
+    {"name": "white", "label": "White", "cdash_code": "WHITE"},
+    {"name": "not_reported", "label": "Not Reported", "cdash_code": "NOT REPORTED"},
+    {"name": "unknown", "label": "Unknown", "cdash_code": "UNKNOWN"}
+  ]
+}

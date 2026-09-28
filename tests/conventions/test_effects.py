@@ -720,3 +720,111 @@ def test_default_value_can_write_non_string_values(make_form, make_field):
         {"default_value": 42}, ctx, spec, "test.default_value.integer",
     )
     assert f["survey"][0]["default"] == 42
+
+
+# ─────────────────── use_canonical_list ───────────────────
+
+_CANONICAL_RACE = {
+    "list_name": "canon_race",
+    "multi_select": True,
+    "choices": [
+        {"name": "white", "label": "White"},
+        {"name": "black_or_african_american", "label": "Black or African American"},
+        {"name": "asian", "label": "Asian"},
+    ],
+}
+
+
+def test_use_canonical_list_sets_field_type(make_form):
+    field = {"type": "text", "name": "RACE", "label": "Race"}
+    f = make_form(survey=[field])
+    spec, ctx = _field_ctx(field, f)
+    effects.apply_effect(
+        {"use_canonical_list": "race"}, ctx, spec, "test.id",
+        canonical_lists={"race": _CANONICAL_RACE},
+    )
+    assert field["type"] == "select_multiple canon_race"
+
+
+def test_use_canonical_list_merges_choices_into_parent_form(make_form):
+    field = {"type": "text", "name": "RACE", "label": "Race"}
+    f = make_form(survey=[field], choices=[])
+    spec, ctx = _field_ctx(field, f)
+    effects.apply_effect(
+        {"use_canonical_list": "race"}, ctx, spec, "test.id",
+        canonical_lists={"race": _CANONICAL_RACE},
+    )
+    names = {c["name"] for c in f["choices"]}
+    assert names == {"white", "black_or_african_american", "asian"}
+    assert all(c["list_name"] == "canon_race" for c in f["choices"])
+
+
+def test_use_canonical_list_is_idempotent(make_form):
+    field = {"type": "text", "name": "RACE", "label": "Race"}
+    f = make_form(survey=[field], choices=[])
+    spec, ctx = _field_ctx(field, f)
+    effect = {"use_canonical_list": "race"}
+    canonical = {"race": _CANONICAL_RACE}
+    effects.apply_effect(effect, ctx, spec, "test.id", canonical_lists=canonical)
+    first_len = len(f["choices"])
+    # Re-apply, as a real re-run of the pipeline on an already-migrated
+    # spec would do.
+    result = effects.apply_effect(effect, ctx, spec, "test.id", canonical_lists=canonical)
+    assert len(f["choices"]) == first_len
+    assert result.mutations_made == []
+
+
+def test_use_canonical_list_preserves_other_lists_on_same_form(make_form):
+    field = {"type": "text", "name": "RACE", "label": "Race"}
+    other_choice = {"list_name": "yn", "name": "y", "label": "Yes"}
+    f = make_form(survey=[field], choices=[other_choice])
+    spec, ctx = _field_ctx(field, f)
+    effects.apply_effect(
+        {"use_canonical_list": "race"}, ctx, spec, "test.id",
+        canonical_lists={"race": _CANONICAL_RACE},
+    )
+    assert other_choice in f["choices"]
+    assert len([c for c in f["choices"] if c["list_name"] == "canon_race"]) == 3
+
+
+def test_use_canonical_list_unknown_name_raises(make_form):
+    field = {"type": "text", "name": "RACE", "label": "Race"}
+    f = make_form(survey=[field])
+    spec, ctx = _field_ctx(field, f)
+    with pytest.raises(DSLEvaluationError, match="Unknown canonical list"):
+        effects.apply_effect(
+            {"use_canonical_list": "not_a_real_list"}, ctx, spec, "test.id",
+            canonical_lists={"race": _CANONICAL_RACE},
+        )
+
+
+def test_use_canonical_list_no_canonical_lists_provided_raises(make_form):
+    field = {"type": "text", "name": "RACE", "label": "Race"}
+    f = make_form(survey=[field])
+    spec, ctx = _field_ctx(field, f)
+    with pytest.raises(DSLEvaluationError, match="Unknown canonical list"):
+        effects.apply_effect({"use_canonical_list": "race"}, ctx, spec, "test.id")
+
+
+def test_use_canonical_list_requires_field_scope(make_form):
+    f = make_form()
+    spec, ctx = _form_ctx(f)
+    with pytest.raises(DSLEvaluationError, match="field-scoped context"):
+        effects.apply_effect(
+            {"use_canonical_list": "race"}, ctx, spec, "test.id",
+            canonical_lists={"race": _CANONICAL_RACE},
+        )
+
+
+def test_use_canonical_list_existing_directives_unaffected_by_new_param(make_form):
+    """Every other directive must keep working when canonical_lists is
+    omitted entirely -- this is the backward-compatibility guarantee
+    for every existing call site (all of pipeline.py pre-dates this
+    parameter)."""
+    f = make_form(visits_assigned=["SE_SCREENING"])
+    spec, ctx = _form_ctx(f)
+    result = effects.apply_effect(
+        {"set": {"form.visits_assigned": ["SE_COMMON"]}}, ctx, spec, "test.id",
+    )
+    assert f["visits_assigned"] == ["SE_COMMON"]
+    assert result.mutations_made[0].directive == "set"

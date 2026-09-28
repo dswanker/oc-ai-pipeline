@@ -271,6 +271,77 @@ def _do_default_value(payload, ctx: "EntityContext", result: "ApplyResult") -> N
         ))
 
 
+def _do_use_canonical_list(payload: Any, ctx: EntityContext, result: ApplyResult,
+                           canonical_lists: Dict[str, Any]) -> None:
+    """
+    Point a field at a shared canonical choice list.
+
+    Shape: "use_canonical_list": "<name>"   — <name> is a filename
+    stem under conventions/canonical_lists/, e.g. "race".
+
+    Sets field.type to "select_one <canonical list_name>" (or
+    select_multiple, per the canonical file's multi_select flag),
+    and merges the canonical file's choices into the parent form's
+    choices array — additive and idempotent: existing choices under
+    the same list_name are left alone, only missing ones are appended,
+    so re-running on an already-migrated field is a no-op.
+
+    Field-scoped only, mirroring default_value. Takes canonical_lists
+    as an explicit parameter (not via ctx) since it's loaded once per
+    build in apply_conventions and threaded through — not part of the
+    per-entity context the other directives read from.
+    """
+    if ctx.kind != "field":
+        raise DSLEvaluationError(
+            f"use_canonical_list requires field-scoped context, got {ctx.kind!r}"
+        )
+    if not isinstance(payload, str) or not payload:
+        raise DSLEvaluationError(
+            "use_canonical_list payload must be a non-empty canonical list name"
+        )
+    if payload not in canonical_lists:
+        raise DSLEvaluationError(
+            f"Unknown canonical list {payload!r} — no file at "
+            f"conventions/canonical_lists/{payload}.json"
+        )
+
+    canonical = canonical_lists[payload]
+    list_name = canonical["list_name"]
+    is_multi = bool(canonical.get("multi_select", False))
+    new_type = f"{'select_multiple' if is_multi else 'select_one'} {list_name}"
+
+    old_type = ctx.entity.get("type")
+    if old_type != new_type:
+        ctx.entity["type"] = new_type
+        result.mutations_made.append(Mutation(
+            directive="use_canonical_list", path="field.type",
+            old_value=old_type, new_value=new_type,
+        ))
+
+    form = ctx.parent
+    if not isinstance(form, dict):
+        raise DSLEvaluationError("use_canonical_list: field has no parent form to hold choices")
+    form_choices = form.setdefault("choices", [])
+    existing_names = {
+        c.get("name") for c in form_choices if c.get("list_name") == list_name
+    }
+    added = 0
+    for choice in canonical["choices"]:
+        if choice.get("name") in existing_names:
+            continue
+        merged = dict(choice)
+        merged["list_name"] = list_name
+        form_choices.append(merged)
+        existing_names.add(choice.get("name"))
+        added += 1
+
+    if added:
+        result.mutations_made.append(Mutation(
+            directive="use_canonical_list", path="form.choices",
+            old_value=None, new_value=f"+{added} choice(s) from canonical list {payload!r}",
+        ))
+
+
 DIRECTIVES = {
     "set":         _do_set,
     "ensure":      _do_ensure,
@@ -282,18 +353,36 @@ DIRECTIVES = {
     "default_value": _do_default_value,
 }
 
+# use_canonical_list is intentionally NOT in DIRECTIVES: every other
+# directive has signature (payload, ctx, result) and _do_match dispatches
+# into DIRECTIVES for its sub-effect-blocks, so adding a 4th required
+# parameter (canonical_lists) here would force it onto directives that
+# don't need it. Handled as an explicit branch in apply_effect instead —
+# see there. It is also deliberately excluded from what _do_match may
+# dispatch to (checked there via DIRECTIVES membership), since a
+# canonical-list swap nested inside a conditional is not a supported
+# pattern yet.
+
 
 # ──────────────────────────────────────────────────────────────────────
 # Public API
 # ──────────────────────────────────────────────────────────────────────
 
 def apply_effect(effect: Dict[str, Any], ctx: EntityContext,
-                 spec: Dict[str, Any], convention_id: str) -> ApplyResult:
+                 spec: Dict[str, Any], convention_id: str,
+                 canonical_lists: Dict[str, Any] | None = None) -> ApplyResult:
     """
     Apply an effect block. Mutates spec / ctx.entity in place. Soft
     directives are accumulated, not applied.
 
     Effects within one block execute in source order.
+
+    `canonical_lists` is optional and defaults to None — every
+    existing caller (including all of tests/conventions/) is
+    unaffected. It's only consulted for the `use_canonical_list`
+    directive; a convention that uses it while canonical_lists is
+    None (or lacks the referenced name) raises DSLEvaluationError,
+    same failure mode as any other malformed convention.
     """
     result = ApplyResult()
     if not effect:
@@ -303,6 +392,9 @@ def apply_effect(effect: Dict[str, Any], ctx: EntityContext,
         if key == "soft":
             if isinstance(payload, str):
                 result.soft_directives.append(payload)
+            continue
+        if key == "use_canonical_list":
+            _do_use_canonical_list(payload, ctx, result, canonical_lists or {})
             continue
         if key in DIRECTIVES:
             DIRECTIVES[key](payload, ctx, result)

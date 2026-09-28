@@ -218,12 +218,15 @@ def apply_conventions(
 
     loaded = loader.load_all(repo_root, customer_subdomain, study_id,
                              migration_source=migration_source or "")
+    canonical_lists, canonical_errs = loader.load_canonical_lists(repo_root)
 
     # Surface load errors as review_flags entries so humans see them
     # — don't crash the whole pipeline on a single malformed file.
     review_flags = spec.setdefault("review_flags", {})
     rf_loaderrors = review_flags.setdefault("convention_load_errors", [])
     for err in loaded.get("errors", []):
+        rf_loaderrors.append({"path": err.path, "reason": err.reason})
+    for err in canonical_errs:
         rf_loaderrors.append({"path": err.path, "reason": err.reason})
 
     resolved_list: List[ResolvedConvention] = cascade.resolve(loaded)
@@ -249,6 +252,7 @@ def apply_conventions(
                 entity_ctx,
                 spec,
                 conv["id"],
+                canonical_lists=canonical_lists,
             )
 
             record.record_application(
