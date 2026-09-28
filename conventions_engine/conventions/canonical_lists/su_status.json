@@ -1,0 +1,11 @@
+{
+  "list_name": "canon_su_status",
+  "multi_select": false,
+  "description": "CDASH SUNCF (C83004) -- Substance Use Never/Current/Former Classification. All 3 official values, applied to both ALCSTAT and SMOKSTAT (both studies already reused the same underlying list for these two fields, just under different list names -- su_stat in Precision, stat in Detroit -- and used lowercase values that don't match the real CDISC submission values).",
+  "source": "NCI EVS CDISC CDASH Controlled Terminology, SUNCF C83004, fetched 2026-09-28 from https://evs.nci.nih.gov/ftp1/CDISC/SDTM/CDASH%20Terminology.pdf",
+  "choices": [
+    {"name": "current", "label": "Current", "cdash_code": "CURRENT", "is_extension": false},
+    {"name": "former", "label": "Former", "cdash_code": "FORMER", "is_extension": false},
+    {"name": "never", "label": "Never", "cdash_code": "NEVER", "is_extension": false}
+  ]
+}

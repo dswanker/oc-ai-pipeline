@@ -1,0 +1,17 @@
+{
+  "list_name": "canon_cm_dose_unit",
+  "multi_select": false,
+  "description": "CDASH CMDOSU (C78417) -- Concomitant Medication Dose Units. All 8 official CDISC submission values included, plus 1 sponsor extension (other) that both BioIVT studies actively use but which is not in the official C78417 subset. Both studies already agreed with each other on this field (MG/MCG/G/ML/IU/OTHER) but neither matched the real CDASH case-sensitive submission values (mg not MG, ug not MCG, etc).",
+  "source": "NCI EVS CDISC CDASH Controlled Terminology, CMDOSU C78417, fetched 2026-09-28 from https://evs.nci.nih.gov/ftp1/CDISC/SDTM/CDASH%20Terminology.pdf",
+  "choices": [
+    {"name": "capsule", "label": "Capsule", "cdash_code": "CAPSULE", "is_extension": false},
+    {"name": "g", "label": "g", "cdash_code": "g", "is_extension": false},
+    {"name": "iu", "label": "IU", "cdash_code": "IU", "is_extension": false},
+    {"name": "mg", "label": "mg", "cdash_code": "mg", "is_extension": false},
+    {"name": "ml", "label": "mL", "cdash_code": "mL", "is_extension": false},
+    {"name": "puff", "label": "Puff", "cdash_code": "PUFF", "is_extension": false},
+    {"name": "tablet", "label": "Tablet", "cdash_code": "TABLET", "is_extension": false},
+    {"name": "ug", "label": "mcg", "cdash_code": "ug", "is_extension": false},
+    {"name": "other", "label": "Other", "cdash_code": "OTHER", "is_extension": true}
+  ]
+}

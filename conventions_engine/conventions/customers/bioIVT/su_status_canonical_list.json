@@ -1,0 +1,31 @@
+{
+  "id": "customer.bioivt.su_status_canonical_list",
+  "title": "BioIVT ALCSTAT and SMOKSTAT use the shared canonical CDASH SUNCF list",
+  "kind": "structured",
+  "scope": "customer",
+  "scope_id": "bioIVT",
+  "status": "active",
+  "natural_key": "bioivt_su_status_canonical_list",
+  "description": "Points ALCSTAT and SMOKSTAT across BioIVT studies at the shared canon_su_status canonical choice list (CDASH SUNCF, C83004). Both studies already agreed on values (never/current/former) but neither matched the real CDISC submission values (NEVER/CURRENT/FORMER).",
+  "rationale": "Dan's standing rule for BioIVT: apply CDASH standard regardless of what either study currently does. SUNCF has an official CDASH codelist and both ALCSTAT and SMOKSTAT already shared the same underlying list under different internal names (su_stat in Precision, stat in Detroit) with lowercase values not matching the real submission values.",
+  "target": "field",
+  "applies_when": {
+    "field.name": { "in": ["ALCSTAT", "SMOKSTAT"] }
+  },
+  "effect": {
+    "use_canonical_list": "su_status"
+  },
+  "created_at": "2026-09-28T00:00:00Z",
+  "created_by": "human:dswanker",
+  "source": "NCI EVS CDISC CDASH Controlled Terminology SUNCF C83004; canonical-code-list-library plan step 1c",
+  "tags": ["bioivt", "su_status", "canonical_list", "cdash", "step_1c"],
+  "history": [
+    {
+      "at": "2026-09-28T00:00:00Z",
+      "by": "human:dswanker",
+      "action": "created",
+      "status": "active",
+      "note": "One canonical list serving two field names (ALCSTAT, SMOKSTAT) since both already used the identical never/current/former list internally."
+    }
+  ]
+}

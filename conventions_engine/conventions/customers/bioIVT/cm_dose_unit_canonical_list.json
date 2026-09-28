@@ -1,0 +1,31 @@
+{
+  "id": "customer.bioivt.cm_dose_unit_canonical_list",
+  "title": "BioIVT CMDOSU uses the shared canonical CDASH CMDOSU list",
+  "kind": "structured",
+  "scope": "customer",
+  "scope_id": "bioIVT",
+  "status": "active",
+  "natural_key": "bioivt_cm_dose_unit_canonical_list",
+  "description": "Points CMDOSU across BioIVT studies at the shared canon_cm_dose_unit canonical choice list (CDASH C78417). Both studies already agreed with each other (MG/MCG/G/ML/IU/OTHER) but neither matched the real CDASH case-sensitive submission values.",
+  "rationale": "Dan's standing rule for BioIVT: apply CDASH standard regardless of what either study currently does or whether they already agree. Same treatment as CMROUTE and CMDOSFRQ, applied for consistency.",
+  "target": "field",
+  "applies_when": {
+    "field.name": "CMDOSU"
+  },
+  "effect": {
+    "use_canonical_list": "cm_dose_unit"
+  },
+  "created_at": "2026-09-28T00:00:00Z",
+  "created_by": "human:dswanker",
+  "source": "NCI EVS CDISC CDASH Controlled Terminology CMDOSU C78417; canonical-code-list-library plan step 1c",
+  "tags": ["bioivt", "cm_dose_unit", "canonical_list", "cdash", "step_1c"],
+  "history": [
+    {
+      "at": "2026-09-28T00:00:00Z",
+      "by": "human:dswanker",
+      "action": "created",
+      "status": "active",
+      "note": "Converts case-sensitive submission values (mg not MG, ug not MCG) even though both studies already agreed with each other."
+    }
+  ]
+}

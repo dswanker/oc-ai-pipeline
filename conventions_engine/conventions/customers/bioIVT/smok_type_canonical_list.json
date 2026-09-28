@@ -1,0 +1,31 @@
+{
+  "id": "customer.bioivt.smok_type_canonical_list",
+  "title": "BioIVT SMOKTYP uses a shared canonical list (deduplication only, no CDASH standard)",
+  "kind": "structured",
+  "scope": "customer",
+  "scope_id": "bioIVT",
+  "status": "active",
+  "natural_key": "bioivt_smok_type_canonical_list",
+  "description": "Points SMOKTYP across BioIVT studies at the shared canon_smok_type list. No CDASH standard exists for this field; both studies already had identical values under different list names (smok_typ in Precision, smok in Detroit). Pure deduplication, no value changes.",
+  "rationale": "BioIVT canonical-code-list-library project. No CDASH question here since there is no CDASH codelist and the two studies do not disagree -- just two names for the same list.",
+  "target": "field",
+  "applies_when": {
+    "field.name": "SMOKTYP"
+  },
+  "effect": {
+    "use_canonical_list": "smok_type"
+  },
+  "created_at": "2026-09-28T00:00:00Z",
+  "created_by": "human:dswanker",
+  "source": "BioIVT_DataMastering_FeasibilityReport.docx Option C recommendation; canonical-code-list-library plan step 1c",
+  "tags": ["bioivt", "smok_type", "canonical_list", "step_1c"],
+  "history": [
+    {
+      "at": "2026-09-28T00:00:00Z",
+      "by": "human:dswanker",
+      "action": "created",
+      "status": "active",
+      "note": "No CDASH standard exists for this field; deduplication-only convention."
+    }
+  ]
+}

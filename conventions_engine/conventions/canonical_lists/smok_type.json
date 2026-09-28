@@ -1,0 +1,13 @@
+{
+  "list_name": "canon_smok_type",
+  "multi_select": false,
+  "description": "No CDASH/CDISC controlled terminology codelist exists for type of tobacco/smoking product -- this is a sponsor-defined SU-domain supplemental item, not part of core CDASH terminology. Both BioIVT studies already used identical values under different list names (smok_typ in Precision, smok in Detroit); this is a pure deduplication into one shared list, no value changes.",
+  "source": "No CDASH standard exists; consolidating identical existing values from both BioIVT studies as-is",
+  "choices": [
+    {"name": "cigarettes", "label": "Cigarettes", "cdash_code": null, "is_extension": false},
+    {"name": "cigars", "label": "Cigars", "cdash_code": null, "is_extension": false},
+    {"name": "pipe", "label": "Pipe", "cdash_code": null, "is_extension": false},
+    {"name": "vaping", "label": "Vaping", "cdash_code": null, "is_extension": false},
+    {"name": "other", "label": "Other", "cdash_code": null, "is_extension": false}
+  ]
+}

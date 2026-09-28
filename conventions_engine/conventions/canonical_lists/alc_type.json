@@ -1,0 +1,12 @@
+{
+  "list_name": "canon_alc_type",
+  "multi_select": false,
+  "description": "No CDASH/CDISC controlled terminology codelist exists for type of alcohol consumed -- this is a sponsor-defined SU-domain supplemental item, not part of core CDASH terminology. Both BioIVT studies already used identical values under different list names (alc_typ in Precision, alc in Detroit); this is a pure deduplication into one shared list, no value changes.",
+  "source": "No CDASH standard exists; consolidating identical existing values from both BioIVT studies as-is",
+  "choices": [
+    {"name": "beer", "label": "Beer", "cdash_code": null, "is_extension": false},
+    {"name": "wine", "label": "Wine", "cdash_code": null, "is_extension": false},
+    {"name": "spirits", "label": "Spirits", "cdash_code": null, "is_extension": false},
+    {"name": "other", "label": "Other", "cdash_code": null, "is_extension": false}
+  ]
+}
