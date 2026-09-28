@@ -1,0 +1,31 @@
+{
+  "id": "customer.bioivt.ethnic_canonical_list",
+  "title": "BioIVT ETHNIC (Precision) and ETH (Detroit) use the shared canonical ETHNIC list, including Unknown",
+  "kind": "structured",
+  "scope": "customer",
+  "scope_id": "bioIVT",
+  "status": "active",
+  "natural_key": "bioivt_ethnic_canonical_list",
+  "description": "Points ETHNIC (Precision) and ETH (Detroit) at the shared canon_ethnic list: the 2 official CDISC ETHNIC (C66790) values plus Unknown, which Precision already collects but the official codelist does not formally allow (C66790 is non-extensible). Detroit gains an Unknown option it never had.",
+  "rationale": "Dan's standing rule for BioIVT: CDASH wins on disagreement, but here the official codelist is non-extensible and applying it strictly would have dropped Precision's existing Unknown option. Explicit decision (2026-09-28): include Unknown anyway rather than lose it, understanding this is a deliberate deviation from strict CDISC compliance, not something the standard sanctions the way the CM-domain extensions (route/frequency/dose unit) were.",
+  "target": "field",
+  "applies_when": {
+    "field.name": { "in": ["ETHNIC", "ETH"] }
+  },
+  "effect": {
+    "use_canonical_list": "ethnic"
+  },
+  "created_at": "2026-09-28T00:00:00Z",
+  "created_by": "human:dswanker",
+  "source": "NCI EVS CDISC SDTM Controlled Terminology ETHNIC C66790; canonical-code-list-library plan step 1c",
+  "tags": ["bioivt", "ethnic", "canonical_list", "cdash", "step_1c"],
+  "history": [
+    {
+      "at": "2026-09-28T00:00:00Z",
+      "by": "human:dswanker",
+      "action": "created",
+      "status": "active",
+      "note": "Unknown included by explicit decision despite the official codelist being non-extensible, to avoid losing an option Precision already collects. SEX/GENDER was the companion case and was resolved the opposite way (left uncanonicalized) since there was no clean way to add Other without contradicting the standard as clearly."
+    }
+  ]
+}

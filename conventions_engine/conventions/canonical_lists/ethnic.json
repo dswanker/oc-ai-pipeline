@@ -1,0 +1,11 @@
+{
+  "list_name": "canon_ethnic",
+  "multi_select": false,
+  "description": "CDISC SDTM/CDASH ETHNIC (C66790). Official codelist has only 2 values and is marked NON-extensible, unlike the CM-domain lists used elsewhere in this project (route, frequency, dose unit). A third value (unknown) is included here by explicit decision, not because the standard permits it -- Precision's ETHNIC field already collects it and losing it was judged worse than strict compliance. See is_extension flag: true on unknown means 'not part of the official codelist and the codelist does not formally allow extensions', which is a stronger caveat than the same flag elsewhere in this project.",
+  "source": "NCI EVS CDISC SDTM Controlled Terminology, ETHNIC C66790 (codelist_extensible: No, confirmed across multiple dated snapshots 2013-2022); unknown value added by explicit decision 2026-09-28, not by CDISC allowance",
+  "choices": [
+    {"name": "hispanic_or_latino", "label": "Hispanic or Latino", "cdash_code": "HISPANIC OR LATINO", "is_extension": false},
+    {"name": "not_hispanic_or_latino", "label": "Not Hispanic or Latino", "cdash_code": "NOT HISPANIC OR LATINO", "is_extension": false},
+    {"name": "unknown", "label": "Unknown", "cdash_code": "UNKNOWN", "is_extension": true}
+  ]
+}
