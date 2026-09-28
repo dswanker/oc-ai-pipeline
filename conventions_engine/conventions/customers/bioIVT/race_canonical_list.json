@@ -1,0 +1,31 @@
+{
+  "id": "customer.bioivt.race_canonical_list",
+  "title": "BioIVT RACE fields use the shared canonical CDASH RACE list (multi-select)",
+  "kind": "structured",
+  "scope": "customer",
+  "scope_id": "bioIVT",
+  "status": "active",
+  "natural_key": "bioivt_race_canonical_list",
+  "description": "Points every field named RACE across BioIVT studies at the shared canon_race canonical choice list (CDASH-standard, multi-select). Replaces each study's own one-off race list with the governed shared list, and converts any single-select race field to multi-select per CDASH RACE domain guidance -- subjects may report more than one race.",
+  "rationale": "BioIVT Data Mastering project, Option C recommendation: replace per-study duplicated code lists with a governed canonical library. Race was chosen first because the field name is consistent (RACE) across every existing BioIVT form (DM, DMONC, SHORTFORM, FOLLOWUP, OUTCOME) with no name collisions against unrelated fields. Precision's race fields (DM.RACE, DMONC.RACE) are already select_multiple race_ml, so this is a values-only swap for them. Detroit's (SHORTFORM.RACE, FOLLOWUP.RACE, OUTCOME.RACE) are currently select_one -- this convention intentionally converts them to select_multiple to match CDASH and Precision, per explicit decision on 2026-09-28 (see history).",
+  "target": "field",
+  "applies_when": {
+    "field.name": "RACE"
+  },
+  "effect": {
+    "use_canonical_list": "race"
+  },
+  "created_at": "2026-09-28T00:00:00Z",
+  "created_by": "human:dswanker",
+  "source": "BioIVT_DataMastering_FeasibilityReport.docx Option C recommendation; canonical-code-list-library plan step 1c",
+  "tags": ["bioivt", "race", "canonical_list", "cdash", "step_1c"],
+  "history": [
+    {
+      "at": "2026-09-28T00:00:00Z",
+      "by": "human:dswanker",
+      "action": "created",
+      "status": "active",
+      "note": "First customer-scoped convention ever written for BioIVT (conventions/customers/bioIVT/ did not exist before this). Explicit decision to convert Detroit's single-select RACE fields to multi-select rather than leave them out of the canonical-list migration, confirmed with Dan in chat before writing this file."
+    }
+  ]
+}
