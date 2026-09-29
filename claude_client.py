@@ -38,28 +38,34 @@ SKILL_BETAS = [
 # ── Plain Claude call — returns text ─────────────────────────────────────────
 
 async def call_claude(prompt, pdf_bytes=None, extra_text=None, max_tokens=MAX_TOKENS,
-                      cache_prompt=True, extended_output=False):
+                      cache_prompt=True, extended_output=False, images=None):
     """
-    Call Claude with a prompt and optional PDF. Returns full text response.
+    Call Claude with a prompt and optional PDF/images. Returns full text response.
     No skills, no code execution — used for JSON extraction tasks only.
 
     Prompt caching:
       When cache_prompt=True (default), the `prompt` block gets
       cache_control=ephemeral. Since we reorder content so `prompt` is FIRST,
       Anthropic caches it across runs, cutting cached-input cost by 90%.
-      The PDF + extra_text come AFTER (they vary per run) so they're not
-      included in the cache.
+      The PDF + extra_text + images come AFTER (they vary per run) so they're
+      not included in the cache.
 
       Caching requires the prompt to be >= 1024 tokens for Opus. Our
       EDC_STRUCTURE_PROMPT (~4.3K tokens) and PRICING_SUMMARY_PROMPT
       (~1.3K tokens) both qualify. Smaller prompts skip caching automatically
       (Anthropic silently ignores cache_control when content is too short).
+
+    images: optional list of (media_type, base64_data) tuples, e.g.
+      [("image/png", "<b64>"), ...]. Injected after pdf_bytes, before
+      extra_text. When more than 20 image blocks are present (counting the
+      PDF as one document block), Anthropic enforces a 2000px per-side
+      dimension limit — callers should pre-resize before passing.
     """
     client = anthropic.AsyncAnthropic(
         api_key=os.environ.get("ANTHROPIC_API_KEY", "").strip()
     )
 
-    # Order: prompt (cacheable) FIRST, then PDF + extra_text (per-run variable).
+    # Order: prompt (cacheable) FIRST, then PDF + images + extra_text (per-run).
     # The cache key is the literal block content up to & including the
     # cache_control marker — so anything BEFORE the marker gets cached.
     content = []
@@ -78,6 +84,20 @@ async def call_claude(prompt, pdf_bytes=None, extra_text=None, max_tokens=MAX_TO
                 "data":       base64.standard_b64encode(pdf_bytes).decode(),
             },
         })
+
+    # Inject source EDC screenshots — placed after the PDF so Claude reads
+    # protocol first, then sees the reference images.
+    if images:
+        for media_type, img_data in images:
+            content.append({
+                "type": "image",
+                "source": {
+                    "type":       "base64",
+                    "media_type": media_type,
+                    "data":       img_data,
+                },
+            })
+
     if extra_text:
         content.append({"type": "text", "text": extra_text})
 

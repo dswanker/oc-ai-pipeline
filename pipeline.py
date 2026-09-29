@@ -552,6 +552,102 @@ def _files_to_text(files: list, label: str = "") -> str:
     return header + "\n\n".join(parts)
 
 
+def _extract_images_from_files(files: list, max_images: int = 100,
+                                max_long_edge: int = 1568) -> list:
+    """
+    Extract images from a list of (filename, bytes) tuples.
+
+    Handles flat image files and ZIPs containing images. Returns a list of
+    (media_type, base64_data) tuples ready for the Claude API images parameter.
+
+    Anthropic rules respected:
+    - Supported formats: JPEG, PNG, GIF, WebP only
+    - When >20 images are sent in one API request (counting the PDF as one
+      block), Anthropic reduces the per-image dimension cap to 2000px. We
+      pre-resize to max_long_edge (default 1568px) which keeps token cost
+      predictable and stays well under that stricter limit regardless of count.
+    - Hard cap: max_images (default 100, API limit for 200K-context models).
+    - Skips macOS __MACOSX/ metadata entries silently.
+    """
+    import io as _io, base64 as _b64, zipfile as _zf
+    _IMG_EXTS = {"png", "jpg", "jpeg", "gif", "webp"}
+    _MEDIA_MAP = {
+        "png":  "image/png",
+        "jpg":  "image/jpeg",
+        "jpeg": "image/jpeg",
+        "gif":  "image/gif",
+        "webp": "image/webp",
+    }
+
+    def _resize_and_encode(img_bytes: bytes, ext: str) -> tuple | None:
+        """Resize to max_long_edge if needed, return (media_type, b64_str)."""
+        try:
+            from PIL import Image as _PILImage
+            import io as _pio
+            img = _PILImage.open(_pio.BytesIO(img_bytes))
+            w, h = img.size
+            if max(w, h) > max_long_edge:
+                scale = max_long_edge / max(w, h)
+                new_w, new_h = int(w * scale), int(h * scale)
+                img = img.resize((new_w, new_h), _PILImage.LANCZOS)
+                buf = _pio.BytesIO()
+                save_fmt = "PNG" if ext == "png" else "JPEG"
+                save_ext = "png" if ext == "png" else "jpeg"
+                img.convert("RGB").save(buf, format=save_fmt, quality=85)
+                img_bytes = buf.getvalue()
+                ext = save_ext
+            media_type = _MEDIA_MAP.get(ext, "image/jpeg")
+            b64 = _b64.standard_b64encode(img_bytes).decode()
+            return (media_type, b64)
+        except Exception as _e:
+            print(f"[images] resize/encode failed: {_e}", flush=True)
+            return None
+
+    collected = []
+
+    for fname, data in files:
+        if len(collected) >= max_images:
+            print(f"[images] hit max_images={max_images} — stopping extraction", flush=True)
+            break
+
+        ext = (fname.rsplit(".", 1)[-1].lower()) if "." in fname else ""
+
+        if ext in _IMG_EXTS:
+            # Flat image file
+            result = _resize_and_encode(data, ext)
+            if result:
+                collected.append(result)
+
+        elif ext == "zip":
+            # ZIP containing images — same as _files_to_text ZIP branch but
+            # collects images instead of text
+            try:
+                with _zf.ZipFile(_io.BytesIO(data)) as zf:
+                    # Sort for deterministic ordering (alphabetical by name)
+                    names = sorted(
+                        n for n in zf.namelist()
+                        if not n.endswith("/")
+                        and not n.startswith("__MACOSX")
+                    )
+                    for inner_name in names:
+                        if len(collected) >= max_images:
+                            break
+                        inner_ext = (inner_name.rsplit(".", 1)[-1].lower()) if "." in inner_name else ""
+                        if inner_ext not in _IMG_EXTS:
+                            continue
+                        inner_bytes = zf.read(inner_name)
+                        result = _resize_and_encode(inner_bytes, inner_ext)
+                        if result:
+                            collected.append(result)
+            except Exception as _ze:
+                print(f"[images] could not open ZIP {fname}: {_ze}", flush=True)
+
+    if collected:
+        print(f"[images] extracted {len(collected)} image(s) from CRF Library "
+              f"for injection into Claude call", flush=True)
+    return collected
+
+
 def _read_zip_xlsforms(zip_bytes):
     """Read a ZIP of XLSForm xlsx files. Returns forms dict."""
     import openpyxl
@@ -5119,6 +5215,7 @@ async def run_pipeline(item_id):
         print(f"Protocol: {_proto_desc} | "
               f"CRF files ({len(_crf_files)}): {_crf_desc} | "
               f"OC files ({len(_oc_files)}): {_oc_desc}", flush=True)
+        _edc_screenshots = []  # populated during Phase 1 if images found in CRF Library
 
         # ── Determine if analysis/chains are needed ───────────────────────────
         needs_analysis = (
@@ -5808,6 +5905,7 @@ async def run_pipeline(item_id):
                 extra_text    = "\n".join(_text_args) if _text_args else None,
                 max_tokens    = EXTENDED_OUTPUT_MAX_TOKENS,
                 extended_output = True,
+                images        = _edc_screenshots if _edc_screenshots else None,
             )
             try:
                 struct_json = extract_json(
