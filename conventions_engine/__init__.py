@@ -267,6 +267,14 @@ def apply_conventions(
                 render.render_one(conv, apply_eval.soft_hints, applied.soft_directives)
             )
 
+        # Sweep any move_to_form tombstones left by this convention's
+        # own pass before the next convention gets a fresh iteration --
+        # see effects.sweep_pending_removals and _do_move_to_form's
+        # docstring for why this can't happen inside the entity loop
+        # above. Cheap no-op for the overwhelming majority of
+        # conventions, which never touch move_to_form at all.
+        effects.sweep_pending_removals(spec)
+
     # Park prompt-injection text under study_meta so prompts.py can
     # pluck it out later. Phase C wires the actual injection.
     spec.setdefault("study_meta", {})["conventions_prompt_block"] = (

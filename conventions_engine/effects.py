@@ -342,6 +342,136 @@ def _do_use_canonical_list(payload: Any, ctx: EntityContext, result: ApplyResult
         ))
 
 
+# Internal marker used by _do_move_to_form / sweep_pending_removals. Not a
+# real spec field -- stripped from every row before it's actually written
+# anywhere a field is read for output (XLSForm build, board.json, etc.
+# never see it, since the sweep removes tombstoned rows from their old
+# form before those consumers run).
+_PENDING_REMOVAL_KEY = "__pending_removal__"
+
+
+def _do_move_to_form(payload: Any, ctx: EntityContext, result: ApplyResult) -> None:
+    """
+    Move a field's survey row to a different form in the same study.
+
+    Shape: "move_to_form": "<form_id>"
+
+    Field-scoped only. Appends the field to the target form's survey
+    list immediately (a different list object than whatever is
+    currently being iterated, so this part is always safe), copies
+    across any choices it references that the target form doesn't
+    already have, and repoints bind__oc_itemgroup to the target
+    form_id.
+
+    The SOURCE row is deliberately NOT removed from its old form's
+    survey list here. Deleting a row mid-iteration of the same list a
+    field-targeted convention is walking risks silently skipping the
+    next matching row in that same form for that convention -- a live
+    Python list mutated during enumerate(). Instead the source row is
+    tombstoned with an internal "__pending_removal__" marker, and
+    apply_conventions() sweeps every form's survey list for that
+    marker once, right after each convention's own iteration fully
+    completes (see sweep_pending_removals, called from __init__.py).
+    This keeps the directive correct regardless of how many fields a
+    single move_to_form convention's applies_when happens to match
+    within one form, not just for today's single-named-field case.
+
+    Idempotent: uses ctx.spec (already on every EntityContext) to find
+    the target form, so it needs no extra threading the way
+    canonical_lists does for use_canonical_list. If the field is
+    already tombstoned (this convention already ran in this build
+    pass) or is already in the target form, this is a no-op.
+    """
+    if ctx.kind != "field":
+        raise DSLEvaluationError(
+            f"move_to_form requires field-scoped context, got {ctx.kind!r}"
+        )
+    if not isinstance(payload, str) or not payload:
+        raise DSLEvaluationError(
+            "move_to_form payload must be a non-empty target form_id"
+        )
+
+    source_form = ctx.parent
+    if not isinstance(source_form, dict):
+        raise DSLEvaluationError("move_to_form: field has no parent form")
+
+    field_row = ctx.entity
+    if field_row.get(_PENDING_REMOVAL_KEY):
+        return  # already tombstoned this build pass
+
+    source_form_id = source_form.get("form_id")
+    target_form_id = payload
+
+    if source_form_id == target_form_id:
+        return  # already home
+
+    target_form = None
+    for f in ctx.spec.get("forms", []):
+        if f.get("form_id") == target_form_id:
+            target_form = f
+            break
+    if target_form is None:
+        raise DSLEvaluationError(
+            f"move_to_form: no form with form_id {target_form_id!r} in this study"
+        )
+
+    moved_row = dict(field_row)
+    moved_row.pop(_PENDING_REMOVAL_KEY, None)
+    old_itemgroup = moved_row.get("bind__oc_itemgroup")
+    moved_row["bind__oc_itemgroup"] = target_form_id
+
+    target_survey = target_form.setdefault("survey", [])
+    target_survey.append(moved_row)
+
+    field_type = moved_row.get("type", "")
+    copied_choices = 0
+    if field_type.startswith("select_one ") or field_type.startswith("select_multiple "):
+        list_name = field_type.split(" ", 1)[1]
+        target_choices = target_form.setdefault("choices", [])
+        existing = {(c.get("list_name"), c.get("name")) for c in target_choices}
+        for c in source_form.get("choices", []):
+            if c.get("list_name") == list_name and (c.get("list_name"), c.get("name")) not in existing:
+                target_choices.append(dict(c))
+                copied_choices += 1
+
+    field_row[_PENDING_REMOVAL_KEY] = source_form_id
+
+    result.mutations_made.append(Mutation(
+        directive="move_to_form", path="field.parent_form",
+        old_value=source_form_id, new_value=target_form_id,
+    ))
+    if old_itemgroup != target_form_id:
+        result.mutations_made.append(Mutation(
+            directive="move_to_form", path="field.bind__oc_itemgroup",
+            old_value=old_itemgroup, new_value=target_form_id,
+        ))
+    if copied_choices:
+        result.mutations_made.append(Mutation(
+            directive="move_to_form", path="form.choices",
+            old_value=None, new_value=f"+{copied_choices} choice(s) copied to {target_form_id!r}",
+        ))
+
+
+def sweep_pending_removals(spec: Dict[str, Any]) -> int:
+    """
+    Strip every survey row tombstoned by move_to_form from its OLD
+    form. Called by apply_conventions() right after each convention's
+    own iteration completes -- see __init__.py. Returns the number of
+    rows removed (0 is the normal case; most conventions never touch
+    move_to_form at all).
+    """
+    removed = 0
+    for form in spec.get("forms") or []:
+        survey = form.get("survey")
+        if not survey:
+            continue
+        kept = [r for r in survey if not r.get(_PENDING_REMOVAL_KEY)]
+        if len(kept) != len(survey):
+            removed += len(survey) - len(kept)
+            form["survey"] = kept
+    return removed
+
+
 DIRECTIVES = {
     "set":         _do_set,
     "ensure":      _do_ensure,
@@ -351,6 +481,7 @@ DIRECTIVES = {
     "remove_from": _do_remove_from,
     "match":       _do_match,
     "default_value": _do_default_value,
+    "move_to_form": _do_move_to_form,
 }
 
 # use_canonical_list is intentionally NOT in DIRECTIVES: every other
