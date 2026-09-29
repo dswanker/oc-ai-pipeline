@@ -1,0 +1,31 @@
+{
+  "id": "customer.bioivt.mhfasted_domain_move",
+  "title": "BioIVT Precision MHFASTED moves from MH to SC (Subject Characteristics)",
+  "kind": "structured",
+  "scope": "customer",
+  "scope_id": "bioIVT",
+  "status": "active",
+  "natural_key": "bioivt_mhfasted_domain_move",
+  "description": "Moves MHFASTED ('Did the donor fast overnight >= 8 hours?') from Medical History to Subject Characteristics on Precision. Fasting status is a protocol-defined testing condition, not a history item.",
+  "rationale": "CDASH Subject Characteristics (SC) domain documentation defines a dedicated 'protocol defined condition' variable with FASTING as its own named example: \"Confirmation that the protocol defined condition imposed on the subject when testing (e.g., FASTING, HYDRATION, EXERCISE) was met.\" Verified against CDASH SC domain documentation before writing this (2026-09-28), not asserted from general domain knowledge alone. Precision already has an SC form with a matching yn choice list, so no new form was needed for this one -- unlike the DOD/TOD/COD case in the same audit.",
+  "target": "field",
+  "applies_when": {
+    "field.name": "MHFASTED"
+  },
+  "effect": {
+    "move_to_form": "SC"
+  },
+  "created_at": "2026-09-28T00:00:00Z",
+  "created_by": "human:dswanker",
+  "source": "CDASH Subject Characteristics domain documentation; domain-alignment audit, BioIVT Option C project",
+  "tags": ["bioivt", "mhfasted", "domain_move", "cdash", "sc"],
+  "history": [
+    {
+      "at": "2026-09-28T00:00:00Z",
+      "by": "human:dswanker",
+      "action": "created",
+      "status": "active",
+      "note": "First use of the new move_to_form directive. Detroit has no equivalent field -- this is Precision-only."
+    }
+  ]
+}
