@@ -2538,13 +2538,21 @@ async def create_oc_study(subdomain, struct_json, is_production=False,
             "collectDateOfBirth": "ONLY_THE_YEAR",
             "collectPersonId":    "ALWAYS",
         }
-        # phase is optional — only include it when we have a recognised
-        # IND phase value. Specimen/observational studies (e.g. BioIVT)
-        # should omit it entirely; some OC instances reject OTHER_NON_IND.
-        if _final_phase in {"PHASEI", "PHASEII", "PHASEIII", "PHASEIV"}:
-            payload["phase"] = _final_phase
+        # phase handling:
+        # - INTERVENTIONAL studies: always send a phase value; use OTHER_NON_IND
+        #   when no recognised IND phase is present. Some OC instances (e.g.
+        #   kariusdx) have a cross-field validator (phaseValid) that rejects
+        #   INTERVENTIONAL studies with a missing phase field entirely.
+        # - OBSERVATIONAL studies: omit phase; the field is not applicable and
+        #   some OC instances reject OTHER_NON_IND for observational studies.
+        _study_type = payload.get("type", "INTERVENTIONAL")
+        if _study_type == "INTERVENTIONAL":
+            payload["phase"] = _final_phase   # always present; OTHER_NON_IND when unknown
+        elif _final_phase in {"PHASEI", "PHASEII", "PHASEIII", "PHASEIV"}:
+            payload["phase"] = _final_phase   # only for recognised IND phases
         print(f"[study-create] phase: raw={_raw_phase!r} final={_final_phase!r} "
-              f"included={'yes' if 'phase' in payload else 'no (omitted)'}", flush=True)
+              f"type={_study_type!r} "
+              f"included={'yes → ' + payload.get('phase','') if 'phase' in payload else 'no (omitted)'}", flush=True)
 
         print(f"[study-create] payload being sent: {payload}", flush=True)
         async with httpx.AsyncClient(timeout=60) as c:
