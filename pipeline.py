@@ -2509,9 +2509,12 @@ async def create_oc_study(subdomain, struct_json, is_production=False,
                      "phase iv": "PHASEIV", "phase 4": "PHASEIV",
                      "not applicable": "OTHER_NON_IND", "n/a": "OTHER_NON_IND",
                      "na": "OTHER_NON_IND", "none": "OTHER_NON_IND",
-                     "other": "OTHER_NON_IND", "observational": "OTHER_NON_IND"}
-        # Always clamp to a valid value regardless of what Claude extracted
-        _raw_phase = str(meta.get("study_phase", "")).lower().strip()
+                     "not set": "OTHER_NON_IND", "": "OTHER_NON_IND",
+                     "other": "OTHER_NON_IND", "observational": "OTHER_NON_IND",
+                     "unknown": "OTHER_NON_IND", "tbd": "OTHER_NON_IND"}
+        # Always clamp to a valid value regardless of what Claude extracted.
+        # Check both "study_phase" and "phase" keys — Claude uses both across runs.
+        _raw_phase = str(meta.get("study_phase") or meta.get("phase") or "").lower().strip()
         _mapped_phase = phase_map.get(_raw_phase, "OTHER_NON_IND")
         _final_phase = _clamp_phase(_mapped_phase)
         print(f"[study-create] phase: raw={_raw_phase!r} mapped={_mapped_phase!r} final={_final_phase!r}", flush=True)
