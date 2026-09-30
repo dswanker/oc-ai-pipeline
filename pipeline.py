@@ -4408,15 +4408,22 @@ def _apply_crf_standards(struct_json: dict, crf_files: list, oc_files: list) -> 
     return struct_json
 
 
-def _ensure_required_forms(spec: dict, protocol_num: str) -> dict:
+def _ensure_required_forms(spec: dict, protocol_num: str,
+                            customer_conventions: dict | None = None) -> dict:
     """Deterministically inject required infrastructure forms if Claude dropped them.
 
-    DOV (Date of Visit) must always be present in every study.  Claude
-    occasionally omits infrastructure forms when the output token budget is
-    tight — this backstop guarantees they appear without requiring a re-run.
+    DOV (Date of Visit) is injected by default but suppressed when the customer
+    has answered "No" to the CQ 'Do you collect Date of Visit (DOV) at
+    scheduled visits?' convention question.  Claude occasionally omits
+    infrastructure forms when the output token budget is tight — this backstop
+    guarantees they appear without requiring a re-run.
 
     Only injects a form if it is completely absent from forms[].
     Idempotent — safe to call multiple times.
+
+    Args:
+        customer_conventions: dict returned by _extract_customer_conventions().
+          If None or empty, DOV is always injected (safe default).
     """
     if not isinstance(spec, dict):
         return spec
@@ -4428,7 +4435,19 @@ def _ensure_required_forms(spec: dict, protocol_num: str) -> dict:
     existing_ids = {f.get("form_id") for f in forms if isinstance(f, dict)}
 
     # ── DOV — Date of Visit ────────────────────────────────────────────────────
-    if "DOV" not in existing_ids:
+    # Respect the CQ 'Do you collect Date of Visit (DOV) at scheduled visits?'
+    # convention answer. Any case-insensitive "no" answer suppresses DOV.
+    _conv = customer_conventions or {}
+    _dov_suppressed = False
+    for _q, _a in _conv.items():
+        if 'date of visit' in _q.lower() and 'dov' in _q.lower():
+            if str(_a).strip().lower().startswith('n'):
+                _dov_suppressed = True
+                print(f"[_ensure_required_forms] DOV suppressed by CQ answer: "
+                      f"Q={_q!r} A={_a!r}", flush=True)
+                break
+
+    if "DOV" not in existing_ids and not _dov_suppressed:
         _event_cf_calc = (
             "instance('clinicaldata')/ODM/ClinicalData/SubjectData"
             "/StudyEventData[@OpenClinica:Current='Yes']/@StudyEventOID"
@@ -4913,6 +4932,7 @@ async def run_pipeline(item_id):
         # so a re-run focuses on the user's actual iteration target
         # (typically Chain C build or Chain D form upload).
         fast_rerun = False
+        customer_conventions = {}  # populated later; initialised here so _ensure_required_forms calls above line 5728 are safe
         _FAST_RERUN_SKIP = {
             "protocol specification",  # Chain A
             "protocol summary",        # Chain B (summary PDF)
@@ -5303,7 +5323,7 @@ async def run_pipeline(item_id):
                         struct_json = _enforce_common_visit(struct_json)
                         struct_json = _backfill_migration_fields(struct_json)
                         struct_json = _sanitize_form_titles(struct_json)
-                        struct_json = _ensure_required_forms(struct_json, protocol_num)
+                        struct_json = _ensure_required_forms(struct_json, protocol_num, customer_conventions)
                         struct_json = _apply_omop_coding(struct_json, edc_design_standard)
                         # ── Conventions engine pass + three-way conflict detection (Phase C.4) ──
                         # Path X.1 is the edited-XLSX path. Three snapshots make TRUE
@@ -5447,7 +5467,7 @@ async def run_pipeline(item_id):
             struct_json = _enforce_common_visit(struct_json)
             struct_json = _backfill_migration_fields(struct_json)
             struct_json = _sanitize_form_titles(struct_json)
-            struct_json = _ensure_required_forms(struct_json, protocol_num)
+            struct_json = _ensure_required_forms(struct_json, protocol_num, customer_conventions)
             struct_json = _apply_omop_coding(struct_json, edc_design_standard)
             # ── Conventions engine pass (no-op until conventions/ store is populated) ─
             try:
@@ -5633,7 +5653,7 @@ async def run_pipeline(item_id):
                     struct_json = _enforce_common_visit(struct_json)
                     struct_json = _backfill_migration_fields(struct_json)
                     struct_json = _sanitize_form_titles(struct_json)
-                    struct_json = _ensure_required_forms(struct_json, protocol_num)
+                    struct_json = _ensure_required_forms(struct_json, protocol_num, customer_conventions)
                     struct_json = _apply_omop_coding(struct_json, edc_design_standard)
                     fast_rerun = True
                     print(f"[fast-rerun] Using existing Study Spec JSON "
@@ -5955,7 +5975,7 @@ async def run_pipeline(item_id):
             struct_json = _enforce_common_visit(struct_json)
             struct_json = _backfill_migration_fields(struct_json)
             struct_json = _sanitize_form_titles(struct_json)
-            struct_json = _ensure_required_forms(struct_json, protocol_num)
+            struct_json = _ensure_required_forms(struct_json, protocol_num, customer_conventions)
             struct_json = _apply_omop_coding(struct_json, edc_design_standard)
             # Deterministic CRF Standards injection — ensure every field from
             # QUESTIONS.csv (and equivalent CRF/OC4 standard files) is present
