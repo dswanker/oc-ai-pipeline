@@ -2546,6 +2546,7 @@ async def create_oc_study(subdomain, struct_json, is_production=False,
         print(f"[study-create] phase: raw={_raw_phase!r} final={_final_phase!r} "
               f"included={'yes' if 'phase' in payload else 'no (omitted)'}", flush=True)
 
+        print(f"[study-create] payload being sent: {payload}", flush=True)
         async with httpx.AsyncClient(timeout=60) as c:
             r = await c.post(f"{base_url}/study-service/api/studies",
                              headers=headers, json=payload)
