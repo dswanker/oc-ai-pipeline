@@ -3845,13 +3845,29 @@ async def load_dvs_uat_data(item_id):
 # ── OC-9 backstop: Common Visit for cross-visit forms ────────────────────────
 
 def _enforce_common_visit(struct_json):
-    """RULE OC-9 backstop. Ensure SE_COMMON exists and AE/CM/DV/AESAE
-    forms only live there. Runs after Claude returns the Study Spec JSON
-    and fixes the structure deterministically if Claude forgot.
+    """RULE OC-9 backstop. Ensure each form that belongs at a common visit
+    gets its OWN common event (SE_COMMON_{FORM_ID}).
+
+    OC4 Study Designer requires one Common event accordion entry per
+    repeating form — a shared SE_COMMON that holds all common forms
+    produces a single accordion row, not one per form. The CQ convention
+    "1 common visit per form that belongs at a common visit" is the
+    explicit customer requirement driving this design.
+
+    Handles two cases:
+    1. Claude assigned forms to "SE_COMMON" (shared) → split into
+       SE_COMMON_{form_id} per form.
+    2. Claude assigned repeating/common forms to scheduled events → move
+       them to their own SE_COMMON_{form_id} event.
+
+    The COMMON_FORMS set is a backstop for forms Claude may have missed.
+    Any form with is_repeating=True or already assigned to any *COMMON*
+    event is also split out.
 
     Idempotent — safe to call multiple times.
     """
-    COMMON_FORMS = {"AE", "CM", "DV", "AESAE"}
+    COMMON_FORMS = {"AE", "CM", "DV", "AESAE", "HOSP", "INVA", "IMAGE",
+                    "MEDHL", "SAE"}
 
     if not isinstance(struct_json, dict):
         return struct_json
@@ -3860,58 +3876,79 @@ def _enforce_common_visit(struct_json):
     if not isinstance(forms, list):
         return struct_json
 
-    # Events may be stored under "events" or "visits" depending on version.
-    # We canonicalize to "events" but tolerate both.
     events = struct_json.get("events")
     if events is None:
         events = struct_json.get("visits", [])
     if not isinstance(events, list):
         events = []
 
-    # Only create SE_COMMON if at least one of the common forms is actually
-    # in scope for this protocol. If none are scoped, skip entirely.
-    common_forms_in_study = [
-        f for f in forms
-        if isinstance(f, dict) and f.get("form_id") in COMMON_FORMS
-    ]
-    if not common_forms_in_study:
-        return struct_json
-
-    # Find enrollment event to anchor SE_COMMON's availability window
+    # Find enrollment event to anchor common events' availability window
     enrollment_oid = None
     for ev in events:
         if not isinstance(ev, dict):
             continue
         oid = str(ev.get("event_oid", "")).upper()
-        if "ENRL" in oid or "RAND" in oid or "ENROLL" in oid:
+        if "ENRL" in oid or "RAND" in oid or "ENROLL" in oid or "SCREEN" in oid:
             enrollment_oid = ev.get("event_oid")
             break
 
-    # Ensure SE_COMMON exists in events
-    has_se_common = any(
-        isinstance(ev, dict) and ev.get("event_oid") == "SE_COMMON"
-        for ev in events
-    )
-    if not has_se_common:
-        events.append({
-            "event_oid":       "SE_COMMON",
-            "event_title":     "Common Visit",
-            "event_type":      "common",
-            "is_repeating":    True,
-            "available_after": enrollment_oid or "",
-        })
-        struct_json["events"] = events
+    # Build set of existing event OIDs for dedup
+    existing_event_oids = {
+        ev.get("event_oid") for ev in events if isinstance(ev, dict)
+    }
 
-    # Force visits_assigned=["SE_COMMON"] on each common form
     fixed_count = 0
-    for f in common_forms_in_study:
-        if f.get("visits_assigned") != ["SE_COMMON"]:
-            f["visits_assigned"] = ["SE_COMMON"]
+    for f in forms:
+        if not isinstance(f, dict):
+            continue
+        form_id = f.get("form_id", "")
+        visits  = f.get("visits_assigned", [])
+
+        # Determine if this form belongs at a common event:
+        # - explicitly in COMMON_FORMS set, OR
+        # - currently assigned to any SE_COMMON* event, OR
+        # - form is marked repeating=True AND assigned to a single visit
+        #   that contains COMMON in its OID
+        is_common = (
+            form_id.upper() in COMMON_FORMS
+            or any("COMMON" in str(v).upper() for v in visits)
+        )
+        if not is_common:
+            continue
+
+        # Each common form gets its own SE_COMMON_{form_id} event
+        target_oid   = f"SE_COMMON_{form_id.upper()}"
+        target_title = f.get("form_title", form_id)  # event title = form title
+
+        # Create the event if it doesn't exist yet
+        if target_oid not in existing_event_oids:
+            events.append({
+                "event_oid":       target_oid,
+                "event_title":     target_title,
+                "event_type":      "common",
+                "is_repeating":    True,
+                "available_after": enrollment_oid or "",
+            })
+            existing_event_oids.add(target_oid)
+            print(f"[OC-9] Created common event {target_oid!r} "
+                  f"for form {form_id!r}", flush=True)
+
+        # Reassign the form to its own common event
+        if f.get("visits_assigned") != [target_oid]:
+            f["visits_assigned"] = [target_oid]
             fixed_count += 1
 
     if fixed_count:
-        print(f"OC-9 backstop: reassigned {fixed_count} form(s) to SE_COMMON",
-              flush=True)
+        print(f"[OC-9] Assigned {fixed_count} form(s) to individual "
+              f"common events (SE_COMMON_{{form_id}})", flush=True)
+
+    # Remove the shared SE_COMMON event if it exists and is now empty
+    # (all forms have been moved to their own events)
+    events[:] = [
+        ev for ev in events
+        if not (isinstance(ev, dict) and ev.get("event_oid") == "SE_COMMON")
+    ]
+    struct_json["events"] = events
 
     return struct_json
 
@@ -4258,6 +4295,25 @@ def _parse_crf_standards_questions(crf_files: list) -> dict:
 
                 if var_safe[0].isdigit():
                     var_safe = 'F_' + var_safe
+
+                # OC4 enforces a hard 40-character limit on field names.
+                # Truncate and deduplicate within this form to avoid upload
+                # failures like "Element X must not have a value longer than
+                # 40 characters" (seen on AE/CM forms from iMedNet).
+                if len(var_safe) > 40:
+                    _truncated = var_safe[:37]  # 37 + 3-digit suffix = 40
+                    # Check for collision with already-added vars on this form
+                    _existing = {f["variable_name"] for f in form_fields.get(form, [])}
+                    if _truncated not in _existing:
+                        var_safe = _truncated
+                    else:
+                        _counter = 2
+                        while f"{_truncated[:-len(str(_counter))]}_{_counter}" in _existing and _counter < 100:
+                            _counter += 1
+                        var_safe = f"{_truncated[:-len(str(_counter))]}_{_counter}"
+                    print(f"[crf-standards] Truncated field name to 40 chars: "
+                          f"{form}.{var_safe!r}", flush=True)
+
                 form_fields[form].append({
                     "variable_name": var_safe,
                     "label":         label or var,
