@@ -1609,8 +1609,9 @@ class FormPublisher:
                                                 # still reuse it (don't call getForm again).
                                                 # Only fall through to getForm when the form
                                                 # is NOT in the bucket at all.
+                                                import re as _re_suffix
                                                 _bucket_oid_is_clean = (
-                                                    not re.search(r'_\d{4}$',
+                                                    not _re_suffix.search(r'_\d{4}$',
                                                         _bucket_forms_by_name.get(
                                                             _bucket_key, {}
                                                         ).get('ocoid', ''))
