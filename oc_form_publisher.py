@@ -50,7 +50,6 @@ import asyncio
 import io
 import json
 import os
-import re
 import shutil
 import tempfile
 import zipfile
@@ -1599,6 +1598,23 @@ class FormPublisher:
                                                 # poisoned partial registration from a
                                                 # prior failed upload — fall through to
                                                 # getForm to re-register fresh.
+                                                # A bucket-hit is safe to use (skip getForm)
+                                                # when the bucket OID is CLEAN (no numeric
+                                                # suffix).  A clean OID means the form shell
+                                                # was registered by importStudy and has never
+                                                # had getForm called on it — calling getForm
+                                                # again would create a suffixed clone.
+                                                # A suffixed OID in the bucket means a prior
+                                                # run already called getForm; in that case we
+                                                # still reuse it (don't call getForm again).
+                                                # Only fall through to getForm when the form
+                                                # is NOT in the bucket at all.
+                                                _bucket_oid_is_clean = (
+                                                    not re.search(r'_\d{4}$',
+                                                        _bucket_forms_by_name.get(
+                                                            _bucket_key, {}
+                                                        ).get('ocoid', ''))
+                                                ) if _bucket_key in _bucket_forms_by_name else False
                                                 _oc_confirmed = (
                                                     oid in confirmed_versioned_oids
                                                     or (oid or '').upper() in {
@@ -1606,7 +1622,8 @@ class FormPublisher:
                                                         confirmed_versioned_oids}
                                                 )
                                                 if (_bucket_key in _bucket_forms_by_name
-                                                        and _oc_confirmed):
+                                                        and (_oc_confirmed
+                                                             or _bucket_oid_is_clean)):
                                                     _existing_bf = (
                                                         _bucket_forms_by_name[_bucket_key])
                                                     _gf_ocoid = (
