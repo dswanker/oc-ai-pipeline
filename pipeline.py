@@ -1331,20 +1331,63 @@ async def _refresh_and_persist_session(session_path):
     return True
 
 
-async def _check_study_exists(subdomain, token, protocol_num, is_production=False):
+async def _check_study_exists(subdomain, token, protocol_num,
+                               is_production=False, known_uuid=None):
+    """Return the study UUID if the study exists in OC4, else None.
+
+    Tries three strategies in order:
+    1. Direct UUID lookup via GET /study-service/api/studies/{uuid} — fast
+       and exact when we have a UUID from a prior run.
+    2. List-scan by uniqueIdentifier — matches protocol_num[:30] case-
+       insensitively. Handles KAR-0025 OPTIMUM vs KAR-0025 etc.
+    3. List-scan by name — fallback for cases where uniqueIdentifier was
+       stored differently than protocol_num.
+    """
     import httpx
-    url = f"https://{subdomain}.build.openclinica.io/study-service/api/studies"
+    base = f"https://{subdomain}.build.openclinica.io"
+    headers = {"Authorization": f"Bearer {token}",
+               "Content-Type": "application/json"}
+
     async with httpx.AsyncClient(timeout=30) as c:
-        r = await c.get(url,
-                        headers={"Authorization": f"Bearer {token}",
-                                 "Content-Type": "application/json"},
+        # Strategy 1: direct UUID lookup (fastest, most reliable)
+        if known_uuid:
+            r1 = await c.get(f"{base}/study-service/api/studies/{known_uuid}",
+                             headers=headers)
+            if r1.status_code == 200:
+                print(f"[_check_study_exists] Found by UUID: {known_uuid}",
+                      flush=True)
+                return known_uuid
+
+        # Strategy 2 + 3: list scan
+        r = await c.get(f"{base}/study-service/api/studies",
+                        headers=headers,
                         params={"archived": "false", "size": 500})
     if r.status_code != 200:
+        print(f"[_check_study_exists] study list returned {r.status_code}",
+              flush=True)
         return None
-    uid = protocol_num[:30].lower()
-    for s in r.json():
-        if s.get("uniqueIdentifier", "").lower() == uid:
+
+    uid = protocol_num[:30].lower().strip()
+    name_lower = protocol_num.lower().strip()
+    studies = r.json() if isinstance(r.json(), list) else r.json().get("content", [])
+
+    for s in studies:
+        # Strategy 2: uniqueIdentifier exact match
+        if s.get("uniqueIdentifier", "").lower().strip() == uid:
+            print(f"[_check_study_exists] Found by uniqueIdentifier: "
+                  f"{s.get('uuid')}", flush=True)
             return s.get("uuid")
+
+    for s in studies:
+        # Strategy 3: name match (protocol_num may differ from uniqueIdentifier
+        # if it was truncated or normalised differently at creation time)
+        if s.get("name", "").lower().strip() == name_lower:
+            print(f"[_check_study_exists] Found by name: {s.get('uuid')}",
+                  flush=True)
+            return s.get("uuid")
+
+    print(f"[_check_study_exists] Study not found for protocol_num={protocol_num!r} "
+          f"uid={uid!r} known_uuid={known_uuid!r}", flush=True)
     return None
 
 
@@ -2491,7 +2534,8 @@ async def create_oc_study(subdomain, struct_json, is_production=False,
     if _monday_uuid:
         # Monday has a UUID from a prior run — check OC to confirm it still exists
         existing_uuid = await _check_study_exists(subdomain, token, protocol_num,
-                                                   is_production=is_production)
+                                                   is_production=is_production,
+                                                   known_uuid=_monday_uuid)
     else:
         # Monday UUID is blank — operator reset for a fresh run, always create new
         print("[study-create] Monday UUID column is blank — creating fresh study "
@@ -2568,7 +2612,8 @@ async def create_oc_study(subdomain, struct_json, is_production=False,
                 print("[study-create] Study OID already exists in OC — "
                       "recovering UUID from study list...", flush=True)
                 recovered = await _check_study_exists(
-                    subdomain, token, protocol_num, is_production)
+                    subdomain, token, protocol_num, is_production,
+                    known_uuid=_monday_uuid if _monday_uuid else None)
                 if recovered:
                     print(f"[study-create] Recovered existing study UUID: "
                           f"{recovered}", flush=True)
