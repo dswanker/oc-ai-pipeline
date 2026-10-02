@@ -62,7 +62,11 @@ async def call_claude(prompt, pdf_bytes=None, extra_text=None, max_tokens=MAX_TO
       dimension limit — callers should pre-resize before passing.
     """
     client = anthropic.AsyncAnthropic(
-        api_key=os.environ.get("ANTHROPIC_API_KEY", "").strip()
+        api_key=os.environ.get("ANTHROPIC_API_KEY", "").strip(),
+        # 45-minute total timeout — covers large Protocol Analysis calls
+        # (3 PDFs + screenshots + extended output). Without this the SDK
+        # waits indefinitely on a hung stream.
+        timeout=httpx.Timeout(timeout=2700.0, connect=30.0),
     )
 
     # Order: prompt (cacheable) FIRST, then PDF + images + extra_text (per-run).
