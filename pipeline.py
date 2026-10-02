@@ -2635,6 +2635,10 @@ async def create_oc_study(subdomain, struct_json, is_production=False,
 
     # ── Step 2: Build board.json from struct_json ──────────────────────────────
     print("Building board.json from Study Specification...", flush=True)
+    _ae_form = next((f for f in struct_json.get("forms",[]) if f.get("form_id")=="AE"), None)
+    _tpt_oids = [r.get("event") for r in struct_json.get("timepoint_csv",{}).get("rows",[])]
+    print(f"[pre-board-build] AE visits={_ae_form.get('visits_assigned') if _ae_form else 'NOT FOUND'}", flush=True)
+    print(f"[pre-board-build] timepoint_csv rows={_tpt_oids}", flush=True)
     board_json = _build_board_json(struct_json)
     print(f"Board: {len(board_json['lists'])} events, "
           f"{len(board_json['cards'])} form cards", flush=True)
