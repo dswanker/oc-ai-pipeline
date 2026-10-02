@@ -13,7 +13,6 @@ Two modes:
 """
 
 import anthropic, base64, json, os, asyncio, re
-import httpx
 
 MODEL       = "claude-opus-4-7"
 MAX_TOKENS  = 16000         # for call_claude (JSON extraction). Opus 4.7
@@ -66,7 +65,7 @@ async def call_claude(prompt, pdf_bytes=None, extra_text=None, max_tokens=MAX_TO
         # 45-minute total timeout — covers large Protocol Analysis calls
         # (3 PDFs + screenshots + extended output). Without this the SDK
         # waits indefinitely on a hung stream.
-        timeout=httpx.Timeout(timeout=2700.0, connect=30.0),
+        timeout=2700.0,
     )
 
     # Order: prompt (cacheable) FIRST, then PDF + images + extra_text (per-run).
