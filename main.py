@@ -986,6 +986,80 @@ async def design_change_webhook(request: Request,
 
 
 
+
+@app.post("/admin/dry-run-board-json")
+async def dry_run_board_json(request: Request):
+    """
+    Dry-run _enforce_common_visit + _build_board_json against the spec JSON
+    currently on the Monday board. Does NOT touch OC4 — reads Monday only.
+    Returns card count, list count, and which forms are missing from the board.
+
+    Call: POST /admin/dry-run-board-json
+    Headers: X-Admin-Secret: <secret>
+    Body: {"item_id": "12717239658"}
+    """
+    secret = request.headers.get("X-Admin-Secret", "")
+    if secret != os.environ.get("ADMIN_SECRET", "oc-admin-2026"):
+        return {"status": "unauthorized"}
+
+    body_bytes = await request.body()
+    try:
+        payload = json.loads(body_bytes) if body_bytes else {}
+    except Exception:
+        payload = {}
+
+    item_id = str(payload.get("item_id", ""))
+    if not item_id:
+        return {"status": "error", "detail": "item_id required"}
+
+    try:
+        from pipeline import (
+            _enforce_common_visit, _build_board_json, download_column_file
+        )
+        from monday_client import COL
+        import copy
+
+        spec_bytes = await download_column_file(item_id, COL["spec_json"])
+        if not spec_bytes:
+            return {"status": "error", "detail": "No spec JSON on board"}
+
+        spec = json.loads(spec_bytes.decode("utf-8"))
+        s = copy.deepcopy(spec)
+
+        # Run exactly the same sequence as the pipeline fast-rerun path
+        enforce_log = []
+        import io, sys
+        buf = io.StringIO()
+        old_stdout = sys.stdout
+        sys.stdout = buf
+        _enforce_common_visit(s)
+        sys.stdout = old_stdout
+        enforce_log = buf.getvalue().strip().splitlines()
+
+        board = _build_board_json(s)
+        card_oids = sorted(c["formOcoid"] for c in board["cards"])
+        list_oids = [l["eventOcoid"] for l in board["lists"]]
+        all_form_oids = sorted(f"F_{f['form_id']}" for f in s["forms"])
+        missing = sorted(set(all_form_oids) - set(card_oids))
+
+        return {
+            "status": "ok",
+            "spec_forms": len(s["forms"]),
+            "board_lists": len(board["lists"]),
+            "board_cards": len(board["cards"]),
+            "list_oids": list_oids,
+            "card_oids": card_oids,
+            "missing_from_board": missing,
+            "enforce_log": enforce_log,
+            "ae_visits": next(
+                (f.get("visits_assigned") for f in s["forms"] if f.get("form_id") == "AE"),
+                "NOT FOUND"
+            ),
+        }
+    except Exception as e:
+        import traceback
+        return {"status": "error", "detail": str(e), "trace": traceback.format_exc()}
+
 @app.post("/admin/regen-dvs")
 async def regen_dvs_route(request: Request, background_tasks: BackgroundTasks):
     """
