@@ -3950,6 +3950,39 @@ def _enforce_common_visit(struct_json):
     ]
     struct_json["events"] = events
 
+    # ── Sync new common events into timepoint_csv.rows ────────────────────
+    # _build_board_json reads from timepoint_csv.rows to build the board
+    # lists (event columns). If SE_COMMON_{form_id} events are not in
+    # timepoint_csv.rows they will be absent from the board import and
+    # the publisher will have no card to upload those forms to.
+    tpt = struct_json.setdefault("timepoint_csv", {})
+    tpt_rows = tpt.setdefault("rows", [])
+    existing_tpt_oids = {r.get("event") for r in tpt_rows if r.get("event")}
+
+    for ev in events:
+        if not isinstance(ev, dict):
+            continue
+        ev_oid = ev.get("event_oid", "")
+        if not ev_oid.startswith("SE_COMMON_"):
+            continue
+        if ev_oid in existing_tpt_oids:
+            continue
+        # Add a minimal timepoint row so _build_board_json creates the list
+        tpt_rows.append({
+            "event":     ev_oid,
+            "timepoint": ev.get("event_title", ev_oid),
+            "type":      "common",
+        })
+        existing_tpt_oids.add(ev_oid)
+        print(f"[OC-9] Added {ev_oid!r} to timepoint_csv.rows "
+              f"(title={ev.get('event_title','')!r})", flush=True)
+
+    # Also remove SE_COMMON from timepoint_csv.rows if present
+    tpt_rows[:] = [
+        r for r in tpt_rows
+        if r.get("event") != "SE_COMMON"
+    ]
+
     return struct_json
 
 
