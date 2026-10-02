@@ -295,9 +295,11 @@ async def full_reset(request: Request, body: dict):
         results["study_oid"]  = await _set(COL["study_oid"],  '""')
 
     # ── Clear upload record on disk ──────────────────────────────────────
-    from pipeline import _upload_record_path
-    import json as _json
-    _upload_record_path(item_id).write_text(
+    from pipeline import UPLOAD_RECORDS_DIR
+    import json as _json, pathlib as _pl
+    _rec_path = _pl.Path(UPLOAD_RECORDS_DIR) / f"{item_id}.json"
+    _rec_path.parent.mkdir(parents=True, exist_ok=True)
+    _rec_path.write_text(
         _json.dumps({"study_uuid": "", "forms": {}, "uploaded_oids": []})
     )
     results["upload_record"] = "cleared"
