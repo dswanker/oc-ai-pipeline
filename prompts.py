@@ -381,7 +381,7 @@ RULE OC-5 — REPEATING GROUPS USE once() FOR THE KEY
   repeating form) must include a `calculate` field at the top of the
   repeating group whose calculation uses `once(... @ItemGroupRepeatKey)`.
   This prevents the repeat key from being overwritten on edit. Example:
-    once(instance('clinicaldata')/ODM/ClinicalData/SubjectData/StudyEventData[@StudyEventOID='SE_COMMON_AE']/FormData[@FormOID='F_AE']/ItemGroupData[@OpenClinica:ItemGroupName='AE']/@ItemGroupRepeatKey)
+    once(instance('clinicaldata')/ODM/ClinicalData/SubjectData/StudyEventData[@StudyEventOID='SE_COMMON']/FormData[@FormOID='F_AE']/ItemGroupData[@OpenClinica:ItemGroupName='AE']/@ItemGroupRepeatKey)
   Pair with a separate display-only field using
     if(${ID}!='', ${ID}, 'Scheduled')
   to show the repeat number during data entry.
@@ -639,7 +639,7 @@ RULE OC-7 — UNIVERSAL CLINICAL DATA PATTERNS (always apply when applicable)
           `relevant`: `${TPTCALC}!='Screening'`
 
       (f) FIRST-ENTRY-ONLY IN REPEATING FORMS: This pattern is OBSOLETE
-          and MUST NOT be used. Common (SE_COMMON_{FORM_ID}) repeating forms do NOT use a
+          and MUST NOT be used. SE_COMMON repeating forms do NOT use a
           YN gate question or begin_group/end_group wrapper — see RULE OC-8.
 
       (g) OUT-OF-RANGE WARNING NOTES: To show a note when a value is
@@ -712,8 +712,8 @@ RULE OC-8 — REPEATING-FORM STRUCTURAL PATTERN
     then validates with pyxform + ODK Validate. Generate the correct
     structure in the first pass anyway — self-correction costs an API call.
 
-  For repeating forms (forms assigned to a SE_COMMON_{FORM_ID} event:
-  AE, CM, DV, AESAE, and any other common form):
+  For repeating forms (SE_COMMON: AE, CM, DV, AESAE, MH, and any other
+  form assigned ONLY to SE_COMMON):
 
   *** CRITICAL RULE — NO YN GATE, NO begin_group/end_group WRAPPER ***
 
@@ -723,13 +723,13 @@ RULE OC-8 — REPEATING-FORM STRUCTURAL PATTERN
     These rows MUST be deleted / never generated for SE_COMMON forms.
 
     The correct pattern is: data fields emitted DIRECTLY, all tagged
-    with their bind::oc:itemgroup. OC4's repeating event UI (SE_COMMON_{FORM_ID})
+    with their bind::oc:itemgroup. OC4's repeating event UI (SE_COMMON)
     handles "add new entry" natively — the form opens fresh for each
     instance. A YN gate and group wrapper break this flow and prevent
     OC from showing any fields.
 
     DO NOT include a top-level SUBJID text row. OC uses its built-in
-    subject context for repeating forms assigned to SE_COMMON_{FORM_ID} events.
+    subject context for repeating forms.
 
   Example — minimal CM (concomitant medications) repeating form shape:
 
@@ -747,55 +747,44 @@ RULE OC-8 — REPEATING-FORM STRUCTURAL PATTERN
 
 RULE OC-9 — COMMON VISIT FOR CROSS-VISIT FORMS
 
-  Common forms (AE, CM, DV, AESAE, and any other repeating cross-visit
-  form) MUST each get their OWN dedicated Common event — one event per
-  form, NOT a single shared SE_COMMON for all of them.
+  Every study MUST include one visit/event called "Common Visit" with
+  OID SE_COMMON. This event is:
+    - Repeating (multiple instances can be added per subject)
+    - Non-scheduled (no fixed timepoint)
+    - Available AFTER the enrollment/randomization event
 
-  This is a hard requirement. OpenClinica 4 Study Designer displays each
-  Common event as its own accordion entry. A single shared event produces
-  one row for all common forms; one event per form produces one row per
-  form, which is the correct and required structure.
-
-  Naming convention for Common events:
-    SE_COMMON_{FORM_ID}   e.g. SE_COMMON_AE, SE_COMMON_CM, SE_COMMON_DV
-
-  Each Common event:
-    - Has event_type: "common"
-    - Is repeating (is_repeating: true)
-    - Is non-scheduled (no fixed timepoint)
-    - Is available AFTER the enrollment/randomization event
-    - Has event_title = the form's title (e.g. "Adverse Event")
-
-  Common forms and their dedicated events:
-    - AE   → SE_COMMON_AE    (Adverse Events)
-    - CM   → SE_COMMON_CM    (Concomitant Medications)
-    - DV   → SE_COMMON_DV    (Protocol Deviations)
-    - AESAE → SE_COMMON_AESAE (Serious Adverse Event Report)
-    - HOSP → SE_COMMON_HOSP  (Hospital Admission — if in scope)
-    - INVA → SE_COMMON_INVA  (Invasive Procedures — if in scope)
-    - IMAGE → SE_COMMON_IMAGE (Imaging — if in scope)
-    - MEDHL → SE_COMMON_MEDHL (Underlying Disease Med Change — if in scope)
-    - Any other repeating form → SE_COMMON_{FORM_ID}
+  The following forms MUST live ONLY on SE_COMMON, not on any
+  scheduled visit:
+    - AE       (Adverse Events)
+    - CM       (Concomitant Medications)
+    - DV       (Protocol Deviations)
+    - AESAE    (Serious Adverse Event Report)
 
   In the Study Spec JSON:
-    * events list — include ONE entry per common form, e.g.:
-        {"event_oid": "SE_COMMON_AE", "event_title": "Adverse Event",
+    * events list — include:
+        {"event_oid": "SE_COMMON", "event_title": "Common Visit",
          "event_type": "common", "is_repeating": true,
          "available_after": "<enrollment event oid>"}
-        {"event_oid": "SE_COMMON_CM", "event_title": "Concomitant Medications",
-         "event_type": "common", "is_repeating": true,
-         "available_after": "<enrollment event oid>"}
-        ... (one per common form)
-    * For each common form in forms[]:
-        visits_assigned = ["SE_COMMON_{FORM_ID}"]  (its own event, nothing else)
-        e.g. AE form: visits_assigned = ["SE_COMMON_AE"]
-             CM form: visits_assigned = ["SE_COMMON_CM"]
+    * For each AE/CM/DV/AESAE form in forms[]:
+        visits_assigned = ["SE_COMMON"]   (exactly this, nothing else)
 
-  Do NOT create a shared SE_COMMON event that holds multiple forms.
-  Every common form gets its own dedicated SE_COMMON_{FORM_ID} event.
+  EXCEPTION — if the Customer Convention Preferences state that each
+  common form should have its own common visit (e.g. "1 common visit per
+  form"), then instead of a shared SE_COMMON, create one event per common
+  form using OID SE_COMMON_{FORM_ID} (e.g. SE_COMMON_AE, SE_COMMON_CM)
+  and assign each form to its own event. In that case do NOT create a
+  shared SE_COMMON event.
 
-  If the protocol does not mention a common form, skip both the form and
-  its event entirely.
+  Rationale: AEs, CMs, deviations, and SAEs can occur at any time during
+  the trial. Attaching them to every scheduled visit creates duplication
+  and confuses the data model. A single Common Visit gives coordinators
+  one place to log these cross-visit events and matches OpenClinica's
+  native "common event" pattern.
+
+  If the protocol does not mention adverse event collection, concomitant
+  medications, deviations, or serious adverse events, skip the corresponding
+  form entirely (do not emit AE etc. with empty content). But SE_COMMON
+  itself should still exist as long as ANY of the four forms are in scope.
 
 
 RULE OC-9a — REPEATING FORM AUTO-ID USES StudyEventRepeatKey, NOT ItemGroupRepeatKey

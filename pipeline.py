@@ -182,16 +182,65 @@ def _extract_customer_conventions(cols: dict) -> dict:
 
 
 def _build_customer_conventions_block(conventions: dict) -> str:
-    """Format customer conventions as a prompt-ready text block. Empty when no answers."""
+    """Format customer conventions as a prompt-ready text block.
+
+    Detects answers that must override system prompt defaults and injects
+    them as MANDATORY OVERRIDE directives Claude will follow over RULE OC-9.
+    """
     if not conventions:
         return ""
-    lines = [
-        "Customer Convention Preferences (apply these when generating the Study Spec):",
-    ]
+
+    override_lines = []
+
+    for q, a in conventions.items():
+        q_lower = q.lower()
+        a_str = str(a)
+        a_lower = a_str.lower().strip()
+        # Detect "1 common visit per form" in any CQ answer
+        _one_per_form = (
+            "1 common visit per form" in a_lower
+            or "own common visit" in a_lower
+            or "one common visit per form" in a_lower
+        )
+        if _one_per_form and not any("MANDATORY OVERRIDE" in o for o in override_lines):
+            override_lines.append(
+                "MANDATORY OVERRIDE — RULE OC-9 COMMON EVENT STRUCTURE:\n"
+                "The customer has specified: \"1 common visit per form\". "
+                "You MUST create one dedicated Common event per common form "
+                "instead of a single shared SE_COMMON.\n"
+                "Use OID pattern SE_COMMON_{FORM_ID} for each:\n"
+                "  AE  -> SE_COMMON_AE,  CM  -> SE_COMMON_CM,  "
+                "DV -> SE_COMMON_DV,\n"
+                "  HOSP -> SE_COMMON_HOSP, INVA -> SE_COMMON_INVA, "
+                "IMAGE -> SE_COMMON_IMAGE, MEDHL -> SE_COMMON_MEDHL.\n"
+                "Set event_type=\'common\' and is_repeating=true on each.\n"
+                "Set visits_assigned=[SE_COMMON_{FORM_ID}] on each common form.\n"
+                "Do NOT create a shared SE_COMMON event."
+            )
+
+    lines_out = []
+    if override_lines:
+        lines_out.append(
+            "MANDATORY CUSTOMER OVERRIDES — these take precedence over all "
+            "built-in rules including RULE OC-9:"
+        )
+        for ov in override_lines:
+            lines_out.append("")
+            lines_out.append(ov)
+        lines_out.append("")
+        lines_out.append(
+            "Customer Convention Preferences (apply these when generating the Study Spec):"
+        )
+    else:
+        lines_out.append(
+            "Customer Convention Preferences (apply these when generating the Study Spec):"
+        )
+
     for question, answer in conventions.items():
-        lines.append(f"  - Q: {question}")
-        lines.append(f"    A: {answer}")
-    return "\n".join(lines)
+        lines_out.append(f"  - Q: {question}")
+        lines_out.append(f"    A: {answer}")
+    return "\n".join(lines_out)
+
 
 
 _VALID_PHASES = {"PHASEI", "PHASEII", "PHASEIII", "PHASEIV", "OTHER_NON_IND"}
