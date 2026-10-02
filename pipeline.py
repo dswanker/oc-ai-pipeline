@@ -1495,8 +1495,14 @@ def _build_board_json(struct_json):
         # a form assigned to the same event twice.
         visits = list(dict.fromkeys(visits))  # preserves order
 
+        if form_id in ('AE', 'CM', 'DV'):
+            print(f"[board-card-debug] {form_id}: visits={visits} "
+                  f"event_id_map_keys={list(event_id_map.keys())}", flush=True)
         for event_oid in visits:
             if event_oid not in event_id_map:
+                if form_id in ('AE', 'CM', 'DV'):
+                    print(f"[board-card-debug] {form_id}: SKIPPING event_oid={event_oid!r} "
+                          f"(not in event_id_map)", flush=True)
                 continue
             list_id  = event_id_map[event_oid]
             sort_idx = card_sort.get(event_oid, 0)
