@@ -114,7 +114,7 @@ member and send bell notification with activation link.
 
 ## Step 4 — Classify Each Email
 
-Call claude-sonnet-4-20250514 (max_tokens=500, temperature=0).
+Call claude-sonnet-4-6 (max_tokens=500, temperature=0).
 Return JSON: classification, protocol_id, customer_name, summary,
 changes_mentioned. If classification fails: treat as needs_review.
 
