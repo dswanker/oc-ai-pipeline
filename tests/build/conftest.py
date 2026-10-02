@@ -16,6 +16,8 @@ _FN_NAMES = [
     '_parse_crf_standards_choices',
     '_crf_variable_type_to_xlsform',
     '_apply_crf_standards',
+    '_enforce_common_visit',
+    '_build_board_json',
 ]
 
 def _build_namespace():
@@ -42,6 +44,14 @@ def pipeline_fns():
 @pytest.fixture(scope='session')
 def parse_questions(pipeline_fns):
     return pipeline_fns['_parse_crf_standards_questions']
+
+@pytest.fixture(scope='session')
+def enforce_common_visit(pipeline_fns):
+    return pipeline_fns['_enforce_common_visit']
+
+@pytest.fixture(scope='session')
+def build_board_json(pipeline_fns):
+    return pipeline_fns['_build_board_json']
 
 @pytest.fixture(scope='session')
 def parse_choices(pipeline_fns):

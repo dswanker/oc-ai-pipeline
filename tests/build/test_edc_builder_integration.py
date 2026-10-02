@@ -127,7 +127,7 @@ FIXTURE_SPEC = {
 }
 
 
-@pytest.fixture(scope='module')
+@pytest.fixture(scope='session')
 def build_zip_bytes():
     """Run edc-builder against the fixture spec and return the ZIP bytes."""
     from build_package import build_package
@@ -161,13 +161,13 @@ def build_zip_bytes():
         return open(zip_path, 'rb').read()
 
 
-@pytest.fixture(scope='module')
+@pytest.fixture(scope='session')
 def build_zip(build_zip_bytes):
     return zipfile.ZipFile(io.BytesIO(build_zip_bytes))
 
 
 # ── Module-level XLSForm workbook fixtures ───────────────────────────────────
-@pytest.fixture(scope='module')
+@pytest.fixture(scope='session')
 def dm_wb(build_zip):
     import openpyxl
     data = build_zip.read(next(n for n in build_zip.namelist()
@@ -175,7 +175,7 @@ def dm_wb(build_zip):
     return openpyxl.load_workbook(io.BytesIO(data), data_only=True)
 
 
-@pytest.fixture(scope='module')
+@pytest.fixture(scope='session')
 def ae_wb(build_zip):
     import openpyxl
     data = build_zip.read(next(n for n in build_zip.namelist()
