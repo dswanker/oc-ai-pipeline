@@ -1433,10 +1433,6 @@ def _build_board_json(struct_json):
 
     raw_timepoint_rows = struct_json.get("timepoint_csv", {}).get("rows", [])
     forms              = struct_json.get("forms", [])
-    print(f"[board-json-debug] timepoint_csv rows at build time: "
-          f"{[r.get('event') for r in raw_timepoint_rows]}", flush=True)
-    print(f"[board-json-debug] AE visits_assigned: "
-          f"{next((f.get('visits_assigned') for f in forms if f.get('form_id')=='AE'), 'NOT FOUND')}", flush=True)
 
     # ── Deduplicate events by OID (preserve first-seen order) ─────────────
     seen_oids      = set()
