@@ -1016,10 +1016,11 @@ async def dry_run_board_json(request: Request):
 
     try:
         from pipeline import (
-            _enforce_common_visit, _build_board_json, download_column_file
+            _enforce_common_visit, _build_board_json, download_column_file,
+            _enforce_form_visits, download_all_column_files
         )
         from monday_client import COL
-        import copy
+        import copy, io, sys
 
         spec_bytes = await download_column_file(item_id, COL["spec_json"])
         if not spec_bytes:
@@ -1028,13 +1029,15 @@ async def dry_run_board_json(request: Request):
         spec = json.loads(spec_bytes.decode("utf-8"))
         s = copy.deepcopy(spec)
 
-        # Run exactly the same sequence as the pipeline fast-rerun path
-        enforce_log = []
-        import io, sys
+        # Load FORMS.csv for _enforce_form_visits
+        crf_files = await download_all_column_files(item_id, COL["crf_library"])
+
+        # Run exactly the same sequence as the pipeline
         buf = io.StringIO()
         old_stdout = sys.stdout
         sys.stdout = buf
         _enforce_common_visit(s)
+        _enforce_form_visits(s, crf_files, {})
         sys.stdout = old_stdout
         enforce_log = buf.getvalue().strip().splitlines()
 
@@ -1043,6 +1046,10 @@ async def dry_run_board_json(request: Request):
         list_oids = [l["eventOcoid"] for l in board["lists"]]
         all_form_oids = sorted(f"F_{f['form_id']}" for f in s["forms"])
         missing = sorted(set(all_form_oids) - set(card_oids))
+
+        # Show all form visit assignments for verification
+        form_visits = {f["form_id"]: f.get("visits_assigned") 
+                       for f in s["forms"] if f.get("form_id")}
 
         return {
             "status": "ok",
@@ -1053,6 +1060,7 @@ async def dry_run_board_json(request: Request):
             "card_oids": card_oids,
             "missing_from_board": missing,
             "enforce_log": enforce_log,
+            "form_visits": form_visits,
             "ae_visits": next(
                 (f.get("visits_assigned") for f in s["forms"] if f.get("form_id") == "AE"),
                 "NOT FOUND"
