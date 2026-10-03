@@ -1029,15 +1029,20 @@ async def dry_run_board_json(request: Request):
         spec = json.loads(spec_bytes.decode("utf-8"))
         s = copy.deepcopy(spec)
 
-        # Load FORMS.csv for _enforce_form_visits
+        # Load FORMS.csv and CQ conventions for _enforce_form_visits
+        from pipeline import _extract_customer_conventions, _build_customer_conventions_block
+        from monday_client import get_item
         crf_files = await download_all_column_files(item_id, COL["crf_library"])
+        _item = await get_item(item_id)
+        _cols = {c["id"]: c for c in (_item.get("column_values") or [])}
+        _conventions = _extract_customer_conventions(_cols)
 
         # Run exactly the same sequence as the pipeline
         buf = io.StringIO()
         old_stdout = sys.stdout
         sys.stdout = buf
         _enforce_common_visit(s)
-        _enforce_form_visits(s, crf_files, {})
+        _enforce_form_visits(s, crf_files, _conventions)
         sys.stdout = old_stdout
         enforce_log = buf.getvalue().strip().splitlines()
 

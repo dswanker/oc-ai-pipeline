@@ -3987,9 +3987,22 @@ def _enforce_form_visits(struct_json: dict, crf_files: list,
     one_per_form = ("1 common visit per form" in cq_text
                     or "own common visit" in cq_text)
 
+    # CQ: remove DOV if customer said No DOV
+    remove_dov = False
+    for q, a in (customer_conventions or {}).items():
+        if "date of visit" in q.lower() or "dov" in q.lower():
+            if str(a).strip().lower() in ("no", "n", "false", "0"):
+                remove_dov = True
+                break
+
+    if remove_dov:
+        before = len(forms)
+        forms[:] = [f for f in forms if (f.get("form_id") or "").upper() != "DOV"]
+        struct_json["forms"] = forms
+        if len(forms) < before:
+            print(f"[enforce-visits] DOV removed per CQ (no DOV)", flush=True)
+
     # CQ: which visits get collapsed (e.g. "hospital into 30 day follow-up")
-    # Build a map of form_id → forced_visit from CQ text
-    # We detect explicit CQ instructions about specific form placements
     collapse_to_fu30 = set()
     if "hospital administration" in cq_text and "30 day" in cq_text:
         collapse_to_fu30.update(["HOSP", "INVA", "IMAGE", "MEDHL"])
@@ -4045,24 +4058,39 @@ def _enforce_form_visits(struct_json: dict, crf_files: list,
                 fixed_count += 1
             continue
 
-        # Fixed-interval forms stay at scheduled visits
+        # Fixed-interval forms stay at scheduled visits — never in common
         if form_id in fixed_interval_forms:
-            # If Claude put it in a common event, that's wrong — but we
-            # don't know which scheduled visit it should be at from FORMS.csv
-            # alone. Leave it as Claude assigned unless it's in SE_COMMON.
             if any("COMMON" in str(v).upper() for v in current):
-                # Claude wrongly put a fixed-interval form in common.
-                # Best we can do: put it in FU30 if that exists, else
-                # leave it and log a warning.
-                if fu30_oid:
-                    print(f"[enforce-visits] {form_id}: fixed-interval form "
-                          f"wrongly in common event → moved to {fu30_oid}",
+                # Claude wrongly put a fixed-interval form in a common event.
+                # Find the first non-common scheduled event as the target,
+                # falling back to FU30 if nothing better is available.
+                scheduled_oids = [
+                    r.get("event") for r in tpt_rows
+                    if "COMMON" not in r.get("event","").upper()
+                    and "UNSCH" not in r.get("event","").upper()
+                ]
+                # For STREV specifically look for a STREV/TEAM_REVIEW event
+                strev_oid = next(
+                    (o for o in scheduled_oids
+                     if "STREV" in o.upper() or "TEAM" in o.upper()
+                     or "AMR" in o.upper() or "REVIEW" in o.upper()),
+                    None
+                )
+                target_scheduled = (
+                    strev_oid if form_id == "STREV" and strev_oid
+                    else fu30_oid if fu30_oid
+                    else scheduled_oids[0] if scheduled_oids
+                    else None
+                )
+                if target_scheduled:
+                    print(f"[enforce-visits] {form_id}: fixed-interval wrongly "
+                          f"in common event → moved to {target_scheduled}",
                           flush=True)
-                    f["visits_assigned"] = [fu30_oid]
+                    f["visits_assigned"] = [target_scheduled]
                     fixed_count += 1
                 else:
                     print(f"[enforce-visits] WARNING: {form_id} is fixed-interval "
-                          f"but Claude placed in common event and no FU30 found",
+                          f"in common event and no scheduled event found",
                           flush=True)
             continue
 
