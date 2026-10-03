@@ -193,10 +193,8 @@ def _build_customer_conventions_block(conventions: dict) -> str:
     override_lines = []
 
     for q, a in conventions.items():
-        q_lower = q.lower()
-        a_str = str(a)
-        a_lower = a_str.lower().strip()
-        # Detect "1 common visit per form" in any CQ answer
+        a_lower = str(a).lower().strip()
+        # Detect "1 common visit per form" — overrides default shared SE_COMMON
         _one_per_form = (
             "1 common visit per form" in a_lower
             or "own common visit" in a_lower
@@ -205,17 +203,16 @@ def _build_customer_conventions_block(conventions: dict) -> str:
         if _one_per_form and not any("MANDATORY OVERRIDE" in o for o in override_lines):
             override_lines.append(
                 "MANDATORY OVERRIDE — RULE OC-9 COMMON EVENT STRUCTURE:\n"
-                "The customer has specified: \"1 common visit per form\". "
-                "You MUST create one dedicated Common event per common form "
-                "instead of a single shared SE_COMMON.\n"
-                "Use OID pattern SE_COMMON_{FORM_ID} for each:\n"
-                "  AE  -> SE_COMMON_AE,  CM  -> SE_COMMON_CM,  "
-                "DV -> SE_COMMON_DV,\n"
-                "  HOSP -> SE_COMMON_HOSP, INVA -> SE_COMMON_INVA, "
-                "IMAGE -> SE_COMMON_IMAGE, MEDHL -> SE_COMMON_MEDHL.\n"
-                "Set event_type=\'common\' and is_repeating=true on each.\n"
+                "The customer requires each common form to have its own dedicated "
+                "Common event instead of a single shared SE_COMMON.\n"
+                "For every form you identify as a common/repeating form, create a "
+                "dedicated event with OID SE_COMMON_{FORM_ID} where FORM_ID is the "
+                "form\'s OID (e.g. if the form OID is AE, the event is SE_COMMON_AE).\n"
+                "Set event_type=\'common\' and is_repeating=true on each event.\n"
                 "Set visits_assigned=[SE_COMMON_{FORM_ID}] on each common form.\n"
-                "Do NOT create a shared SE_COMMON event."
+                "Do NOT create a shared SE_COMMON event.\n"
+                "Which forms are common is determined by the protocol and reference "
+                "material — do not assume specific form IDs."
             )
 
     lines_out = []
@@ -3915,9 +3912,6 @@ def _enforce_common_visit(struct_json):
 
     Idempotent — safe to call multiple times.
     """
-    COMMON_FORMS = {"AE", "CM", "DV", "AESAE", "HOSP", "INVA", "IMAGE",
-                    "MEDHL", "SAE"}
-
     if not isinstance(struct_json, dict):
         return struct_json
 
@@ -3953,15 +3947,12 @@ def _enforce_common_visit(struct_json):
         form_id = f.get("form_id", "")
         visits  = f.get("visits_assigned", [])
 
-        # Determine if this form belongs at a common event:
-        # - explicitly in COMMON_FORMS set, OR
-        # - currently assigned to any SE_COMMON* event, OR
-        # - form is marked repeating=True AND assigned to a single visit
-        #   that contains COMMON in its OID
-        is_common = (
-            form_id.upper() in COMMON_FORMS
-            or any("COMMON" in str(v).upper() for v in visits)
-        )
+        # Only handle forms that Claude already assigned to SE_COMMON (shared).
+        # Do NOT force any specific form IDs into common events — that is
+        # determined by the protocol and reference material, not hardcoded here.
+        # This backstop only handles the structural split when the customer
+        # has requested 1 common visit per form.
+        is_common = any("COMMON" in str(v).upper() for v in visits)
         if not is_common:
             continue
 

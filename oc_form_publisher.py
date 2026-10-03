@@ -2260,7 +2260,7 @@ class FormPublisher:
                                                 _base = _final_oid
                                                 if _base.upper().startswith("F_"):
                                                     _base = _base[2:]
-                                                _base = re.sub(r"_\d+$", "", _base).upper()
+                                                import re as _re_base; _base = _re_base.sub(r"_\d+$", "", _base).upper()
                                                 if _base:
                                                     _uploaded_form_by_base[_base] = {
                                                         "oid": _final_oid,
@@ -2547,7 +2547,7 @@ class FormPublisher:
                                 _cbase = _coid
                                 if _cbase.upper().startswith('F_'):
                                     _cbase = _cbase[2:]
-                                _cbase = re.sub(r'_\d+$', '', _cbase).upper()
+                                import re as _re_cbase; _cbase = _re_cbase.sub(r'_\d+$', '', _cbase).upper()
                                 _hit = _uploaded_form_by_base.get(_cbase)
                                 if not _hit:
                                     continue

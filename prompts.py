@@ -712,8 +712,7 @@ RULE OC-8 — REPEATING-FORM STRUCTURAL PATTERN
     then validates with pyxform + ODK Validate. Generate the correct
     structure in the first pass anyway — self-correction costs an API call.
 
-  For repeating forms (SE_COMMON: AE, CM, DV, AESAE, MH, and any other
-  form assigned ONLY to SE_COMMON):
+  For repeating forms (any form assigned to SE_COMMON or SE_COMMON_{FORM_ID}):
 
   *** CRITICAL RULE — NO YN GATE, NO begin_group/end_group WRAPPER ***
 
@@ -747,44 +746,42 @@ RULE OC-8 — REPEATING-FORM STRUCTURAL PATTERN
 
 RULE OC-9 — COMMON VISIT FOR CROSS-VISIT FORMS
 
-  Every study MUST include one visit/event called "Common Visit" with
-  OID SE_COMMON. This event is:
-    - Repeating (multiple instances can be added per subject)
-    - Non-scheduled (no fixed timepoint)
-    - Available AFTER the enrollment/randomization event
+  Some forms are collected on an ongoing, repeating basis throughout the
+  trial — they are not tied to any specific scheduled visit. These are
+  called "common forms" and belong in a Common Visit event.
 
-  The following forms MUST live ONLY on SE_COMMON, not on any
-  scheduled visit:
-    - AE       (Adverse Events)
-    - CM       (Concomitant Medications)
-    - DV       (Protocol Deviations)
-    - AESAE    (Serious Adverse Event Report)
+  HOW TO IDENTIFY COMMON FORMS:
+    Read the protocol and Schedule of Activities (SoA) carefully.
+    A form is a common form if:
+      - The protocol describes it as collected whenever an event occurs
+        (e.g. "record any time an adverse event occurs")
+      - It does NOT appear as a column in the SoA schedule
+      - The reference material (CRF Standards / source EDC screenshots)
+        shows it as a repeating or unscheduled form
+    A form is NOT a common form if:
+      - It is collected at a specific scheduled visit in the SoA
+      - The Customer Convention Preferences or protocol explicitly place
+        it at a named visit
 
-  In the Study Spec JSON:
+  DEFAULT RULE — common forms go in ONE shared SE_COMMON event:
     * events list — include:
         {"event_oid": "SE_COMMON", "event_title": "Common Visit",
          "event_type": "common", "is_repeating": true,
          "available_after": "<enrollment event oid>"}
-    * For each AE/CM/DV/AESAE form in forms[]:
-        visits_assigned = ["SE_COMMON"]   (exactly this, nothing else)
+    * For each common form:
+        visits_assigned = ["SE_COMMON"]
 
-  EXCEPTION — if the Customer Convention Preferences state that each
-  common form should have its own common visit (e.g. "1 common visit per
-  form"), then instead of a shared SE_COMMON, create one event per common
-  form using OID SE_COMMON_{FORM_ID} (e.g. SE_COMMON_AE, SE_COMMON_CM)
-  and assign each form to its own event. In that case do NOT create a
-  shared SE_COMMON event.
+  EXCEPTION — if Customer Convention Preferences say each common form
+  should have its own common visit (e.g. "1 common visit per form"),
+  then create one SE_COMMON_{FORM_ID} event per common form instead of
+  a shared SE_COMMON. Do NOT create a shared SE_COMMON in that case.
 
-  Rationale: AEs, CMs, deviations, and SAEs can occur at any time during
-  the trial. Attaching them to every scheduled visit creates duplication
-  and confuses the data model. A single Common Visit gives coordinators
-  one place to log these cross-visit events and matches OpenClinica's
-  native "common event" pattern.
+  IMPORTANT: Do not hardcode which forms are common. Let the protocol,
+  SoA, and reference material tell you. If a form is at a specific
+  scheduled visit per the protocol or CQ instructions, put it there —
+  not in SE_COMMON.
 
-  If the protocol does not mention adverse event collection, concomitant
-  medications, deviations, or serious adverse events, skip the corresponding
-  form entirely (do not emit AE etc. with empty content). But SE_COMMON
-  itself should still exist as long as ANY of the four forms are in scope.
+  Only create SE_COMMON if at least one common form exists in the study.
 
 
 RULE OC-9a — REPEATING FORM AUTO-ID USES StudyEventRepeatKey, NOT ItemGroupRepeatKey
