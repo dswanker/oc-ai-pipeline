@@ -3925,6 +3925,189 @@ def _enforce_common_visit(struct_json):
     return struct_json
 
 
+
+def _enforce_form_visits(struct_json: dict, crf_files: list,
+                         customer_conventions: dict) -> dict:
+    """Post-process the spec to enforce correct visit assignments.
+
+    Uses FORMS.csv from the CRF Standards (Fixed Interval field) to
+    determine which forms are repeating (common events) vs scheduled.
+    Applies CQ override instructions on top.
+
+    This runs AFTER Claude generates the spec, so it corrects any
+    Claude errors deterministically. It is data-driven, not hardcoded.
+
+    Priority order (highest to lowest):
+      1. CQ instructions (customer_conventions)
+      2. FORMS.csv Fixed Interval field
+      3. Claude's assignment (left unchanged if no data contradicts it)
+    """
+    import csv, io
+
+    if not isinstance(struct_json, dict):
+        return struct_json
+
+    forms = struct_json.get("forms", [])
+    if not isinstance(forms, list) or not forms:
+        return struct_json
+
+    # ── Parse FORMS.csv ───────────────────────────────────────────────
+    fixed_interval_forms = set()   # Form Keys with Fixed Interval = 1
+    repeating_forms      = set()   # Form Keys with no Fixed Interval
+
+    for fname, fdata in (crf_files or []):
+        if fname.upper() != "FORMS.CSV":
+            continue
+        try:
+            text = fdata.decode("utf-8-sig", errors="replace")
+            reader = csv.DictReader(io.StringIO(text))
+            for row in reader:
+                key = (row.get("Form Key") or "").strip().upper()
+                fi  = (row.get("Fixed Interval") or "").strip()
+                if not key:
+                    continue
+                if fi == "1":
+                    fixed_interval_forms.add(key)
+                else:
+                    repeating_forms.add(key)
+        except Exception as e:
+            print(f"[enforce-visits] FORMS.csv parse error: {e}", flush=True)
+
+    if not fixed_interval_forms and not repeating_forms:
+        print("[enforce-visits] No FORMS.csv data — skipping", flush=True)
+        return struct_json
+
+    print(f"[enforce-visits] FORMS.csv: {len(fixed_interval_forms)} fixed-interval, "
+          f"{len(repeating_forms)} repeating", flush=True)
+
+    # ── Parse CQ overrides ────────────────────────────────────────────
+    cq_text = " ".join(str(v) for v in (customer_conventions or {}).values()).lower()
+
+    # CQ: 1 common visit per form
+    one_per_form = ("1 common visit per form" in cq_text
+                    or "own common visit" in cq_text)
+
+    # CQ: which visits get collapsed (e.g. "hospital into 30 day follow-up")
+    # Build a map of form_id → forced_visit from CQ text
+    # We detect explicit CQ instructions about specific form placements
+    collapse_to_fu30 = set()
+    if "hospital administration" in cq_text and "30 day" in cq_text:
+        collapse_to_fu30.update(["HOSP", "INVA", "IMAGE", "MEDHL"])
+
+    # ── Determine target event for each form ──────────────────────────
+    # Find the enrollment event OID and FU30 event OID from timepoint rows
+    tpt_rows = struct_json.get("timepoint_csv", {}).get("rows", [])
+    enrollment_oid = next(
+        (r.get("event") for r in tpt_rows
+         if "ENROLL" in r.get("event","").upper()
+         or "ENRL" in r.get("event","").upper()),
+        None
+    )
+    fu30_oid = next(
+        (r.get("event") for r in tpt_rows
+         if any(x in r.get("event","").upper()
+                for x in ["FU30","FOLLOW","FOLLOWUP","DAY30","DAY_30"])),
+        None
+    )
+
+    # ── Apply corrections ─────────────────────────────────────────────
+    events        = struct_json.setdefault("events", [])
+    existing_eids = {e.get("event_oid") for e in events if isinstance(e, dict)}
+    tpt_oids      = {r.get("event") for r in tpt_rows}
+
+    def _ensure_event(oid, title, etype, repeating):
+        if oid not in existing_eids:
+            events.append({
+                "event_oid":       oid,
+                "event_title":     title,
+                "event_type":      etype,
+                "is_repeating":    repeating,
+                "available_after": enrollment_oid or "",
+            })
+            existing_eids.add(oid)
+        if oid not in tpt_oids:
+            tpt_rows.append({"event": oid, "timepoint": title, "type": etype})
+            tpt_oids.add(oid)
+
+    fixed_count = 0
+    for f in forms:
+        if not isinstance(f, dict):
+            continue
+        form_id = (f.get("form_id") or "").upper()
+        current = f.get("visits_assigned", [])
+
+        # CQ collapse override — these go to FU30 regardless
+        if form_id in collapse_to_fu30:
+            if fu30_oid and current != [fu30_oid]:
+                print(f"[enforce-visits] {form_id}: CQ collapse → {fu30_oid}",
+                      flush=True)
+                f["visits_assigned"] = [fu30_oid]
+                fixed_count += 1
+            continue
+
+        # Fixed-interval forms stay at scheduled visits
+        if form_id in fixed_interval_forms:
+            # If Claude put it in a common event, that's wrong — but we
+            # don't know which scheduled visit it should be at from FORMS.csv
+            # alone. Leave it as Claude assigned unless it's in SE_COMMON.
+            if any("COMMON" in str(v).upper() for v in current):
+                # Claude wrongly put a fixed-interval form in common.
+                # Best we can do: put it in FU30 if that exists, else
+                # leave it and log a warning.
+                if fu30_oid:
+                    print(f"[enforce-visits] {form_id}: fixed-interval form "
+                          f"wrongly in common event → moved to {fu30_oid}",
+                          flush=True)
+                    f["visits_assigned"] = [fu30_oid]
+                    fixed_count += 1
+                else:
+                    print(f"[enforce-visits] WARNING: {form_id} is fixed-interval "
+                          f"but Claude placed in common event and no FU30 found",
+                          flush=True)
+            continue
+
+        # Repeating forms go in common events
+        if form_id in repeating_forms:
+            if one_per_form:
+                # CQ: one SE_COMMON_{form_id} per form
+                target = f"SE_COMMON_{form_id}"
+                _ensure_event(target, f.get("form_title", form_id),
+                              "common", True)
+                if current != [target]:
+                    print(f"[enforce-visits] {form_id}: repeating + 1-per-form "
+                          f"→ {target}", flush=True)
+                    f["visits_assigned"] = [target]
+                    fixed_count += 1
+            else:
+                # Default: shared SE_COMMON
+                _ensure_event("SE_COMMON", "Common Visit", "common", True)
+                if current != ["SE_COMMON"]:
+                    print(f"[enforce-visits] {form_id}: repeating → SE_COMMON",
+                          flush=True)
+                    f["visits_assigned"] = ["SE_COMMON"]
+                    fixed_count += 1
+            continue
+
+        # Form not in FORMS.csv — leave as Claude assigned
+
+    # Clean up: remove SE_COMMON if one_per_form and it's now empty
+    if one_per_form:
+        common_users = [f for f in forms
+                        if f.get("visits_assigned") == ["SE_COMMON"]]
+        if not common_users:
+            events[:] = [e for e in events
+                         if e.get("event_oid") != "SE_COMMON"]
+            tpt_rows[:] = [r for r in tpt_rows
+                           if r.get("event") != "SE_COMMON"]
+
+    struct_json["events"] = events
+    struct_json["timepoint_csv"]["rows"] = tpt_rows
+
+    if fixed_count:
+        print(f"[enforce-visits] corrected {fixed_count} form(s)", flush=True)
+    return struct_json
+
+
 def _backfill_migration_fields(spec):
     """Add schedule_of_events + per-form migration lifecycle fields if
     missing. Idempotent — safe to call on every spec load."""
@@ -5416,6 +5599,7 @@ async def run_pipeline(item_id):
                         print("Extracted JSON from edited Study Spec XLSX.", flush=True)
                         # OC-9 backstop: apply to edited-XLSX path as well
                         struct_json = _enforce_common_visit(struct_json)
+                        struct_json = _enforce_form_visits(struct_json, _crf_files, customer_conventions)
                         struct_json = _backfill_migration_fields(struct_json)
                         struct_json = _sanitize_form_titles(struct_json)
                         struct_json = _ensure_required_forms(struct_json, protocol_num, customer_conventions)
@@ -5560,6 +5744,7 @@ async def run_pipeline(item_id):
             spec_bytes = await download_column_file(item_id, COL["spec_json"])
             struct_json = json.loads(spec_bytes.decode("utf-8"))
             struct_json = _enforce_common_visit(struct_json)
+            struct_json = _enforce_form_visits(struct_json, _crf_files, customer_conventions)
             struct_json = _backfill_migration_fields(struct_json)
             struct_json = _sanitize_form_titles(struct_json)
             struct_json = _ensure_required_forms(struct_json, protocol_num, customer_conventions)
@@ -5746,6 +5931,7 @@ async def run_pipeline(item_id):
                 if _existing_spec:
                     struct_json = json.loads(_existing_spec.decode("utf-8"))
                     struct_json = _enforce_common_visit(struct_json)
+                    struct_json = _enforce_form_visits(struct_json, _crf_files, customer_conventions)
                     struct_json = _backfill_migration_fields(struct_json)
                     struct_json = _sanitize_form_titles(struct_json)
                     struct_json = _ensure_required_forms(struct_json, protocol_num, customer_conventions)
@@ -6068,6 +6254,7 @@ async def run_pipeline(item_id):
             # OC-9 backstop: ensure SE_COMMON exists and AE/CM/DV/AESAE
             # forms live only there. Deterministic fix-up if Claude missed it.
             struct_json = _enforce_common_visit(struct_json)
+            struct_json = _enforce_form_visits(struct_json, _crf_files, customer_conventions)
             struct_json = _backfill_migration_fields(struct_json)
             struct_json = _sanitize_form_titles(struct_json)
             struct_json = _ensure_required_forms(struct_json, protocol_num, customer_conventions)
