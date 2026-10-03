@@ -182,62 +182,16 @@ def _extract_customer_conventions(cols: dict) -> dict:
 
 
 def _build_customer_conventions_block(conventions: dict) -> str:
-    """Format customer conventions as a prompt-ready text block.
-
-    Detects answers that must override system prompt defaults and injects
-    them as MANDATORY OVERRIDE directives Claude will follow over RULE OC-9.
-    """
+    """Format customer conventions as a prompt-ready text block. Empty when no answers."""
     if not conventions:
         return ""
-
-    override_lines = []
-
-    for q, a in conventions.items():
-        a_lower = str(a).lower().strip()
-        # Detect "1 common visit per form" — overrides default shared SE_COMMON
-        _one_per_form = (
-            "1 common visit per form" in a_lower
-            or "own common visit" in a_lower
-            or "one common visit per form" in a_lower
-        )
-        if _one_per_form and not any("MANDATORY OVERRIDE" in o for o in override_lines):
-            override_lines.append(
-                "MANDATORY OVERRIDE — RULE OC-9 COMMON EVENT STRUCTURE:\n"
-                "The customer requires each common form to have its own dedicated "
-                "Common event instead of a single shared SE_COMMON.\n"
-                "For every form you identify as a common/repeating form, create a "
-                "dedicated event with OID SE_COMMON_{FORM_ID} where FORM_ID is the "
-                "form\'s OID (e.g. if the form OID is AE, the event is SE_COMMON_AE).\n"
-                "Set event_type=\'common\' and is_repeating=true on each event.\n"
-                "Set visits_assigned=[SE_COMMON_{FORM_ID}] on each common form.\n"
-                "Do NOT create a shared SE_COMMON event.\n"
-                "Which forms are common is determined by the protocol and reference "
-                "material — do not assume specific form IDs."
-            )
-
-    lines_out = []
-    if override_lines:
-        lines_out.append(
-            "MANDATORY CUSTOMER OVERRIDES — these take precedence over all "
-            "built-in rules including RULE OC-9:"
-        )
-        for ov in override_lines:
-            lines_out.append("")
-            lines_out.append(ov)
-        lines_out.append("")
-        lines_out.append(
-            "Customer Convention Preferences (apply these when generating the Study Spec):"
-        )
-    else:
-        lines_out.append(
-            "Customer Convention Preferences (apply these when generating the Study Spec):"
-        )
-
+    lines = [
+        "Customer Convention Preferences (apply these when generating the Study Spec):",
+    ]
     for question, answer in conventions.items():
-        lines_out.append(f"  - Q: {question}")
-        lines_out.append(f"    A: {answer}")
-    return "\n".join(lines_out)
-
+        lines.append(f"  - Q: {question}")
+        lines.append(f"    A: {answer}")
+    return "\n".join(lines)
 
 
 _VALID_PHASES = {"PHASEI", "PHASEII", "PHASEIII", "PHASEIV", "OTHER_NON_IND"}
@@ -3891,27 +3845,14 @@ async def load_dvs_uat_data(item_id):
 # ── OC-9 backstop: Common Visit for cross-visit forms ────────────────────────
 
 def _enforce_common_visit(struct_json):
-    """RULE OC-9 backstop. Ensure each form that belongs at a common visit
-    gets its OWN common event (SE_COMMON_{FORM_ID}).
-
-    OC4 Study Designer requires one Common event accordion entry per
-    repeating form — a shared SE_COMMON that holds all common forms
-    produces a single accordion row, not one per form. The CQ convention
-    "1 common visit per form that belongs at a common visit" is the
-    explicit customer requirement driving this design.
-
-    Handles two cases:
-    1. Claude assigned forms to "SE_COMMON" (shared) → split into
-       SE_COMMON_{form_id} per form.
-    2. Claude assigned repeating/common forms to scheduled events → move
-       them to their own SE_COMMON_{form_id} event.
-
-    The COMMON_FORMS set is a backstop for forms Claude may have missed.
-    Any form with is_repeating=True or already assigned to any *COMMON*
-    event is also split out.
+    """RULE OC-9 backstop. Ensure SE_COMMON exists and AE/CM/DV/AESAE
+    forms only live there. Runs after Claude returns the Study Spec JSON
+    and fixes the structure deterministically if Claude forgot.
 
     Idempotent — safe to call multiple times.
     """
+    COMMON_FORMS = {"AE", "CM", "DV", "AESAE"}
+
     if not isinstance(struct_json, dict):
         return struct_json
 
@@ -3919,109 +3860,67 @@ def _enforce_common_visit(struct_json):
     if not isinstance(forms, list):
         return struct_json
 
+    # Events may be stored under "events" or "visits" depending on version.
     events = struct_json.get("events")
     if events is None:
         events = struct_json.get("visits", [])
     if not isinstance(events, list):
         events = []
 
-    # Find enrollment event to anchor common events' availability window
+    # Only create SE_COMMON if at least one common form is in scope.
+    common_forms_in_study = [
+        f for f in forms
+        if isinstance(f, dict) and f.get("form_id") in COMMON_FORMS
+    ]
+    if not common_forms_in_study:
+        return struct_json
+
+    # Find enrollment event to anchor SE_COMMON's availability window
     enrollment_oid = None
     for ev in events:
         if not isinstance(ev, dict):
             continue
         oid = str(ev.get("event_oid", "")).upper()
-        if "ENRL" in oid or "RAND" in oid or "ENROLL" in oid or "SCREEN" in oid:
+        if "ENRL" in oid or "RAND" in oid or "ENROLL" in oid:
             enrollment_oid = ev.get("event_oid")
             break
 
-    # Build set of existing event OIDs for dedup
-    existing_event_oids = {
-        ev.get("event_oid") for ev in events if isinstance(ev, dict)
-    }
+    # Ensure SE_COMMON exists in events
+    has_se_common = any(
+        isinstance(ev, dict) and ev.get("event_oid") == "SE_COMMON"
+        for ev in events
+    )
+    if not has_se_common:
+        events.append({
+            "event_oid":       "SE_COMMON",
+            "event_title":     "Common Visit",
+            "event_type":      "common",
+            "is_repeating":    True,
+            "available_after": enrollment_oid or "",
+        })
+        struct_json["events"] = events
 
+    # Ensure SE_COMMON is in timepoint_csv.rows
+    tpt = struct_json.setdefault("timepoint_csv", {})
+    tpt_rows = tpt.setdefault("rows", [])
+    existing_tpt_oids = {r.get("event") for r in tpt_rows}
+    if "SE_COMMON" not in existing_tpt_oids:
+        tpt_rows.append({
+            "event":     "SE_COMMON",
+            "timepoint": "Common Visit",
+            "type":      "common",
+        })
+
+    # Force visits_assigned=["SE_COMMON"] on each common form
     fixed_count = 0
-    for f in forms:
-        if not isinstance(f, dict):
-            continue
-        form_id = f.get("form_id", "")
-        visits  = f.get("visits_assigned", [])
-
-        # Only handle forms that Claude already assigned to SE_COMMON (shared).
-        # Do NOT force any specific form IDs into common events — that is
-        # determined by the protocol and reference material, not hardcoded here.
-        # This backstop only handles the structural split when the customer
-        # has requested 1 common visit per form.
-        is_common = any("COMMON" in str(v).upper() for v in visits)
-        if not is_common:
-            continue
-
-        # Each common form gets its own SE_COMMON_{form_id} event
-        target_oid   = f"SE_COMMON_{form_id.upper()}"
-        target_title = f.get("form_title", form_id)  # event title = form title
-
-        # Create the event if it doesn't exist yet
-        if target_oid not in existing_event_oids:
-            events.append({
-                "event_oid":       target_oid,
-                "event_title":     target_title,
-                "event_type":      "common",
-                "is_repeating":    True,
-                "available_after": enrollment_oid or "",
-            })
-            existing_event_oids.add(target_oid)
-            print(f"[OC-9] Created common event {target_oid!r} "
-                  f"for form {form_id!r}", flush=True)
-
-        # Reassign the form to its own common event
-        if f.get("visits_assigned") != [target_oid]:
-            f["visits_assigned"] = [target_oid]
+    for f in common_forms_in_study:
+        if f.get("visits_assigned") != ["SE_COMMON"]:
+            f["visits_assigned"] = ["SE_COMMON"]
             fixed_count += 1
 
     if fixed_count:
-        print(f"[OC-9] Assigned {fixed_count} form(s) to individual "
-              f"common events (SE_COMMON_{{form_id}})", flush=True)
-
-    # Remove the shared SE_COMMON event if it exists and is now empty
-    # (all forms have been moved to their own events)
-    events[:] = [
-        ev for ev in events
-        if not (isinstance(ev, dict) and ev.get("event_oid") == "SE_COMMON")
-    ]
-    struct_json["events"] = events
-
-    # ── Sync new common events into timepoint_csv.rows ────────────────────
-    # _build_board_json reads from timepoint_csv.rows to build the board
-    # lists (event columns). If SE_COMMON_{form_id} events are not in
-    # timepoint_csv.rows they will be absent from the board import and
-    # the publisher will have no card to upload those forms to.
-    tpt = struct_json.setdefault("timepoint_csv", {})
-    tpt_rows = tpt.setdefault("rows", [])
-    existing_tpt_oids = {r.get("event") for r in tpt_rows if r.get("event")}
-
-    for ev in events:
-        if not isinstance(ev, dict):
-            continue
-        ev_oid = ev.get("event_oid", "")
-        if not ev_oid.startswith("SE_COMMON_"):
-            continue
-        if ev_oid in existing_tpt_oids:
-            continue
-        # Add a minimal timepoint row so _build_board_json creates the list
-        tpt_rows.append({
-            "event":     ev_oid,
-            "timepoint": ev.get("event_title", ev_oid),
-            "type":      "common",
-        })
-        existing_tpt_oids.add(ev_oid)
-        print(f"[OC-9] Added {ev_oid!r} to timepoint_csv.rows "
-              f"(title={ev.get('event_title','')!r})", flush=True)
-
-    # Also remove SE_COMMON from timepoint_csv.rows if present
-    tpt_rows[:] = [
-        r for r in tpt_rows
-        if r.get("event") != "SE_COMMON"
-    ]
+        print(f"[OC-9] backstop: reassigned {fixed_count} form(s) to SE_COMMON",
+              flush=True)
 
     return struct_json
 

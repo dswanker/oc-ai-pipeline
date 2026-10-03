@@ -2,14 +2,12 @@
 Unit tests for _enforce_common_visit and _build_board_json.
 
 Verifies that:
-1. _enforce_common_visit creates one SE_COMMON_{form_id} event per
-   common form and removes the shared SE_COMMON.
-2. Those events are synced into timepoint_csv.rows.
-3. _build_board_json produces one Common list per common form.
-4. Each common form card lands in the correct list.
-5. Visit-based forms are unaffected.
-
-No OC4 call, no study creation — fully offline.
+1. _enforce_common_visit ensures SE_COMMON exists and AE/CM/DV/AESAE
+   forms are assigned to it (the original working behaviour).
+2. SE_COMMON is in timepoint_csv.rows.
+3. _build_board_json produces one Common list (SE_COMMON) with all
+   common form cards under it.
+4. Visit-based forms are unaffected.
 """
 import copy
 import pytest
@@ -18,216 +16,159 @@ import sys
 sys.path.insert(0, '/Users/danswanker/oc-ai-pipeline')
 
 
-# Functions provided via conftest.py fixtures: enforce_common_visit, build_board_json
+@pytest.fixture(scope='session')
+def pipeline_fns_board():
+    import ast
+    src = open('/Users/danswanker/oc-ai-pipeline/pipeline.py').read()
+    tree = ast.parse(src)
+    snippets = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name in (
+                '_enforce_common_visit', '_build_board_json'):
+            snippets.append(ast.get_source_segment(src, node))
+    ns = {}
+    exec(compile('\n\n'.join(snippets), '<pipeline>', 'exec'), ns)
+    return ns
 
 
-# ── Fixture spec ─────────────────────────────────────────────────────────────
 @pytest.fixture
 def spec():
     return {
-        "study_meta": {"protocol_number": "TEST-001"},
         "forms": [
-            # Visit-based forms
             {"form_id": "DOV",  "form_title": "Date of Visit",
-             "repeating": False, "visits_assigned": ["SE_SCREEN"],
-             "survey": [], "choices": []},
+             "visits_assigned": ["SE_SCREEN"], "survey": [], "choices": []},
             {"form_id": "DM",   "form_title": "Demographics",
-             "repeating": False, "visits_assigned": ["SE_SCREEN"],
-             "survey": [], "choices": []},
-            # Common forms — assigned to shared SE_COMMON
+             "visits_assigned": ["SE_SCREEN"], "survey": [], "choices": []},
             {"form_id": "AE",   "form_title": "Adverse Event",
-             "repeating": True,  "visits_assigned": ["SE_COMMON"],
-             "survey": [], "choices": []},
+             "visits_assigned": ["SE_COMMON"], "survey": [], "choices": []},
             {"form_id": "CM",   "form_title": "Concomitant Medications",
-             "repeating": True,  "visits_assigned": ["SE_COMMON"],
-             "survey": [], "choices": []},
+             "visits_assigned": ["SE_COMMON"], "survey": [], "choices": []},
             {"form_id": "DV",   "form_title": "Protocol Deviation",
-             "repeating": True,  "visits_assigned": ["SE_COMMON"],
-             "survey": [], "choices": []},
-            {"form_id": "HOSP", "form_title": "Hospital Admission",
-             "repeating": True,  "visits_assigned": ["SE_COMMON"],
-             "survey": [], "choices": []},
+             "visits_assigned": ["SE_COMMON"], "survey": [], "choices": []},
         ],
         "events": [
             {"event_oid": "SE_SCREEN", "event_title": "Screening",
              "event_type": "scheduled", "is_repeating": False},
-            {"event_oid": "SE_COMMON", "event_title": "Common Visit",
-             "event_type": "common",    "is_repeating": True},
         ],
-        "timepoint_csv": {
-            "rows": [
-                {"event": "SE_SCREEN", "timepoint": "Screening",    "type": "scheduled"},
-                {"event": "SE_COMMON", "timepoint": "Common Visit",  "type": "common"},
-            ]
-        },
+        "timepoint_csv": {"rows": [
+            {"event": "SE_SCREEN", "timepoint": "Screening",
+             "type": "scheduled", "arm": "ALL"},
+        ]},
         "form_placements": [],
-        "schedule_of_events": {},
     }
 
 
-# ── _enforce_common_visit tests ───────────────────────────────────────────────
 class TestEnforceCommonVisit:
 
-    def test_creates_one_event_per_common_form(self, spec, enforce_common_visit):
+    def test_creates_se_common_event(self, spec, pipeline_fns_board):
         s = copy.deepcopy(spec)
-        result = enforce_common_visit(s)
-        event_oids = [e['event_oid'] for e in result['events']]
-        assert 'SE_COMMON_AE'   in event_oids
-        assert 'SE_COMMON_CM'   in event_oids
-        assert 'SE_COMMON_DV'   in event_oids
-        assert 'SE_COMMON_HOSP' in event_oids
+        pipeline_fns_board['_enforce_common_visit'](s)
+        oids = [e['event_oid'] for e in s['events']]
+        assert 'SE_COMMON' in oids
 
-    def test_removes_shared_se_common_event(self, spec, enforce_common_visit):
+    def test_se_common_is_repeating(self, spec, pipeline_fns_board):
         s = copy.deepcopy(spec)
-        result = enforce_common_visit(s)
-        event_oids = [e['event_oid'] for e in result['events']]
-        assert 'SE_COMMON' not in event_oids
+        pipeline_fns_board['_enforce_common_visit'](s)
+        ev = next(e for e in s['events'] if e['event_oid'] == 'SE_COMMON')
+        assert ev['is_repeating'] is True
+        assert ev['event_type'] == 'common'
 
-    def test_visit_based_events_untouched(self, spec, enforce_common_visit):
+    def test_common_forms_assigned_to_se_common(self, spec, pipeline_fns_board):
         s = copy.deepcopy(spec)
-        result = enforce_common_visit(s)
-        event_oids = [e['event_oid'] for e in result['events']]
-        assert 'SE_SCREEN' in event_oids
+        pipeline_fns_board['_enforce_common_visit'](s)
+        forms = {f['form_id']: f for f in s['forms']}
+        assert forms['AE']['visits_assigned'] == ['SE_COMMON']
+        assert forms['CM']['visits_assigned'] == ['SE_COMMON']
+        assert forms['DV']['visits_assigned'] == ['SE_COMMON']
 
-    def test_common_forms_reassigned_to_own_event(self, spec, enforce_common_visit):
+    def test_visit_based_forms_unchanged(self, spec, pipeline_fns_board):
         s = copy.deepcopy(spec)
-        result = enforce_common_visit(s)
-        forms = {f['form_id']: f for f in result['forms']}
-        assert forms['AE']['visits_assigned']   == ['SE_COMMON_AE']
-        assert forms['CM']['visits_assigned']   == ['SE_COMMON_CM']
-        assert forms['DV']['visits_assigned']   == ['SE_COMMON_DV']
-        assert forms['HOSP']['visits_assigned'] == ['SE_COMMON_HOSP']
-
-    def test_visit_based_forms_visits_unchanged(self, spec, enforce_common_visit):
-        s = copy.deepcopy(spec)
-        result = enforce_common_visit(s)
-        forms = {f['form_id']: f for f in result['forms']}
+        pipeline_fns_board['_enforce_common_visit'](s)
+        forms = {f['form_id']: f for f in s['forms']}
         assert forms['DOV']['visits_assigned'] == ['SE_SCREEN']
         assert forms['DM']['visits_assigned']  == ['SE_SCREEN']
 
-    def test_common_events_added_to_timepoint_csv_rows(self, spec, enforce_common_visit):
+    def test_se_common_in_timepoint_csv(self, spec, pipeline_fns_board):
         s = copy.deepcopy(spec)
-        result = enforce_common_visit(s)
-        tpt_oids = [r['event'] for r in result['timepoint_csv']['rows']]
-        assert 'SE_COMMON_AE'   in tpt_oids
-        assert 'SE_COMMON_CM'   in tpt_oids
-        assert 'SE_COMMON_DV'   in tpt_oids
-        assert 'SE_COMMON_HOSP' in tpt_oids
+        pipeline_fns_board['_enforce_common_visit'](s)
+        tpt_oids = [r['event'] for r in s['timepoint_csv']['rows']]
+        assert 'SE_COMMON' in tpt_oids
 
-    def test_shared_se_common_removed_from_timepoint_csv(self, spec, enforce_common_visit):
+    def test_idempotent(self, spec, pipeline_fns_board):
         s = copy.deepcopy(spec)
-        result = enforce_common_visit(s)
-        tpt_oids = [r['event'] for r in result['timepoint_csv']['rows']]
-        assert 'SE_COMMON' not in tpt_oids
+        pipeline_fns_board['_enforce_common_visit'](s)
+        pipeline_fns_board['_enforce_common_visit'](s)
+        oids = [e['event_oid'] for e in s['events']]
+        assert oids.count('SE_COMMON') == 1
 
-    def test_idempotent(self, spec, enforce_common_visit):
-        """Calling twice produces same result."""
-        s = copy.deepcopy(spec)
-        once  = enforce_common_visit(copy.deepcopy(s))
-        twice = enforce_common_visit(copy.deepcopy(once))
-        once_oids  = sorted(e['event_oid'] for e in once['events'])
-        twice_oids = sorted(e['event_oid'] for e in twice['events'])
-        assert once_oids == twice_oids
-
-    def test_no_common_forms_is_noop(self, enforce_common_visit):
-        """Spec with no common forms: events unchanged."""
+    def test_no_common_forms_is_noop(self, pipeline_fns_board):
         s = {
-            "forms": [
-                {"form_id": "DOV", "form_title": "DOV",
-                 "visits_assigned": ["SE_SCREEN"],
-                 "survey": [], "choices": []},
-            ],
-            "events": [
-                {"event_oid": "SE_SCREEN", "event_title": "Screening",
-                 "event_type": "scheduled", "is_repeating": False},
-            ],
+            "forms": [{"form_id": "DOV", "form_title": "DOV",
+                        "visits_assigned": ["SE_SCREEN"],
+                        "survey": [], "choices": []}],
+            "events": [{"event_oid": "SE_SCREEN", "event_title": "Screening",
+                        "event_type": "scheduled", "is_repeating": False}],
             "timepoint_csv": {"rows": [
                 {"event": "SE_SCREEN", "timepoint": "Screening", "type": "scheduled"}
             ]},
             "form_placements": [],
         }
-        result = enforce_common_visit(s)
-        assert [e['event_oid'] for e in result['events']] == ['SE_SCREEN']
+        pipeline_fns_board['_enforce_common_visit'](s)
+        oids = [e['event_oid'] for e in s['events']]
+        assert 'SE_COMMON' not in oids
 
 
-# ── _build_board_json tests ───────────────────────────────────────────────────
 class TestBuildBoardJson:
 
     @pytest.fixture
-    def board(self, spec, pipeline_fns):
-        """Run enforce then build on the fixture spec."""
+    def board(self, spec, pipeline_fns_board):
         s = copy.deepcopy(spec)
-        pipeline_fns['_enforce_common_visit'](s)
-        return pipeline_fns['_build_board_json'](s)
+        pipeline_fns_board['_enforce_common_visit'](s)
+        return pipeline_fns_board['_build_board_json'](s)
 
-    def test_returns_dict_with_lists_and_cards(self, board):
-        assert isinstance(board, dict)
-        assert 'lists' in board
-        assert 'cards' in board
+    def test_has_one_common_list(self, board):
+        common = [l for l in board['lists'] if l['eventOcoid'] == 'SE_COMMON']
+        assert len(common) == 1
+        assert common[0]['type'] == 'Common'
 
-    def test_one_common_list_per_common_form(self, board):
-        list_types = {l['eventOcoid']: l['type'] for l in board['lists']}
-        assert list_types.get('SE_COMMON_AE')   == 'Common'
-        assert list_types.get('SE_COMMON_CM')   == 'Common'
-        assert list_types.get('SE_COMMON_DV')   == 'Common'
-        assert list_types.get('SE_COMMON_HOSP') == 'Common'
-
-    def test_no_shared_se_common_list(self, board):
-        list_oids = [l['eventOcoid'] for l in board['lists']]
-        assert 'SE_COMMON' not in list_oids
-
-    def test_screening_list_is_visit_based(self, board):
+    def test_se_screen_list_is_visit_based(self, board):
         lists = {l['eventOcoid']: l for l in board['lists']}
         assert lists['SE_SCREEN']['type'] == 'Visit-Based'
 
-    def test_ae_card_in_se_common_ae_list(self, board):
+    def test_ae_card_in_se_common(self, board):
         lists = {l['eventOcoid']: l['_id'] for l in board['lists']}
-        ae_card = next(
-            (c for c in board['cards']
-             if c.get('formOcoid') == 'F_AE'),
-            None
-        )
-        assert ae_card is not None, "No F_AE card found"
-        assert ae_card['listId'] == lists['SE_COMMON_AE'], \
-            f"F_AE card is in wrong list: {ae_card['listId']}"
+        ae_card = next((c for c in board['cards']
+                        if c.get('formOcoid') == 'F_AE'), None)
+        assert ae_card is not None
+        assert ae_card['listId'] == lists['SE_COMMON']
 
-    def test_cm_card_in_se_common_cm_list(self, board):
+    def test_cm_card_in_se_common(self, board):
         lists = {l['eventOcoid']: l['_id'] for l in board['lists']}
-        cm_card = next(
-            (c for c in board['cards'] if c.get('formOcoid') == 'F_CM'), None
-        )
+        cm_card = next((c for c in board['cards']
+                        if c.get('formOcoid') == 'F_CM'), None)
         assert cm_card is not None
-        assert cm_card['listId'] == lists['SE_COMMON_CM']
+        assert cm_card['listId'] == lists['SE_COMMON']
 
-    def test_dov_card_in_screening_list(self, board):
+    def test_dv_card_in_se_common(self, board):
         lists = {l['eventOcoid']: l['_id'] for l in board['lists']}
-        dov_card = next(
-            (c for c in board['cards'] if c.get('formOcoid') == 'F_DOV'), None
-        )
-        assert dov_card is not None
-        assert dov_card['listId'] == lists['SE_SCREEN']
+        dv_card = next((c for c in board['cards']
+                        if c.get('formOcoid') == 'F_DV'), None)
+        assert dv_card is not None
+        assert dv_card['listId'] == lists['SE_COMMON']
 
-    def test_all_forms_have_cards(self, spec, board, pipeline_fns):
-        """Every form in the spec has at least one card in the board."""
+    def test_all_forms_have_cards(self, spec, pipeline_fns_board, board):
         s = copy.deepcopy(spec)
-        pipeline_fns['_enforce_common_visit'](s)
-        expected_oids = {f'F_{f["form_id"]}' for f in s['forms']}
-        actual_oids   = {c['formOcoid'] for c in board['cards']}
-        missing = expected_oids - actual_oids
-        assert not missing, f"Forms missing from board cards: {missing}"
+        pipeline_fns_board['_enforce_common_visit'](s)
+        expected = {f'F_{f["form_id"]}' for f in s['forms']}
+        actual = {c['formOcoid'] for c in board['cards']}
+        assert expected == actual
 
-    def test_common_cards_are_not_required(self, board):
-        """Common/repeating cards should not be marked required."""
-        common_oids = {'F_AE', 'F_CM', 'F_DV', 'F_HOSP'}
+    def test_common_cards_not_required(self, board):
         for card in board['cards']:
-            if card.get('formOcoid') in common_oids:
-                assert not card.get('required', False), \
-                    f"{card['formOcoid']} card should not be required"
+            if card.get('formOcoid') in ('F_AE', 'F_CM', 'F_DV'):
+                assert not card.get('required', False)
 
-    def test_visit_based_cards_are_required(self, board):
-        """Visit-based cards should be required by default."""
-        vb_oids = {'F_DOV', 'F_DM'}
+    def test_visit_based_cards_required(self, board):
         for card in board['cards']:
-            if card.get('formOcoid') in vb_oids:
-                assert card.get('required', False), \
-                    f"{card['formOcoid']} card should be required"
+            if card.get('formOcoid') in ('F_DOV', 'F_DM'):
+                assert card.get('required', False)
