@@ -747,37 +747,52 @@ RULE OC-8 — REPEATING-FORM STRUCTURAL PATTERN
 
 RULE OC-9 — COMMON VISIT FOR CROSS-VISIT FORMS
 
-  Every study MUST include one visit/event called "Common Visit" with
-  OID SE_COMMON. This event is:
-    - Repeating (multiple instances can be added per subject)
-    - Non-scheduled (no fixed timepoint)
-    - Available AFTER the enrollment/randomization event
+  DEFAULT BEHAVIOUR (apply unless overridden by the inputs below):
 
-  The following forms MUST live ONLY on SE_COMMON, not on any
-  scheduled visit:
-    - AE       (Adverse Events)
-    - CM       (Concomitant Medications)
-    - DV       (Protocol Deviations)
-    - AESAE    (Serious Adverse Event Report)
+  Forms that are collected on an ongoing, repeating basis throughout the
+  trial — not tied to any specific scheduled visit — belong in a Common
+  event. The default is one shared Common event (SE_COMMON) for all such
+  forms.
 
-  In the Study Spec JSON:
+  In the Study Spec JSON (default):
     * events list — include:
         {"event_oid": "SE_COMMON", "event_title": "Common Visit",
          "event_type": "common", "is_repeating": true,
          "available_after": "<enrollment event oid>"}
-    * For each AE/CM/DV/AESAE form in forms[]:
-        visits_assigned = ["SE_COMMON"]   (exactly this, nothing else)
+    * For each common form:
+        visits_assigned = ["SE_COMMON"]
 
-  Rationale: AEs, CMs, deviations, and SAEs can occur at any time during
-  the trial. Attaching them to every scheduled visit creates duplication
-  and confuses the data model. A single Common Visit gives coordinators
-  one place to log these cross-visit events and matches OpenClinica's
-  native "common event" pattern.
+  OVERRIDE PRIORITY — the following inputs override this default,
+  from highest to lowest priority:
 
-  If the protocol does not mention adverse event collection, concomitant
-  medications, deviations, or serious adverse events, skip the corresponding
-  form entirely (do not emit AE etc. with empty content). But SE_COMMON
-  itself should still exist as long as ANY of the four forms are in scope.
+  1. Customer Convention Preferences (CQ answers on the Monday board)
+     These always take precedence over the default. Examples:
+     - "1 common visit per form" → create SE_COMMON_{FORM_ID} per form
+       instead of a shared SE_COMMON (e.g. SE_COMMON_AE, SE_COMMON_CM)
+     - "Hospital administration into 30-day follow-up" → HOSP form goes
+       to the 30-day follow-up visit, NOT SE_COMMON
+     Read ALL CQ answers carefully and apply them to form placements.
+
+  2. Protocol or Schedule of Activities (SoA)
+     If the protocol explicitly places a form at a specific visit,
+     use that visit regardless of the default.
+
+  3. Reference material (CRF Standards, source EDC screenshots, FORMS.csv)
+     If a form has Fixed Interval = 1 in the source system, it belongs
+     at a specific scheduled visit, not SE_COMMON.
+     If a form has no Fixed Interval (blank), it is repeating and belongs
+     in a common event by default.
+
+  HOW TO DETERMINE WHICH FORMS ARE COMMON:
+  Read the reference material. A form belongs in a common event if:
+    - It has no Fixed Interval in the source system (repeating), AND
+    - The protocol/CQ does not place it at a specific visit
+  A form belongs at a scheduled visit if:
+    - It has Fixed Interval = 1 in the source system, OR
+    - The CQ or protocol explicitly assigns it to a named visit
+
+  Only create SE_COMMON (or SE_COMMON_{FORM_ID}) if at least one
+  common form exists in the study.
 
 
 RULE OC-9a — REPEATING FORM AUTO-ID USES StudyEventRepeatKey, NOT ItemGroupRepeatKey
