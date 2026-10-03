@@ -3930,17 +3930,16 @@ def _enforce_form_visits(struct_json: dict, crf_files: list,
                          customer_conventions: dict) -> dict:
     """Post-process the spec to enforce correct visit assignments.
 
-    Uses FORMS.csv from the CRF Standards (Fixed Interval field) to
-    determine which forms are repeating (common events) vs scheduled.
-    Applies CQ override instructions on top.
+    Uses FORMS.csv (Fixed Interval field) to determine which forms are
+    repeating vs scheduled. Applies CQ instructions on top.
 
-    This runs AFTER Claude generates the spec, so it corrects any
-    Claude errors deterministically. It is data-driven, not hardcoded.
+    Priority (highest to lowest):
+      1. CQ answer for a specific question (e.g. "collect DOV?" = No)
+      2. FORMS.csv Fixed Interval: 1 = scheduled, blank = repeating
+      3. Claude's assignment — left unchanged if nothing contradicts it
 
-    Priority order (highest to lowest):
-      1. CQ instructions (customer_conventions)
-      2. FORMS.csv Fixed Interval field
-      3. Claude's assignment (left unchanged if no data contradicts it)
+    No study-specific form IDs or visit names are hardcoded here.
+    Everything comes from the reference data and CQ answers.
     """
     import csv, io
 
@@ -3952,8 +3951,8 @@ def _enforce_form_visits(struct_json: dict, crf_files: list,
         return struct_json
 
     # ── Parse FORMS.csv ───────────────────────────────────────────────
-    fixed_interval_forms = set()   # Form Keys with Fixed Interval = 1
-    repeating_forms      = set()   # Form Keys with no Fixed Interval
+    fixed_interval_forms = set()
+    repeating_forms      = set()
 
     for fname, fdata in (crf_files or []):
         if fname.upper() != "FORMS.CSV":
@@ -3980,35 +3979,35 @@ def _enforce_form_visits(struct_json: dict, crf_files: list,
     print(f"[enforce-visits] FORMS.csv: {len(fixed_interval_forms)} fixed-interval, "
           f"{len(repeating_forms)} repeating", flush=True)
 
-    # ── Parse CQ overrides ────────────────────────────────────────────
-    cq_text = " ".join(str(v) for v in (customer_conventions or {}).values()).lower()
+    # ── CQ: remove forms the customer said not to collect ─────────────
+    # Only handles specific boolean CQ questions (e.g. "Do you collect DOV?")
+    # Maps CQ question keywords → form_id to remove when answer is No
+    BOOLEAN_CQ_FORMS = {
+        "date of visit": "DOV",
+        " dov": "DOV",
+        "protocol deviation": None,   # handled by CQ "Do you collect PD?" → keep/remove DV
+        "unscheduled visit": None,    # structural, not a form removal
+    }
+    for q, a in (customer_conventions or {}).items():
+        q_lower = q.lower()
+        a_lower = str(a).strip().lower()
+        is_no = a_lower in ("no", "n", "false", "0")
+        for keyword, form_id in BOOLEAN_CQ_FORMS.items():
+            if keyword in q_lower and form_id and is_no:
+                before = len(forms)
+                forms[:] = [f for f in forms
+                            if (f.get("form_id") or "").upper() != form_id]
+                struct_json["forms"] = forms
+                if len(forms) < before:
+                    print(f"[enforce-visits] {form_id} removed: "
+                          f"CQ '{q}' = '{a}'", flush=True)
 
-    # CQ: 1 common visit per form
+    # ── CQ: 1 common visit per form? ──────────────────────────────────
+    cq_text = " ".join(str(v) for v in (customer_conventions or {}).values()).lower()
     one_per_form = ("1 common visit per form" in cq_text
                     or "own common visit" in cq_text)
 
-    # CQ: remove DOV if customer said No DOV
-    remove_dov = False
-    for q, a in (customer_conventions or {}).items():
-        if "date of visit" in q.lower() or "dov" in q.lower():
-            if str(a).strip().lower() in ("no", "n", "false", "0"):
-                remove_dov = True
-                break
-
-    if remove_dov:
-        before = len(forms)
-        forms[:] = [f for f in forms if (f.get("form_id") or "").upper() != "DOV"]
-        struct_json["forms"] = forms
-        if len(forms) < before:
-            print(f"[enforce-visits] DOV removed per CQ (no DOV)", flush=True)
-
-    # CQ: which visits get collapsed (e.g. "hospital into 30 day follow-up")
-    collapse_to_fu30 = set()
-    if "hospital administration" in cq_text and "30 day" in cq_text:
-        collapse_to_fu30.update(["HOSP", "INVA", "IMAGE", "MEDHL"])
-
-    # ── Determine target event for each form ──────────────────────────
-    # Find the enrollment event OID and FU30 event OID from timepoint rows
+    # ── Build enrollment OID for anchoring new common events ──────────
     tpt_rows = struct_json.get("timepoint_csv", {}).get("rows", [])
     enrollment_oid = next(
         (r.get("event") for r in tpt_rows
@@ -4016,14 +4015,6 @@ def _enforce_form_visits(struct_json: dict, crf_files: list,
          or "ENRL" in r.get("event","").upper()),
         None
     )
-    fu30_oid = next(
-        (r.get("event") for r in tpt_rows
-         if any(x in r.get("event","").upper()
-                for x in ["FU30","FOLLOW","FOLLOWUP","DAY30","DAY_30"])),
-        None
-    )
-
-    # ── Apply corrections ─────────────────────────────────────────────
     events        = struct_json.setdefault("events", [])
     existing_eids = {e.get("event_oid") for e in events if isinstance(e, dict)}
     tpt_oids      = {r.get("event") for r in tpt_rows}
@@ -4042,6 +4033,7 @@ def _enforce_form_visits(struct_json: dict, crf_files: list,
             tpt_rows.append({"event": oid, "timepoint": title, "type": etype})
             tpt_oids.add(oid)
 
+    # ── Apply corrections ─────────────────────────────────────────────
     fixed_count = 0
     for f in forms:
         if not isinstance(f, dict):
@@ -4049,80 +4041,44 @@ def _enforce_form_visits(struct_json: dict, crf_files: list,
         form_id = (f.get("form_id") or "").upper()
         current = f.get("visits_assigned", [])
 
-        # CQ collapse override — these go to FU30 regardless
-        if form_id in collapse_to_fu30:
-            if fu30_oid and current != [fu30_oid]:
-                print(f"[enforce-visits] {form_id}: CQ collapse → {fu30_oid}",
-                      flush=True)
-                f["visits_assigned"] = [fu30_oid]
-                fixed_count += 1
-            continue
-
-        # Fixed-interval forms stay at scheduled visits — never in common
+        # Fixed-interval: must not be in a common event.
+        # If Claude put it there, log a warning and leave it — we do NOT
+        # guess which scheduled visit it should be at. Claude should have
+        # assigned it correctly. The warning surfaces the problem.
         if form_id in fixed_interval_forms:
             if any("COMMON" in str(v).upper() for v in current):
-                # Claude wrongly put a fixed-interval form in a common event.
-                # Find the first non-common scheduled event as the target,
-                # falling back to FU30 if nothing better is available.
-                scheduled_oids = [
-                    r.get("event") for r in tpt_rows
-                    if "COMMON" not in r.get("event","").upper()
-                    and "UNSCH" not in r.get("event","").upper()
-                ]
-                # For STREV specifically look for a STREV/TEAM_REVIEW event
-                strev_oid = next(
-                    (o for o in scheduled_oids
-                     if "STREV" in o.upper() or "TEAM" in o.upper()
-                     or "AMR" in o.upper() or "REVIEW" in o.upper()),
-                    None
-                )
-                target_scheduled = (
-                    strev_oid if form_id == "STREV" and strev_oid
-                    else fu30_oid if fu30_oid
-                    else scheduled_oids[0] if scheduled_oids
-                    else None
-                )
-                if target_scheduled:
-                    print(f"[enforce-visits] {form_id}: fixed-interval wrongly "
-                          f"in common event → moved to {target_scheduled}",
-                          flush=True)
-                    f["visits_assigned"] = [target_scheduled]
-                    fixed_count += 1
-                else:
-                    print(f"[enforce-visits] WARNING: {form_id} is fixed-interval "
-                          f"in common event and no scheduled event found",
-                          flush=True)
+                print(f"[enforce-visits] WARNING: {form_id} is fixed-interval "
+                      f"(scheduled) but Claude placed it in a common event "
+                      f"({current}). Check the spec — this form needs a "
+                      f"scheduled visit assignment.", flush=True)
+            # Leave as-is either way — we don't hardcode visit names
             continue
 
-        # Repeating forms go in common events
+        # Repeating: goes in a common event per FORMS.csv
         if form_id in repeating_forms:
             if one_per_form:
-                # CQ: one SE_COMMON_{form_id} per form
                 target = f"SE_COMMON_{form_id}"
                 _ensure_event(target, f.get("form_title", form_id),
                               "common", True)
                 if current != [target]:
-                    print(f"[enforce-visits] {form_id}: repeating + 1-per-form "
-                          f"→ {target}", flush=True)
+                    print(f"[enforce-visits] {form_id}: repeating + "
+                          f"1-per-form → {target}", flush=True)
                     f["visits_assigned"] = [target]
                     fixed_count += 1
             else:
-                # Default: shared SE_COMMON
                 _ensure_event("SE_COMMON", "Common Visit", "common", True)
                 if current != ["SE_COMMON"]:
-                    print(f"[enforce-visits] {form_id}: repeating → SE_COMMON",
-                          flush=True)
+                    print(f"[enforce-visits] {form_id}: repeating → "
+                          f"SE_COMMON", flush=True)
                     f["visits_assigned"] = ["SE_COMMON"]
                     fixed_count += 1
             continue
 
-        # Form not in FORMS.csv — leave as Claude assigned
+        # Not in FORMS.csv — leave as Claude assigned
 
-    # Clean up: remove SE_COMMON if one_per_form and it's now empty
+    # Remove SE_COMMON if one_per_form and nothing references it anymore
     if one_per_form:
-        common_users = [f for f in forms
-                        if f.get("visits_assigned") == ["SE_COMMON"]]
-        if not common_users:
+        if not any(f.get("visits_assigned") == ["SE_COMMON"] for f in forms):
             events[:] = [e for e in events
                          if e.get("event_oid") != "SE_COMMON"]
             tpt_rows[:] = [r for r in tpt_rows
