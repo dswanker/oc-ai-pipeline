@@ -4108,6 +4108,45 @@ def _enforce_form_visits(struct_json: dict, crf_files: list,
     return struct_json
 
 
+
+def _fix_missing_choices(struct_json: dict) -> dict:
+    """Remove survey fields whose select_one/select_multiple list is not
+    defined in the form's choices. The EDC builder QA check blocks the
+    entire build on missing lists — better to drop the orphaned field
+    and log a warning than to fail the whole build.
+
+    Idempotent and safe to call on every spec load.
+    """
+    if not isinstance(struct_json, dict):
+        return struct_json
+    for f in struct_json.get("forms", []):
+        if not isinstance(f, dict):
+            continue
+        form_id  = f.get("form_id", "?")
+        choices  = f.get("choices", []) or []
+        survey   = f.get("survey",  []) or []
+        defined  = {(c.get("list_name") or "").strip().lower()
+                    for c in choices if c.get("list_name")}
+        cleaned  = []
+        dropped  = []
+        for row in survey:
+            if not isinstance(row, dict):
+                cleaned.append(row)
+                continue
+            rtype = (row.get("type") or "").strip().lower()
+            if rtype.startswith("select_one ") or rtype.startswith("select_multiple "):
+                list_name = rtype.split(" ", 1)[1].strip()
+                if list_name and list_name not in defined:
+                    dropped.append(row.get("name", rtype))
+                    continue
+            cleaned.append(row)
+        if dropped:
+            print(f"[fix-choices] {form_id}: removed {len(dropped)} field(s) "
+                  f"with undefined list(s): {dropped}", flush=True)
+            f["survey"] = cleaned
+    return struct_json
+
+
 def _backfill_migration_fields(spec):
     """Add schedule_of_events + per-form migration lifecycle fields if
     missing. Idempotent — safe to call on every spec load."""
@@ -5600,6 +5639,7 @@ async def run_pipeline(item_id):
                         # OC-9 backstop: apply to edited-XLSX path as well
                         struct_json = _enforce_common_visit(struct_json)
                         struct_json = _enforce_form_visits(struct_json, _crf_files, customer_conventions)
+                        struct_json = _fix_missing_choices(struct_json)
                         struct_json = _backfill_migration_fields(struct_json)
                         struct_json = _sanitize_form_titles(struct_json)
                         struct_json = _ensure_required_forms(struct_json, protocol_num, customer_conventions)
@@ -5745,6 +5785,7 @@ async def run_pipeline(item_id):
             struct_json = json.loads(spec_bytes.decode("utf-8"))
             struct_json = _enforce_common_visit(struct_json)
             struct_json = _enforce_form_visits(struct_json, _crf_files, customer_conventions)
+            struct_json = _fix_missing_choices(struct_json)
             struct_json = _backfill_migration_fields(struct_json)
             struct_json = _sanitize_form_titles(struct_json)
             struct_json = _ensure_required_forms(struct_json, protocol_num, customer_conventions)
@@ -5932,6 +5973,7 @@ async def run_pipeline(item_id):
                     struct_json = json.loads(_existing_spec.decode("utf-8"))
                     struct_json = _enforce_common_visit(struct_json)
                     struct_json = _enforce_form_visits(struct_json, _crf_files, customer_conventions)
+                    struct_json = _fix_missing_choices(struct_json)
                     struct_json = _backfill_migration_fields(struct_json)
                     struct_json = _sanitize_form_titles(struct_json)
                     struct_json = _ensure_required_forms(struct_json, protocol_num, customer_conventions)
@@ -6255,6 +6297,7 @@ async def run_pipeline(item_id):
             # forms live only there. Deterministic fix-up if Claude missed it.
             struct_json = _enforce_common_visit(struct_json)
             struct_json = _enforce_form_visits(struct_json, _crf_files, customer_conventions)
+            struct_json = _fix_missing_choices(struct_json)
             struct_json = _backfill_migration_fields(struct_json)
             struct_json = _sanitize_form_titles(struct_json)
             struct_json = _ensure_required_forms(struct_json, protocol_num, customer_conventions)
