@@ -42,6 +42,20 @@ RULE PROTOCOL-1 — EVERY SCHEDULE ROW IS A FORM (UNIVERSAL)
   data collection requirement and MUST become at least one form in the output.
   Do NOT drop, merge, or skip any row for any reason.
 
+  ADDITIONAL RULE — IF CRF STANDARDS ARE PROVIDED (FORMS.csv):
+  When FORMS.csv is provided in the Customer CRF Standards, treat it as the
+  authoritative list of forms to build. Every row in FORMS.csv with
+  Form Type = "Patient" MUST produce a form in the output, unless a CQ
+  answer explicitly says not to collect that data (e.g. "Do you collect
+  Protocol Deviations? No").
+  - Do NOT skip a Patient form just because you don't see it in the protocol
+    SoA — the source system may have it as a standalone form.
+  - Fixed Interval = 1 in FORMS.csv means the form is collected at a specific
+    scheduled visit (not repeating). Use the protocol/SoA to determine which
+    visit. Do NOT put it in a common event.
+  - Fixed Interval blank in FORMS.csv means the form is repeating — it belongs
+    in a common event (SE_COMMON or SE_COMMON_{FORM_ID} per CQ instruction).
+
   CDASH rows — map to the standard domain:
   - Eligibility criteria / I/E review → IE
   - Demographics → DM
@@ -769,8 +783,10 @@ RULE OC-9 — COMMON VISIT FOR CROSS-VISIT FORMS
      These always take precedence over the default. Examples:
      - "1 common visit per form" → create SE_COMMON_{FORM_ID} per form
        instead of a shared SE_COMMON (e.g. SE_COMMON_AE, SE_COMMON_CM)
-     - "Hospital administration into 30-day follow-up" → HOSP form goes
-       to the 30-day follow-up visit, NOT SE_COMMON
+     - "Hospital administration into 30-day follow-up" → the Hospital
+       Admission form (HOSP) MUST still be created; assign it to the
+       follow-up visit, NOT to SE_COMMON. "Collapsed into" means the
+       form goes at that visit, not that the form is omitted.
      Read ALL CQ answers carefully and apply them to form placements.
 
   2. Protocol or Schedule of Activities (SoA)
