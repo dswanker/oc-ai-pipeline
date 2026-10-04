@@ -1,0 +1,39 @@
+{
+  "id": "customer.bioivt.other_specify_rules",
+  "title": "BioIVT 'Other, specify' fields follow the canonical Other option",
+  "kind": "structured",
+  "scope": "customer",
+  "scope_id": "bioIVT",
+  "status": "active",
+  "natural_key": "bioivt_other_specify_rules",
+  "description": "Repairs the show/hide rule on the four 'Other, specify' fields whose parent list was swapped for a canonical list. Each rule used the old list's value for Other ('OTHER', '6', 'other_race'), which no longer exists after the swap, so the specify field could never appear. Each rule now points at the canonical 'other' value. RACE is multi-select, so it uses selected().",
+  "rationale": "Found 2026-10-04 by comparing every relevant/constraint/calculation expression against the real choice names with and without the bioIVT conventions: 8 rules broke (4 per study). Also repairs SHORTFORM/FOLLOWUP/OUTCOME RACE_OTH, whose rules were already pointing at a value that did not exist in the original lists.",
+  "target": "field",
+  "applies_when": {
+    "field.name": { "in": ["CMROUTE_OTH", "CMDOSU_OTH", "CMDOSFRQ_OTH", "RACE_OTH"] }
+  },
+  "effect": {
+    "match": {
+      "on": "field.name",
+      "cases": {
+        "CMROUTE_OTH": { "set": { "field.relevant": "${CMROUTE}='other'" } },
+        "CMDOSU_OTH": { "set": { "field.relevant": "${CMDOSU}='other'" } },
+        "CMDOSFRQ_OTH": { "set": { "field.relevant": "${CMDOSFRQ}='other'" } },
+        "RACE_OTH": { "set": { "field.relevant": "selected(${RACE}, 'other')" } }
+      }
+    }
+  },
+  "created_at": "2026-10-04T00:00:00Z",
+  "created_by": "human:dswanker",
+  "source": "Regression check of the BioIVT canonical-list conventions",
+  "tags": ["bioivt", "relevance", "repair", "canonical_list"],
+  "history": [
+    {
+      "at": "2026-10-04T00:00:00Z",
+      "by": "human:dswanker",
+      "action": "created",
+      "status": "active",
+      "note": "Repairs a regression caused by the earlier canonical-list conventions; 'Other' also restored to canon_race and canon_cm_freq."
+    }
+  ]
+}
