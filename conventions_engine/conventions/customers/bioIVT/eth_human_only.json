@@ -1,0 +1,32 @@
+{
+  "id": "customer.bioivt.eth_human_only",
+  "title": "BioIVT SHORTFORM ethnicity is shown for human donors only",
+  "kind": "structured",
+  "scope": "customer",
+  "scope_id": "bioIVT",
+  "status": "active",
+  "natural_key": "bioivt_eth_human_only",
+  "description": "Hides the ethnicity question on SHORTFORM unless the first question, 'Is this a Human subject?', is answered Yes. Same rule RACE already uses. Without it, ETH showed for animal donors and before the question was answered.",
+  "rationale": "Verified in the built Detroit form 2026-10-04: RACE has relevant = ${IS_IT_A_VETERINARY_FORM}='Yes' but ETH had no rule. Scoped to SHORTFORM only: FOLLOWUP and OUTCOME have no such gate question, so the rule would reference a field that is not on those forms. Approved by Dan 2026-10-04.",
+  "target": "field",
+  "applies_when": {
+    "form.form_id": "SHORTFORM",
+    "field.name": "ETH"
+  },
+  "effect": {
+    "set": { "field.relevant": "${IS_IT_A_VETERINARY_FORM}='Yes'" }
+  },
+  "created_at": "2026-10-04T00:00:00Z",
+  "created_by": "human:dswanker",
+  "source": "Detroit SHORTFORM RACE rule; approved by Dan",
+  "tags": ["bioivt", "relevance", "veterinary", "eth"],
+  "history": [
+    {
+      "at": "2026-10-04T00:00:00Z",
+      "by": "human:dswanker",
+      "action": "created",
+      "status": "active",
+      "note": "Closes the gap where the ethnicity question appeared on animal records."
+    }
+  ]
+}
