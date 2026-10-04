@@ -1,0 +1,453 @@
+study,form,field,label,current_type,proposed_cdash_domain,action,proposed_target,confidence,cdashig_basis,note
+Precision,DOV,DOVTPT,** Timepoint: **,text,operational (visit tracking),KEEP,DOV,M,CDASHIG 7.1 #2,
+Precision,DOV,VISYN,Was the visit done?,select_one NY,operational (visit tracking),KEEP,DOV,M,CDASHIG 7.1 #2,
+Precision,DOV,VISDT,Provide the date of visit.,date,operational (visit tracking),KEEP,DOV,M,CDASHIG 7.1 #2,
+Precision,DOV,VISNDRSN,Reason visit not done:,text,operational (visit tracking),KEEP,DOV,M,CDASHIG 7.1 #2,
+Precision,DM,VISIT,Visit,select_one visit_type,visit tracking,NEEDS_DECISION,DOV,L,CDASHIG 7.1 #2,DOV already records visit and date
+Precision,DM,DIN,DIN (Donor ID Number),text,DM identifier,KEEP,DM,H,CDASHIG 7.3 DM,
+Precision,DM,FOLLOW_DIN,DIN (Follow-up),text,identifier,NEEDS_DECISION,DM,L,n/a,Meaning unclear
+Precision,DM,PROJID,Project ID,text,DM identifier,KEEP,DM,H,CDASHIG 7.3 DM,
+Precision,DM,ICFDAT,Date Consent Obtained,date,DS informed consent date,CONSOLIDATE,Consent (DS),M,CDASHIG 8.2.4 DS; 3.7.1,
+Precision,DM,VISITNUM,Visit Number,integer,visit tracking,NEEDS_DECISION,DOV,L,CDASHIG 7.1 #2,
+Precision,DM,COLLDT,Visit Date,date,visit tracking,NEEDS_DECISION,DOV,L,CDASHIG 7.1 #2,
+Precision,DM,BRTHDAT,Date of Birth,date,DM,KEEP,DM,H,CDASHIG 7.3 DM,
+Precision,DM,SEX,Gender,select_one sex,DM,KEEP,DM,H,CDASHIG 7.3 DM,List left un-canonicalized by your decision
+Precision,DM,SEX_OTH,Specify (Other Gender),text,DM,KEEP,DM,M,CDASHIG 7.3 DM,
+Precision,DM,RACE,Race,select_multiple race_ml,DM,KEEP,DM,H,CDASHIG 7.3 DM,
+Precision,DM,RACE_OTH,Other Race (Specify),text,DM,KEEP,DM,H,CDASHIG 7.3 DM,
+Precision,DM,ORIGIN,Origin,text,DM,NEEDS_DECISION,DM,L,CDASHIG 4.1 #12,"Free text ""Origin""; meaning unclear. Picklist if kept."
+Precision,DM,ETHNIC,Ethnicity,select_one ethnic,DM,KEEP,DM,H,CDASHIG 7.3 DM,
+Precision,VS,(all 10 fields),,,VS,KEEP,VS,H,CDASHIG 8 (domain forms audited earlier),Already aligned; only list values changed (canonical lists)
+Precision,SC,(all 7 fields),,,SC,KEEP,SC,H,CDASHIG 8 (domain forms audited earlier),Already aligned; only list values changed (canonical lists)
+Precision,SU,(all 12 fields),,,SU,KEEP,SU,H,CDASHIG 8 (domain forms audited earlier),Already aligned; only list values changed (canonical lists)
+Precision,MH,MHFAMSUBJ,Subject has history of:,select_multiple fh_cond,MH (family history),KEEP,MH,L,CDASHIG 8.2.7 MH,CDASHIG v2.1 has no family-history domain (SDTM has FH); keep with MH and mark as family
+Precision,MH,MHFAMSUBJ_OTH,Other (specify),text,MH (family history),KEEP,MH,L,CDASHIG 8.2.7 MH,CDASHIG v2.1 has no family-history domain (SDTM has FH); keep with MH and mark as family
+Precision,MH,MHFAM1DEG,1st Degree Relatives have history of:,select_multiple fh_cond,MH (family history),KEEP,MH,L,CDASHIG 8.2.7 MH,CDASHIG v2.1 has no family-history domain (SDTM has FH); keep with MH and mark as family
+Precision,MH,MHFAM1DEG_OTH,Other (specify),text,MH (family history),KEEP,MH,L,CDASHIG 8.2.7 MH,CDASHIG v2.1 has no family-history domain (SDTM has FH); keep with MH and mark as family
+Precision,MH,MHFAM2DEG,2nd Degree Relatives have history of:,select_multiple fh_cond,MH (family history),KEEP,MH,L,CDASHIG 8.2.7 MH,CDASHIG v2.1 has no family-history domain (SDTM has FH); keep with MH and mark as family
+Precision,MH,MHFAM2DEG_OTH,Other (specify),text,MH (family history),KEEP,MH,L,CDASHIG 8.2.7 MH,CDASHIG v2.1 has no family-history domain (SDTM has FH); keep with MH and mark as family
+Precision,MH,MHMEMSTAGEY,Age at onset of memory disturbances,integer,MH,KEEP,MH,M,CDASHIG 8.2.7 MH,
+Precision,MH,MHMEMSTAGDT,Date of diagnosis of memory disturbance,date,MH,KEEP,MH,M,CDASHIG 8.2.7 MH,
+Precision,MH,MHAUHCURR,Auditory hallucinations — Current?,select_one yn,CE (symptoms),KEEP,MH,M,CDASHIG 8.2.3 CE,Current + since-onset pairs; an onset date + ongoing flag would carry the same information (4.1 #5)
+Precision,MH,MHAUHONS,Auditory hallucinations — Since onset?,select_one yn,CE (symptoms),KEEP,MH,M,CDASHIG 8.2.3 CE,Current + since-onset pairs; an onset date + ongoing flag would carry the same information (4.1 #5)
+Precision,MH,MHVHCURR,Visual hallucinations — Current?,select_one yn,CE (symptoms),KEEP,MH,M,CDASHIG 8.2.3 CE,Current + since-onset pairs; an onset date + ongoing flag would carry the same information (4.1 #5)
+Precision,MH,MHVHONS,Visual hallucinations — Since onset?,select_one yn,CE (symptoms),KEEP,MH,M,CDASHIG 8.2.3 CE,Current + since-onset pairs; an onset date + ongoing flag would carry the same information (4.1 #5)
+Precision,MH,MHDELCURR,Delusions — Current?,select_one yn,CE (symptoms),KEEP,MH,M,CDASHIG 8.2.3 CE,Current + since-onset pairs; an onset date + ongoing flag would carry the same information (4.1 #5)
+Precision,MH,MHDELONS,Delusions — Since onset?,select_one yn,CE (symptoms),KEEP,MH,M,CDASHIG 8.2.3 CE,Current + since-onset pairs; an onset date + ongoing flag would carry the same information (4.1 #5)
+Precision,MH,MHAGGCURR,Aggression — Current?,select_one yn,CE (symptoms),KEEP,MH,M,CDASHIG 8.2.3 CE,Current + since-onset pairs; an onset date + ongoing flag would carry the same information (4.1 #5)
+Precision,MH,MHAGGONS,Aggression — Since onset?,select_one yn,CE (symptoms),KEEP,MH,M,CDASHIG 8.2.3 CE,Current + since-onset pairs; an onset date + ongoing flag would carry the same information (4.1 #5)
+Precision,MH,MHCOLDFL,Evidence of cold or flu?,select_one yn,CE,KEEP,MH,L,CDASHIG 8.2.3 CE,
+Precision,MH,MHFASTED,Did the donor fast overnight ≥ 8 hours?,select_one yn,LB LBFAST,KEEP,MH (no change this pass),M,CDASHIG 4.1 #4,"Stays where it is. PC.BLDFAST/CSFFAST ask the same thing on the same 8 visits; the overlap is flagged, nothing moved or deleted."
+Precision,MH,MHICP,Clinical evidence of raised intracranial pressure?,select_one yn,PE (exam finding),NEEDS_DECISION,PE or leave,L,CDASHIG 8.3.11 PE,"A clinical exam finding, not history"
+Precision,MH,MHHOSPYN,Hospital admission in the last 6 months?,select_one yn,HO healthcare encounter,MOVE,HO (new healthcare encounters form),M,CDASHIG 8.2.6 HO,
+Precision,MH,MHHOSPREASON,"If yes, reason:",text,HO healthcare encounter,MOVE,HO (new healthcare encounters form),M,CDASHIG 8.2.6 HO,
+Precision,MH,MHMEDCHG,Change in medication?,select_one yn,CM gate,KEEP,MH,L,CDASHIG 8.1.2 CM,"Asks about a change, whereas CM.CMYN asks if any"
+Precision,MH,MHSURGYN,Surgery?,select_one yn,PR,CONSOLIDATE,Dx & Procedures (one shared place),M,CDASHIG 8.1.4 PR,Detroit MH has the same surgery question
+Precision,MH,MHSURGDET,Details:,text,PR,CONSOLIDATE,Dx & Procedures (one shared place),M,CDASHIG 8.1.4 PR,
+Precision,MH,MHOTHTST,Other tests?,select_one yn,LB / PE catch-all,NEEDS_DECISION,MH,L,CDASHIG 4.1 #12,Free-text catch-all for tests
+Precision,MH,MHOTHTSTDET,Details:,text,LB / PE catch-all,NEEDS_DECISION,MH,L,CDASHIG 4.1 #12,
+Precision,CM,(all 13 fields),,,CM,KEEP,CM,H,CDASHIG 8 (domain forms audited earlier),Already aligned; only list values changed (canonical lists)
+Precision,DMONC,VISIT,Visit,select_one visit_type,DM,CONSOLIDATE,Use DM (assign DM to protocol 6504 instead of a second form),M,CDASHIG 4.1 #4; 8.3.1,"No field is lost: every DMONC field already exists on DM except MHYN, which is the MH gate. Only the second copy of the form goes away."
+Precision,DMONC,DIN,DIN (Donor ID Number),text,DM,CONSOLIDATE,Use DM (assign DM to protocol 6504 instead of a second form),M,CDASHIG 4.1 #4; 8.3.1,"No field is lost: every DMONC field already exists on DM except MHYN, which is the MH gate. Only the second copy of the form goes away."
+Precision,DMONC,PROJID,Project ID,text,DM,CONSOLIDATE,Use DM (assign DM to protocol 6504 instead of a second form),M,CDASHIG 4.1 #4; 8.3.1,"No field is lost: every DMONC field already exists on DM except MHYN, which is the MH gate. Only the second copy of the form goes away."
+Precision,DMONC,ICFDAT,Date Consent Obtained,date,DM,CONSOLIDATE,Use DM (assign DM to protocol 6504 instead of a second form),M,CDASHIG 4.1 #4; 8.3.1,"No field is lost: every DMONC field already exists on DM except MHYN, which is the MH gate. Only the second copy of the form goes away."
+Precision,DMONC,COLLDT,Visit Date,date,DM,CONSOLIDATE,Use DM (assign DM to protocol 6504 instead of a second form),M,CDASHIG 4.1 #4; 8.3.1,"No field is lost: every DMONC field already exists on DM except MHYN, which is the MH gate. Only the second copy of the form goes away."
+Precision,DMONC,BRTHDAT,Date of Birth,date,DM,CONSOLIDATE,Use DM (assign DM to protocol 6504 instead of a second form),M,CDASHIG 4.1 #4; 8.3.1,"No field is lost: every DMONC field already exists on DM except MHYN, which is the MH gate. Only the second copy of the form goes away."
+Precision,DMONC,SEX,Gender,select_one sex,DM,CONSOLIDATE,Use DM (assign DM to protocol 6504 instead of a second form),M,CDASHIG 4.1 #4; 8.3.1,"No field is lost: every DMONC field already exists on DM except MHYN, which is the MH gate. Only the second copy of the form goes away."
+Precision,DMONC,RACE,Race,select_multiple race_ml,DM,CONSOLIDATE,Use DM (assign DM to protocol 6504 instead of a second form),M,CDASHIG 4.1 #4; 8.3.1,"No field is lost: every DMONC field already exists on DM except MHYN, which is the MH gate. Only the second copy of the form goes away."
+Precision,DMONC,ETHNIC,Ethnicity,select_one ethnic,DM,CONSOLIDATE,Use DM (assign DM to protocol 6504 instead of a second form),M,CDASHIG 4.1 #4; 8.3.1,"No field is lost: every DMONC field already exists on DM except MHYN, which is the MH gate. Only the second copy of the form goes away."
+Precision,DMONC,MHYN,Any personal medical history?,select_one yn,MH,CONSOLIDATE,MH gate question,M,CDASHIG 8.2.7 MH,"No field is lost: every DMONC field already exists on DM except MHYN, which is the MH gate. Only the second copy of the form goes away."
+Precision,PC,PCDAT,Sample Collection Date,date,specimen collection (sponsor-defined),KEEP,PC,M,CDASHIG 8.3.6 LB / 8.2.5 DV,
+Precision,PC,BLDPROT,Blood collected according to protocol?,select_one yn,DV (protocol deviation),KEEP,PC,L,CDASHIG 8.2.5 DV,Form id PC also means Pharmacokinetics Sampling in CDASH; this is a specimen form. Rename is a decision.
+Precision,PC,BLDNOEXP,"If No, explain (Blood)",text,DV (protocol deviation),KEEP,PC,L,CDASHIG 8.2.5 DV,Form id PC also means Pharmacokinetics Sampling in CDASH; this is a specimen form. Rename is a decision.
+Precision,PC,BLDFAST,Was the subject fasting? (Blood),select_one yn,LB LBFAST (fasting status),KEEP,PC,H,SDTM LB variable LBFAST,Source of truth for fasting; MH.MHFASTED asks the same thing
+Precision,PC,BLDTIME,Time of Blood Draw (HH:MM),text,specimen collection (sponsor-defined),KEEP,PC,M,CDASHIG 8.3.6 LB / 8.2.5 DV,
+Precision,PC,CSFPROT,CSF collected according to protocol?,select_one yn,DV (protocol deviation),KEEP,PC,L,CDASHIG 8.2.5 DV,Form id PC also means Pharmacokinetics Sampling in CDASH; this is a specimen form. Rename is a decision.
+Precision,PC,CSFNOEXP,"If No, explain (CSF)",text,DV (protocol deviation),KEEP,PC,L,CDASHIG 8.2.5 DV,Form id PC also means Pharmacokinetics Sampling in CDASH; this is a specimen form. Rename is a decision.
+Precision,PC,CSFFAST,Was subject fasting? (CSF),select_one yn,LB LBFAST (fasting status),KEEP,PC,H,SDTM LB variable LBFAST,
+Precision,PC,CSFPOS,What position was CSF collected in?,select_one csf_pos,specimen collection (sponsor-defined),KEEP,PC,M,CDASHIG 8.3.6 LB / 8.2.5 DV,
+Precision,PC,CSFTIME,Time of Optional Spinal Tap (HH:MM),text,specimen collection (sponsor-defined),KEEP,PC,M,CDASHIG 8.3.6 LB / 8.2.5 DV,
+Precision,PC,CSFVOL,CSF Volume Collected (mL),decimal,specimen collection (sponsor-defined),KEEP,PC,M,CDASHIG 8.3.6 LB / 8.2.5 DV,
+Precision,PC,CSFBLDY,Was it a Bloody Tap?,select_one yn,specimen collection (sponsor-defined),KEEP,PC,M,CDASHIG 8.3.6 LB / 8.2.5 DV,
+Precision,PC,URPROT,Urine collected according to protocol?,select_one yn,DV (protocol deviation),KEEP,PC,L,CDASHIG 8.2.5 DV,Form id PC also means Pharmacokinetics Sampling in CDASH; this is a specimen form. Rename is a decision.
+Precision,PC,URNOEXP,"If No, explain (Urine)",text,DV (protocol deviation),KEEP,PC,L,CDASHIG 8.2.5 DV,Form id PC also means Pharmacokinetics Sampling in CDASH; this is a specimen form. Rename is a decision.
+Precision,PC,URTIME,Time of Urine Collection (HH:MM),text,specimen collection (sponsor-defined),KEEP,PC,M,CDASHIG 8.3.6 LB / 8.2.5 DV,
+Precision,PC,SALPROT,Saliva collected according to protocol?,select_one yn,DV (protocol deviation),KEEP,PC,L,CDASHIG 8.2.5 DV,Form id PC also means Pharmacokinetics Sampling in CDASH; this is a specimen form. Rename is a decision.
+Precision,PC,SALNOEXP,"If No, explain (Saliva)",text,DV (protocol deviation),KEEP,PC,L,CDASHIG 8.2.5 DV,Form id PC also means Pharmacokinetics Sampling in CDASH; this is a specimen form. Rename is a decision.
+Precision,PC,SALTIME,Time of Saliva Collection (HH:MM),text,specimen collection (sponsor-defined),KEEP,PC,M,CDASHIG 8.3.6 LB / 8.2.5 DV,
+Precision,PC,FUCALL,24-HOUR Follow-up Phone Call after Spinal Tap completed?,select_one yn,specimen collection (sponsor-defined),KEEP,PC,M,CDASHIG 8.3.6 LB / 8.2.5 DV,
+Precision,PC,PCNOTE,Additional Information (if any),text,CO,KEEP,PC,M,CDASHIG 7.2 CO,
+Precision,PCONC,BLDORDER,Blood collected in the following order?,select_one yn,specimen collection (sponsor-defined),CONSOLIDATE,PC (one specimen collection form),M,CDASHIG 4.1 #4; 4.2 #2,
+Precision,PCONC,BLDORDNOEXP,"If No, specify",text,specimen collection (sponsor-defined),CONSOLIDATE,PC (one specimen collection form),M,CDASHIG 4.1 #4; 4.2 #2,
+Precision,PCONC,SAMPTYP,Sample types collected (check all that apply),select_multiple onc_samps,specimen collection (sponsor-defined),CONSOLIDATE,PC (one specimen collection form),M,CDASHIG 4.1 #4; 4.2 #2,
+Precision,PCONC,BLOCKS,Please specify # of blocks,text,specimen collection (sponsor-defined),CONSOLIDATE,PC (one specimen collection form),M,CDASHIG 4.1 #4; 4.2 #2,
+Precision,PCONC,TISSNOTE,If No tissue (specify),text,specimen collection (sponsor-defined),CONSOLIDATE,PC (one specimen collection form),M,CDASHIG 4.1 #4; 4.2 #2,
+Precision,IE8200,(all 24 fields),,,IE,KEEP,IE8200,M,CDASHIG 8.3.5 IE,Protocol-specific eligibility; IE domain. Not itemized.
+Precision,IE8009,(all 21 fields),,,IE,KEEP,IE8009,M,CDASHIG 8.3.5 IE,Protocol-specific eligibility; IE domain. Not itemized.
+Precision,IE4800,(all 16 fields),,,IE,KEEP,IE4800,M,CDASHIG 8.3.5 IE,Protocol-specific eligibility; IE domain. Not itemized.
+Precision,IE1009,(all 20 fields),,,IE,KEEP,IE1009,M,CDASHIG 8.3.5 IE,Protocol-specific eligibility; IE domain. Not itemized.
+Precision,IE5400,(all 8 fields),,,IE,KEEP,IE5400,M,CDASHIG 8.3.5 IE,Protocol-specific eligibility; IE domain. Not itemized.
+Precision,IE8011,(all 16 fields),,,IE,KEEP,IE8011,M,CDASHIG 8.3.5 IE,Protocol-specific eligibility; IE domain. Not itemized.
+Precision,IE8008,(all 16 fields),,,IE,KEEP,IE8008,M,CDASHIG 8.3.5 IE,Protocol-specific eligibility; IE domain. Not itemized.
+Precision,IE8010,(all 14 fields),,,IE,KEEP,IE8010,M,CDASHIG 8.3.5 IE,Protocol-specific eligibility; IE domain. Not itemized.
+Precision,IE6504,(all 16 fields),,,IE,KEEP,IE6504,M,CDASHIG 8.3.5 IE,Protocol-specific eligibility; IE domain. Not itemized.
+Precision,QSCOG,(all 15 fields),,,QRS,KEEP,QSCOG,M,CDASHIG 5.1 #7; 8.3.12 QRS,Validated instrument; must not be restructured. Not itemized.
+Precision,QSMS,(all 9 fields),,,QRS,KEEP,QSMS,M,CDASHIG 5.1 #7; 8.3.12 QRS,Validated instrument; must not be restructured. Not itemized.
+Precision,QSPARK,(all 9 fields),,,QRS,KEEP,QSPARK,M,CDASHIG 5.1 #7; 8.3.12 QRS,Validated instrument; must not be restructured. Not itemized.
+Precision,QSALS,(all 6 fields),,,QRS,KEEP,QSALS,M,CDASHIG 5.1 #7; 8.3.12 QRS,Validated instrument; must not be restructured. Not itemized.
+Precision,GEN,GENTEST,Has the donor undergone genetic testing?,select_one yn,LB / MH,CONSOLIDATE,Biomarker log (LB),M,CDASHIG 4.1 #4,Mutation presence/list overlaps BIOMK; mutation list is free text
+Precision,GEN,MUTPRES,Is there a mutation present?,select_one yn,LB / MH,CONSOLIDATE,Biomarker log (LB),M,CDASHIG 4.1 #4,Mutation presence/list overlaps BIOMK; mutation list is free text
+Precision,GEN,MUTLIST,"If yes, please list the mutation",text,LB / MH,CONSOLIDATE,Biomarker log (LB),M,CDASHIG 4.1 #4,Mutation presence/list overlaps BIOMK; mutation list is free text
+Precision,BIOMK,KRAS,KRAS Mutation,select_one mut_result,LB (molecular biomarker),STRUCTURE,Biomarker log (LB),M,CDASHIG 8.3.6 LB; 3.4,"Wide layout: one column per biomarker and per method. One repeating record (biomarker, result, method) is easier to analyze over time."
+Precision,BIOMK,KRAS_MTH,KRAS Test Method,select_multiple test_method,LB (molecular biomarker),STRUCTURE,Biomarker log (LB),M,CDASHIG 8.3.6 LB; 3.4,"Wide layout: one column per biomarker and per method. One repeating record (biomarker, result, method) is easier to analyze over time."
+Precision,BIOMK,EGFR,EGFR Mutation,select_one mut_result,LB (molecular biomarker),STRUCTURE,Biomarker log (LB),M,CDASHIG 8.3.6 LB; 3.4,"Wide layout: one column per biomarker and per method. One repeating record (biomarker, result, method) is easier to analyze over time."
+Precision,BIOMK,EGFR_MTH,EGFR Test Method,select_multiple test_method,LB (molecular biomarker),STRUCTURE,Biomarker log (LB),M,CDASHIG 8.3.6 LB; 3.4,"Wide layout: one column per biomarker and per method. One repeating record (biomarker, result, method) is easier to analyze over time."
+Precision,BIOMK,ALK,ALK Mutation,select_one mut_result,LB (molecular biomarker),STRUCTURE,Biomarker log (LB),M,CDASHIG 8.3.6 LB; 3.4,"Wide layout: one column per biomarker and per method. One repeating record (biomarker, result, method) is easier to analyze over time."
+Precision,BIOMK,ALK_MTH,ALK Test Method,select_multiple test_method,LB (molecular biomarker),STRUCTURE,Biomarker log (LB),M,CDASHIG 8.3.6 LB; 3.4,"Wide layout: one column per biomarker and per method. One repeating record (biomarker, result, method) is easier to analyze over time."
+Precision,BIOMK,BRAF,BRAF Mutation,select_one mut_result,LB (molecular biomarker),STRUCTURE,Biomarker log (LB),M,CDASHIG 8.3.6 LB; 3.4,"Wide layout: one column per biomarker and per method. One repeating record (biomarker, result, method) is easier to analyze over time."
+Precision,BIOMK,BRAF_MTH,BRAF Test Method,select_multiple test_method,LB (molecular biomarker),STRUCTURE,Biomarker log (LB),M,CDASHIG 8.3.6 LB; 3.4,"Wide layout: one column per biomarker and per method. One repeating record (biomarker, result, method) is easier to analyze over time."
+Precision,BIOMK,MET,MET Mutation,select_one mut_result,LB (molecular biomarker),STRUCTURE,Biomarker log (LB),M,CDASHIG 8.3.6 LB; 3.4,"Wide layout: one column per biomarker and per method. One repeating record (biomarker, result, method) is easier to analyze over time."
+Precision,BIOMK,MET_MTH,MET Test Method,select_multiple test_method,LB (molecular biomarker),STRUCTURE,Biomarker log (LB),M,CDASHIG 8.3.6 LB; 3.4,"Wide layout: one column per biomarker and per method. One repeating record (biomarker, result, method) is easier to analyze over time."
+Precision,BIOMK,ROS,ROS Mutation,select_one mut_result,LB (molecular biomarker),STRUCTURE,Biomarker log (LB),M,CDASHIG 8.3.6 LB; 3.4,"Wide layout: one column per biomarker and per method. One repeating record (biomarker, result, method) is easier to analyze over time."
+Precision,BIOMK,ROS_MTH,ROS Test Method,select_multiple test_method,LB (molecular biomarker),STRUCTURE,Biomarker log (LB),M,CDASHIG 8.3.6 LB; 3.4,"Wide layout: one column per biomarker and per method. One repeating record (biomarker, result, method) is easier to analyze over time."
+Precision,BIOMK,RET,RET Mutation,select_one mut_result,LB (molecular biomarker),STRUCTURE,Biomarker log (LB),M,CDASHIG 8.3.6 LB; 3.4,"Wide layout: one column per biomarker and per method. One repeating record (biomarker, result, method) is easier to analyze over time."
+Precision,BIOMK,RET_MTH,RET Test Method,select_multiple test_method,LB (molecular biomarker),STRUCTURE,Biomarker log (LB),M,CDASHIG 8.3.6 LB; 3.4,"Wide layout: one column per biomarker and per method. One repeating record (biomarker, result, method) is easier to analyze over time."
+Precision,BIOMK,PIK3CA,PIK3CA Mutation,select_one mut_result,LB (molecular biomarker),STRUCTURE,Biomarker log (LB),M,CDASHIG 8.3.6 LB; 3.4,"Wide layout: one column per biomarker and per method. One repeating record (biomarker, result, method) is easier to analyze over time."
+Precision,BIOMK,PIK3CA_MTH,PIK3CA Test Method,select_multiple test_method,LB (molecular biomarker),STRUCTURE,Biomarker log (LB),M,CDASHIG 8.3.6 LB; 3.4,"Wide layout: one column per biomarker and per method. One repeating record (biomarker, result, method) is easier to analyze over time."
+Precision,BIOMK,PDL1,PD-L1 Mutation,select_one mut_result,LB (molecular biomarker),STRUCTURE,Biomarker log (LB),M,CDASHIG 8.3.6 LB; 3.4,"Wide layout: one column per biomarker and per method. One repeating record (biomarker, result, method) is easier to analyze over time."
+Precision,BIOMK,PDL1TPS,PD-L1 IHC TPS (%),decimal,LB (molecular biomarker),STRUCTURE,Biomarker log (LB),M,CDASHIG 8.3.6 LB; 3.4,"Wide layout: one column per biomarker and per method. One repeating record (biomarker, result, method) is easier to analyze over time."
+Precision,BIOMK,HPV,HPV,select_one mut_result,LB (molecular biomarker),STRUCTURE,Biomarker log (LB),M,CDASHIG 8.3.6 LB; 3.4,"Wide layout: one column per biomarker and per method. One repeating record (biomarker, result, method) is easier to analyze over time."
+Precision,BIOMK,HPV_MTH,HPV Test Method,select_multiple hpv_method,LB (molecular biomarker),STRUCTURE,Biomarker log (LB),M,CDASHIG 8.3.6 LB; 3.4,"Wide layout: one column per biomarker and per method. One repeating record (biomarker, result, method) is easier to analyze over time."
+Precision,BIOMK,HPV_GENO,HPV Genotype (specify),text,LB (molecular biomarker),STRUCTURE,Biomarker log (LB),M,CDASHIG 8.3.6 LB; 3.4,"Wide layout: one column per biomarker and per method. One repeating record (biomarker, result, method) is easier to analyze over time."
+Precision,BIOMK,ER,ER Mutation,select_one mut_result,LB (molecular biomarker),STRUCTURE,Biomarker log (LB),M,CDASHIG 8.3.6 LB; 3.4,"Wide layout: one column per biomarker and per method. One repeating record (biomarker, result, method) is easier to analyze over time."
+Precision,BIOMK,ER_MTH,ER Test Method,select_multiple test_method,LB (molecular biomarker),STRUCTURE,Biomarker log (LB),M,CDASHIG 8.3.6 LB; 3.4,"Wide layout: one column per biomarker and per method. One repeating record (biomarker, result, method) is easier to analyze over time."
+Precision,BIOMK,PR,PR Mutation,select_one mut_result,LB (molecular biomarker),STRUCTURE,Biomarker log (LB),M,CDASHIG 8.3.6 LB; 3.4,"Wide layout: one column per biomarker and per method. One repeating record (biomarker, result, method) is easier to analyze over time."
+Precision,BIOMK,PR_MTH,PR Test Method,select_multiple test_method,LB (molecular biomarker),STRUCTURE,Biomarker log (LB),M,CDASHIG 8.3.6 LB; 3.4,"Wide layout: one column per biomarker and per method. One repeating record (biomarker, result, method) is easier to analyze over time."
+Precision,BIOMK,HER2,HER2 Mutation,select_one mut_result,LB (molecular biomarker),STRUCTURE,Biomarker log (LB),M,CDASHIG 8.3.6 LB; 3.4,"Wide layout: one column per biomarker and per method. One repeating record (biomarker, result, method) is easier to analyze over time."
+Precision,BIOMK,HER2_MTH,HER2 Test Method,select_multiple test_method,LB (molecular biomarker),STRUCTURE,Biomarker log (LB),M,CDASHIG 8.3.6 LB; 3.4,"Wide layout: one column per biomarker and per method. One repeating record (biomarker, result, method) is easier to analyze over time."
+Precision,BIOMK,BRCA1,BRCA1 Mutation,select_one mut_result,LB (molecular biomarker),STRUCTURE,Biomarker log (LB),M,CDASHIG 8.3.6 LB; 3.4,"Wide layout: one column per biomarker and per method. One repeating record (biomarker, result, method) is easier to analyze over time."
+Precision,BIOMK,BRCA1_MTH,BRCA1 Test Method,select_multiple test_method,LB (molecular biomarker),STRUCTURE,Biomarker log (LB),M,CDASHIG 8.3.6 LB; 3.4,"Wide layout: one column per biomarker and per method. One repeating record (biomarker, result, method) is easier to analyze over time."
+Precision,BIOMK,BRCA2,BRCA2 Mutation,select_one mut_result,LB (molecular biomarker),STRUCTURE,Biomarker log (LB),M,CDASHIG 8.3.6 LB; 3.4,"Wide layout: one column per biomarker and per method. One repeating record (biomarker, result, method) is easier to analyze over time."
+Precision,BIOMK,BRCA2_MTH,BRCA2 Test Method,select_multiple test_method,LB (molecular biomarker),STRUCTURE,Biomarker log (LB),M,CDASHIG 8.3.6 LB; 3.4,"Wide layout: one column per biomarker and per method. One repeating record (biomarker, result, method) is easier to analyze over time."
+Precision,BIOMK,EXONDET,Specific exon/mutations (details),text,LB (molecular biomarker),STRUCTURE,Biomarker log (LB),M,CDASHIG 8.3.6 LB; 3.4,"Wide layout: one column per biomarker and per method. One repeating record (biomarker, result, method) is easier to analyze over time."
+Precision,BIOMK,OTHBIO,Other biomarkers (details),text,LB (molecular biomarker),STRUCTURE,Biomarker log (LB),M,CDASHIG 8.3.6 LB; 3.4,"Wide layout: one column per biomarker and per method. One repeating record (biomarker, result, method) is easier to analyze over time."
+Precision,ATT,ATTDETL,Attachment details,text,operational (attachments),KEEP,ATT,M,n/a,
+Precision,ATT,ATTFILE,Attachment (file upload — enter reference or filename),text,operational (attachments),KEEP,ATT,M,n/a,
+Detroit,DOV,(all 4 fields),,,operational visit tracking,KEEP,DOV,H,CDASHIG 8 (domain forms audited earlier),Already aligned; only list values changed (canonical lists)
+Detroit,ECONSENT,AGREE,Do you agree to participate?,select_one agree,DS consent decision,KEEP,ECONSENT,M,CDASHIG 8.2.4 DS,
+Detroit,ECONSENT,EMAIL,E-mail Address,text,contact data (not a CDASH domain),KEEP,ECONSENT,M,OC4 docs: Contact Data,"KEPT per your decision. Option for later: OC4 has a native Contact Data store for email/phone, kept separate and permission-controlled."
+Detroit,ECONSENT,CONFIRM_EMAIL,Confirm e-mail address,text,contact data (not a CDASH domain),KEEP,ECONSENT,M,OC4 docs: Contact Data,"KEPT per your decision. Option for later: OC4 has a native Contact Data store for email/phone, kept separate and permission-controlled."
+Detroit,ECONSENT,CELL,Cell phone number,text,contact data (not a CDASH domain),KEEP,ECONSENT,M,OC4 docs: Contact Data,"KEPT per your decision. Option for later: OC4 has a native Contact Data store for email/phone, kept separate and permission-controlled."
+Detroit,ECONSENT,CELL_CONFIRM,Confirm cell phone number,text,contact data (not a CDASH domain),KEEP,ECONSENT,M,OC4 docs: Contact Data,"KEPT per your decision. Option for later: OC4 has a native Contact Data store for email/phone, kept separate and permission-controlled."
+Detroit,ECONSENT,SURVEY,This study involves brief yearly questionnaires. May we contact you?,select_multiple surv,consent preference,KEEP,ECONSENT,L,n/a,
+Detroit,ECONSENT,PATIENT_SIG,Patient signature,image,operational (signature),KEEP,ECONSENT,M,n/a,
+Detroit,ECONSENT,EC,Check to confirm signature,select_multiple ec,operational (signature),KEEP,ECONSENT,M,n/a,
+Detroit,ECONSENT,CONSENT_DT,Date of Consent,date,DS informed consent date,KEEP,ECONSENT (source of truth),H,CDASHIG 8.2.4 DS,
+Detroit,ECONSENT,ACKNOWLEDGE1,I have had enough time to read the consent form,select_one yn,operational,KEEP,ECONSENT,M,n/a,
+Detroit,ECONSENT,ACKNOWLEDGE2,I have had all of my questions answered,select_one yn,operational,KEEP,ECONSENT,M,n/a,
+Detroit,ECONSENT,ACKNOWLEDGE4,I have been told that my participation is voluntary,select_one yn,operational,KEEP,ECONSENT,M,n/a,
+Detroit,ECONSENT,DECLINE_PARTICIPATION,Please provide the reason for declining,select_one decline,DS reason,KEEP,ECONSENT,M,CDASHIG 8.2.4 DS,
+Detroit,ECONSENT,DECLINE_OTHER,"Other, specify reason",text,DS reason,KEEP,ECONSENT,M,CDASHIG 8.2.4 DS,
+Detroit,SHORTFORM,IS_IT_A_VETERINARY_FORM,Is this a Human subject?,select_one ys9lj11,operational routing,KEEP,SHORTFORM,M,n/a,"Verified in the built form: logic follows the LABEL (Yes = human; human-only fields use =""Yes""). Only the variable NAME is misleading."
+Detroit,SHORTFORM,DIN,DIN (Donor Identification Number),text,DM identifier,KEEP,SHORTFORM (stays as DM),H,CDASHIG 7.3 DM,
+Detroit,SHORTFORM,PROJID,Project ID,text,DM identifier,KEEP,SHORTFORM (stays as DM),H,CDASHIG 7.3 DM,
+Detroit,SHORTFORM,KIT_NO,Kit Number,text,specimen collection (sponsor-defined),MOVE,SPECCOL (new specimen collection form),M,CDASHIG 3.4 sponsor-defined fields,
+Detroit,SHORTFORM,COLLDT,Date of Collection,date,specimen collection (sponsor-defined),MOVE,SPECCOL (new specimen collection form),M,CDASHIG 4.2 #1,
+Detroit,SHORTFORM,COLLTM,Collection Time (HH:MM),text,specimen collection (sponsor-defined),MOVE,SPECCOL (new specimen collection form),M,CDASHIG 4.2 #1,
+Detroit,SHORTFORM,ICF,ICF Number,text,DS informed consent,CONSOLIDATE,Consent (DS),M,CDASHIG 8.2.4 DS; 4.1 #4,Consent also captured on ECONSENT.CONSENT_DT and INCEXC.SIGNED_ICF
+Detroit,SHORTFORM,IRB,IRB approval letter number,text,DS informed consent (sponsor-defined),MOVE,Consent (DS),M,CDASHIG 3.4; 8.2.4 DS,KEPT. Housed with the consent record next to ICF.
+Detroit,SHORTFORM,PM_Y,Post-mortem sample?,select_multiple pm,specimen collection (sponsor-defined),MOVE,SPECCOL (new specimen collection form),M,CDASHIG 3.4,"Also decides whether death fields apply, which becomes a cross-form condition"
+Detroit,SHORTFORM,DOD,Date of Death,date,DD / DM death date,MOVE,DD (new Death Details form),H,CDASHIG 8.3.3 DD; CDISC death example,"DM keeps only death flag + date; details live in DD DEFECT (verified in built form): shown only when selected(PM_Y,""TESTED""), but the only PM_Y choice is ""1"", so these fields can never appear today."
+Detroit,SHORTFORM,TOD,Time of Death (HH:MM),text,DD (sponsor-defined),MOVE,DD (new Death Details form),M,CDASHIG 3.4,"KEPT per your decision. No CDASH time-of-death variable found, so it is carried as a sponsor-defined field in Death Details (CDASH 3.4: non-standard fields map to SUPP-- style qualifiers). DEFECT (verified in built form): shown only when selected(PM_Y,""TESTED""), but the only PM_Y choice is ""1"", so these fields can never appear today."
+Detroit,SHORTFORM,COD,Cause of Death,text,DD (primary cause of death),MOVE,DD (new Death Details form),H,CDASHIG 8.3.3 DD,"Free text in CDASH too; coding to a picklist is a separate step DEFECT (verified in built form): shown only when selected(PM_Y,""TESTED""), but the only PM_Y choice is ""1"", so these fields can never appear today."
+Detroit,SHORTFORM,DOB,Date of Birth,date,DM,KEEP,SHORTFORM (stays as DM),H,CDASHIG 7.3 DM,
+Detroit,SHORTFORM,GENDER,Gender,select_one gend,DM (SEX),KEEP,SHORTFORM (stays as DM),H,CDASHIG 7.3 DM,List left un-canonicalized by your decision
+Detroit,SHORTFORM,RACE,Race,select_one race,DM,KEEP,SHORTFORM (stays as DM),H,CDASHIG 7.3 DM,
+Detroit,SHORTFORM,RACE_OTH,"Other race, specify",text,DM,KEEP,SHORTFORM (stays as DM),H,CDASHIG 7.3 DM,
+Detroit,SHORTFORM,ETH,Ethnicity,select_one in8gq18,DM,KEEP,SHORTFORM (stays as DM),H,CDASHIG 7.3 DM,"DEFECT (verified in built form): RACE is hidden for animal records but ETH has no hide rule, so the ethnicity question shows for animals."
+Detroit,VS,(all 9 fields),,,VS,KEEP,VS,H,CDASHIG 8 (domain forms audited earlier),Already aligned; only list values changed (canonical lists)
+Detroit,SU,(all 16 fields),,,SU,KEEP,SU,H,CDASHIG 8 (domain forms audited earlier),Already aligned; only list values changed (canonical lists)
+Detroit,SC,(all 6 fields),,,SC,KEEP,SC,H,CDASHIG 8 (domain forms audited earlier),Already aligned; only list values changed (canonical lists)
+Detroit,MH,(all 6 fields),,,MH,KEEP,MH,H,CDASHIG 8 (domain forms audited earlier),Already aligned; only list values changed (canonical lists)
+Detroit,CM,(all 13 fields),,,CM,KEEP,CM,H,CDASHIG 8 (domain forms audited earlier),Already aligned; only list values changed (canonical lists)
+Detroit,INCEXC,SIGNED_ICF,"Signed, written informed consent provided",select_one yn,DS,ONE_HOME,(read-only from ECONSENT.CONSENT_DT),M,CDASHIG 4.1 #4,"Field stays. Instead of asking again, the form shows the value read-only from DM via an OC4 cross-form reference (supported per OC4 docs). Pipeline support for the event list is not yet verified."
+Detroit,INCEXC,DONOR_DIAGNOSIS,Donor is diagnosed with,text,MH,CONSOLIDATE,Dx & Procedures (one shared place),M,CDASHIG 8.1.4 PR / 8.2.7 MH; 4.1 #4,"Same question appears on FOLLOWUP, OUTCOME and ONCOLOGY under three spellings"
+Detroit,INCEXC,DATE_DIAGNOSIS,Date of diagnosis,date,MH,CONSOLIDATE,Dx & Procedures (one shared place),M,CDASHIG 8.1.4 PR / 8.2.7 MH; 4.1 #4,"Same question appears on FOLLOWUP, OUTCOME and ONCOLOGY under three spellings"
+Detroit,INCEXC,DONOR_AGE18,Donor is age 18 or over,select_one yn,derived from DM date of birth,CALCULATE,"same form, read-only calculated",M,"CDASHIG 4.1 #4, #11",Field stays; calculated from DM date of birth. Nothing deleted.
+Detroit,INCEXC,INC_OTHER,Other Inclusion Criteria Question,text,IE,KEEP,INCEXC,M,CDASHIG 8.3.5 IE,
+Detroit,INCEXC,DONOR_UNDER18,Donor is less than 18 years of age,select_one yn,inverse of DONOR_AGE18,CALCULATE,"same form, read-only calculated",H,CDASHIG 4.1 #4,Field stays; becomes the calculated inverse of DONOR_AGE18. Nothing deleted.
+Detroit,INCEXC,DONOR_INFECTIOUS,Donor is known to have infectious disease,select_one yn,IE,KEEP,INCEXC,M,CDASHIG 8.3.5 IE,
+Detroit,INCEXC,DONOR_PRIOR_STUDY,Donor already participated in this study,select_one yn,IE,KEEP,INCEXC,M,CDASHIG 8.3.5 IE,
+Detroit,INCEXC,SIGNIFICANT_MEDICAL,Any significant medical reason per PI/Sponsor,select_one yn,IE,KEEP,INCEXC,M,CDASHIG 8.3.5 IE,
+Detroit,INCEXC,EXC_OTHER,Other Exclusion Criteria Question,text,IE,KEEP,INCEXC,M,CDASHIG 8.3.5 IE,
+Detroit,INCEXC,ELIGIBILITY,Did the patient meet the eligibility requirements?,select_one yn,IE (overall),KEEP,INCEXC,L,CDASHIG 8.3.5 IE,Derivable from the criteria; keep only if the investigator must attest
+Detroit,BIOIVTONC,CUSTNOTES,Customer Output Notes,text,operational (BioIVT specimen QC),KEEP,BIOIVTONC,M,n/a,"BioIVT internal handling, not clinical data"
+Detroit,BIOIVTONC,QUAR,Quarantine status,select_multiple quar,operational (BioIVT specimen QC),KEEP,BIOIVTONC,M,n/a,"BioIVT internal handling, not clinical data"
+Detroit,BIOIVTONC,QUAR_REAS,Quarantine Reason,select_one quar_reas,operational (BioIVT specimen QC),KEEP,BIOIVTONC,M,n/a,"BioIVT internal handling, not clinical data"
+Detroit,BIOIVTONC,ACCNUM,Accession Number,text,operational (BioIVT specimen QC),KEEP,BIOIVTONC,M,n/a,"BioIVT internal handling, not clinical data"
+Detroit,BIOIVTONC,NEOTHISCASE,Neoplasm this case,select_multiple neot,MI / TU / TR,KEEP,BIOIVTONC,M,CDASHIG 8.3.9 MI / 8.3.16 TU / 8.3.17 TR,"BioIVT-confirmed values; same concepts as ONCOLOGY but different provenance, so not a pure duplicate"
+Detroit,BIOIVTONC,NEOPRIORCASE,Neoplasm prior case,select_multiple neop,MI / TU / TR,KEEP,BIOIVTONC,M,CDASHIG 8.3.9 MI / 8.3.16 TU / 8.3.17 TR,"BioIVT-confirmed values; same concepts as ONCOLOGY but different provenance, so not a pure duplicate"
+Detroit,BIOIVTONC,CONFTNMSTG,Confirmed TNM Stage,text,RS / MI / MH,STRUCTURE,BIOIVTONC,M,CDASHIG 4.1 #12,Free text; same concept as on ONCOLOGY
+Detroit,BIOIVTONC,CONFSTGROUP,Confirmed Stage Group,text,RS / MI / MH,STRUCTURE,BIOIVTONC,M,CDASHIG 4.1 #12,Free text; same concept as on ONCOLOGY
+Detroit,BIOIVTONC,TUMPRES,Tumor Presence,select_multiple tump,MI / TU / TR,KEEP,BIOIVTONC,M,CDASHIG 8.3.9 MI / 8.3.16 TU / 8.3.17 TR,"BioIVT-confirmed values; same concepts as ONCOLOGY but different provenance, so not a pure duplicate"
+Detroit,BIOIVTONC,LOCCON,Location Confirmed,select_multiple locc,MI / TU / TR,KEEP,BIOIVTONC,M,CDASHIG 8.3.9 MI / 8.3.16 TU / 8.3.17 TR,"BioIVT-confirmed values; same concepts as ONCOLOGY but different provenance, so not a pure duplicate"
+Detroit,BIOIVTONC,ORG_SITE_CONF,Confirmed Organ Site,text,RS / MI / MH,STRUCTURE,BIOIVTONC,M,CDASHIG 4.1 #12,Free text; same concept as on ONCOLOGY
+Detroit,BIOIVTONC,TUM_LOC_CONF,Confirmed Tumor Location,text,RS / MI / MH,STRUCTURE,BIOIVTONC,M,CDASHIG 4.1 #12,Free text; same concept as on ONCOLOGY
+Detroit,BIOIVTONC,DIAG_CONF,Confirmed Diagnosis,text,RS / MI / MH,STRUCTURE,BIOIVTONC,M,CDASHIG 4.1 #12,Free text; same concept as on ONCOLOGY
+Detroit,BIOIVTONC,DIAG_CODE,ICD Diagnosis Code,text,RS / MI / MH,STRUCTURE,BIOIVTONC,M,CDASHIG 4.1 #12,Free text; same concept as on ONCOLOGY
+Detroit,BIOIVTONC,ANATLOC,Anatomic Location,text,RS / MI / MH,STRUCTURE,BIOIVTONC,M,CDASHIG 4.1 #12,Free text; same concept as on ONCOLOGY
+Detroit,BIOIVTONC,SITE,Site,select_one group,MI / TU / TR,KEEP,BIOIVTONC,M,CDASHIG 8.3.9 MI / 8.3.16 TU / 8.3.17 TR,"BioIVT-confirmed values; same concepts as ONCOLOGY but different provenance, so not a pure duplicate"
+Detroit,BIOIVTONC,SITE_OTH,"Other, Specify Site",text,MI / TU / TR,KEEP,BIOIVTONC,M,CDASHIG 8.3.9 MI / 8.3.16 TU / 8.3.17 TR,"BioIVT-confirmed values; same concepts as ONCOLOGY but different provenance, so not a pure duplicate"
+Detroit,BIOIVTONC,MAN_CKLIST,Manual Checklist,text,operational (BioIVT specimen QC),KEEP,BIOIVTONC,M,n/a,"BioIVT internal handling, not clinical data"
+Detroit,BIOIVTONC,SPEC_TYP,Specimen Type,text,RS / MI / MH,STRUCTURE,BIOIVTONC,M,CDASHIG 4.1 #12,Free text; same concept as on ONCOLOGY
+Detroit,BIOIVTONC,SPEC_SIZE1,Specimen Size 1,decimal,MI / TU / TR,KEEP,BIOIVTONC,M,CDASHIG 8.3.9 MI / 8.3.16 TU / 8.3.17 TR,"BioIVT-confirmed values; same concepts as ONCOLOGY but different provenance, so not a pure duplicate"
+Detroit,BIOIVTONC,SPEC_SIZE2,Specimen Size 2,decimal,MI / TU / TR,KEEP,BIOIVTONC,M,CDASHIG 8.3.9 MI / 8.3.16 TU / 8.3.17 TR,"BioIVT-confirmed values; same concepts as ONCOLOGY but different provenance, so not a pure duplicate"
+Detroit,BIOIVTONC,SPEC_SIZE3,Specimen Size 3,decimal,MI / TU / TR,KEEP,BIOIVTONC,M,CDASHIG 8.3.9 MI / 8.3.16 TU / 8.3.17 TR,"BioIVT-confirmed values; same concepts as ONCOLOGY but different provenance, so not a pure duplicate"
+Detroit,BIOIVTONC,TUM_SITE,Tumor Site,select_one tsite,MI / TU / TR,KEEP,BIOIVTONC,M,CDASHIG 8.3.9 MI / 8.3.16 TU / 8.3.17 TR,"BioIVT-confirmed values; same concepts as ONCOLOGY but different provenance, so not a pure duplicate"
+Detroit,BIOIVTONC,TUM_SIZE1,Tumor Size 1,decimal,MI / TU / TR,KEEP,BIOIVTONC,M,CDASHIG 8.3.9 MI / 8.3.16 TU / 8.3.17 TR,"BioIVT-confirmed values; same concepts as ONCOLOGY but different provenance, so not a pure duplicate"
+Detroit,BIOIVTONC,TUM_SIZE2,Tumor Size 2,decimal,MI / TU / TR,KEEP,BIOIVTONC,M,CDASHIG 8.3.9 MI / 8.3.16 TU / 8.3.17 TR,"BioIVT-confirmed values; same concepts as ONCOLOGY but different provenance, so not a pure duplicate"
+Detroit,BIOIVTONC,TUM_SIZE3,Tumor Size 3,decimal,MI / TU / TR,KEEP,BIOIVTONC,M,CDASHIG 8.3.9 MI / 8.3.16 TU / 8.3.17 TR,"BioIVT-confirmed values; same concepts as ONCOLOGY but different provenance, so not a pure duplicate"
+Detroit,BIOIVTONC,TFEAT_BLAD,Tumor Features (Bladder),select_multiple blad,MI / TU / TR,KEEP,BIOIVTONC,M,CDASHIG 8.3.9 MI / 8.3.16 TU / 8.3.17 TR,"BioIVT-confirmed values; same concepts as ONCOLOGY but different provenance, so not a pure duplicate"
+Detroit,BIOIVTONC,TFEAT_COL,Tumor Features (Large Intestine),select_multiple colo,MI / TU / TR,KEEP,BIOIVTONC,M,CDASHIG 8.3.9 MI / 8.3.16 TU / 8.3.17 TR,"BioIVT-confirmed values; same concepts as ONCOLOGY but different provenance, so not a pure duplicate"
+Detroit,BIOIVTONC,TFEAT_SKIN,Tumor Features (Skin),select_multiple skin,MI / TU / TR,KEEP,BIOIVTONC,M,CDASHIG 8.3.9 MI / 8.3.16 TU / 8.3.17 TR,"BioIVT-confirmed values; same concepts as ONCOLOGY but different provenance, so not a pure duplicate"
+Detroit,BIOIVTONC,TFEAT_STOM,Tumor Features (Stomach),select_multiple stom,MI / TU / TR,KEEP,BIOIVTONC,M,CDASHIG 8.3.9 MI / 8.3.16 TU / 8.3.17 TR,"BioIVT-confirmed values; same concepts as ONCOLOGY but different provenance, so not a pure duplicate"
+Detroit,BIOIVTONC,GROSS,Gross description present?,select_one yn,MI / TU / TR,KEEP,BIOIVTONC,M,CDASHIG 8.3.9 MI / 8.3.16 TU / 8.3.17 TR,"BioIVT-confirmed values; same concepts as ONCOLOGY but different provenance, so not a pure duplicate"
+Detroit,BIOIVTONC,FOC,Focality,select_one focal,MI / TU / TR,KEEP,BIOIVTONC,M,CDASHIG 8.3.9 MI / 8.3.16 TU / 8.3.17 TR,"BioIVT-confirmed values; same concepts as ONCOLOGY but different provenance, so not a pure duplicate"
+Detroit,BIOIVTONC,HIST_TYP,Histology Type,text,RS / MI / MH,STRUCTURE,BIOIVTONC,M,CDASHIG 4.1 #12,Free text; same concept as on ONCOLOGY
+Detroit,BIOIVTONC,HIST_GRD,Histology Grade,select_one hgrade,MI / TU / TR,KEEP,BIOIVTONC,M,CDASHIG 8.3.9 MI / 8.3.16 TU / 8.3.17 TR,"BioIVT-confirmed values; same concepts as ONCOLOGY but different provenance, so not a pure duplicate"
+Detroit,BIOIVTONC,TUM_EXT,Tumor Extension,select_one tumor_ext,MI / TU / TR,KEEP,BIOIVTONC,M,CDASHIG 8.3.9 MI / 8.3.16 TU / 8.3.17 TR,"BioIVT-confirmed values; same concepts as ONCOLOGY but different provenance, so not a pure duplicate"
+Detroit,BIOIVTONC,TUM_EXT_OTHR,"Tumor Extension, Other",text,MI / TU / TR,KEEP,BIOIVTONC,M,CDASHIG 8.3.9 MI / 8.3.16 TU / 8.3.17 TR,"BioIVT-confirmed values; same concepts as ONCOLOGY but different provenance, so not a pure duplicate"
+Detroit,BIOIVTONC,LYMP_NOD,Lymph Nodes,text,RS / MI / MH,STRUCTURE,BIOIVTONC,M,CDASHIG 4.1 #12,Free text; same concept as on ONCOLOGY
+Detroit,BIOIVTONC,SAT_NOD,Satellite Nodules,select_one ext,MI / TU / TR,KEEP,BIOIVTONC,M,CDASHIG 8.3.9 MI / 8.3.16 TU / 8.3.17 TR,"BioIVT-confirmed values; same concepts as ONCOLOGY but different provenance, so not a pure duplicate"
+Detroit,BIOIVTONC,OTH_NOD,Other Nodes,select_one ynns,MI / TU / TR,KEEP,BIOIVTONC,M,CDASHIG 8.3.9 MI / 8.3.16 TU / 8.3.17 TR,"BioIVT-confirmed values; same concepts as ONCOLOGY but different provenance, so not a pure duplicate"
+Detroit,BIOIVTONC,LYMP_INV,Lymphatic Invasion,select_one ext,MI / TU / TR,KEEP,BIOIVTONC,M,CDASHIG 8.3.9 MI / 8.3.16 TU / 8.3.17 TR,"BioIVT-confirmed values; same concepts as ONCOLOGY but different provenance, so not a pure duplicate"
+Detroit,ONCOLOGY,VIRUS,Virus,select_one virinfec,LB,CONSOLIDATE,Lab results log (LB),M,CDASHIG 8.3.6 LB,Same virus/blood-test questions on TESTRES and ONCOLOGY
+Detroit,ONCOLOGY,VIRTEST,Tested,select_one test,LB,CONSOLIDATE,Lab results log (LB),M,CDASHIG 8.3.6 LB,Same virus/blood-test questions on TESTRES and ONCOLOGY
+Detroit,ONCOLOGY,VIRRESULT,Result,select_one res,LB,CONSOLIDATE,Lab results log (LB),M,CDASHIG 8.3.6 LB,Same virus/blood-test questions on TESTRES and ONCOLOGY
+Detroit,ONCOLOGY,BLDTEST,Blood Test,select_one bldtest,LB,CONSOLIDATE,Lab results log (LB),M,CDASHIG 8.3.6 LB,Same virus/blood-test questions on TESTRES and ONCOLOGY
+Detroit,ONCOLOGY,OTHTEST,"Other test, specify",text,LB,CONSOLIDATE,Lab results log (LB),M,CDASHIG 8.3.6 LB,Same virus/blood-test questions on TESTRES and ONCOLOGY
+Detroit,ONCOLOGY,BLDVALUE,Value,text,LB,STRUCTURE,Lab results log (LB),M,CDASHIG 8.3.6 LB; 4.1 #12,Result and unit stored as free text; should be numeric + unit picklist
+Detroit,ONCOLOGY,BLDUNIT,Unit,text,LB,STRUCTURE,Lab results log (LB),M,CDASHIG 8.3.6 LB; 4.1 #12,Result and unit stored as free text; should be numeric + unit picklist
+Detroit,ONCOLOGY,EXCIDT,Date of Excision,date,PR excision date,CONSOLIDATE,Dx & Procedures (one shared place),M,CDASHIG 8.1.4 PR / 8.2.7 MH; 4.1 #4,"Same question appears on FOLLOWUP, OUTCOME and ONCOLOGY under three spellings"
+Detroit,ONCOLOGY,ANALOC,Anatomic Location,text,PR location / TU,CONSOLIDATE,Dx & Procedures (one shared place),M,CDASHIG 8.1.4 PR / 8.2.7 MH; 4.1 #4,"Same question appears on FOLLOWUP, OUTCOME and ONCOLOGY under three spellings"
+Detroit,ONCOLOGY,SURGIPROC,Surgical Procedure,text,PR,CONSOLIDATE,Dx & Procedures (one shared place),M,CDASHIG 8.1.4 PR / 8.2.7 MH; 4.1 #4,"Same question appears on FOLLOWUP, OUTCOME and ONCOLOGY under three spellings"
+Detroit,ONCOLOGY,DTDIAG,Date of Diagnosis,date,MH diagnosis date,CONSOLIDATE,Dx & Procedures (one shared place),M,CDASHIG 8.1.4 PR / 8.2.7 MH; 4.1 #4,"Same question appears on FOLLOWUP, OUTCOME and ONCOLOGY under three spellings"
+Detroit,ONCOLOGY,SPECIDIAG,Specimen Diagnosis,text,MH / MI,CONSOLIDATE,Dx & Procedures (one shared place),M,CDASHIG 8.1.4 PR / 8.2.7 MH; 4.1 #4,"Same question appears on FOLLOWUP, OUTCOME and ONCOLOGY under three spellings"
+Detroit,ONCOLOGY,ICD9DIAG,ICD-9 Diagnosis Code,text,MH (coded diagnosis),STRUCTURE,Dx & Procedures (one shared place),M,CDASHIG 6.1.2; 4.1 #12,ICD-9 is retired for most uses; free text code
+Detroit,ONCOLOGY,GROSS_DESCR,Gross Description,text,MI / CO narrative,KEEP,ONCOLOGY,M,CDASHIG 8.3.9 MI,
+Detroit,ONCOLOGY,MICRO_DESCR,Microscopic Description,text,MI narrative,KEEP,ONCOLOGY,M,CDASHIG 8.3.9 MI,
+Detroit,ONCOLOGY,DIAG_DETAIL,Diagnostic Details,text,MI narrative,KEEP,ONCOLOGY,L,CDASHIG 8.3.9 MI,
+Detroit,ONCOLOGY,PATH_COMMENT,Pathology Comments,text,CO,KEEP,ONCOLOGY,M,CDASHIG 7.2 CO,
+Detroit,ONCOLOGY,TUMLOCA,Tumor Location,text,TU,KEEP,ONCOLOGY,M,CDASHIG 8.3.16 TU,
+Detroit,ONCOLOGY,UICCSTGE,UICC Stage,text,RS (stage),STRUCTURE,ONCOLOGY,M,CDASHIG 8.3.14 RS; 4.1 #12,Free-text stage; same concept on 3 other forms
+Detroit,ONCOLOGY,TUMSTGE,Stage,text,RS (stage),STRUCTURE,ONCOLOGY,M,CDASHIG 8.3.14 RS; 4.1 #12,
+Detroit,ONCOLOGY,TUMGRADE,Grade,select_one grade,MI (grade),KEEP,ONCOLOGY,M,CDASHIG 8.3.9 MI,
+Detroit,ONCOLOGY,TUMSIZE1,Tumor Size 1,decimal,TR,KEEP,ONCOLOGY,M,CDASHIG 8.3.17 TR,
+Detroit,ONCOLOGY,TUMSIZE2,Tumor Size 2,decimal,TR,KEEP,ONCOLOGY,M,CDASHIG 8.3.17 TR,
+Detroit,ONCOLOGY,TUMSIZE3,Tumor Size 3,decimal,TR,KEEP,ONCOLOGY,M,CDASHIG 8.3.17 TR,
+Detroit,ONCOLOGY,LOCCONFIN,Location Confined?,select_one yn,TU / MI,KEEP,ONCOLOGY,L,CDASHIG 8.3.16 TU,
+Detroit,ONCOLOGY,LYMPHEXAM,# Lymph Nodes Examined,integer,MI,KEEP,ONCOLOGY,M,CDASHIG 8.3.9 MI,
+Detroit,ONCOLOGY,POSLYMPH,# Positive Lymph Nodes,integer,MI,KEEP,ONCOLOGY,M,CDASHIG 8.3.9 MI,
+Detroit,ONCOLOGY,LYMPHLOC,Lymph Node Locations,text,MI,STRUCTURE,ONCOLOGY,L,CDASHIG 4.1 #12,
+Detroit,ONCOLOGY,DISTMETA,Distant Metastasis Present,select_one yn,TU / CE,KEEP,ONCOLOGY,M,CDASHIG 8.3.16 TU,
+Detroit,ONCOLOGY,DISTMETA_LOC,Location of Distant Metastases,text,TU / CE,STRUCTURE,ONCOLOGY,M,CDASHIG 4.1 #12,
+Detroit,ONCOLOGY,THERTYP,Therapy Type,select_one ther,CM / PR,CONSOLIDATE,Therapy log (CM/PR),M,CDASHIG 8.1.2 CM / 8.1.4 PR,"Therapy captured on FOLLOWUP, OUTCOME, ONCOLOGY and PSORIASIS separately"
+Detroit,ONCOLOGY,THERTYP_OTH,"Therapy Type, Other",text,CM / PR,CONSOLIDATE,Therapy log (CM/PR),M,CDASHIG 8.1.2 CM / 8.1.4 PR,"Therapy captured on FOLLOWUP, OUTCOME, ONCOLOGY and PSORIASIS separately"
+Detroit,ONCOLOGY,THER_STDT,Therapy Start Date,date,CM / PR,CONSOLIDATE,Therapy log (CM/PR),M,CDASHIG 8.1.2 CM / 8.1.4 PR,"Therapy captured on FOLLOWUP, OUTCOME, ONCOLOGY and PSORIASIS separately"
+Detroit,ONCOLOGY,THER_ENDDT,Therapy End Date,date,CM / PR,CONSOLIDATE,Therapy log (CM/PR),M,CDASHIG 8.1.2 CM / 8.1.4 PR,"Therapy captured on FOLLOWUP, OUTCOME, ONCOLOGY and PSORIASIS separately"
+Detroit,ONCOLOGY,THEROUTC,Therapy Outcome,text,CM / PR outcome,STRUCTURE,Therapy log (CM/PR),L,CDASHIG 4.1 #12,Free text
+Detroit,ONCOLOGY,THERADMIN,Therapy Administration,text,CM (route),STRUCTURE,Therapy log (CM/PR),M,CDASHIG 8.1.2 CM,Free text; CM route list canon_cm_route already exists
+Detroit,ONCOLOGY,MARKER,Marker,select_one mark,LB tumor marker,CONSOLIDATE,Lab results log (LB),M,CDASHIG 8.3.6 LB,Same virus/blood-test questions on TESTRES and ONCOLOGY
+Detroit,ONCOLOGY,MARKOTH,Other Marker,text,LB tumor marker,CONSOLIDATE,Lab results log (LB),M,CDASHIG 8.3.6 LB,Same virus/blood-test questions on TESTRES and ONCOLOGY
+Detroit,ONCOLOGY,MARKVALUE,Marker Value,text,LB,STRUCTURE,Lab results log (LB),M,CDASHIG 8.3.6 LB; 4.1 #12,Result and unit stored as free text; should be numeric + unit picklist
+Detroit,ONCOLOGY,MARKUNIT,Marker Unit,text,LB,STRUCTURE,Lab results log (LB),M,CDASHIG 8.3.6 LB; 4.1 #12,Result and unit stored as free text; should be numeric + unit picklist
+Detroit,LUPUS,SUBMR,Malar Rash sub-criteria,select_multiple subm,CE / RS (ACR classification criteria),KEEP,same form,L,CDASHIG 8.2.3 CE / 8.3.14 RS,Sponsor-defined within the domain (CDASHIG 3.4)
+Detroit,LUPUS,RESMR,Malar Rash Result,select_one result,CE / RS (ACR classification criteria),KEEP,same form,L,CDASHIG 8.2.3 CE / 8.3.14 RS,Sponsor-defined within the domain (CDASHIG 3.4)
+Detroit,LUPUS,DTMR,Malar Rash Date,date,CE / RS (ACR classification criteria),KEEP,same form,L,CDASHIG 8.2.3 CE / 8.3.14 RS,Sponsor-defined within the domain (CDASHIG 3.4)
+Detroit,LUPUS,SUBDR,Discoid Rash sub-criteria,select_multiple subd,CE / RS (ACR classification criteria),KEEP,same form,L,CDASHIG 8.2.3 CE / 8.3.14 RS,Sponsor-defined within the domain (CDASHIG 3.4)
+Detroit,LUPUS,RESDR,Discoid Result,select_one result,CE / RS (ACR classification criteria),KEEP,same form,L,CDASHIG 8.2.3 CE / 8.3.14 RS,Sponsor-defined within the domain (CDASHIG 3.4)
+Detroit,LUPUS,DTDR,Discoid Date,date,CE / RS (ACR classification criteria),KEEP,same form,L,CDASHIG 8.2.3 CE / 8.3.14 RS,Sponsor-defined within the domain (CDASHIG 3.4)
+Detroit,LUPUS,SUBPH,Photosensitivity sub-criteria,select_multiple subp,CE / RS (ACR classification criteria),KEEP,same form,L,CDASHIG 8.2.3 CE / 8.3.14 RS,Sponsor-defined within the domain (CDASHIG 3.4)
+Detroit,LUPUS,RESPH,Photosensitivity Result,select_one result,CE / RS (ACR classification criteria),KEEP,same form,L,CDASHIG 8.2.3 CE / 8.3.14 RS,Sponsor-defined within the domain (CDASHIG 3.4)
+Detroit,LUPUS,DTPH,Photosensitivity Date,date,CE / RS (ACR classification criteria),KEEP,same form,L,CDASHIG 8.2.3 CE / 8.3.14 RS,Sponsor-defined within the domain (CDASHIG 3.4)
+Detroit,LUPUS,SUBOU,Oral Ulcers sub-criteria,select_multiple subo,CE / RS (ACR classification criteria),KEEP,same form,L,CDASHIG 8.2.3 CE / 8.3.14 RS,Sponsor-defined within the domain (CDASHIG 3.4)
+Detroit,LUPUS,RESOU,Oral Ulcers Result,select_one result,CE / RS (ACR classification criteria),KEEP,same form,L,CDASHIG 8.2.3 CE / 8.3.14 RS,Sponsor-defined within the domain (CDASHIG 3.4)
+Detroit,LUPUS,DTOU,Oral Ulcers Date,date,CE / RS (ACR classification criteria),KEEP,same form,L,CDASHIG 8.2.3 CE / 8.3.14 RS,Sponsor-defined within the domain (CDASHIG 3.4)
+Detroit,LUPUS,SUBARTH,Arthritis sub-criteria,select_multiple suba,CE / RS (ACR classification criteria),KEEP,same form,L,CDASHIG 8.2.3 CE / 8.3.14 RS,Sponsor-defined within the domain (CDASHIG 3.4)
+Detroit,LUPUS,RESARTH,Arthritis Result,select_one result,CE / RS (ACR classification criteria),KEEP,same form,L,CDASHIG 8.2.3 CE / 8.3.14 RS,Sponsor-defined within the domain (CDASHIG 3.4)
+Detroit,LUPUS,DTARTH,Arthritis Date,date,CE / RS (ACR classification criteria),KEEP,same form,L,CDASHIG 8.2.3 CE / 8.3.14 RS,Sponsor-defined within the domain (CDASHIG 3.4)
+Detroit,LUPUS,SUBSER,Serositis sub-criteria,select_multiple subs,CE / RS (ACR classification criteria),KEEP,same form,L,CDASHIG 8.2.3 CE / 8.3.14 RS,Sponsor-defined within the domain (CDASHIG 3.4)
+Detroit,LUPUS,RESER1,Pleuritis Result,select_one result,CE / RS (ACR classification criteria),KEEP,same form,L,CDASHIG 8.2.3 CE / 8.3.14 RS,Sponsor-defined within the domain (CDASHIG 3.4)
+Detroit,LUPUS,DTER1,Pleuritis Date,date,CE / RS (ACR classification criteria),KEEP,same form,L,CDASHIG 8.2.3 CE / 8.3.14 RS,Sponsor-defined within the domain (CDASHIG 3.4)
+Detroit,LUPUS,RESER2,Pericarditis Result,select_one result,CE / RS (ACR classification criteria),KEEP,same form,L,CDASHIG 8.2.3 CE / 8.3.14 RS,Sponsor-defined within the domain (CDASHIG 3.4)
+Detroit,LUPUS,DTER2,Pericarditis Date,date,CE / RS (ACR classification criteria),KEEP,same form,L,CDASHIG 8.2.3 CE / 8.3.14 RS,Sponsor-defined within the domain (CDASHIG 3.4)
+Detroit,LUPUS,SUBRD,Renal Disorder sub-criteria,select_multiple subr,CE / RS (ACR classification criteria),KEEP,same form,L,CDASHIG 8.2.3 CE / 8.3.14 RS,Sponsor-defined within the domain (CDASHIG 3.4)
+Detroit,LUPUS,RESRD1A,Persistent Proteinuria Result,select_one result,CE / RS (ACR classification criteria),KEEP,same form,L,CDASHIG 8.2.3 CE / 8.3.14 RS,Sponsor-defined within the domain (CDASHIG 3.4)
+Detroit,LUPUS,RESRD1B,Persistent Proteinuria Value,text,LB,STRUCTURE,Lab results log (LB),M,CDASHIG 8.3.6 LB,Lab value stored as text
+Detroit,LUPUS,DTRD1,Proteinuria Date,date,CE / RS (ACR classification criteria),KEEP,same form,L,CDASHIG 8.2.3 CE / 8.3.14 RS,Sponsor-defined within the domain (CDASHIG 3.4)
+Detroit,LUPUS,RESRD2,Cellular Casts Result,select_one result,CE / RS (ACR classification criteria),KEEP,same form,L,CDASHIG 8.2.3 CE / 8.3.14 RS,Sponsor-defined within the domain (CDASHIG 3.4)
+Detroit,LUPUS,DTRD2,Cellular Casts Date,date,CE / RS (ACR classification criteria),KEEP,same form,L,CDASHIG 8.2.3 CE / 8.3.14 RS,Sponsor-defined within the domain (CDASHIG 3.4)
+Detroit,LUPUS,SUBND,Neuro Disorder sub-criteria,select_multiple subn,CE / RS (ACR classification criteria),KEEP,same form,L,CDASHIG 8.2.3 CE / 8.3.14 RS,Sponsor-defined within the domain (CDASHIG 3.4)
+Detroit,LUPUS,RESND1,Seizures Result,select_one result,CE / RS (ACR classification criteria),KEEP,same form,L,CDASHIG 8.2.3 CE / 8.3.14 RS,Sponsor-defined within the domain (CDASHIG 3.4)
+Detroit,LUPUS,DTND1,Seizures Date,date,CE / RS (ACR classification criteria),KEEP,same form,L,CDASHIG 8.2.3 CE / 8.3.14 RS,Sponsor-defined within the domain (CDASHIG 3.4)
+Detroit,LUPUS,RESND2,Psychosis Result,select_one result,CE / RS (ACR classification criteria),KEEP,same form,L,CDASHIG 8.2.3 CE / 8.3.14 RS,Sponsor-defined within the domain (CDASHIG 3.4)
+Detroit,LUPUS,DTND2,Psychosis Date,date,CE / RS (ACR classification criteria),KEEP,same form,L,CDASHIG 8.2.3 CE / 8.3.14 RS,Sponsor-defined within the domain (CDASHIG 3.4)
+Detroit,LUPUS,SUBHD,Hematologic Disorder sub-criteria,select_multiple subh,CE / RS (ACR classification criteria),KEEP,same form,L,CDASHIG 8.2.3 CE / 8.3.14 RS,Sponsor-defined within the domain (CDASHIG 3.4)
+Detroit,LUPUS,RESHD1,Hemolytic Anemia Result,select_one result,CE / RS (ACR classification criteria),KEEP,same form,L,CDASHIG 8.2.3 CE / 8.3.14 RS,Sponsor-defined within the domain (CDASHIG 3.4)
+Detroit,LUPUS,DTHD1,Hemolytic Anemia Date,date,CE / RS (ACR classification criteria),KEEP,same form,L,CDASHIG 8.2.3 CE / 8.3.14 RS,Sponsor-defined within the domain (CDASHIG 3.4)
+Detroit,LUPUS,RESHD2,Leukopenia Value,text,LB,STRUCTURE,Lab results log (LB),M,CDASHIG 8.3.6 LB,Lab value stored as text
+Detroit,LUPUS,DTHD2,Leukopenia Date,date,CE / RS (ACR classification criteria),KEEP,same form,L,CDASHIG 8.2.3 CE / 8.3.14 RS,Sponsor-defined within the domain (CDASHIG 3.4)
+Detroit,LUPUS,RESHD3,Lymphopenia Value,text,LB,STRUCTURE,Lab results log (LB),M,CDASHIG 8.3.6 LB,Lab value stored as text
+Detroit,LUPUS,DTHD3,Lymphopenia Date,date,CE / RS (ACR classification criteria),KEEP,same form,L,CDASHIG 8.2.3 CE / 8.3.14 RS,Sponsor-defined within the domain (CDASHIG 3.4)
+Detroit,LUPUS,RESHD4,Thrombocytopenia Value,text,LB,STRUCTURE,Lab results log (LB),M,CDASHIG 8.3.6 LB,Lab value stored as text
+Detroit,LUPUS,DTHD4,Thrombocytopenia Date,date,CE / RS (ACR classification criteria),KEEP,same form,L,CDASHIG 8.2.3 CE / 8.3.14 RS,Sponsor-defined within the domain (CDASHIG 3.4)
+Detroit,RA,MORNSTIFF_RES,Morning Stiffness Result,select_one rares,CE / RS (ACR classification criteria),KEEP,same form,L,CDASHIG 8.2.3 CE / 8.3.14 RS,Sponsor-defined within the domain (CDASHIG 3.4)
+Detroit,RA,MORNSTIFF_DTFRSTOB,Morning Stiffness First Observation,date,CE / RS (ACR classification criteria),KEEP,same form,L,CDASHIG 8.2.3 CE / 8.3.14 RS,Sponsor-defined within the domain (CDASHIG 3.4)
+Detroit,RA,MORNSTIFF_DTLSTOB,Morning Stiffness Last Observation,date,CE / RS (ACR classification criteria),KEEP,same form,L,CDASHIG 8.2.3 CE / 8.3.14 RS,Sponsor-defined within the domain (CDASHIG 3.4)
+Detroit,RA,ARTH_RES,Arthritis Result,select_one rares,CE / RS (ACR classification criteria),KEEP,same form,L,CDASHIG 8.2.3 CE / 8.3.14 RS,Sponsor-defined within the domain (CDASHIG 3.4)
+Detroit,RA,ARTH_DTFRSTOB,Arthritis First Observation,date,CE / RS (ACR classification criteria),KEEP,same form,L,CDASHIG 8.2.3 CE / 8.3.14 RS,Sponsor-defined within the domain (CDASHIG 3.4)
+Detroit,RA,ARTH_DTLSTOB,Arthritis Last Observation,date,CE / RS (ACR classification criteria),KEEP,same form,L,CDASHIG 8.2.3 CE / 8.3.14 RS,Sponsor-defined within the domain (CDASHIG 3.4)
+Detroit,RA,SYMMJOI_RES,Symmetric Joint Involvement Result,select_one rares,CE / RS (ACR classification criteria),KEEP,same form,L,CDASHIG 8.2.3 CE / 8.3.14 RS,Sponsor-defined within the domain (CDASHIG 3.4)
+Detroit,RA,SYMMJOI_DTFRSTOB,Symm Joint First Observation,date,CE / RS (ACR classification criteria),KEEP,same form,L,CDASHIG 8.2.3 CE / 8.3.14 RS,Sponsor-defined within the domain (CDASHIG 3.4)
+Detroit,RA,SYMMJOI_DTLSTOB,Symm Joint Last Observation,date,CE / RS (ACR classification criteria),KEEP,same form,L,CDASHIG 8.2.3 CE / 8.3.14 RS,Sponsor-defined within the domain (CDASHIG 3.4)
+Detroit,RA,RHEUM_RES,Rheumatoid Nodules Result,select_one rares,CE / RS (ACR classification criteria),KEEP,same form,L,CDASHIG 8.2.3 CE / 8.3.14 RS,Sponsor-defined within the domain (CDASHIG 3.4)
+Detroit,RA,RHEUM_DTFRSTOB,Rheumatoid Nodules First Obs,date,CE / RS (ACR classification criteria),KEEP,same form,L,CDASHIG 8.2.3 CE / 8.3.14 RS,Sponsor-defined within the domain (CDASHIG 3.4)
+Detroit,RA,RHEUM_DTLSTOB,Rheumatoid Nodules Last Obs,date,CE / RS (ACR classification criteria),KEEP,same form,L,CDASHIG 8.2.3 CE / 8.3.14 RS,Sponsor-defined within the domain (CDASHIG 3.4)
+Detroit,RA,RADI_RES,Radiographic Changes Result,select_one rares,CE / RS (ACR classification criteria),KEEP,same form,L,CDASHIG 8.2.3 CE / 8.3.14 RS,Sponsor-defined within the domain (CDASHIG 3.4)
+Detroit,RA,RADI_DTFRSTOB,Radiographic First Obs,date,CE / RS (ACR classification criteria),KEEP,same form,L,CDASHIG 8.2.3 CE / 8.3.14 RS,Sponsor-defined within the domain (CDASHIG 3.4)
+Detroit,RA,RADI_DTLSTOB,Radiographic Last Obs,date,CE / RS (ACR classification criteria),KEEP,same form,L,CDASHIG 8.2.3 CE / 8.3.14 RS,Sponsor-defined within the domain (CDASHIG 3.4)
+Detroit,RA,SERRHEUM_POSNEG,Serum Rheumatoid Factor,select_one posneg,LB,STRUCTURE,Lab results log (LB),M,CDASHIG 8.3.6 LB; 4.1 #12,Rheumatoid factor has two value fields (IU/mL and U/mL) plus a units picklist; should be one number + one unit. ANA/ESR/CRP are free text.
+Detroit,RA,SERRHEUM_DTFRSTOB,Serum RF First Obs,date,CE / RS (ACR classification criteria),KEEP,same form,L,CDASHIG 8.2.3 CE / 8.3.14 RS,Sponsor-defined within the domain (CDASHIG 3.4)
+Detroit,RA,SERRHEUM_DTLSTOB,Serum RF Last Obs,date,CE / RS (ACR classification criteria),KEEP,same form,L,CDASHIG 8.2.3 CE / 8.3.14 RS,Sponsor-defined within the domain (CDASHIG 3.4)
+Detroit,RA,SERRHEUM_UNITS,Units,select_one units,LB,STRUCTURE,Lab results log (LB),M,CDASHIG 8.3.6 LB; 4.1 #12,Rheumatoid factor has two value fields (IU/mL and U/mL) plus a units picklist; should be one number + one unit. ANA/ESR/CRP are free text.
+Detroit,RA,SERRHEUM_UNIT1,Value (IU/mL),text,LB,STRUCTURE,Lab results log (LB),M,CDASHIG 8.3.6 LB; 4.1 #12,Rheumatoid factor has two value fields (IU/mL and U/mL) plus a units picklist; should be one number + one unit. ANA/ESR/CRP are free text.
+Detroit,RA,SERRHEUM_UNIT2,Value (U/mL),text,LB,STRUCTURE,Lab results log (LB),M,CDASHIG 8.3.6 LB; 4.1 #12,Rheumatoid factor has two value fields (IU/mL and U/mL) plus a units picklist; should be one number + one unit. ANA/ESR/CRP are free text.
+Detroit,RA,ANA_RES,ANA Result,text,LB,STRUCTURE,Lab results log (LB),M,CDASHIG 8.3.6 LB; 4.1 #12,Rheumatoid factor has two value fields (IU/mL and U/mL) plus a units picklist; should be one number + one unit. ANA/ESR/CRP are free text.
+Detroit,RA,ANA_DTFRSTOB,ANA First Obs,date,CE / RS (ACR classification criteria),KEEP,same form,L,CDASHIG 8.2.3 CE / 8.3.14 RS,Sponsor-defined within the domain (CDASHIG 3.4)
+Detroit,RA,HLA_RES,HLA Result,select_one posneg,LB,STRUCTURE,Lab results log (LB),M,CDASHIG 8.3.6 LB; 4.1 #12,Rheumatoid factor has two value fields (IU/mL and U/mL) plus a units picklist; should be one number + one unit. ANA/ESR/CRP are free text.
+Detroit,RA,HLA_DTFRSTOB,HLA First Obs,date,CE / RS (ACR classification criteria),KEEP,same form,L,CDASHIG 8.2.3 CE / 8.3.14 RS,Sponsor-defined within the domain (CDASHIG 3.4)
+Detroit,RA,ESR_RES,ESR Result,text,LB,STRUCTURE,Lab results log (LB),M,CDASHIG 8.3.6 LB; 4.1 #12,Rheumatoid factor has two value fields (IU/mL and U/mL) plus a units picklist; should be one number + one unit. ANA/ESR/CRP are free text.
+Detroit,RA,ESR_DTFRSTOB,ESR First Obs,date,CE / RS (ACR classification criteria),KEEP,same form,L,CDASHIG 8.2.3 CE / 8.3.14 RS,Sponsor-defined within the domain (CDASHIG 3.4)
+Detroit,RA,CRP_RES,CRP Result,text,LB,STRUCTURE,Lab results log (LB),M,CDASHIG 8.3.6 LB; 4.1 #12,Rheumatoid factor has two value fields (IU/mL and U/mL) plus a units picklist; should be one number + one unit. ANA/ESR/CRP are free text.
+Detroit,RA,CRP_DTFRSTOB,CRP First Obs,date,CE / RS (ACR classification criteria),KEEP,same form,L,CDASHIG 8.2.3 CE / 8.3.14 RS,Sponsor-defined within the domain (CDASHIG 3.4)
+Detroit,RA,STAGE,Stage (based on criteria),select_one stage,RS,KEEP,RA,M,CDASHIG 8.3.14 RS,
+Detroit,PSORIASIS,PSOSTAT,Status of Psoriasis,select_one psostat,RS,KEEP,PSORIASIS,M,CDASHIG 8.3.14 RS,
+Detroit,PSORIASIS,PSOSEV,Severity rating for Psoriasis,select_one psosev,RS,KEEP,PSORIASIS,M,CDASHIG 8.3.14 RS,
+Detroit,PSORIASIS,PATHINFO,Pathology Info,text,MI,KEEP,PSORIASIS,L,CDASHIG 8.3.9 MI,
+Detroit,PSORIASIS,ORALSTER,Oral Steroid,text,CM,STRUCTURE,Therapy log (CM/PR),H,CDASHIG 8.1.2 CM; 4.1 #12,Free-text drug / dose / unit / frequency; canon_cm_dose_unit and canon_cm_freq already exist for this
+Detroit,PSORIASIS,ORALDOSE,Dose,text,CM,STRUCTURE,Therapy log (CM/PR),H,CDASHIG 8.1.2 CM; 4.1 #12,Free-text drug / dose / unit / frequency; canon_cm_dose_unit and canon_cm_freq already exist for this
+Detroit,PSORIASIS,ORALUNIT,Unit,text,CM,STRUCTURE,Therapy log (CM/PR),H,CDASHIG 8.1.2 CM; 4.1 #12,Free-text drug / dose / unit / frequency; canon_cm_dose_unit and canon_cm_freq already exist for this
+Detroit,PSORIASIS,ORALFREQ,Frequency,text,CM,STRUCTURE,Therapy log (CM/PR),H,CDASHIG 8.1.2 CM; 4.1 #12,Free-text drug / dose / unit / frequency; canon_cm_dose_unit and canon_cm_freq already exist for this
+Detroit,PSORIASIS,ORALDUR,Duration of use,text,CM,STRUCTURE,Therapy log (CM/PR),H,CDASHIG 8.1.2 CM; 4.1 #12,Free-text drug / dose / unit / frequency; canon_cm_dose_unit and canon_cm_freq already exist for this
+Detroit,PSORIASIS,TOP,Topical treatment,text,CM,STRUCTURE,Therapy log (CM/PR),H,CDASHIG 8.1.2 CM; 4.1 #12,Free-text drug / dose / unit / frequency; canon_cm_dose_unit and canon_cm_freq already exist for this
+Detroit,PSORIASIS,TOPFREQ,Topical Frequency,text,CM,STRUCTURE,Therapy log (CM/PR),H,CDASHIG 8.1.2 CM; 4.1 #12,Free-text drug / dose / unit / frequency; canon_cm_dose_unit and canon_cm_freq already exist for this
+Detroit,PSORIASIS,TOPDUR,Topical Duration of use,text,CM,STRUCTURE,Therapy log (CM/PR),H,CDASHIG 8.1.2 CM; 4.1 #12,Free-text drug / dose / unit / frequency; canon_cm_dose_unit and canon_cm_freq already exist for this
+Detroit,PSORIASIS,OTHR,Other Treatment,text,CM,STRUCTURE,Therapy log (CM/PR),H,CDASHIG 8.1.2 CM; 4.1 #12,Free-text drug / dose / unit / frequency; canon_cm_dose_unit and canon_cm_freq already exist for this
+Detroit,PSORIASIS,OTHRFREQ,Other Frequency,text,CM,STRUCTURE,Therapy log (CM/PR),H,CDASHIG 8.1.2 CM; 4.1 #12,Free-text drug / dose / unit / frequency; canon_cm_dose_unit and canon_cm_freq already exist for this
+Detroit,PSORIASIS,OTHRDUR,Other Duration of use,text,CM,STRUCTURE,Therapy log (CM/PR),H,CDASHIG 8.1.2 CM; 4.1 #12,Free-text drug / dose / unit / frequency; canon_cm_dose_unit and canon_cm_freq already exist for this
+Detroit,COVID19,BLOOD_TYPE,Blood Type,select_one sc6qu01,LB,KEEP,COVID19,L,CDASHIG 8.3.6 LB,
+Detroit,COVID19,COVID_CONF,Date of confirmed diagnosis,date,CE / MH,KEEP,COVID19,M,CDASHIG 8.2.3 CE,
+Detroit,COVID19,TEST_COVID,How were you tested?,select_one covid_tes,LB,KEEP,COVID19,M,CDASHIG 8.3.6 LB,
+Detroit,COVID19,CONF_COPY,Do you have a copy of the confirmation?,select_one yn,operational,KEEP,COVID19,M,n/a,
+Detroit,COVID19,TEST_MANU,Test manufacturer,text,LB,STRUCTURE,COVID19,L,CDASHIG 4.1 #12,Free text
+Detroit,COVID19,ONSET,Date of Symptom Onset,date,CE,KEEP,COVID19,M,CDASHIG 8.2.3 CE,
+Detroit,COVID19,SYMPTOMS_DURING_ILLNESS,Symptoms during illness,select_multiple tg3j,CE / FA,KEEP,COVID19,M,CDASHIG 8.2.3 CE,
+Detroit,COVID19,RECOVERY,Date of recovery,date,CE,KEEP,COVID19,M,CDASHIG 8.2.3 CE,
+Detroit,COVID19,SYMPTOMS_CURRENT,Symptoms currently,select_multiple xf7b,CE / FA,KEEP,COVID19,M,CDASHIG 8.2.3 CE,
+Detroit,COVID19,SYMPTOMS_SEV,How severe were your symptoms?,select_one severity,CE / FA,KEEP,COVID19,M,CDASHIG 8.2.3 CE,
+Detroit,COVID19,LENGTH_STAY,Days in hospital or ICU,integer,HO healthcare encounter,KEEP,COVID19,M,CDASHIG 8.2.6 HO,
+Detroit,COVID19,IMMUNIZATION_TYPE,Immunizations,text,CM (vaccine),STRUCTURE,Therapy log (CM/PR),L,CDASHIG 8.1.2 CM; 4.1 #12,Free text; no vaccine domain in CDASHIG v2.1
+Detroit,COVID19,IMMUNIZATION_DATE,Immunization Date,date,CM (vaccine),KEEP,COVID19,L,CDASHIG 8.1.2 CM,
+Detroit,TESTRES,VIRUS,Virus,select_one virinfec,LB,CONSOLIDATE,Lab results log (LB),M,CDASHIG 8.3.6 LB,Same virus/blood-test questions on TESTRES and ONCOLOGY
+Detroit,TESTRES,OTHVIR,"Other virus, specify",text,LB,CONSOLIDATE,Lab results log (LB),M,CDASHIG 8.3.6 LB,Same virus/blood-test questions on TESTRES and ONCOLOGY
+Detroit,TESTRES,VIRTEST,Tested,select_one test,LB,CONSOLIDATE,Lab results log (LB),M,CDASHIG 8.3.6 LB,Same virus/blood-test questions on TESTRES and ONCOLOGY
+Detroit,TESTRES,VIRRESULT,Result,select_one res,LB,CONSOLIDATE,Lab results log (LB),M,CDASHIG 8.3.6 LB,Same virus/blood-test questions on TESTRES and ONCOLOGY
+Detroit,TESTRES,BLDTEST,Blood Test,select_one bldtest,LB,CONSOLIDATE,Lab results log (LB),M,CDASHIG 8.3.6 LB,Same virus/blood-test questions on TESTRES and ONCOLOGY
+Detroit,TESTRES,OTHTEST,Other blood test,text,LB,CONSOLIDATE,Lab results log (LB),M,CDASHIG 8.3.6 LB,Same virus/blood-test questions on TESTRES and ONCOLOGY
+Detroit,TESTRES,BLDVALUE,Value,text,LB,STRUCTURE,Lab results log (LB),M,CDASHIG 8.3.6 LB; 4.1 #12,Result and unit stored as free text; should be numeric + unit picklist
+Detroit,TESTRES,BLDUNIT,Unit,text,LB,STRUCTURE,Lab results log (LB),M,CDASHIG 8.3.6 LB; 4.1 #12,Result and unit stored as free text; should be numeric + unit picklist
+Detroit,VET,ANIMAL,Animal,select_one qn1iy50,DM-style (sponsor-defined SPECIES),KEEP,VET,M,CDASHIG 3.4; SEND DM variable SPECIES,"Donor-animal characteristic, same role as human demographics. SEND DM also has SPECIES and SEX."
+Detroit,VET,OTHERSPECIFY,Other (Specify Animal),text,DM-style (sponsor-defined SPECIES),KEEP,VET,M,CDASHIG 3.4; SEND DM variable SPECIES,"Donor-animal characteristic, same role as human demographics. SEND DM also has SPECIES and SEX."
+Detroit,VET,BREED,Breed,select_one ai7en52,DM-style (sponsor-defined breed),KEEP,VET,M,CDASHIG 3.4,Closest SEND analog is STRAIN (my mapping). Four breed fields plus a pure/mixed switch; the single/multi duplicate lists hit the known engine limit.
+Detroit,VET,CANINE_BREEDSELECT_ONE,Canine Breed (Select One),select_one tb0hg85,DM-style (sponsor-defined breed),KEEP,VET,M,CDASHIG 3.4,Closest SEND analog is STRAIN (my mapping). Four breed fields plus a pure/mixed switch; the single/multi duplicate lists hit the known engine limit.
+Detroit,VET,OTHERSPECIFY_001,Other (Specify),text,DM-style (sponsor-defined breed),KEEP,VET,M,CDASHIG 3.4,Closest SEND analog is STRAIN (my mapping). Four breed fields plus a pure/mixed switch; the single/multi duplicate lists hit the known engine limit.
+Detroit,VET,CANINE_BREEDSELECT_MULT,Canine Breed (Select Multiple),select_multiple dd7q,DM-style (sponsor-defined breed),KEEP,VET,M,CDASHIG 3.4,Closest SEND analog is STRAIN (my mapping). Four breed fields plus a pure/mixed switch; the single/multi duplicate lists hit the known engine limit.
+Detroit,VET,OTHERSPECIFY_MIXED,Other (Specify),text,DM-style (sponsor-defined breed),KEEP,VET,M,CDASHIG 3.4,Closest SEND analog is STRAIN (my mapping). Four breed fields plus a pure/mixed switch; the single/multi duplicate lists hit the known engine limit.
+Detroit,VET,FELINE_BREEDSELECT_ONE,Feline Breed (Select One),select_one ij28a58,DM-style (sponsor-defined breed),KEEP,VET,M,CDASHIG 3.4,Closest SEND analog is STRAIN (my mapping). Four breed fields plus a pure/mixed switch; the single/multi duplicate lists hit the known engine limit.
+Detroit,VET,OTHERSPECIFY_003,Other (Specify),text,DM-style (sponsor-defined breed),KEEP,VET,M,CDASHIG 3.4,Closest SEND analog is STRAIN (my mapping). Four breed fields plus a pure/mixed switch; the single/multi duplicate lists hit the known engine limit.
+Detroit,VET,FELINE_BREEDSELECT_MULT,Feline Breed (Select Multiple),select_multiple wt8v,DM-style (sponsor-defined breed),KEEP,VET,M,CDASHIG 3.4,Closest SEND analog is STRAIN (my mapping). Four breed fields plus a pure/mixed switch; the single/multi duplicate lists hit the known engine limit.
+Detroit,VET,OTHERSPECIFY_002,Other (Specify),text,DM-style (sponsor-defined breed),KEEP,VET,M,CDASHIG 3.4,Closest SEND analog is STRAIN (my mapping). Four breed fields plus a pure/mixed switch; the single/multi duplicate lists hit the known engine limit.
+Detroit,VET,SURGERY,Surgery,text,PR,STRUCTURE,Dx & Procedures (one shared place),M,CDASHIG 8.1.4 PR; 4.1 #12,Free text; same shape as the human surgery questions
+Detroit,VET,SPAYED,Spayed,select_one nm4ae38,RP reproductive findings (by analogy),KEEP,VET,L,CDASHIG 8.3.13 RP,RP is a human-oriented domain; applied by analogy
+Detroit,VET,NUMBER_OF_LITTERS,Number of Litters,integer,RP reproductive findings (by analogy),KEEP,VET,L,CDASHIG 8.3.13 RP,RP is a human-oriented domain; applied by analogy
+Detroit,VET,NUMBER_OF_BIRTH,Number of Births,integer,RP reproductive findings (by analogy),KEEP,VET,L,CDASHIG 8.3.13 RP,RP is a human-oriented domain; applied by analogy
+Detroit,VET,DATE_OF_LAST_LITTER,Date of Last Litter,date,RP reproductive findings (by analogy),KEEP,VET,L,CDASHIG 8.3.13 RP,RP is a human-oriented domain; applied by analogy
+Detroit,VET,NEUTERED_1,Neutered,select_one iq2sg23,RP reproductive findings (by analogy),KEEP,VET,L,CDASHIG 8.3.13 RP,RP is a human-oriented domain; applied by analogy
+Detroit,VET,SELECT_VACCINATION,Vaccination,select_one xm4gy63,CM (vaccine),CONSOLIDATE,Therapy log (CM/PR),L,CDASHIG 8.1.2 CM,Same shape as the COVID19 immunization fields
+Detroit,VET,OTHER_SPECIFY_VACCINATION,Other (Specify),text,CM (vaccine),CONSOLIDATE,Therapy log (CM/PR),L,CDASHIG 8.1.2 CM,Same shape as the COVID19 immunization fields
+Detroit,VET,SPECIFY_BRAND,Brand,text,CM (vaccine),CONSOLIDATE,Therapy log (CM/PR),L,CDASHIG 8.1.2 CM,Same shape as the COVID19 immunization fields
+Detroit,VET,SPECIFY_DATE_OF_VACCINATION,Current Date of Vaccination,date,CM (vaccine),CONSOLIDATE,Therapy log (CM/PR),L,CDASHIG 8.1.2 CM,Same shape as the COVID19 immunization fields
+Detroit,FOLLOWUP,DOB,Date of Birth,date,DM,ONE_HOME,"(read-only, pulled from the single home)",M,CDASHIG 4.1 #4,"Field stays. Instead of asking again, the form shows the value read-only from DM via an OC4 cross-form reference (supported per OC4 docs). Pipeline support for the event list is not yet verified."
+Detroit,FOLLOWUP,GENDER,Gender,select_one gend,DM,ONE_HOME,"(read-only, pulled from the single home)",M,CDASHIG 4.1 #4,"Field stays. Instead of asking again, the form shows the value read-only from DM via an OC4 cross-form reference (supported per OC4 docs). Pipeline support for the event list is not yet verified."
+Detroit,FOLLOWUP,RACE,Race,select_one race,DM,ONE_HOME,"(read-only, pulled from the single home)",M,CDASHIG 4.1 #4,"Field stays. Instead of asking again, the form shows the value read-only from DM via an OC4 cross-form reference (supported per OC4 docs). Pipeline support for the event list is not yet verified."
+Detroit,FOLLOWUP,RACE_OTH,Other Race,text,DM,ONE_HOME,"(read-only, pulled from the single home)",M,CDASHIG 4.1 #4,"Field stays. Instead of asking again, the form shows the value read-only from DM via an OC4 cross-form reference (supported per OC4 docs). Pipeline support for the event list is not yet verified."
+Detroit,FOLLOWUP,ETH,Ethnicity,select_one in8gq18,DM,ONE_HOME,"(read-only, pulled from the single home)",M,CDASHIG 4.1 #4,"Field stays. Instead of asking again, the form shows the value read-only from DM via an OC4 cross-form reference (supported per OC4 docs). Pipeline support for the event list is not yet verified."
+Detroit,FOLLOWUP,EXCDT,Date of Excision,date,PR excision date,CONSOLIDATE,Dx & Procedures (one shared place),M,CDASHIG 8.1.4 PR / 8.2.7 MH; 4.1 #4,"Same question appears on FOLLOWUP, OUTCOME and ONCOLOGY under three spellings"
+Detroit,FOLLOWUP,ANATLOC,Anatomic Location,text,PR location / TU,CONSOLIDATE,Dx & Procedures (one shared place),M,CDASHIG 8.1.4 PR / 8.2.7 MH; 4.1 #4,"Same question appears on FOLLOWUP, OUTCOME and ONCOLOGY under three spellings"
+Detroit,FOLLOWUP,SURGPROC,Surgical Procedure,text,PR,CONSOLIDATE,Dx & Procedures (one shared place),M,CDASHIG 8.1.4 PR / 8.2.7 MH; 4.1 #4,"Same question appears on FOLLOWUP, OUTCOME and ONCOLOGY under three spellings"
+Detroit,FOLLOWUP,DIAGDT,Date of Diagnosis,date,MH diagnosis date,CONSOLIDATE,Dx & Procedures (one shared place),M,CDASHIG 8.1.4 PR / 8.2.7 MH; 4.1 #4,"Same question appears on FOLLOWUP, OUTCOME and ONCOLOGY under three spellings"
+Detroit,FOLLOWUP,SPECDIAG,Original Specimen Diagnosis,text,MH / MI,CONSOLIDATE,Dx & Procedures (one shared place),M,CDASHIG 8.1.4 PR / 8.2.7 MH; 4.1 #4,"Same question appears on FOLLOWUP, OUTCOME and ONCOLOGY under three spellings"
+Detroit,FOLLOWUP,SITES,Distant Sites,text,TU / CE distant sites,CONSOLIDATE,Dx & Procedures (one shared place),M,CDASHIG 8.1.4 PR / 8.2.7 MH; 4.1 #4,"Same question appears on FOLLOWUP, OUTCOME and ONCOLOGY under three spellings"
+Detroit,FOLLOWUP,DTFUPROV,Date Follow-up Data Provided,date,DS / contact date,KEEP,FOLLOWUP,M,CDASHIG 4.2 #1,Overlaps OUTCOME.FOLLOW_UP_DATE
+Detroit,FOLLOWUP,THERTYP,Therapy Type,select_one ther,CM / PR,CONSOLIDATE,Therapy log (CM/PR),M,CDASHIG 8.1.2 CM / 8.1.4 PR,"Therapy captured on FOLLOWUP, OUTCOME, ONCOLOGY and PSORIASIS separately"
+Detroit,FOLLOWUP,THERTYP_OTH,Other Therapy Type,text,CM / PR,CONSOLIDATE,Therapy log (CM/PR),M,CDASHIG 8.1.2 CM / 8.1.4 PR,"Therapy captured on FOLLOWUP, OUTCOME, ONCOLOGY and PSORIASIS separately"
+Detroit,FOLLOWUP,THER_STDT,Therapy Start Date,date,CM / PR,CONSOLIDATE,Therapy log (CM/PR),M,CDASHIG 8.1.2 CM / 8.1.4 PR,"Therapy captured on FOLLOWUP, OUTCOME, ONCOLOGY and PSORIASIS separately"
+Detroit,FOLLOWUP,THER_ENDDT,Therapy End Date,date,CM / PR,CONSOLIDATE,Therapy log (CM/PR),M,CDASHIG 8.1.2 CM / 8.1.4 PR,"Therapy captured on FOLLOWUP, OUTCOME, ONCOLOGY and PSORIASIS separately"
+Detroit,FOLLOWUP,STATUS,Patient status after initial treatment,select_one stat,RS,KEEP,FOLLOWUP,L,CDASHIG 8.3.14 RS,
+Detroit,FOLLOWUP,STAT_OTHR,Other Status,text,RS,KEEP,FOLLOWUP,L,CDASHIG 8.3.14 RS,
+Detroit,FOLLOWUP,MONDISFREE,Number of months disease free,integer,derived,CALCULATE,"same form, read-only calculated",H,CDASHIG 4.1 #11,Field stays; value becomes a read-only calculation from data already collected (CDASHIG 4.1 #11). Nothing deleted.
+Detroit,FOLLOWUP,REMISSYN,Is the patient in remission?,select_one ynu,RS / CE,KEEP,FOLLOWUP,M,CDASHIG 8.3.14 RS,
+Detroit,FOLLOWUP,REMISSDT,Date of remission,date,RS / CE,KEEP,FOLLOWUP,M,CDASHIG 8.3.14 RS,
+Detroit,FOLLOWUP,REOCCURYN,Did the cancer reoccur?,select_one ynu,RS / CE,KEEP,FOLLOWUP,M,CDASHIG 8.3.14 RS,
+Detroit,FOLLOWUP,REOCCURDT,Date of recurrence,date,RS / CE,KEEP,FOLLOWUP,M,CDASHIG 8.3.14 RS,
+Detroit,FOLLOWUP,TNMSTG,TNM Stage at recurrence,text,RS (TNM stage),STRUCTURE,FOLLOWUP,M,CDASHIG 8.3.14 RS; 4.1 #12,Free-text stage; same concept in 4 other fields on 3 forms
+Detroit,FOLLOWUP,DIAGMETH,Method of diagnosis of recurrence,select_one diagmeth,RS / PR,KEEP,FOLLOWUP,L,CDASHIG 8.3.14 RS,
+Detroit,FOLLOWUP,DIAGMETH_OTHR,Other Diagnosis Method,text,RS / PR,KEEP,FOLLOWUP,L,CDASHIG 8.3.14 RS,
+Detroit,FOLLOWUP,CANCERDTH,Did the patient die of the cancer?,select_one ynu,DD (cause category),MOVE,DD (new Death Details form),M,CDASHIG 8.3.3 DD,
+Detroit,FOLLOWUP,DTDTH,Date of death,date,DD / DM death date,MOVE,DD (new Death Details form),H,CDASHIG 8.3.3 DD,
+Detroit,FOLLOWUP,CAUSDTH,Cause of death,text,DD (primary cause of death),MOVE,DD (new Death Details form),H,CDASHIG 8.3.3 DD,
+Detroit,FOLLOWUP,MONSURV,Number of months survived,integer,derived,CALCULATE,"same form, read-only calculated",H,CDASHIG 4.1 #11,Field stays; value becomes a read-only calculation from data already collected (CDASHIG 4.1 #11). Nothing deleted.
+Detroit,OUTCOME,DIN,DIN,text,DM identifier,ONE_HOME,"(read-only, pulled from the single home)",M,CDASHIG 4.1 #4,"Field stays. Instead of asking again, the form shows the value read-only from DM via an OC4 cross-form reference (supported per OC4 docs). Pipeline support for the event list is not yet verified."
+Detroit,OUTCOME,DOB,Date of Birth,date,DM,ONE_HOME,"(read-only, pulled from the single home)",M,CDASHIG 4.1 #4,"Field stays. Instead of asking again, the form shows the value read-only from DM via an OC4 cross-form reference (supported per OC4 docs). Pipeline support for the event list is not yet verified."
+Detroit,OUTCOME,GENDER,Gender at Birth,select_one ln4ol44,DM,ONE_HOME,"(read-only, pulled from the single home)",M,CDASHIG 4.1 #4,"Field stays. Instead of asking again, the form shows the value read-only from DM via an OC4 cross-form reference (supported per OC4 docs). Pipeline support for the event list is not yet verified."
+Detroit,OUTCOME,RACE,Race,select_one uw8fa89,DM,ONE_HOME,"(read-only, pulled from the single home)",M,CDASHIG 4.1 #4,"Field stays. Instead of asking again, the form shows the value read-only from DM via an OC4 cross-form reference (supported per OC4 docs). Pipeline support for the event list is not yet verified."
+Detroit,OUTCOME,RACE_OTH,Other Race Specify,text,DM,ONE_HOME,"(read-only, pulled from the single home)",M,CDASHIG 4.1 #4,"Field stays. Instead of asking again, the form shows the value read-only from DM via an OC4 cross-form reference (supported per OC4 docs). Pipeline support for the event list is not yet verified."
+Detroit,OUTCOME,ETH,Ethnicity,select_one in8gq18,DM,ONE_HOME,"(read-only, pulled from the single home)",M,CDASHIG 4.1 #4,"Field stays. Instead of asking again, the form shows the value read-only from DM via an OC4 cross-form reference (supported per OC4 docs). Pipeline support for the event list is not yet verified."
+Detroit,OUTCOME,SPECDIAG,Original Specimen Diagnosis,text,MH / MI,CONSOLIDATE,Dx & Procedures (one shared place),M,CDASHIG 8.1.4 PR / 8.2.7 MH; 4.1 #4,"Same question appears on FOLLOWUP, OUTCOME and ONCOLOGY under three spellings"
+Detroit,OUTCOME,ANATLOC,Topographic (Anatomic) Site,text,PR location / TU,CONSOLIDATE,Dx & Procedures (one shared place),M,CDASHIG 8.1.4 PR / 8.2.7 MH; 4.1 #4,"Same question appears on FOLLOWUP, OUTCOME and ONCOLOGY under three spellings"
+Detroit,OUTCOME,TSS,Tissue Source Site (TSS),text,specimen provenance,MOVE,SPECCOL (new specimen collection form),L,CDASHIG 3.4,Tissue source site
+Detroit,OUTCOME,SITES,Distant Sites,text,TU / CE distant sites,CONSOLIDATE,Dx & Procedures (one shared place),M,CDASHIG 8.1.4 PR / 8.2.7 MH; 4.1 #4,"Same question appears on FOLLOWUP, OUTCOME and ONCOLOGY under three spellings"
+Detroit,OUTCOME,DIAGDT,Date of Initial Diagnosis,date,MH diagnosis date,CONSOLIDATE,Dx & Procedures (one shared place),M,CDASHIG 8.1.4 PR / 8.2.7 MH; 4.1 #4,"Same question appears on FOLLOWUP, OUTCOME and ONCOLOGY under three spellings"
+Detroit,OUTCOME,EXCDT,Date of Excision,date,PR excision date,CONSOLIDATE,Dx & Procedures (one shared place),M,CDASHIG 8.1.4 PR / 8.2.7 MH; 4.1 #4,"Same question appears on FOLLOWUP, OUTCOME and ONCOLOGY under three spellings"
+Detroit,OUTCOME,SURGPROC,Surgical Procedure,text,PR,CONSOLIDATE,Dx & Procedures (one shared place),M,CDASHIG 8.1.4 PR / 8.2.7 MH; 4.1 #4,"Same question appears on FOLLOWUP, OUTCOME and ONCOLOGY under three spellings"
+Detroit,OUTCOME,LOST_FU,Is Patient Lost to Follow-up?,select_one ly7tx48,DS,CONSOLIDATE,Disposition / vital status (DS),M,CDASHIG 8.2.4 DS,
+Detroit,OUTCOME,FOLLOW_UP_DATE,Follow Up Date,date,DS,CONSOLIDATE,Disposition / vital status (DS),M,CDASHIG 8.2.4 DS,Overlaps FOLLOWUP.DTFUPROV
+Detroit,OUTCOME,DATE_OF_LAST_CONTACT,Date of Last Contact,date,DS,CONSOLIDATE,Disposition / vital status (DS),M,CDASHIG 8.2.4 DS,
+Detroit,OUTCOME,VITAL_LC,Vital Status (at last contact),select_one kl0li20,DS,CONSOLIDATE,Disposition / vital status (DS),M,CDASHIG 8.2.4 DS,
+Detroit,OUTCOME,VITAL_FC,Vital Status (at form completion),select_one lm8bz49,DS,CONSOLIDATE,Disposition / vital status (DS),M,CDASHIG 8.2.4 DS,
+Detroit,OUTCOME,DATE_OF_DEATH,Date of Death (DOD),date,DD / DM death date,MOVE,DD (new Death Details form),H,CDASHIG 8.3.3 DD,
+Detroit,OUTCOME,TREATMENT_MODALITY,Treatment Modality,select_one ko2ju88,CM / PR,CONSOLIDATE,Therapy log (CM/PR),M,CDASHIG 8.1.2 CM / 8.1.4 PR,"Therapy captured on FOLLOWUP, OUTCOME, ONCOLOGY and PSORIASIS separately"
+Detroit,OUTCOME,RADIATION_DETAILS,Radiation Therapy Details,text,CM / PR,STRUCTURE,Therapy log (CM/PR),M,CDASHIG 8.1.2 CM; 4.1 #12,Free text
+Detroit,OUTCOME,CHEMO_AGENTS,Chemotherapy Agents,text,CM,STRUCTURE,Therapy log (CM/PR),M,CDASHIG 8.1.2 CM; 4.1 #12,Free-text agent list -> one coded agent per record (reuses the RxNorm mechanism)
+Detroit,OUTCOME,MTT_AGENTS,Molecular Targeted Therapy Agents,text,CM,STRUCTURE,Therapy log (CM/PR),M,CDASHIG 8.1.2 CM; 4.1 #12,Free-text agent list
+Detroit,OUTCOME,IMMUNO_AGENTS,Immunotherapy Agents,text,CM,STRUCTURE,Therapy log (CM/PR),M,CDASHIG 8.1.2 CM; 4.1 #12,Free-text agent list
+Detroit,OUTCOME,HORMONE_AGENTS,Hormone Therapy Agents,text,CM,STRUCTURE,Therapy log (CM/PR),M,CDASHIG 8.1.2 CM; 4.1 #12,Free-text agent list
+Detroit,OUTCOME,TX_START_DATE,Treatment Start Date,date,CM / PR,CONSOLIDATE,Therapy log (CM/PR),M,CDASHIG 8.1.2 CM / 8.1.4 PR,"Therapy captured on FOLLOWUP, OUTCOME, ONCOLOGY and PSORIASIS separately"
+Detroit,OUTCOME,ONGOING_TX,Ongoing Treatment?,select_one cv1ol91,CM / PR,CONSOLIDATE,Therapy log (CM/PR),M,CDASHIG 8.1.2 CM / 8.1.4 PR,"Therapy captured on FOLLOWUP, OUTCOME, ONCOLOGY and PSORIASIS separately"
+Detroit,OUTCOME,TX_END_DATE,Treatment End Date,date,CM / PR,CONSOLIDATE,Therapy log (CM/PR),M,CDASHIG 8.1.2 CM / 8.1.4 PR,"Therapy captured on FOLLOWUP, OUTCOME, ONCOLOGY and PSORIASIS separately"
+Detroit,OUTCOME,BEST_RESPONSE,Best Overall Response (RECIST),select_one zb6fs13,RS (RECIST),KEEP,OUTCOME,H,CDASHIG 8.3.14 RS,
+Detroit,OUTCOME,COMMENTS,Comments,text,CO,KEEP,OUTCOME,H,CDASHIG 7.2 CO,
+Detroit,OUTCOME,OUTCOME_AT_DLC,Outcome at date of last contact,select_one oa1pr88,RS / DS,KEEP,OUTCOME,L,CDASHIG 8.3.14 RS,
+Detroit,OUTCOME,AJCC_TNM_DLC,AJCC (TNM) Stage at last evaluation,text,RS (TNM stage),STRUCTURE,OUTCOME,M,CDASHIG 8.3.14 RS; 4.1 #12,
+Detroit,OUTCOME,PERF_SCORE_TYPE,Performance Score Type,select_one vc6ur74,QRS (ECOG),KEEP,OUTCOME,H,CDASHIG 8.3.12 QRS,
+Detroit,OUTCOME,ECOG_SCORE_DLC,ECOG Performance Score at DLC,select_one du0dx64,QRS (ECOG),KEEP,OUTCOME,H,CDASHIG 8.3.12 QRS,

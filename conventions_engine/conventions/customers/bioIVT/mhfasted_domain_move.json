@@ -4,10 +4,10 @@
   "kind": "structured",
   "scope": "customer",
   "scope_id": "bioIVT",
-  "status": "active",
+  "status": "archived",
   "natural_key": "bioivt_mhfasted_domain_move",
   "description": "Moves MHFASTED ('Did the donor fast overnight >= 8 hours?') from Medical History to Subject Characteristics on Precision. Fasting status is a protocol-defined testing condition, not a history item.",
-  "rationale": "CDASH Subject Characteristics (SC) domain documentation defines a dedicated 'protocol defined condition' variable with FASTING as its own named example: \"Confirmation that the protocol defined condition imposed on the subject when testing (e.g., FASTING, HYDRATION, EXERCISE) was met.\" Verified against CDASH SC domain documentation before writing this (2026-09-28), not asserted from general domain knowledge alone. Precision already has an SC form with a matching yn choice list, so no new form was needed for this one -- unlike the DOD/TOD/COD case in the same audit.",
+  "rationale": "CDASH Subject Characteristics (SC) domain documentation defines a dedicated 'protocol defined condition' variable with FASTING as its own named example: \"Confirmation that the protocol defined condition imposed on the subject when testing (e.g., FASTING, HYDRATION, EXERCISE) was met.\" Verified against CDASH SC domain documentation before writing this (2026-09-28), not asserted from general domain knowledge alone. Precision already has an SC form with a matching yn choice list, so no new form was needed for this one -- unlike the DOD/TOD/COD case in the same audit. ARCHIVED 2026-10-04: the source used to justify SC was misattributed (page titled 'CDASH Subject Characteristics' but its content was lab-collection metadata). The only CDASH fasting variable verified is LBFAST (LB domain). Precision's PC form already collects fasting (BLDFAST, CSFFAST) on the same visits as MH, so MHFASTED is likely a duplicate; resolution pending Dan's decision in the domain-alignment audit.",
   "target": "field",
   "applies_when": {
     "field.name": "MHFASTED"
@@ -18,7 +18,13 @@
   "created_at": "2026-09-28T00:00:00Z",
   "created_by": "human:dswanker",
   "source": "CDASH Subject Characteristics domain documentation; domain-alignment audit, BioIVT Option C project",
-  "tags": ["bioivt", "mhfasted", "domain_move", "cdash", "sc"],
+  "tags": [
+    "bioivt",
+    "mhfasted",
+    "domain_move",
+    "cdash",
+    "sc"
+  ],
   "history": [
     {
       "at": "2026-09-28T00:00:00Z",
@@ -26,6 +32,13 @@
       "action": "created",
       "status": "active",
       "note": "First use of the new move_to_form directive. Detroit has no equivalent field -- this is Precision-only."
+    },
+    {
+      "at": "2026-10-04T00:00:00Z",
+      "by": "human:dswanker",
+      "action": "archived",
+      "status": "archived",
+      "note": "Reverted the move: SC placement not supported by a verified CDASH source; field likely duplicates PC.BLDFAST/CSFFAST."
     }
   ]
 }
