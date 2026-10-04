@@ -1,0 +1,214 @@
+{
+  "id": "customer.bioivt.detroit_broken_rule_repairs",
+  "title": "Repair 29 Detroit show/hide rules that point at values that do not exist",
+  "kind": "structured",
+  "scope": "customer",
+  "scope_id": "bioIVT",
+  "status": "active",
+  "natural_key": "bioivt_detroit_broken_rule_repairs",
+  "description": "29 Detroit rules (21 LUPUS, 2+2 ONCOLOGY/TESTRES, 1 BIOIVTONC, 3 SHORTFORM death fields) tested a value that is not a choice on the controlling list, so the fields could never appear. Each is repointed at the choice whose label names the same thing. Generated from docs/BIOIVT_BROKEN_RULES_PROPOSED_FIXES.csv.",
+  "rationale": "Found 2026-10-04 by comparing every rule against real choice names. The wrong values are leftovers of a lab-test list (TESTED, CMP, PT_INR, PSA) applied in choice order. Every proposed value verified to exist as a choice. Approved by Dan 2026-10-04 (death fields approved earlier the same day).",
+  "target": "field",
+  "applies_when": {
+    "form.form_id": {
+      "in": [
+        "BIOIVTONC",
+        "LUPUS",
+        "ONCOLOGY",
+        "SHORTFORM",
+        "TESTRES"
+      ]
+    },
+    "field.name": {
+      "in": [
+        "COD",
+        "DOD",
+        "DTER1",
+        "DTER2",
+        "DTHD1",
+        "DTHD2",
+        "DTHD3",
+        "DTHD4",
+        "DTND1",
+        "DTND2",
+        "DTRD1",
+        "DTRD2",
+        "OTHTEST",
+        "QUAR_REAS",
+        "RESER1",
+        "RESER2",
+        "RESHD1",
+        "RESHD2",
+        "RESHD3",
+        "RESHD4",
+        "RESND1",
+        "RESND2",
+        "RESRD1A",
+        "RESRD1B",
+        "RESRD2",
+        "TOD",
+        "VIRRESULT"
+      ]
+    }
+  },
+  "effect": {
+    "match": {
+      "on": "field.name",
+      "cases": {
+        "RESER1": {
+          "set": {
+            "field.relevant": "selected(${SUBSER},'1')"
+          }
+        },
+        "DTER1": {
+          "set": {
+            "field.relevant": "selected(${SUBSER},'1')"
+          }
+        },
+        "RESER2": {
+          "set": {
+            "field.relevant": "selected(${SUBSER},'2')"
+          }
+        },
+        "DTER2": {
+          "set": {
+            "field.relevant": "selected(${SUBSER},'2')"
+          }
+        },
+        "RESRD1A": {
+          "set": {
+            "field.relevant": "selected(${SUBRD},'1')"
+          }
+        },
+        "RESRD1B": {
+          "set": {
+            "field.relevant": "selected(${SUBRD},'1')"
+          }
+        },
+        "DTRD1": {
+          "set": {
+            "field.relevant": "selected(${SUBRD},'1')"
+          }
+        },
+        "RESRD2": {
+          "set": {
+            "field.relevant": "selected(${SUBRD},'2')"
+          }
+        },
+        "DTRD2": {
+          "set": {
+            "field.relevant": "selected(${SUBRD},'2')"
+          }
+        },
+        "RESND1": {
+          "set": {
+            "field.relevant": "selected(${SUBND},'1')"
+          }
+        },
+        "DTND1": {
+          "set": {
+            "field.relevant": "selected(${SUBND},'1')"
+          }
+        },
+        "RESND2": {
+          "set": {
+            "field.relevant": "selected(${SUBND},'2')"
+          }
+        },
+        "DTND2": {
+          "set": {
+            "field.relevant": "selected(${SUBND},'2')"
+          }
+        },
+        "RESHD1": {
+          "set": {
+            "field.relevant": "selected(${SUBHD},'1')"
+          }
+        },
+        "DTHD1": {
+          "set": {
+            "field.relevant": "selected(${SUBHD},'1')"
+          }
+        },
+        "RESHD2": {
+          "set": {
+            "field.relevant": "selected(${SUBHD},'2')"
+          }
+        },
+        "DTHD2": {
+          "set": {
+            "field.relevant": "selected(${SUBHD},'2')"
+          }
+        },
+        "RESHD3": {
+          "set": {
+            "field.relevant": "selected(${SUBHD},'3')"
+          }
+        },
+        "DTHD3": {
+          "set": {
+            "field.relevant": "selected(${SUBHD},'3')"
+          }
+        },
+        "RESHD4": {
+          "set": {
+            "field.relevant": "selected(${SUBHD},'4')"
+          }
+        },
+        "DTHD4": {
+          "set": {
+            "field.relevant": "selected(${SUBHD},'4')"
+          }
+        },
+        "VIRRESULT": {
+          "set": {
+            "field.relevant": "${VIRTEST}='TESTED'"
+          }
+        },
+        "OTHTEST": {
+          "set": {
+            "field.relevant": "${BLDTEST}='OTHER'"
+          }
+        },
+        "QUAR_REAS": {
+          "set": {
+            "field.relevant": "selected(${QUAR},'1')"
+          }
+        },
+        "DOD": {
+          "set": {
+            "field.relevant": "selected(${PM_Y},'1')"
+          }
+        },
+        "TOD": {
+          "set": {
+            "field.relevant": "selected(${PM_Y},'1')"
+          }
+        },
+        "COD": {
+          "set": {
+            "field.relevant": "selected(${PM_Y},'1')"
+          }
+        }
+      }
+    }
+  },
+  "created_at": "2026-10-04T00:00:00Z",
+  "created_by": "human:dswanker",
+  "source": "Rule-breakage check of the Detroit spec",
+  "tags": [
+    "bioivt",
+    "relevance",
+    "repair",
+    "detroit"
+  ],
+  "history": [
+    {
+      "at": "2026-10-04T00:00:00Z",
+      "by": "human:dswanker",
+      "action": "created",
+      "status": "active",
+      "note": "Approved fix list; pre-existing defects, not caused by the canonical-list work."
+    }
+  ]
+}
