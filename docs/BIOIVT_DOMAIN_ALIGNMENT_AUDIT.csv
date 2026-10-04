@@ -151,7 +151,7 @@ Detroit,ECONSENT,DECLINE_OTHER,"Other, specify reason",text,DS reason,KEEP,ECONS
 Detroit,SHORTFORM,IS_IT_A_VETERINARY_FORM,Is this a Human subject?,select_one ys9lj11,operational routing,KEEP,SHORTFORM,M,n/a,"Verified in the built form: logic follows the LABEL (Yes = human; human-only fields use =""Yes""). Only the variable NAME is misleading."
 Detroit,SHORTFORM,DIN,DIN (Donor Identification Number),text,DM identifier,KEEP,SHORTFORM (stays as DM),H,CDASHIG 7.3 DM,
 Detroit,SHORTFORM,PROJID,Project ID,text,DM identifier,KEEP,SHORTFORM (stays as DM),H,CDASHIG 7.3 DM,
-Detroit,SHORTFORM,KIT_NO,Kit Number,text,specimen collection (sponsor-defined),MOVE,SPECCOL (new specimen collection form),M,CDASHIG 3.4 sponsor-defined fields,
+Detroit,SHORTFORM,KIT_NO,Kit Number,text,specimen collection (sponsor-defined),MOVE,SPECCOL (new specimen collection form),M,CDASHIG 3.4,KIT_NO hidden for animals today (same Yes=human gate as RACE). Decision 2026-10-04: keep that rule when it moves to the shared specimen form.
 Detroit,SHORTFORM,COLLDT,Date of Collection,date,specimen collection (sponsor-defined),MOVE,SPECCOL (new specimen collection form),M,CDASHIG 4.2 #1,
 Detroit,SHORTFORM,COLLTM,Collection Time (HH:MM),text,specimen collection (sponsor-defined),MOVE,SPECCOL (new specimen collection form),M,CDASHIG 4.2 #1,
 Detroit,SHORTFORM,ICF,ICF Number,text,DS informed consent,CONSOLIDATE,Consent (DS),M,CDASHIG 8.2.4 DS; 4.1 #4,Consent also captured on ECONSENT.CONSENT_DT and INCEXC.SIGNED_ICF
