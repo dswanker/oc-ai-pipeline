@@ -1,0 +1,39 @@
+{
+  "id": "customer.bioivt.calc_months_survived",
+  "title": "BioIVT: months survived is calculated",
+  "kind": "structured",
+  "scope": "customer",
+  "scope_id": "bioIVT",
+  "status": "active",
+  "natural_key": "bioivt_calc_months_survived",
+  "description": "Makes 'Number of months survived' a read-only calculation: whole months from the diagnosis date to the date of death (from Death Details when one exists), otherwise to the date follow-up data was provided, i.e. survived so far. Blank when a needed date is missing.",
+  "rationale": "Dan asked for a proposal from the study design. Uses the Death Details form built in Phase 1.",
+  "target": "field",
+  "applies_when": {
+    "form.form_id": "FOLLOWUP",
+    "field.name": "MONSURV"
+  },
+  "effect": {
+    "set": {
+      "field.calculation": "if(${DIAGDT}='' or if(${DTHDAT_CF}!='', ${DTHDAT_CF}, ${DTFUPROV})='', '', if(decimal-date-time(if(${DTHDAT_CF}!='', ${DTHDAT_CF}, ${DTFUPROV})) < decimal-date-time(${DIAGDT}), '', int((decimal-date-time(if(${DTHDAT_CF}!='', ${DTHDAT_CF}, ${DTFUPROV})) - decimal-date-time(${DIAGDT})) div 30.4375)))",
+      "field.readonly": "yes"
+    }
+  },
+  "created_at": "2026-10-05T00:00:00Z",
+  "created_by": "human:dswanker",
+  "source": "BioIVT Option C build for the client demonstration; approved by Dan",
+  "tags": [
+    "bioivt",
+    "phase_2",
+    "calculated"
+  ],
+  "history": [
+    {
+      "at": "2026-10-05T00:00:00Z",
+      "by": "human:dswanker",
+      "action": "created",
+      "status": "active",
+      "note": "Phase 2 build for the client demonstration."
+    }
+  ]
+}

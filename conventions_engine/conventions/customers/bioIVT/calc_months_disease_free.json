@@ -1,0 +1,39 @@
+{
+  "id": "customer.bioivt.calc_months_disease_free",
+  "title": "BioIVT: months disease-free is calculated",
+  "kind": "structured",
+  "scope": "customer",
+  "scope_id": "bioIVT",
+  "status": "active",
+  "natural_key": "bioivt_calc_months_disease_free",
+  "description": "Makes 'Number of months disease free' a read-only calculation: whole months from the remission date (or the therapy end date if there is no remission) to the recurrence date (or the date follow-up data was provided if there is no recurrence). Blank when a needed date is missing. The date questions are unchanged.",
+  "rationale": "Dan asked for a proposal from the study design (status 'Disease free', remission, recurrence and therapy dates). A month is 30.4375 days.",
+  "target": "field",
+  "applies_when": {
+    "form.form_id": "FOLLOWUP",
+    "field.name": "MONDISFREE"
+  },
+  "effect": {
+    "set": {
+      "field.calculation": "if(if(${REMISSDT}!='', ${REMISSDT}, ${THER_ENDDT})='' or if(${REOCCURDT}!='', ${REOCCURDT}, ${DTFUPROV})='', '', if(decimal-date-time(if(${REOCCURDT}!='', ${REOCCURDT}, ${DTFUPROV})) < decimal-date-time(if(${REMISSDT}!='', ${REMISSDT}, ${THER_ENDDT})), '', int((decimal-date-time(if(${REOCCURDT}!='', ${REOCCURDT}, ${DTFUPROV})) - decimal-date-time(if(${REMISSDT}!='', ${REMISSDT}, ${THER_ENDDT}))) div 30.4375)))",
+      "field.readonly": "yes"
+    }
+  },
+  "created_at": "2026-10-05T00:00:00Z",
+  "created_by": "human:dswanker",
+  "source": "BioIVT Option C build for the client demonstration; approved by Dan",
+  "tags": [
+    "bioivt",
+    "phase_2",
+    "calculated"
+  ],
+  "history": [
+    {
+      "at": "2026-10-05T00:00:00Z",
+      "by": "human:dswanker",
+      "action": "created",
+      "status": "active",
+      "note": "Phase 2 build for the client demonstration."
+    }
+  ]
+}

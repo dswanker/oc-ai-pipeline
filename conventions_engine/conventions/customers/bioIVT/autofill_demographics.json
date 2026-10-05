@@ -1,0 +1,53 @@
+{
+  "id": "customer.bioivt.autofill_demographics",
+  "title": "BioIVT: Follow-up and Outcome read demographics from the Short Form",
+  "kind": "structured",
+  "scope": "customer",
+  "scope_id": "bioIVT",
+  "status": "active",
+  "natural_key": "bioivt_autofill_demographics",
+  "description": "On Follow-up and Outcome, looks up date of birth, gender, race and ethnicity (and DIN on Outcome) from the subject's Short Form. When found, the original question hides and a read-only line shows the value; when not found, the original question shows exactly as before. 'Other race, specify' is left alone: it already hides whenever Race is hidden, and another convention owns its show/hide rule.",
+  "rationale": "Option C: cross-form autofill (CDASH best practice: collect once). Dan: do not defer. The fail-safe means a failed lookup cannot block data entry.",
+  "target": "field",
+  "applies_when": {
+    "form.form_id": {
+      "in": [
+        "FOLLOWUP",
+        "OUTCOME"
+      ]
+    },
+    "field.name": {
+      "in": [
+        "DIN",
+        "DOB",
+        "GENDER",
+        "RACE",
+        "ETH"
+      ]
+    }
+  },
+  "effect": {
+    "lookup_from": {
+      "from": "SHORTFORM.{self}",
+      "mode": "autofill",
+      "from_label": "from the Short Form"
+    }
+  },
+  "created_at": "2026-10-05T00:00:00Z",
+  "created_by": "human:dswanker",
+  "source": "BioIVT Option C build for the client demonstration; approved by Dan",
+  "tags": [
+    "bioivt",
+    "phase_2",
+    "autofill"
+  ],
+  "history": [
+    {
+      "at": "2026-10-05T00:00:00Z",
+      "by": "human:dswanker",
+      "action": "created",
+      "status": "active",
+      "note": "Phase 2 build for the client demonstration."
+    }
+  ]
+}

@@ -1,0 +1,43 @@
+{
+  "id": "customer.bioivt.din_max_length",
+  "title": "BioIVT: DIN is text up to 15 characters, nothing else restricted",
+  "kind": "structured",
+  "scope": "customer",
+  "scope_id": "bioIVT",
+  "status": "active",
+  "natural_key": "bioivt_din_max_length",
+  "description": "Gives every DIN question (DIN and Follow-up DIN, both studies) the same rule: text, at most 15 characters, no pattern. 15 is the longest DIN in the real Carlsbad data (for example 002-6504-660002); digits and hyphens are what occur there.",
+  "rationale": "Dan's decision: the longest existing DIN and the least restrictive type, applied to every DIN field. Detroit DIN lengths were not available.",
+  "target": "field",
+  "applies_when": {
+    "field.name": {
+      "in": [
+        "DIN",
+        "FOLLOW_DIN"
+      ]
+    }
+  },
+  "effect": {
+    "set": {
+      "field.constraint": "string-length(.) <= 15",
+      "field.constraint_message": "A DIN can be at most 15 characters."
+    }
+  },
+  "created_at": "2026-10-05T00:00:00Z",
+  "created_by": "human:dswanker",
+  "source": "BioIVT Option C build for the client demonstration; approved by Dan",
+  "tags": [
+    "bioivt",
+    "phase_2",
+    "din"
+  ],
+  "history": [
+    {
+      "at": "2026-10-05T00:00:00Z",
+      "by": "human:dswanker",
+      "action": "created",
+      "status": "active",
+      "note": "Phase 2 build for the client demonstration."
+    }
+  ]
+}

@@ -1,0 +1,105 @@
+{
+  "id": "customer.bioivt.vocab_other_specify",
+  "title": "BioIVT: 'Other, specify' beside every single-choice lookup",
+  "kind": "structured",
+  "scope": "customer",
+  "scope_id": "bioIVT",
+  "status": "active",
+  "natural_key": "bioivt_vocab_other_specify",
+  "description": "Adds an 'Other (not in list), specify' free-text question directly after each single-choice lookup, shown only when Other is chosen, so nothing a site could type before becomes untypeable and the verbatim text is kept alongside the code.",
+  "rationale": "Approved choice-list rules 1 and 2 (nothing becomes untypeable; coded plus verbatim).",
+  "target": "field",
+  "applies_when": {
+    "any_of": [
+      {
+        "form.form_id": "PSORIASIS",
+        "field.name": "ORALSTER"
+      },
+      {
+        "form.form_id": "PSORIASIS",
+        "field.name": "TOP"
+      },
+      {
+        "form.form_id": "PSORIASIS",
+        "field.name": "OTHR"
+      },
+      {
+        "form.form_id": "INCEXC",
+        "field.name": "DONOR_DIAGNOSIS"
+      },
+      {
+        "form.form_id": "FOLLOWUP",
+        "field.name": "SPECDIAG"
+      },
+      {
+        "form.form_id": "OUTCOME",
+        "field.name": "SPECDIAG"
+      },
+      {
+        "form.form_id": "ONCOLOGY",
+        "field.name": "SPECIDIAG"
+      },
+      {
+        "form.form_id": "BIOIVTONC",
+        "field.name": "DIAG_CONF"
+      },
+      {
+        "form.form_id": "ONCOLOGY",
+        "field.name": "OTHTEST"
+      },
+      {
+        "form.form_id": "TESTRES",
+        "field.name": "OTHTEST"
+      },
+      {
+        "form.form_id": "ONCOLOGY",
+        "field.name": "MARKOTH"
+      },
+      {
+        "form.form_id": "ONCOLOGY",
+        "field.name": "BLDUNIT"
+      },
+      {
+        "form.form_id": "ONCOLOGY",
+        "field.name": "MARKUNIT"
+      },
+      {
+        "form.form_id": "TESTRES",
+        "field.name": "BLDUNIT"
+      },
+      {
+        "form.form_id": "CM",
+        "field.name": "CMTRT"
+      },
+      {
+        "form.form_id": "MH",
+        "field.name": "DONDIAG"
+      }
+    ]
+  },
+  "effect": {
+    "insert_after": {
+      "name": "{self}_OTH",
+      "type": "text",
+      "label": "Other (not in list), specify",
+      "relevant": "${{self}}='OTHER'"
+    }
+  },
+  "created_at": "2026-10-05T00:00:00Z",
+  "created_by": "human:dswanker",
+  "source": "BioIVT Option C build for the client demonstration; approved by Dan",
+  "tags": [
+    "bioivt",
+    "phase_2",
+    "other_specify"
+  ],
+  "history": [
+    {
+      "at": "2026-10-05T00:00:00Z",
+      "by": "human:dswanker",
+      "action": "created",
+      "status": "active",
+      "note": "Phase 2 build for the client demonstration."
+    }
+  ]
+}

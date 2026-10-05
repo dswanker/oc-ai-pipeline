@@ -25,11 +25,20 @@ def build(raw, name):
     return s
 
 raw = json.load(open(SPEC_PATH))
-after = build(raw, 'after')
-tmp_root = Path(tempfile.mkdtemp()); shutil.copytree(ROOT / 'conventions_engine' / 'conventions', tmp_root / 'conventions')
-for slug in PHASE1: (tmp_root / 'conventions' / 'customers' / 'bioIVT' / f'{slug}.json').unlink()
+# Phase 2 conventions also change some of the same forms, so compare Phase 1 alone: 'after' = Phase 1 present and Phase 2 absent.
+PHASE2 = ['vocab_rxnorm_single', 'vocab_rxnorm_multi', 'vocab_snomed_diagnoses', 'vocab_loinc_tests', 'vocab_units', 'lab_values_numeric', 'lab_unit_rows',
+          'vocab_other_specify', 'vocab_other_specify_multi', 'din_max_length', 'autofill_demographics', 'calc_months_disease_free', 'calc_months_survived',
+          'calc_months_survived_death_lookup']
+def root_without(slugs):
+    r = Path(tempfile.mkdtemp()); shutil.copytree(ROOT / 'conventions_engine' / 'conventions', r / 'conventions')
+    for slug in slugs:
+        f = r / 'conventions' / 'customers' / 'bioIVT' / f'{slug}.json'
+        if f.exists(): f.unlink()
+    return r
 real_root = conventions_engine._default_data_root
-conventions_engine._default_data_root = lambda: tmp_root
+conventions_engine._default_data_root = (lambda r=root_without(PHASE2): r)
+after = build(raw, 'after')
+conventions_engine._default_data_root = (lambda r=root_without(PHASE1 + PHASE2): r)
 before = build(raw, 'before')
 conventions_engine._default_data_root = real_root
 

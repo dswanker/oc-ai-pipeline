@@ -1,0 +1,82 @@
+{
+  "id": "customer.bioivt.lab_values_numeric",
+  "title": "BioIVT: lab result values are numbers",
+  "kind": "structured",
+  "scope": "customer",
+  "scope_id": "bioIVT",
+  "status": "active",
+  "natural_key": "bioivt_lab_values_numeric",
+  "description": "Changes eleven lab result questions that were free text to decimal numbers. Their units are separate lookup questions.",
+  "rationale": "Approved choice-list rule 4: numbers stay numbers. Old free-text values such as '>100' will need handling during data migration.",
+  "target": "field",
+  "applies_when": {
+    "any_of": [
+      {
+        "form.form_id": "ONCOLOGY",
+        "field.name": "BLDVALUE"
+      },
+      {
+        "form.form_id": "ONCOLOGY",
+        "field.name": "MARKVALUE"
+      },
+      {
+        "form.form_id": "TESTRES",
+        "field.name": "BLDVALUE"
+      },
+      {
+        "form.form_id": "RA",
+        "field.name": "SERRHEUM_UNIT1"
+      },
+      {
+        "form.form_id": "RA",
+        "field.name": "SERRHEUM_UNIT2"
+      },
+      {
+        "form.form_id": "RA",
+        "field.name": "ESR_RES"
+      },
+      {
+        "form.form_id": "RA",
+        "field.name": "CRP_RES"
+      },
+      {
+        "form.form_id": "LUPUS",
+        "field.name": "RESRD1B"
+      },
+      {
+        "form.form_id": "LUPUS",
+        "field.name": "RESHD2"
+      },
+      {
+        "form.form_id": "LUPUS",
+        "field.name": "RESHD3"
+      },
+      {
+        "form.form_id": "LUPUS",
+        "field.name": "RESHD4"
+      }
+    ]
+  },
+  "effect": {
+    "set": {
+      "field.type": "decimal"
+    }
+  },
+  "created_at": "2026-10-05T00:00:00Z",
+  "created_by": "human:dswanker",
+  "source": "BioIVT Option C build for the client demonstration; approved by Dan",
+  "tags": [
+    "bioivt",
+    "phase_2",
+    "numeric"
+  ],
+  "history": [
+    {
+      "at": "2026-10-05T00:00:00Z",
+      "by": "human:dswanker",
+      "action": "created",
+      "status": "active",
+      "note": "Phase 2 build for the client demonstration."
+    }
+  ]
+}

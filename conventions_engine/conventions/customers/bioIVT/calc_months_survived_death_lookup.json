@@ -1,0 +1,42 @@
+{
+  "id": "customer.bioivt.calc_months_survived_death_lookup",
+  "title": "BioIVT: months survived reads the date of death from Death Details",
+  "kind": "structured",
+  "scope": "customer",
+  "scope_id": "bioIVT",
+  "status": "active",
+  "natural_key": "bioivt_calc_months_survived_death_lookup",
+  "description": "Adds a hidden lookup of the date of death from the Death Details form (common event) beside 'Number of months survived'. If the lookup returns nothing the calculation uses the follow-up data date.",
+  "rationale": "Supports calc_months_survived. Fail-safe: no death record means survival so far.",
+  "target": "field",
+  "applies_when": {
+    "form.form_id": "FOLLOWUP",
+    "field.name": "MONSURV"
+  },
+  "effect": {
+    "lookup_from": {
+      "from": "DD.DTHDAT",
+      "name": "DTHDAT_CF",
+      "item_group": "DD",
+      "event": "SE_COMMON",
+      "mode": "hidden"
+    }
+  },
+  "created_at": "2026-10-05T00:00:00Z",
+  "created_by": "human:dswanker",
+  "source": "BioIVT Option C build for the client demonstration; approved by Dan",
+  "tags": [
+    "bioivt",
+    "phase_2",
+    "calculated"
+  ],
+  "history": [
+    {
+      "at": "2026-10-05T00:00:00Z",
+      "by": "human:dswanker",
+      "action": "created",
+      "status": "active",
+      "note": "Phase 2 build for the client demonstration."
+    }
+  ]
+}

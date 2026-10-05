@@ -1,0 +1,56 @@
+{
+  "id": "customer.bioivt.vocab_rxnorm_multi",
+  "title": "BioIVT: therapy agent lists become a multi-select RxNorm lookup",
+  "kind": "structured",
+  "scope": "customer",
+  "scope_id": "bioIVT",
+  "status": "active",
+  "natural_key": "bioivt_vocab_rxnorm_multi",
+  "description": "Turns the four free-text agent lists on Outcome (chemotherapy, molecular targeted, immunotherapy, hormone) into a type-ahead multi-select over real RxNorm drug codes, so several agents can be picked in one question. DEMONSTRATION list: real codes, partial, not clinically reviewed; licences to be confirmed before real use.",
+  "rationale": "Option C: coded medication names. One question holds several agents, as the free-text box did.",
+  "target": "field",
+  "applies_when": {
+    "any_of": [
+      {
+        "form.form_id": "OUTCOME",
+        "field.name": "CHEMO_AGENTS"
+      },
+      {
+        "form.form_id": "OUTCOME",
+        "field.name": "MTT_AGENTS"
+      },
+      {
+        "form.form_id": "OUTCOME",
+        "field.name": "IMMUNO_AGENTS"
+      },
+      {
+        "form.form_id": "OUTCOME",
+        "field.name": "HORMONE_AGENTS"
+      }
+    ]
+  },
+  "effect": {
+    "use_vocabulary": {
+      "file": "rxnorm_demo.csv",
+      "multi": true
+    }
+  },
+  "created_at": "2026-10-05T00:00:00Z",
+  "created_by": "human:dswanker",
+  "source": "BioIVT Option C build for the client demonstration; approved by Dan",
+  "tags": [
+    "bioivt",
+    "phase_2",
+    "vocabulary",
+    "rxnorm"
+  ],
+  "history": [
+    {
+      "at": "2026-10-05T00:00:00Z",
+      "by": "human:dswanker",
+      "action": "created",
+      "status": "active",
+      "note": "Phase 2 build for the client demonstration."
+    }
+  ]
+}
