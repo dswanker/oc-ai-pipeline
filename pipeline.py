@@ -784,7 +784,7 @@ def run_pricing_quote(pricing_summary_dict,
 # These mirror test_skills_locally.py — imported directly from the skills
 # folder's scripts/ directory and run in a thread pool executor.
 
-def run_study_spec_files(struct_json, customer_subdomain="", migration_source=None):
+def run_study_spec_files(struct_json, customer_subdomain="", migration_source=None, client_name=""):
     """Generate Study Spec PDF + XLSX locally. Returns {'pdf': bytes, 'xlsx': bytes}."""
     _add_scripts("protocol-analysis")
     from generate_study_spec_pdf  import build_edc_pdf
@@ -801,6 +801,7 @@ def run_study_spec_files(struct_json, customer_subdomain="", migration_source=No
             study_id=study_id,
             customer_subdomain=customer_subdomain,
             migration_source=migration_source,
+            client_name=client_name,
         )
         
         applied_list = struct_json.get("study_meta", {}).get("conventions_engine_applied", [])
@@ -5048,6 +5049,7 @@ async def run_pipeline(item_id):
         cols         = {c["id"]: c for c in item["column_values"]}
         protocol_num = cols.get(COL["protocol_number"], {}).get("text", "STUDY")
         oc_subdomain = cols.get(COL["oc_subdomain"],    {}).get("text", "").strip()
+        client_name = (cols.get(COL["client"], {}).get("text") or "").strip()   # conventions follow the customer, not only the tenant
         # Per-user OC SSO login for form upload (Playwright/storage_state).
         # Required for create_oc_study's Playwright form-publish step; if
         # empty, that step is skipped with a clear log.
@@ -5712,7 +5714,8 @@ async def run_pipeline(item_id):
                             _user_change_paths = {r["field_path"] for r in _user_changes}
 
                             apply_conventions(struct_json, study_id=_study_id,
-                                              customer_subdomain=oc_subdomain)
+                                              customer_subdomain=oc_subdomain,
+                                              client_name=client_name)
 
                             # Engine changes = diff(user_edit, post_convention). Attribute to conventions.
                             _engine_changes = _conv_diff.deep_diff(_user_edit_spec, struct_json)
@@ -5821,7 +5824,8 @@ async def run_pipeline(item_id):
                 _vendor_slug = _vendor_slug_from_display_name(mig_result.get("source_system"))
                 apply_conventions(struct_json, study_id=_study_id,
                                   customer_subdomain=oc_subdomain,
-                                  migration_source=_vendor_slug)
+                                  migration_source=_vendor_slug,
+                                  client_name=client_name)
             except Exception as _ce:
                 print(f"conventions_engine FAILED — continuing without conventions: {_ce}",
                       flush=True)
@@ -6356,7 +6360,8 @@ async def run_pipeline(item_id):
                 # vendor conventions in future, extract the column at build entry and
                 # thread it through as migration_source here.
                 apply_conventions(struct_json, study_id=_study_id,
-                                  customer_subdomain=oc_subdomain)
+                                  customer_subdomain=oc_subdomain,
+                                  client_name=client_name)
             except Exception as _ce:
                 print(f"conventions_engine FAILED — continuing without conventions: {_ce}",
                       flush=True)
@@ -6495,7 +6500,7 @@ async def run_pipeline(item_id):
                 try:
                     loop = asyncio.get_event_loop()
                     spec_files = await loop.run_in_executor(
-                        None, lambda: run_study_spec_files(struct_json, oc_subdomain, None)
+                        None, lambda: run_study_spec_files(struct_json, oc_subdomain, None, client_name)
                     )
                     await asyncio.gather(
                         upload_file(item_id, COL["spec_pdf"],

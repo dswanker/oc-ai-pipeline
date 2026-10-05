@@ -189,9 +189,14 @@ def apply_conventions(
     customer_subdomain: str,
     migration_source: Optional[str] = None,
     repo_root: Optional[Path] = None,
+    client_name: str = "",
 ) -> Dict[str, Any]:
     """
     Load active conventions, resolve cascade, apply to spec.
+
+    `client_name` is the item's Client (monday). When the tenant subdomain has no
+    conventions folder of its own, the client's folder is used (see
+    loader.resolve_customer), so customer conventions follow the customer.
 
     `migration_source` is the vendor slug (e.g. "redcap", "castor") for
     migration builds, drawn from monday's source_edc_system column via
@@ -216,6 +221,7 @@ def apply_conventions(
 
     record.ensure_section(spec)
 
+    customer_subdomain = loader.resolve_customer(repo_root, customer_subdomain, client_name)
     loaded = loader.load_all(repo_root, customer_subdomain, study_id,
                              migration_source=migration_source or "")
     canonical_lists, canonical_errs = loader.load_canonical_lists(repo_root)

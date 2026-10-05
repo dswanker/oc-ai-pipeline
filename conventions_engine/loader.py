@@ -162,6 +162,25 @@ def load_canonical_lists(repo_root: Path) -> Tuple[Dict[str, Any], List[LoadErro
     return out, errors
 
 
+def resolve_customer(repo_root: Path, customer_subdomain: str, client_name: str = "") -> str:
+    """Which conventions/customers/<folder> applies to this item?
+
+    The tenant subdomain wins when it has a folder of its own. Names are matched ignoring case and spaces, so 'bioivt' (the
+    registry spelling) and 'bioIVT' (the folder) are the same customer. When the subdomain has no folder, the item's Client
+    name is tried instead, so a customer's conventions follow the customer even when a build is rehearsed in another tenant
+    (for example cust1). With neither, the subdomain is returned unchanged (no customer conventions load)."""
+    base = Path(repo_root) / "conventions" / "customers"
+    try:
+        folders = {p.name.replace(" ", "").lower(): p.name for p in base.iterdir() if p.is_dir()}
+    except OSError:
+        return customer_subdomain
+    for candidate in (customer_subdomain, client_name):
+        key = (candidate or "").replace(" ", "").lower()
+        if key and key in folders:
+            return folders[key]
+    return customer_subdomain
+
+
 def load_all(repo_root: Path, customer_subdomain: str, study_id: str,
              migration_source: str = ""
              ) -> Dict[str, Any]:
