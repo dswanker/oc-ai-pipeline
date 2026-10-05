@@ -5536,7 +5536,15 @@ async def run_pipeline(item_id):
         print(f"Protocol: {_proto_desc} | "
               f"CRF files ({len(_crf_files)}): {_crf_desc} | "
               f"OC files ({len(_oc_files)}): {_oc_desc}", flush=True)
-        _edc_screenshots = []  # populated during Phase 1 if images found in CRF Library
+        # Extract images from CRF Library files (screenshots ZIPs, PNGs, etc.)
+        # and pass them to Claude during Study Spec generation so it can read
+        # visit structure, SoA, and form layouts from source system screenshots.
+        _edc_screenshots = _extract_images_from_files(
+            _crf_files, max_images=40, max_long_edge=1568
+        )
+        if _edc_screenshots:
+            print(f"CRF screenshots: {len(_edc_screenshots)} image(s) extracted "
+                  f"from CRF Library — will be sent to Claude", flush=True)
 
         # ── Determine if analysis/chains are needed ───────────────────────────
         needs_analysis = (
