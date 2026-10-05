@@ -684,12 +684,43 @@ def _read_zip_xlsforms(zip_bytes):
     return {"forms": forms}
 
 
+# Reference-only sheets in the DVS workbook. They are for people to read and are NEVER sent to Claude when an edited DVS is
+# re-uploaded (the type-ahead lookup lists have thousands of rows each).
+_DVS_REFERENCE_SHEETS = {"Lookup_Lists"}
+
+
+def _add_dvs_lookup_sheet(xlsx_path, struct_json):
+    """Add a 'Lookup_Lists' sheet: the COMPLETE type-ahead lookup lists (RxNorm, SNOMED CT, LOINC, UCUM) that the forms use."""
+    try:
+        import lookup_lists as _LL
+        import openpyxl
+        lists = _LL.external_lists(struct_json)
+        users = {}
+        for f in struct_json.get("forms", []):
+            for fn in _LL.form_list_names(f):
+                users.setdefault(fn, []).append(f.get("form_id", ""))
+        lists = {fn: rows for fn, rows in lists.items() if fn in users}
+        if not lists:
+            return
+        wb = openpyxl.load_workbook(xlsx_path)
+        ws = wb.create_sheet("Lookup_Lists")
+        ws.append(["list_file", "list_title", "code (stored by OpenClinica)", "term (shown to staff)", "used by forms"])
+        for fn, rows in lists.items():
+            for code, label in rows:
+                ws.append([fn, _LL.title(fn), code, label, ", ".join(users[fn])])
+        wb.save(xlsx_path)
+    except Exception as e:
+        print(f"DVS lookup sheet skipped: {e}", flush=True)
+
+
 def _dvs_xlsx_to_text(dvs_bytes):
     """Extract DVS XLSX as structured text for Claude to read."""
     import openpyxl
     wb = openpyxl.load_workbook(io.BytesIO(dvs_bytes))
     lines = []
     for sheet_name in wb.sheetnames:
+        if sheet_name in _DVS_REFERENCE_SHEETS:
+            continue
         ws   = wb[sheet_name]
         rows = list(ws.values)
         if not rows:
@@ -928,6 +959,7 @@ def run_dvs_xlsx(struct_json, forms_json):
     with tempfile.TemporaryDirectory() as tmp:
         xlsx_path = os.path.join(tmp, f"{protocol}_DVS.xlsx")
         build_dvs(dvs_data, xlsx_path)
+        _add_dvs_lookup_sheet(xlsx_path, struct_json)
         return open(xlsx_path, "rb").read()
 
 def _extract_scheduling_block(struct_json):

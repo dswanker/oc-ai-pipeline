@@ -392,7 +392,7 @@ CHOICES_EDITABLE_COLS = [
     ("filter_value", "Value for choice_filter matching", 20),
 ]
 
-def build_choices_sheet(wb, form):
+def _build_choices_sheet_core(wb, form):
     form_id = form.get("form_id", "FORM")
     sheet_name = f"{form_id}_choices"[:31]
     ws = wb.create_sheet(title=sheet_name)
@@ -1399,7 +1399,40 @@ def build_ai_instructions_sheet(wb, data: dict):
     ws.freeze_panes = "A2"
 
 
+try:
+    import lookup_lists as _LL
+except Exception:                      # the generator still works on its own
+    _LL = None
+_EXTERNAL_LISTS = {}
+
+
+def build_choices_sheet(wb, form):
+    """The form's own choices, then the COMPLETE type-ahead lookup lists it uses (reference rows, from the CSV files)."""
+    _build_choices_sheet_core(wb, form)
+    if not _LL or not _EXTERNAL_LISTS:
+        return
+    names = [n for n in _LL.form_list_names(form) if n in _EXTERNAL_LISTS]
+    if not names:
+        return
+    ws = wb[f"{form.get('form_id', 'FORM')}_choices"[:31]]
+    for fn in names:
+        rows = _EXTERNAL_LISTS[fn]
+        band = ws.cell(row=ws.max_row + 2, column=1,
+                       value=f"EXTERNAL LOOKUP LIST  {fn}  ({_LL.title(fn)}):  {len(rows):,} entries.  Type-ahead list loaded from this CSV in the EDC build ZIP. "
+                             f"Reference rows only: they are not part of this form's choices sheet. name = the real code stored by OpenClinica; label = the term staff see.")
+        band.font = hdr_font(size=9, color=WHITE_HEX)
+        band.fill = fill(MID_BLUE_HEX)
+        for code, label in rows:
+            ws.append(["", "", fn, label, code, "EXTERNAL_LOOKUP", "", ""])
+    try:
+        ws["A1"].value = f"{ws['A1'].value}  |  + external lookup lists: " + ", ".join(f"{n} ({len(_EXTERNAL_LISTS[n]):,})" for n in names)
+    except Exception:
+        pass
+
+
 def build_edc_xlsx(data: dict, output_path: str):
+    global _EXTERNAL_LISTS
+    _EXTERNAL_LISTS = _LL.external_lists(data) if _LL else {}
     wb = Workbook()
 
     # INDEX sheet (uses default active sheet)

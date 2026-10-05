@@ -493,7 +493,16 @@ def build_conflicts_page(meta, styles):
 
 
 # ── Main builder ──────────────────────────────────────────────────────────────
+try:
+    import lookup_lists as _LL
+except Exception:
+    _LL = None
+_EXTERNAL_LISTS = {}
+
+
 def build_edc_pdf(data: dict, output_path: str):
+    global _EXTERNAL_LISTS
+    _EXTERNAL_LISTS = _LL.external_lists(data) if _LL else {}
     styles = make_styles()
     meta      = data.get("study_meta", {})
     tpt_csv   = data.get("timepoint_csv", {})
@@ -863,6 +872,35 @@ def build_edc_pdf(data: dict, output_path: str):
                                list_bg.get(ch.get("list_name",""), WHITE)))
             ch_tbl.setStyle(TableStyle(ch_ts))
             block.append(ch_tbl)
+
+        # Type-ahead lookup lists (external CSV): count + a representative sample so the lists are visible here too.
+        # (The complete lists are in the Study Specification XLSX choices tabs and in the EDC build ZIP.)
+        if _LL and _EXTERNAL_LISTS:
+            from xml.sax.saxutils import escape as _esc
+            for _fn in [n for n in _LL.form_list_names(form) if n in _EXTERNAL_LISTS]:
+                _rows = _EXTERNAL_LISTS[_fn]
+                _samp = _LL.sample(_rows, 36)
+                block.append(Spacer(1, 4))
+                _band = Table([[Paragraph(
+                    f"LOOKUP LIST  {_fn}  ({_LL.title(_fn)}):  {len(_rows):,} entries, type-ahead.  "
+                    f"Sample of {len(_samp)} shown; complete list in the Study Specification XLSX and the EDC build ZIP.",
+                    ParagraphStyle("lk_hdr", fontName="Helvetica-Bold", fontSize=7.5, textColor=WHITE, leftIndent=4))]],
+                    colWidths=[CONTENT_W])
+                _band.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), MID_BLUE),
+                                           ("TOPPADDING", (0, 0), (-1, -1), 3), ("BOTTOMPADDING", (0, 0), (-1, -1), 3)]))
+                block.append(_band)
+                _half = (len(_samp) + 1) // 2
+                _data = [[Paragraph("Code", styles["cell_bold"]), Paragraph("Term", styles["cell_bold"]),
+                          Paragraph("Code", styles["cell_bold"]), Paragraph("Term", styles["cell_bold"])]]
+                for _i in range(_half):
+                    _a = _samp[_i]
+                    _b = _samp[_i + _half] if _i + _half < len(_samp) else ("", "")
+                    _data.append([Paragraph(_esc(_a[0]), styles["cell"]), Paragraph(_esc(_a[1]), styles["cell"]),
+                                  Paragraph(_esc(_b[0]), styles["cell"]), Paragraph(_esc(_b[1]), styles["cell"])])
+                _tbl = Table(_data, colWidths=[CONTENT_W * 0.12, CONTENT_W * 0.38, CONTENT_W * 0.12, CONTENT_W * 0.38], repeatRows=1)
+                _tbl.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.3, GREY_MID), ("TOPPADDING", (0, 0), (-1, -1), 2),
+                                          ("BOTTOMPADDING", (0, 0), (-1, -1), 2), ("LEFTPADDING", (0, 0), (-1, -1), 3)]))
+                block.append(_tbl)
 
         # Flagged items summary
         flagged_items = [r for r in survey if r.get("completion_status") in ("FLAGGED","PLACEHOLDER")]

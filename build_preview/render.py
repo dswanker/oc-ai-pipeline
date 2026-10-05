@@ -89,6 +89,52 @@ def parse_choices_from_model(model_xml: str) -> dict:
     return out
 
 
+_lookup_cache = {}
+
+
+def _load_lookups(unzip_dir: str) -> dict:
+    """Type-ahead lookup lists (forms/*.csv in the EDC build ZIP) -> {list_id: {...}} for the preview and simulator."""
+    import glob as _glob
+    import html as _html
+    try:
+        import lookup_lists as LL
+    except Exception:
+        return {}
+    out = {}
+    for p in _glob.glob(os.path.join(unzip_dir, '**', 'forms', '*.csv'), recursive=True):
+        fn = os.path.basename(p)
+        with open(p, newline='', encoding='utf-8') as fh:
+            rows = LL.parse_csv(fh.read())
+        if not rows:
+            continue
+        out[os.path.splitext(fn)[0]] = {
+            'file': fn, 'title': LL.title(fn), 'rows': rows, 'sample': LL.sample(rows, 12),
+            # simulator dropdown: the term is what is typed and shown, the real code is the small second line
+            'options': [{'name': _html.escape(label, quote=True), 'label': _html.escape(code)} for code, label in rows],
+        }
+    return out
+
+
+def add_lookup_captions(form_html: str, lookups: dict) -> str:
+    """Visible caption under each type-ahead question: list name, size, examples (shows in the Build Preview PDF)."""
+    import html as _html
+    pat = re.compile(
+        r'(<datalist[^>]*>\s*<option\s+class="itemset-template"\s+[^>]*data-items-path="instance\(\'([^\']+)\'\)/root/item"[^>]*>.*?</option>\s*</datalist>)',
+        re.DOTALL,
+    )
+
+    def cap(m):
+        lk = lookups.get(m.group(2))
+        if not lk:
+            return m.group(0)
+        ex = '; '.join(f"{_html.escape(l)} ({_html.escape(c)})" for c, l in lk['sample'] if c != 'OTHER')
+        return (m.group(1) + '<div class="lookup-sample" style="font:11px/1.4 sans-serif;color:#555;margin:2px 0 8px;">'
+                f"Type-ahead list: {_html.escape(lk['title'])} ({_html.escape(lk['file'])}), {len(lk['rows']):,} entries. "
+                f"Examples: {ex}</div>")
+
+    return pat.sub(cap, form_html)
+
+
 def expand_itemsets(form_html: str, choices: dict) -> str:
     """Replace itemset templates with concrete <label> entries per choice."""
     pattern = re.compile(
@@ -599,7 +645,12 @@ def _render_with_study_spec(study_spec: dict, edc_zip_bytes: bytes,
                         continue
 
                     choices = parse_choices_from_model(result['model'])
-                    raw_form_html = expand_itemsets(result['form'], choices)
+                    _lk = _lookup_cache.get(unzip_dir)
+                    if _lk is None:
+                        _lk = _lookup_cache[unzip_dir] = _load_lookups(unzip_dir)
+                    _form_src = add_lookup_captions(result['form'], _lk)
+                    choices = {**choices, **{k: v['options'] for k, v in _lk.items()}}
+                    raw_form_html = expand_itemsets(_form_src, choices)
 
                     # Annotate: hoists data-relevant to .or-branch containers
                     # and reveals calculated-items fieldset (CSS hides it again
