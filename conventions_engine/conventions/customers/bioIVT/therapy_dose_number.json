@@ -1,0 +1,38 @@
+{
+  "id": "customer.bioivt.therapy_dose_number",
+  "title": "BioIVT: psoriasis oral steroid dose amount is a number",
+  "kind": "structured",
+  "scope": "customer",
+  "scope_id": "bioIVT",
+  "status": "active",
+  "natural_key": "bioivt_therapy_dose_number",
+  "description": "Changes the Dose question for the oral steroid on the Psoriasis form from free text to a decimal number. The unit is a separate pick list question.",
+  "rationale": "A dose amount is a number, not a choice (approved choice-list rule 4). Existing free-text values such as '10 mg' will need matching during data migration.",
+  "target": "field",
+  "applies_when": {
+    "form.form_id": "PSORIASIS",
+    "field.name": "ORALDOSE"
+  },
+  "effect": {
+    "set": {
+      "field.type": "decimal"
+    }
+  },
+  "created_at": "2026-10-05T00:00:00Z",
+  "created_by": "human:dswanker",
+  "source": "BIOIVT_BEFORE_AFTER.html Phase 1 plan, approved by Dan",
+  "tags": [
+    "bioivt",
+    "phase_1",
+    "number"
+  ],
+  "history": [
+    {
+      "at": "2026-10-05T00:00:00Z",
+      "by": "human:dswanker",
+      "action": "created",
+      "status": "active",
+      "note": "Phase 1 build. Approved by Dan after reviewing the before/after page."
+    }
+  ]
+}

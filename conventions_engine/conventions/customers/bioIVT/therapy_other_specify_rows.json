@@ -1,0 +1,94 @@
+{
+  "id": "customer.bioivt.therapy_other_specify_rows",
+  "title": "BioIVT: add 'Other, specify' beside the converted therapy lists",
+  "kind": "structured",
+  "scope": "customer",
+  "scope_id": "bioIVT",
+  "status": "active",
+  "natural_key": "bioivt_therapy_other_specify_rows",
+  "description": "Adds an 'Other, specify' free-text question directly after each of the five therapy questions that became pick lists (three frequencies, the oral steroid unit, and the oncology administration route), shown only when Other is chosen. Nothing a site could type before becomes untypeable.",
+  "rationale": "Approved choice-list rule 1: every converted field keeps an 'Other, specify' box.",
+  "target": "field",
+  "applies_when": {
+    "form.form_id": {
+      "in": [
+        "PSORIASIS",
+        "ONCOLOGY"
+      ]
+    },
+    "field.name": {
+      "in": [
+        "ORALFREQ",
+        "TOPFREQ",
+        "OTHRFREQ",
+        "ORALUNIT",
+        "THERADMIN"
+      ]
+    }
+  },
+  "effect": {
+    "match": {
+      "on": "field.name",
+      "cases": {
+        "ORALFREQ": {
+          "insert_after": {
+            "name": "{self}_OTH",
+            "type": "text",
+            "label": "Other frequency, specify",
+            "relevant": "${{self}}='other'"
+          }
+        },
+        "TOPFREQ": {
+          "insert_after": {
+            "name": "{self}_OTH",
+            "type": "text",
+            "label": "Other topical frequency, specify",
+            "relevant": "${{self}}='other'"
+          }
+        },
+        "OTHRFREQ": {
+          "insert_after": {
+            "name": "{self}_OTH",
+            "type": "text",
+            "label": "Other treatment frequency, specify",
+            "relevant": "${{self}}='other'"
+          }
+        },
+        "ORALUNIT": {
+          "insert_after": {
+            "name": "{self}_OTH",
+            "type": "text",
+            "label": "Other unit, specify",
+            "relevant": "${{self}}='other'"
+          }
+        },
+        "THERADMIN": {
+          "insert_after": {
+            "name": "{self}_OTH",
+            "type": "text",
+            "label": "Other therapy administration, specify",
+            "relevant": "${{self}}='other'"
+          }
+        }
+      }
+    }
+  },
+  "created_at": "2026-10-05T00:00:00Z",
+  "created_by": "human:dswanker",
+  "source": "BIOIVT_BEFORE_AFTER.html Phase 1 plan, approved by Dan",
+  "tags": [
+    "bioivt",
+    "phase_1",
+    "choice_list",
+    "other_specify"
+  ],
+  "history": [
+    {
+      "at": "2026-10-05T00:00:00Z",
+      "by": "human:dswanker",
+      "action": "created",
+      "status": "active",
+      "note": "Phase 1 build. Approved by Dan after reviewing the before/after page."
+    }
+  ]
+}

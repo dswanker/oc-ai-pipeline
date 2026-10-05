@@ -18,7 +18,11 @@ for study, path, sid in (('Detroit', 'tmp/Detroit_DS_Study_Specification_CORRECT
     bio = apply_conventions(copy.deepcopy(raw), study_id=sid, customer_subdomain='bioIVT')
     print(f"\n===== {study}: options that existed before and are missing now =====")
     n_changed = n_dropped = 0
-    for fa, fb in zip(plain['forms'], bio['forms']):
+    bio_by = {f['form_id']: f for f in bio['forms']}          # match forms by id: conventions may add forms
+    for fa in plain['forms']:
+        fb = bio_by.get(fa['form_id'])
+        if fb is None:
+            continue
         la, lb = lists(fa), lists(fb)
         rb = {r['name']: r for r in fb.get('survey', []) if r.get('name')}
         for r in fa.get('survey', []):

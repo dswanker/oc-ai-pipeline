@@ -1,0 +1,42 @@
+{
+  "id": "customer.bioivt.therapy_frequency_list",
+  "title": "BioIVT: psoriasis treatment frequencies use the shared frequency list",
+  "kind": "structured",
+  "scope": "customer",
+  "scope_id": "bioIVT",
+  "status": "active",
+  "natural_key": "bioivt_therapy_frequency_list",
+  "description": "Turns the free-text Frequency questions for oral steroid, topical and other treatment on the Psoriasis form into pick lists using the shared canon_cm_freq list (CDISC CMDOSFRQ plus documented extensions, including Other).",
+  "rationale": "Free text becomes a pick list per rule 1 to 6 of the approved choice-list rules; the list was built and verified earlier.",
+  "target": "field",
+  "applies_when": {
+    "form.form_id": "PSORIASIS",
+    "field.name": {
+      "in": [
+        "ORALFREQ",
+        "TOPFREQ",
+        "OTHRFREQ"
+      ]
+    }
+  },
+  "effect": {
+    "use_canonical_list": "cm_freq"
+  },
+  "created_at": "2026-10-05T00:00:00Z",
+  "created_by": "human:dswanker",
+  "source": "BIOIVT_BEFORE_AFTER.html Phase 1 plan, approved by Dan",
+  "tags": [
+    "bioivt",
+    "phase_1",
+    "choice_list"
+  ],
+  "history": [
+    {
+      "at": "2026-10-05T00:00:00Z",
+      "by": "human:dswanker",
+      "action": "created",
+      "status": "active",
+      "note": "Phase 1 build. Approved by Dan after reviewing the before/after page."
+    }
+  ]
+}

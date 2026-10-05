@@ -1,0 +1,82 @@
+{
+  "id": "customer.bioivt.death_details_form",
+  "title": "BioIVT: Death Details form assembled from three forms",
+  "kind": "structured",
+  "scope": "customer",
+  "scope_id": "bioIVT",
+  "status": "active",
+  "natural_key": "bioivt_death_details_form",
+  "description": "Creates a Death Details form (DD) on the common event only, so staff add it when someone has died. The same death questions were asked three different ways on the Short Form, Follow-up and Outcome; each is now asked once. Date of death merges the three date questions, cause of death merges the two cause questions, and time of death and 'died of the cancer?' move as they are. The old show/hide rules are dropped because the form only exists when a death has happened. Studies without a Short Form are untouched.",
+  "rationale": "CDASH has a dedicated Death Details domain (CDASHIG 8.3.3 DD); DM carries only the death flag and date. Merges keep the stricter date rule. Every old question is recorded in study_meta.field_lineage. Approved by Dan, including add-when-needed placement.",
+  "target": "study",
+  "applies_when": {
+    "study.forms[*].form_id": {
+      "contains": "SHORTFORM"
+    }
+  },
+  "effect": {
+    "assemble_form": {
+      "form_id": "DD",
+      "form_title": "Death Details",
+      "clone_from": "SHORTFORM",
+      "cdash_domain": "DD",
+      "visits": {
+        "events": [
+          "SE_COMMON"
+        ]
+      },
+      "item_group": "DD",
+      "group_name": "DD_GRP",
+      "required": false,
+      "fields": [
+        {
+          "from": "SHORTFORM.DOD",
+          "as": "DTHDAT",
+          "label": "Date of death",
+          "relevant": null,
+          "also_from": [
+            "FOLLOWUP.DTDTH",
+            "OUTCOME.DATE_OF_DEATH"
+          ]
+        },
+        {
+          "from": "SHORTFORM.TOD",
+          "as": "DTHTIM",
+          "label": "Time of death (HH:MM)",
+          "relevant": null
+        },
+        {
+          "from": "SHORTFORM.COD",
+          "as": "PRCDTH",
+          "label": "Primary cause of death",
+          "relevant": null,
+          "also_from": [
+            "FOLLOWUP.CAUSDTH"
+          ]
+        },
+        {
+          "from": "FOLLOWUP.CANCERDTH",
+          "relevant": null
+        }
+      ]
+    }
+  },
+  "created_at": "2026-10-05T00:00:00Z",
+  "created_by": "human:dswanker",
+  "source": "BIOIVT_BEFORE_AFTER.html Phase 1 plan, approved by Dan",
+  "tags": [
+    "bioivt",
+    "phase_1",
+    "death_details",
+    "dd"
+  ],
+  "history": [
+    {
+      "at": "2026-10-05T00:00:00Z",
+      "by": "human:dswanker",
+      "action": "created",
+      "status": "active",
+      "note": "Phase 1 build. Approved by Dan after reviewing the before/after page."
+    }
+  ]
+}

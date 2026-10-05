@@ -1,0 +1,12 @@
+old_form.field,old_label,new_form.field,new_label,how
+SHORTFORM.DOD,Date of Death,DD.DTHDAT,Date of death,merged
+FOLLOWUP.DTDTH,Date of death,DD.DTHDAT,Date of death,merged
+OUTCOME.DATE_OF_DEATH,Date of Death (DOD),DD.DTHDAT,Date of death,merged
+SHORTFORM.TOD,Time of Death (HH:MM),DD.DTHTIM,Time of death (HH:MM),moved
+SHORTFORM.COD,Cause of Death,DD.PRCDTH,Primary cause of death,merged
+FOLLOWUP.CAUSDTH,Cause of death,DD.PRCDTH,Primary cause of death,merged
+FOLLOWUP.CANCERDTH,Did the patient die of the cancer?,DD.CANCERDTH,Did the patient die of the cancer?,moved
+SHORTFORM.KIT_NO,Kit Number,SPECCOL.KIT_NO,Kit Number,moved
+SHORTFORM.COLLDT,Date of Collection,SPECCOL.COLLDT,Date of Collection,moved
+SHORTFORM.COLLTM,Collection Time (HH:MM),SPECCOL.COLLTM,Collection Time (HH:MM),moved
+SHORTFORM.PM_Y,Post-mortem sample?,SPECCOL.PM_Y,Post-mortem sample?,moved

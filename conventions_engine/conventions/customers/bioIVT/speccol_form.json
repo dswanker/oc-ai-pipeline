@@ -1,0 +1,90 @@
+{
+  "id": "customer.bioivt.speccol_form",
+  "title": "BioIVT: Specimen Collection form assembled from the Short Form",
+  "kind": "structured",
+  "scope": "customer",
+  "scope_id": "bioIVT",
+  "status": "active",
+  "natural_key": "bioivt_speccol_form",
+  "description": "Creates a Specimen Collection form (SPECCOL) on the same events as the Short Form and moves kit number, collection date, collection time and the post-mortem flag onto it. The kit number and post-mortem question stay hidden for animal donors; the form reads the 'Is this a Human subject?' answer from the Short Form on the same event, and if that lookup returns nothing the questions show rather than hide. Studies without a Short Form are untouched.",
+  "rationale": "Part of unjumbling the Short Form (BioIVT Option C, Phase 1). Every moved question is recorded in study_meta.field_lineage. Approved by Dan.",
+  "target": "study",
+  "applies_when": {
+    "study.forms[*].form_id": {
+      "contains": "SHORTFORM"
+    }
+  },
+  "effect": {
+    "assemble_form": {
+      "form_id": "SPECCOL",
+      "form_title": "Specimen Collection",
+      "clone_from": "SHORTFORM",
+      "cdash_domain": null,
+      "visits": {
+        "like": "SHORTFORM"
+      },
+      "item_group": "SPECCOL",
+      "group_name": "SPECCOL_GRP",
+      "required": true,
+      "helpers": [
+        {
+          "type": "calculate",
+          "name": "HUMAN_CF",
+          "calculation": "instance('clinicaldata')/ODM/ClinicalData/SubjectData/StudyEventData[@OpenClinica:Current='Yes']/FormData[@FormOID='F_SHORTFORM']/ItemGroupData[@OpenClinica:ItemGroupName='SF']/ItemData[@OpenClinica:ItemName='IS_IT_A_VETERINARY_FORM']/@Value",
+          "bind__oc_external": "clinicaldata",
+          "completion_status": "FLAGGED",
+          "library_source": "PROTOCOL_SPECIFIC",
+          "flag_reason": "Cross-form fetch of the 'Is this a Human subject?' answer from the Short Form on the same event."
+        }
+      ],
+      "cross_form_dependencies": [
+        {
+          "source_form": "SHORTFORM",
+          "source_field": "IS_IT_A_VETERINARY_FORM",
+          "source_item_oid": "SHORTFORM.IS_IT_A_VETERINARY_FORM",
+          "source_itemgroup_oid": "SHORTFORM.SF",
+          "source_event_oid": "CURRENT EVENT",
+          "target_field": "HUMAN_CF",
+          "purpose": "Hide the kit number and post-mortem question for animal donors",
+          "visit_context": "Same event as the Short Form",
+          "status": "FLAGGED \u2014 OID CONFIRMATION REQUIRED",
+          "xpath_expression": "instance('clinicaldata')/ODM/ClinicalData/SubjectData/StudyEventData[@OpenClinica:Current='Yes']/FormData[@FormOID='F_SHORTFORM']/ItemGroupData[@OpenClinica:ItemGroupName='SF']/ItemData[@OpenClinica:ItemName='IS_IT_A_VETERINARY_FORM']/@Value"
+        }
+      ],
+      "fields": [
+        {
+          "from": "SHORTFORM.KIT_NO",
+          "relevant": "${HUMAN_CF}!='No'"
+        },
+        {
+          "from": "SHORTFORM.COLLDT"
+        },
+        {
+          "from": "SHORTFORM.COLLTM"
+        },
+        {
+          "from": "SHORTFORM.PM_Y",
+          "relevant": "${HUMAN_CF}!='No'"
+        }
+      ]
+    }
+  },
+  "created_at": "2026-10-05T00:00:00Z",
+  "created_by": "human:dswanker",
+  "source": "BIOIVT_BEFORE_AFTER.html Phase 1 plan, approved by Dan",
+  "tags": [
+    "bioivt",
+    "phase_1",
+    "speccol",
+    "short_form"
+  ],
+  "history": [
+    {
+      "at": "2026-10-05T00:00:00Z",
+      "by": "human:dswanker",
+      "action": "created",
+      "status": "active",
+      "note": "Phase 1 build. Approved by Dan after reviewing the before/after page."
+    }
+  ]
+}
