@@ -1,13 +1,13 @@
 {
   "id": "customer.bioivt.din_max_length",
-  "title": "BioIVT: DIN is text up to 15 characters, nothing else restricted",
+  "title": "BioIVT: DIN is text up to 30 characters, nothing else restricted",
   "kind": "structured",
   "scope": "customer",
   "scope_id": "bioIVT",
   "status": "active",
   "natural_key": "bioivt_din_max_length",
-  "description": "Gives every DIN question (DIN and Follow-up DIN, both studies) the same rule: text, at most 15 characters, no pattern. 15 is the longest DIN in the real Carlsbad data (for example 002-6504-660002); digits and hyphens are what occur there.",
-  "rationale": "Dan's decision: the longest existing DIN and the least restrictive type, applied to every DIN field. Detroit DIN lengths were not available.",
+  "description": "Gives every DIN question (DIN and Follow-up DIN, both studies) the same rule: text, at most 30 characters, no pattern. The longest DINs seen are 18 characters in the Detroit data (81,272 participants; lengths 8 to 18, most 12 to 16) and 15 in the Carlsbad data (for example 002-6504-660002); 30 leaves headroom because only the ten most common Detroit lengths were available.",
+  "rationale": "Dan's decision: the longest existing DIN and the least restrictive type, applied to every DIN field. A first cap of 15 (Carlsbad only) would have blocked about 13% of Detroit DIN values (lengths 16 and 18), so it was raised to 30.",
   "target": "field",
   "applies_when": {
     "field.name": {
@@ -19,8 +19,8 @@
   },
   "effect": {
     "set": {
-      "field.constraint": "string-length(.) <= 15",
-      "field.constraint_message": "A DIN can be at most 15 characters."
+      "field.constraint": "string-length(.) <= 30",
+      "field.constraint_message": "A DIN can be at most 30 characters."
     }
   },
   "created_at": "2026-10-05T00:00:00Z",

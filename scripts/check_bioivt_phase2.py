@@ -92,7 +92,7 @@ check('lists are attached only to forms that use them (new volume is a fraction 
 # ---------------------------------------------------------------- DIN
 for st in ('Detroit', 'Precision'):
     din = [(f['form_id'], r) for f in after[st]['forms'] for r in f['survey'] if r.get('name') in ('DIN', 'FOLLOW_DIN')]
-    check(f'{st}: all {len(din)} DIN questions are text with the same rule (<=15 characters) and nothing else', din and all(r['type'] == 'text' and r.get('constraint') == 'string-length(.) <= 15' and r.get('constraint_message') for _, r in din), [(f, r['name'], r.get('constraint')) for f, r in din if r.get('constraint') != 'string-length(.) <= 15'])
+    check(f'{st}: all {len(din)} DIN questions are text with the same rule (<=30 characters) and nothing else', din and all(r['type'] == 'text' and r.get('constraint') == 'string-length(.) <= 30' and r.get('constraint_message') for _, r in din), [(f, r['name'], r.get('constraint')) for f, r in din if r.get('constraint') != 'string-length(.) <= 30'])
 
 # ---------------------------------------------------------------- autofill
 SF = rows(D, 'SHORTFORM'); sf_events = next(f for f in D['forms'] if f['form_id'] == 'SHORTFORM')['visits_assigned']
