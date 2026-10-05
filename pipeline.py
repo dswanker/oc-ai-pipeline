@@ -6477,6 +6477,7 @@ async def run_pipeline(item_id):
                     study_id=struct_json.get("study_meta", {}).get("protocol_number", "UNKNOWN"),
                     customer_subdomain=oc_subdomain,
                     migration_source=None,
+                    client_name=client_name,
                 )
                 _conv_applied = struct_json.get("study_meta", {}).get("conventions_engine_applied", [])
                 print(f"conventions_engine: applied {len(_conv_applied)} conventions", flush=True)
