@@ -160,7 +160,7 @@ def test_multiple_matched_fields_in_same_form_all_move_correctly(tmp_path):
         "scope_id": "TESTCO",
         "status": "active",
         "natural_key": "test_move_many",
-        "description": "test",
+        "description": "Test convention: moves every select_one movegroup field to the TARGET form in one pass.",
         "target": "field",
         "applies_when": {"field.type": {"in": ["select_one movegroup"]}},
         "effect": {"move_to_form": "TARGET"},

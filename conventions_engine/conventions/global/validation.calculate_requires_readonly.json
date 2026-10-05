@@ -61,9 +61,16 @@
     {
       "at": "2026-09-11T00:00:00Z",
       "by": "system:bug_fix",
-      "action": "updated",
+      "action": "edited",
       "status": "active",
       "note": "Added field.type != calculate exclusion to applies_when. Previously the convention applied to ALL types including type=calculate, incorrectly adding readonly=yes to background calculate fields, causing OC rejection: \"cannot be defined as type=calculate and readonly\". Confirmed affected forms: ECONSENT (ACKNOWLEDGE_CALC) and BIOIVTONC (ORG_SITE_CALC) on Detroit DS New study."
+    },
+    {
+      "at": "2026-10-05T00:00:00Z",
+      "by": "human:dswanker",
+      "action": "edited",
+      "status": "active",
+      "note": "Corrected the previous history entry's action from 'updated' (not an allowed value in convention.schema.json) to 'edited'. No change to applies_when or effect. With jsonschema installed the old value made the loader skip this rule entirely; production has no jsonschema, so it was loading there regardless."
     }
   ]
 }
