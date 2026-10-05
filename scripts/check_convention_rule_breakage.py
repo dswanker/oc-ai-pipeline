@@ -15,7 +15,10 @@ PATS = [
 ]
 
 def mismatches(spec):
+    import csv, io
     found = {}
+    file_values = {fn: {row[0] for row in list(csv.reader(io.StringIO(txt)))[1:] if row}
+                   for fn, txt in (spec.get('_omop_vocab_files') or {}).items()}
     for form in spec['forms']:
         fields = {r['name']: r for r in form.get('survey', []) if r.get('name')}
         names_by_list = {}
@@ -34,8 +37,10 @@ def mismatches(spec):
                         if not tgt or not str(tgt.get('type', '')).startswith('select'):
                             continue
                         ln = tgt['type'].split(' ', 1)[1]
-                        if lit not in names_by_list.get(ln, set()):
-                            found[(form['form_id'], r.get('name'), key, ref, lit)] = (ln, sorted(names_by_list.get(ln, set()))[:12])
+                        # type-ahead fields (select_one_from_file X.csv) keep their values in the CSV, not the choices sheet
+                        valid = names_by_list.get(ln) or file_values.get(ln, set())
+                        if lit not in valid:
+                            found[(form['form_id'], r.get('name'), key, ref, lit)] = (ln, sorted(valid)[:12])
     return found
 
 for study, path, sid in (('Detroit', 'tmp/Detroit_DS_Study_Specification_CORRECTED_v8.json', 'DETROITD_NEW_V3'),

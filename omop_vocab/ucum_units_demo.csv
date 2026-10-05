@@ -1,0 +1,69 @@
+name,label
+OTHER,Other unit (not in list)
+mg/dL,mg/dL
+g/dL,g/dL
+g/L,g/L
+mg/L,mg/L
+ug/L,ug/L
+ng/mL,ng/mL
+pg/mL,pg/mL
+ug/mL,ug/mL
+ug/dL,ug/dL
+ng/dL,ng/dL
+pg/dL,pg/dL
+mmol/L,mmol/L
+umol/L,umol/L
+nmol/L,nmol/L
+pmol/L,pmol/L
+mEq/L,mEq/L
+U/L,U/L
+U/mL,U/mL
+[IU]/L,IU/L
+[IU]/mL,IU/mL
+m[IU]/L,mIU/L
+u[IU]/mL,uIU/mL
+10*3/uL,10^3/uL (K/uL)
+10*6/uL,10^6/uL (M/uL)
+10*9/L,10^9/L
+10*12/L,10^12/L
+/uL,/uL
+/L,/L
+/mL,/mL
+%,%
+fL,fL
+pg,pg
+g,g
+mg,mg
+ug,ug (mcg)
+ng,ng
+kg,kg
+mL,mL
+L,L
+dL,dL
+mm/h,mm/h
+s,seconds
+min,minutes
+h,hours
+d,days
+mo,months
+a,years
+cm,cm
+mm,mm
+mm[Hg],mmHg
+Cel,degrees Celsius
+[degF],degrees Fahrenheit
+{ratio},ratio
+{titer},titer
+{index_val},index value
+mL/min/{1.73_m2},mL/min/1.73 m2
+mL/min,mL/min
+mosm/kg,mOsm/kg
+g/24.h,g/24 h
+mg/24.h,mg/24 h
+mg/g,mg/g
+ug/g,ug/g
+mg/mmol,mg/mmol
+{copies}/mL,copies/mL
+[arb'U]/mL,arbitrary units/mL
+{S_CO_ratio},S/CO ratio
+kU/L,kU/L

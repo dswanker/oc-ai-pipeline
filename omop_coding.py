@@ -48,17 +48,19 @@ import io
 #    form, this filters list choices in the dropdown list as you type."
 # The correct value is the two-word compound "minimal autocomplete",
 # not "minimal" alone and not "autocomplete" alone. Set below.
+# 2026-10: pointed at the real-code DEMONSTRATION lists built by omop_vocab/build_demo_vocabs.py (RxNorm, SNOMED CT).
+# The earlier placeholder-code sample lists (RXTEST-/SNOMEDTEST-) are no longer used by these two fields.
 OMOP_CODED_FIELDS = [
     {
         "form_id": "CM",
         "field_name": "CMTRT",
-        "vocab_csv_filename": "rxnorm_cm.csv",
+        "vocab_csv_filename": "rxnorm_demo.csv",
         "appearance": "minimal autocomplete",
     },
     {
         "form_id": "MH",
         "field_name": "DONDIAG",
-        "vocab_csv_filename": "snomed_diagnoses.csv",
+        "vocab_csv_filename": "snomed_demo.csv",
         "appearance": "minimal autocomplete",
     },
 ]

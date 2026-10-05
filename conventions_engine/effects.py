@@ -2,6 +2,7 @@
 from __future__ import annotations
 import copy
 import re
+from pathlib import Path
 from typing import Any, Dict, List
 
 from . import ApplyResult, Mutation, Flag, DSLEvaluationError, EntityContext
@@ -647,6 +648,14 @@ def _do_insert_after(payload: Any, ctx: EntityContext, result: ApplyResult) -> N
     row = {k: (v.replace("{self}", me) if isinstance(v, str) else copy.deepcopy(v)) for k, v in payload.items()}
     if any(r.get("name") == row["name"] for r in form.get("survey") or []):
         return
+    inherit = row.pop("inherit_relevant", False)
+    vocab = row.pop("register_vocab", None)
+    if vocab and not _register_vocab(ctx.spec, vocab):
+        result.flags_raised.append(Flag(category="review_flags.vocabulary_missing",
+                                        message=f"{vocab} not found; {row['name']} was not added after {me}"))
+        return
+    if inherit and field.get("relevant") and "relevant" not in row:
+        row["relevant"] = field["relevant"]
     row.setdefault("bind__oc_itemgroup", field.get("bind__oc_itemgroup"))
     if "appearance" not in row and field.get("appearance"):
         row["appearance"] = field["appearance"]
@@ -658,6 +667,129 @@ def _do_insert_after(payload: Any, ctx: EntityContext, result: ApplyResult) -> N
     result.mutations_made.append(Mutation(
         directive="insert_after", path="form.survey", old_value=None,
         new_value=f"+{row['name']} after {me}"))
+
+
+# Vocabulary CSVs (omop_vocab/) live next to the package; tests may point this at a temp dir.
+_VOCAB_DIR = Path(__file__).resolve().parent.parent / "omop_vocab"
+
+
+def _register_vocab(spec: Dict[str, Any], filename: str) -> bool:
+    """Put a vocabulary CSV into the spec (spec["_omop_vocab_files"]) so the builder writes it next to the forms."""
+    path = _VOCAB_DIR / filename
+    if not path.is_file():
+        return False
+    spec.setdefault("_omop_vocab_files", {}).setdefault(filename, path.read_text(encoding="utf-8"))
+    return True
+
+
+def _do_use_vocabulary(payload: Any, ctx: EntityContext, result: ApplyResult) -> None:
+    """
+    Turn a field into a type-ahead lookup over a vocabulary CSV (e.g. RxNorm, SNOMED, LOINC).
+
+    Shape (field-scoped): "use_vocabulary": {"file": "rxnorm_demo.csv", "multi": false}  (or just the file name)
+    Sets type to select_one_from_file <file> (select_multiple_from_file when multi), sets the appearance OpenClinica
+    documents for long lists ("minimal autocomplete"; "minimal" for multi), and registers the CSV in the spec so the
+    form builder and uploader attach it. If the file is missing nothing changes and review_flags.vocabulary_missing
+    is raised. Idempotent.
+    """
+    if ctx.kind != "field":
+        raise DSLEvaluationError(f"use_vocabulary requires field-scoped context, got {ctx.kind!r}")
+    if isinstance(payload, str):
+        payload = {"file": payload}
+    if not isinstance(payload, dict) or not payload.get("file"):
+        raise DSLEvaluationError("use_vocabulary payload needs a file name")
+    fname, multi, field = payload["file"], bool(payload.get("multi", False)), ctx.entity
+    if not _register_vocab(ctx.spec, fname):
+        result.flags_raised.append(Flag(category="review_flags.vocabulary_missing",
+                                        message=f"{fname} not found; {field.get('name')} was not converted"))
+        return
+    new_type = f"{'select_multiple' if multi else 'select_one'}_from_file {fname}"
+    new_app = payload.get("appearance") or ("minimal" if multi else "minimal autocomplete")
+    if field.get("type") != new_type or field.get("appearance") != new_app:
+        result.mutations_made.append(Mutation(directive="use_vocabulary", path="field.type",
+                                              old_value=field.get("type"), new_value=new_type))
+        field["type"], field["appearance"] = new_type, new_app
+
+
+def _cf_xpath(form_id: str, item_group: str, item: str, event: Any = None) -> str:
+    ev = f"[@StudyEventOID='{event}']" if event else ""
+    return ("instance('clinicaldata')/ODM/ClinicalData/SubjectData/StudyEventData" + ev +
+            f"/FormData[@FormOID='F_{form_id}']/ItemGroupData[@OpenClinica:ItemGroupName='{item_group}']"
+            f"/ItemData[@OpenClinica:ItemName='{item}']/@Value")
+
+
+def _do_lookup_from(payload: Any, ctx: EntityContext, result: ApplyResult) -> None:
+    """
+    Read a value that was entered on another form (same subject) into a hidden helper next to this field.
+
+    Shape (field-scoped): "lookup_from": {"from": "SHORTFORM.{self}", "mode": "hidden" | "autofill",
+        "name": "{self}_CF", "event": "SE_COMMON", "item_group": "DD", "from_label": "Short Form"}
+    "{self}" in strings is the current field's name. The source item group is read from the source question in the
+    spec unless item_group is given (then the source form need not exist yet). event limits the lookup to one event;
+    otherwise any event is searched. The form's crossform_references and cross_form_dependencies are updated.
+
+    mode "hidden" only adds the helper calculate row. mode "autofill" ALSO makes this question show only while the
+    helper is blank, and adds a read-only line (stored on this form) that shows the looked-up value when found. So if
+    the lookup ever returns nothing the original question behaves exactly as before: nothing becomes un-enterable.
+
+    If the source form is not in this study (and no item_group is given) the convention simply does not apply (no
+    flag); if the form exists but the source question does not, a review flag is raised. Idempotent.
+    """
+    if ctx.kind != "field":
+        raise DSLEvaluationError(f"lookup_from requires field-scoped context, got {ctx.kind!r}")
+    if not isinstance(payload, dict) or not payload.get("from"):
+        raise DSLEvaluationError("lookup_from payload needs 'from' (FORM.field)")
+    form, field = ctx.parent, ctx.entity
+    me = field.get("name", "")
+    sub = lambda v: v.replace("{self}", me) if isinstance(v, str) else v
+    src = sub(payload["from"])
+    src_form_id, _, src_item = src.partition(".")
+    src_form = _form_by_id(ctx.spec, src_form_id)
+    item_group = payload.get("item_group")
+    if item_group is None:
+        if src_form is None:
+            return
+        src_row = next((r for r in src_form.get("survey") or [] if r.get("name") == src_item), None)
+        item_group = (src_row or {}).get("bind__oc_itemgroup")
+        if not item_group:
+            result.flags_raised.append(Flag(category="review_flags.lookup_skipped",
+                                            message=f"{src} is not in this study (or has no item group); no lookup added to {form.get('form_id')}.{me}"))
+            return
+    event = payload.get("event")
+    events = [event] if event else list(dict.fromkeys((src_form or {}).get("visits_assigned") or []))
+    helper = sub(payload.get("name") or "{self}_CF")
+    rows = form["survey"]
+    if any(r.get("name") == helper for r in rows):
+        return
+    xp = _cf_xpath(src_form_id, item_group, src_item, event)
+    insert = [{"type": "calculate", "name": helper, "calculation": xp, "bind__oc_external": "clinicaldata",
+               "completion_status": "FLAGGED", "library_source": "PROTOCOL_SPECIFIC",
+               "flag_reason": f"Cross-form fetch of {src} ({'event ' + event if event else 'any event'})."}]
+    if payload.get("mode", "hidden") == "autofill":
+        existing = field.get("relevant")
+        cond = f"${{{helper}}}=''"
+        field["relevant"] = f"({existing}) and {cond}" if existing else cond
+        mirror = {"type": "text", "name": sub(payload.get("mirror_name") or "{self}_SF"),
+                  "label": f"{field.get('label', '')} ({payload.get('from_label', 'from the source form')})",
+                  "calculation": f"${{{helper}}}", "readonly": "yes", "relevant": f"${{{helper}}}!=''",
+                  "bind__oc_itemgroup": field.get("bind__oc_itemgroup"),
+                  "completion_status": "COMPLETE", "library_source": "PROTOCOL_SPECIFIC"}
+        if field.get("appearance"):
+            mirror["appearance"] = field["appearance"]
+        insert.append(mirror)
+    idx = next(i for i, r in enumerate(rows) if r is field)
+    rows[idx + 1:idx + 1] = insert
+    st = form.setdefault("settings", {})
+    cur = [e for e in str(st.get("crossform_references") or "").split(",") if e]
+    st["crossform_references"] = ",".join(cur + [e for e in events if e not in cur])
+    form.setdefault("cross_form_dependencies", []).append({
+        "source_form": src_form_id, "source_field": src_item, "source_item_oid": f"{src_form_id}.{src_item}",
+        "source_itemgroup_oid": f"{src_form_id}.{item_group}", "source_event_oid": event or "ANY EVENT",
+        "target_field": helper, "purpose": payload.get("purpose", "Look up a value entered on another form"),
+        "visit_context": event or "Same subject, any event",
+        "status": "FLAGGED \u2014 OID CONFIRMATION REQUIRED", "xpath_expression": xp})
+    result.mutations_made.append(Mutation(directive="lookup_from", path="form.survey", old_value=None,
+                                          new_value=f"+{', '.join(r['name'] for r in insert)} after {me}"))
 
 
 DIRECTIVES = {
@@ -672,6 +804,8 @@ DIRECTIVES = {
     "move_to_form": _do_move_to_form,
     "assemble_form": _do_assemble_form,
     "insert_after": _do_insert_after,
+    "use_vocabulary": _do_use_vocabulary,
+    "lookup_from": _do_lookup_from,
 }
 
 # use_canonical_list is intentionally NOT in DIRECTIVES: every other

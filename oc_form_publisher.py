@@ -1815,9 +1815,15 @@ class FormPublisher:
                                             # CSVs live elsewhere (a separate "csv/" folder),
                                             # so any CSV sitting beside the .xlsx here is
                                             # safe to assume is a vocab file for this form.
-                                            _sibling_csvs = sorted(
-                                                p for p in xlsx_path.parent.glob("*.csv")
-                                            )
+                                            # Attach only the vocab CSVs THIS form's survey
+                                            # references (vocab_attach.csvs_to_attach). Attaching
+                                            # every CSV in the folder was fine for two small
+                                            # lists but would upload several large lists with
+                                            # every one of the study's forms.
+                                            from vocab_attach import csvs_to_attach
+                                            _sibling_csvs = csvs_to_attach(
+                                                xlsx_path,
+                                                sorted(xlsx_path.parent.glob("*.csv")))
                                             _upload_paths = [str(xlsx_path)] + [
                                                 str(p) for p in _sibling_csvs
                                             ]
