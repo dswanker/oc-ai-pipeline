@@ -44,6 +44,7 @@ shorthand for `equals`.
 | `equals` | `"form.form_id": { "equals": "DM" }` | explicit equals |
 | `not_equals` | `"form.form_id": { "not_equals": "DM" }` | not equal |
 | `in` | `"form.form_id": { "in": ["AE","CM"] }` | value in list |
+| `contains` | `"study.forms[*].form_id": { "contains": "SHORTFORM" }` | a list-valued path (from `[*]`) contains the value; false if the path is not a list. Use it to apply a convention only to studies that have a given form |
 | `not_in` | `"form.form_id": { "not_in": ["ICF"] }` | value not in list |
 | `matches` | `"field.name": { "matches": "^[A-Z]+DAT$" }` | regex match |
 | `gt` / `gte` / `lt` / `lte` | `"form.survey.length": { "gt": 200 }` | numerical |

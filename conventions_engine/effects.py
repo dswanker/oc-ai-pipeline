@@ -1,5 +1,6 @@
 """Effect DSL applier. See conventions/schema/dsl-operators.md."""
 from __future__ import annotations
+import copy
 import re
 from typing import Any, Dict, List
 
@@ -472,6 +473,193 @@ def sweep_pending_removals(spec: Dict[str, Any]) -> int:
     return removed
 
 
+def _form_by_id(spec: Dict[str, Any], form_id: Any):
+    for f in spec.get("forms") or []:
+        if f.get("form_id") == form_id:
+            return f
+    return None
+
+
+def _do_assemble_form(payload: Any, ctx: EntityContext, result: ApplyResult) -> None:
+    """
+    Create a new form by pulling questions out of existing forms.
+
+    Shape (study-scoped):
+      "assemble_form": {
+        "form_id": "SPECCOL", "form_title": "Specimen Collection",
+        "clone_from": "SHORTFORM",            # template form: supplies the form-level settings and group layout
+        "cdash_domain": null,
+        "visits": {"like": "SHORTFORM"} | {"events": ["SE_COMMON"]},
+        "item_group": "SPECCOL", "group_name": "SPECCOL_GRP", "required": true,
+        "helpers": [ {calculate row}, ... ],  # optional hidden helper rows placed before the group
+        "fields": [
+          {"from": "SHORTFORM.KIT_NO", "relevant": "..." | null},
+          {"from": "SHORTFORM.DOD", "as": "DTHDAT", "label": "...", "also_from": ["FOLLOWUP.DTDTH"], "relevant": null}
+        ]
+      }
+
+    Nothing is deleted without a home: every source row moves into the new form (the first source is the
+    row that is copied; any "also_from" rows must have the same answer type and are merged into it), the
+    old row is removed from its form, and an old -> new entry is written to study_meta.field_lineage.
+    A "relevant" key replaces that row's show/hide rule (null/"" clears it); no key keeps the copied rule.
+
+    Applicability: if the template form (clone_from) is not in this study, the convention does not apply and
+    nothing happens, with no flag (e.g. a BioIVT study that has no Short Form).
+    All-or-nothing: if the template exists but a source question, an event, or a merge type is missing, the
+    form is NOT created, nothing is moved, and a review flag review_flags.assemble_form_skipped explains why.
+    Idempotent: if the form already exists the directive does nothing, because conventions run more than
+    once per build.
+    """
+    if ctx.kind != "study":
+        raise DSLEvaluationError(f"assemble_form requires study-scoped context, got {ctx.kind!r}")
+    if not isinstance(payload, dict) or not payload.get("form_id") or not payload.get("clone_from"):
+        raise DSLEvaluationError("assemble_form payload needs form_id and clone_from")
+    spec = ctx.spec
+    form_id = payload["form_id"]
+    if _form_by_id(spec, form_id) is not None:
+        return
+
+    template = _form_by_id(spec, payload["clone_from"])
+    if template is None:
+        return  # the study does not have this structure at all, so the convention simply does not apply (no flag)
+    problems: List[str] = []
+
+    visits = payload.get("visits") or {}
+    if "like" in visits:
+        like = _form_by_id(spec, visits["like"])
+        if like is None:
+            problems.append(f"form {visits['like']!r} (used for its events) is not in this study")
+        events = list(dict.fromkeys((like or {}).get("visits_assigned") or []))
+    else:
+        events = list(visits.get("events") or [])
+    known = {r.get("event") for r in ((spec.get("timepoint_csv") or {}).get("rows") or [])}
+    if not events:
+        problems.append("there are no events to place the form on")
+    elif [e for e in events if e not in known]:
+        problems.append(f"event(s) {[e for e in events if e not in known]} are not defined in this study")
+
+    plan = []
+    for spec_f in payload.get("fields") or []:
+        found = []
+        for ref in [spec_f.get("from")] + list(spec_f.get("also_from") or []):
+            src_id, _, src_name = str(ref).partition(".")
+            src_form = _form_by_id(spec, src_id)
+            row = next((r for r in (src_form or {}).get("survey") or [] if r.get("name") == src_name), None)
+            if row is None:
+                problems.append(f"{ref} is not in this study")
+            else:
+                found.append((src_form, row))
+        if len({str(r.get("type")) for _, r in found}) > 1:
+            problems.append(f"{spec_f.get('from')} and the questions merged into it have different answer types")
+        if found:
+            plan.append((spec_f, found))
+
+    if problems:
+        result.flags_raised.append(Flag(
+            category="review_flags.assemble_form_skipped",
+            message=f"Form {form_id} was not created and nothing was moved: " + "; ".join(problems)))
+        return
+
+    new = copy.deepcopy({k: v for k, v in template.items() if k not in ("survey", "choices")})
+    new.update({
+        "form_id": form_id, "form_title": payload.get("form_title", form_id),
+        "cdash_domain": payload.get("cdash_domain"), "visits_assigned": events, "reuse_count": len(events),
+        "cross_form_dependencies": copy.deepcopy(payload.get("cross_form_dependencies") or []),
+    })
+    settings = copy.deepcopy(template.get("settings") or {})
+    settings.update({"form_title": new["form_title"], "form_id": form_id})
+    settings["crossform_references"] = ",".join(events) if payload.get("helpers") else ""
+    new["settings"] = settings
+
+    begin = next((copy.deepcopy(r) for r in template["survey"] if r.get("type") == "begin group"),
+                 {"type": "begin group", "appearance": "field-list", "label": ""})
+    begin["name"] = payload.get("group_name") or f"{form_id}_GRP"
+    end = next((copy.deepcopy(r) for r in reversed(template["survey"]) if r.get("type") == "end group"),
+               {"type": "end group", "name": ""})
+    item_group = payload.get("item_group") or form_id
+    survey = [copy.deepcopy(h) for h in payload.get("helpers") or []] + [begin]
+    choices, seen, lineage = [], set(), []
+    for spec_f, found in plan:
+        src_form, src_row = found[0]
+        row = copy.deepcopy(src_row)
+        row["name"] = spec_f.get("as") or src_row["name"]
+        if spec_f.get("label"):
+            row["label"] = spec_f["label"]
+        if "relevant" in spec_f:
+            if spec_f["relevant"]:
+                row["relevant"] = spec_f["relevant"]
+            else:
+                row.pop("relevant", None)
+        row["bind__oc_itemgroup"] = item_group
+        survey.append(row)
+        t = str(row.get("type", ""))
+        if t.startswith("select") and " " in t:
+            ln = t.split(" ", 1)[1]
+            for c in src_form.get("choices") or []:
+                if c.get("list_name") == ln and (ln, c.get("name")) not in seen:
+                    seen.add((ln, c.get("name")))
+                    choices.append(copy.deepcopy(c))
+        for sf, sr in found:
+            lineage.append({"old": f"{sf['form_id']}.{sr['name']}", "new": f"{form_id}.{row['name']}",
+                            "how": "merged" if len(found) > 1 else "moved"})
+    survey.append(end)
+    new["survey"], new["choices"] = survey, choices
+
+    for _, found in plan:
+        for sf, sr in found:
+            sf["survey"] = [r for r in sf["survey"] if r is not sr]
+
+    anchor = _form_by_id(spec, payload.get("insert_after") or payload["clone_from"])
+    forms = spec["forms"]
+    idx = next((i for i, f in enumerate(forms) if f is anchor), len(forms) - 1)
+    forms.insert(idx + 1, new)
+
+    soe = spec.get("schedule_of_events")
+    if isinstance(soe, dict) and isinstance(soe.get("form_placements"), list):
+        for e in events:
+            soe["form_placements"].append({"target_visit_oid": e, "form_id": form_id,
+                                           "required": bool(payload.get("required", False)),
+                                           "repeating": False, "notes": ""})
+    spec.setdefault("study_meta", {}).setdefault("field_lineage", []).extend(lineage)
+    result.mutations_made.append(Mutation(
+        directive="assemble_form", path="forms", old_value=None,
+        new_value=f"created {form_id}: {len(plan)} question(s) from "
+                  f"{sorted({l['old'].split('.')[0] for l in lineage})}, events {events}"))
+
+
+def _do_insert_after(payload: Any, ctx: EntityContext, result: ApplyResult) -> None:
+    """
+    Insert a new question directly after the current field.
+
+    Shape (field-scoped): "insert_after": {"name": "{self}_OTH", "type": "text", "label": "...",
+                                           "relevant": "${{self}}='other'"}
+    "{self}" in any string value is replaced by the current field's name. The new row inherits the current
+    field's item group and width unless it sets its own. Idempotent: if a question with that name already
+    exists on the form, nothing happens. Safe during the engine's field walk: the new row is inserted after
+    the current position and has a different name, so it is visited once and does not match again.
+    """
+    if ctx.kind != "field":
+        raise DSLEvaluationError(f"insert_after requires field-scoped context, got {ctx.kind!r}")
+    if not isinstance(payload, dict) or not payload.get("name") or not payload.get("type"):
+        raise DSLEvaluationError("insert_after payload needs at least name and type")
+    form, field = ctx.parent, ctx.entity
+    me = field.get("name", "")
+    row = {k: (v.replace("{self}", me) if isinstance(v, str) else copy.deepcopy(v)) for k, v in payload.items()}
+    if any(r.get("name") == row["name"] for r in form.get("survey") or []):
+        return
+    row.setdefault("bind__oc_itemgroup", field.get("bind__oc_itemgroup"))
+    if "appearance" not in row and field.get("appearance"):
+        row["appearance"] = field["appearance"]
+    row.setdefault("completion_status", "COMPLETE")
+    row.setdefault("library_source", "PROTOCOL_SPECIFIC")
+    survey = form["survey"]
+    idx = next(i for i, r in enumerate(survey) if r is field)
+    survey.insert(idx + 1, row)
+    result.mutations_made.append(Mutation(
+        directive="insert_after", path="form.survey", old_value=None,
+        new_value=f"+{row['name']} after {me}"))
+
+
 DIRECTIVES = {
     "set":         _do_set,
     "ensure":      _do_ensure,
@@ -482,6 +670,8 @@ DIRECTIVES = {
     "match":       _do_match,
     "default_value": _do_default_value,
     "move_to_form": _do_move_to_form,
+    "assemble_form": _do_assemble_form,
+    "insert_after": _do_insert_after,
 }
 
 # use_canonical_list is intentionally NOT in DIRECTIVES: every other

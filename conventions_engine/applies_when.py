@@ -121,6 +121,10 @@ def _op_in(actual: Any, expected: Any) -> bool:
         raise DSLEvaluationError(f"'in' requires a list, got {type(expected).__name__}")
     return actual in expected
 
+def _op_contains(actual: Any, expected: Any) -> bool:
+    """List-valued path (e.g. study.forms[*].form_id) contains the value. False for anything that is not a list."""
+    return isinstance(actual, list) and expected in actual
+
 def _op_not_in(actual: Any, expected: Any) -> bool:
     if not isinstance(expected, list):
         raise DSLEvaluationError(f"'not_in' requires a list, got {type(expected).__name__}")
@@ -160,6 +164,7 @@ OPS = {
     "equals":     _op_equals,
     "not_equals": lambda a, e: not _op_equals(a, e),
     "in":         _op_in,
+    "contains":   _op_contains,
     "not_in":     _op_not_in,
     "matches":    _op_matches,
     "gt":         _op_gt,
