@@ -568,6 +568,38 @@ def _apply_item_oid_map(rows: list, item_oid_map: dict) -> dict:
     return counts
 
 
+# ── Which rows the ODM load can test ─────────────────────────────────────────
+
+def _not_testable_via_odm(load_value: str, expected: str, scenario: str) -> bool:
+    """True when a UAT row cannot be checked by loading a value and reading it back.
+
+    One rule for both sides: _build_odm_xml does not load these rows and
+    _evaluate_uat_cases reports them as "Not Testable via ODM". The ODM import
+    does not run form logic, so a value that should trip a constraint is simply
+    stored; loading it proves nothing and leaves bad data on the participant.
+    """
+    lv = str(load_value or "").strip()
+    expected = str(expected or "")
+    lv_lower = lv.lower()
+    is_blank_case = lv_lower == "(leave blank)"
+    is_calc_case  = "=" in lv and not lv.startswith("20")  # field=value patterns
+    is_multistep  = "then" in lv_lower  # multi-step setup like "ICFDAT=x, then date=y"
+    # Load values that are event OID names (e.g. "SE_TREATMENT") are
+    # calculated field context markers, not loadable data values.
+    is_event_oid  = lv.upper().startswith("SE_") and "_" in lv and " " not in lv
+    is_visibility = any(x in expected.upper() for x in ["VISIBLE", "HIDDEN", "RELEVANT"])
+    # Rows that expect a UI error need Playwright, not ODM: an out-of-bounds
+    # value (101 for a 0-100 field, a future date) is accepted by the import.
+    # "No constraint error. Form saves." rows ARE testable via ODM read-back.
+    is_ui_constraint = any(x in expected for x in [
+        "error shown", "Form does not save", "Constraint fires",
+        "Subject is ineligible"])  # eligibility constraint checks need PW
+    # Calc rows with multiple inputs (ODI1=x, ODI2=y) are loaded via ODM
+    is_pure_calc = "Calc path" in str(scenario or "")
+    return (is_blank_case or is_multistep or is_visibility or is_ui_constraint
+            or is_event_oid or (is_calc_case and not is_pure_calc))
+
+
 # ── ODM XML builder ───────────────────────────────────────────────────────────
 
 def _xml_escape(val: str) -> str:
@@ -648,6 +680,7 @@ def _build_odm_xml(study_oid: str, site_oid: str,
     _drop_blank = 0
     _drop_then = 0
     _drop_visibility = 0
+    _drop_not_testable = 0
     _drop_examples: dict[str, list] = {}  # reason -> up to 3 example strings
 
     def _record_drop(reason: str, row: dict, val: str = "") -> None:
@@ -725,6 +758,15 @@ def _build_odm_xml(study_oid: str, site_oid: str,
                      .append((_item_oid, _fval.strip())))
             continue
 
+        # Same rule the evaluation uses: a row it will report as
+        # "Not Testable via ODM" (constraint-fires, visibility, event-marker
+        # rows) is not loaded. Playwright enters those values itself.
+        if _not_testable_via_odm(val, row.get("Expected Result", ""),
+                                 row.get("Scenario", "")):
+            _drop_not_testable += 1
+            _record_drop("not_testable", row, val)
+            continue
+
         (events
          .setdefault(ev, {})
          .setdefault(rk, {})
@@ -738,7 +780,8 @@ def _build_odm_xml(study_oid: str, site_oid: str,
     print(f"[odm-build] {_n_pass} items passed filter out of {_n_total} rows "
           f"({_n_drop} dropped: missing_coords={_drop_missing_coords} "
           f"leave_blank={_drop_blank} has_then={_drop_then} "
-          f"visibility_gate={_drop_visibility})", flush=True)
+          f"visibility_gate={_drop_visibility} "
+          f"not_testable={_drop_not_testable})", flush=True)
     # Log per-event breakdown so we can see which events are getting data
     ev_summary = {ev: sum(len(items) for rk_d in rk_map.values() for fo_d in rk_d.values() for items in fo_d.values())
                   for ev, rk_map in events.items()}
@@ -1162,29 +1205,10 @@ def _evaluate_uat_cases(
         # Check if this item failed in this participant's ODM import job
         job_msg = (job_failures or {}).get((pkey, item_oid), "")
 
-        # Classify non-loadable rows as Not Testable via ODM
-        lv_lower = lv.lower()
-        is_blank_case    = lv_lower == "(leave blank)"
-        is_calc_case     = "=" in lv and not lv.startswith("20")  # field=value patterns
-        is_multistep     = "then" in lv_lower  # multi-step setup like "ICFDAT=x, then date=y"
-        # Load values that are event OID names (e.g. "SE_TREATMENT") are
-        # calculated field context markers, not loadable data values.
-        is_event_oid     = lv.upper().startswith("SE_") and "_" in lv and " " not in lv
-        is_visibility    = any(x in expected.upper() for x in ["VISIBLE", "HIDDEN", "RELEVANT"])
-        # is_ui_constraint: rows that expect a UI error need Playwright, not ODM.
-        # "Constraint fires" rows must NOT be loaded via ODM — loading out-of-bounds
-        # values (e.g. 101 for a 0-100 field, or a future date) overwrites prior
-        # valid loads for the same field, causing those happy-path rows to Fail.
-        # "No constraint error. Form saves." rows ARE testable via ODM read-back.
-        is_ui_constraint = any(x in expected for x in [
-            "error shown", "Form does not save", "Constraint fires",
-            "Subject is ineligible"])  # eligibility constraint checks need PW
-        # Calc rows with multiple inputs (ODI1=x, ODI2=y) are loaded via ODM
-        # and OC computes the output with runFormLogic=y — these ARE testable
-        is_pure_calc     = "Calc path" in str(row[col_idx.get("Scenario", 1) - 1].value or "")
-        not_testable = (is_blank_case or is_multistep or is_visibility or is_ui_constraint
-                        or is_event_oid
-                        or (is_calc_case and not is_pure_calc))
+        # Rows the ODM load cannot test (and _build_odm_xml did not load)
+        not_testable = _not_testable_via_odm(
+            lv, expected,
+            row[col_idx["Scenario"] - 1].value if "Scenario" in col_idx else "")
 
         if not_testable:
             row[col_idx["Test Result"]    - 1].value = "Not Run"
@@ -1528,6 +1552,14 @@ async def run_uat_loader(item_id: str, fo_titles: dict = None) -> dict:
                 study_oid, created_site_oid, oc_oid, confirmed_id, rows,
                 item_oid_map=item_oid_map,
             )
+            if "<ItemData " not in odm_xml_full:
+                # Every row for this participant is a UI-only case. An ODM
+                # with no data is rejected (subjectDoesNotContainStudyEventData).
+                await append_log(
+                    item_id,
+                    f"UAT Loader: nothing to load via ODM for {run_key} "
+                    f"(UI-only cases) — import skipped")
+                continue
             odm_errors = _validate_odm_xml(odm_xml_full)
             if odm_errors:
                 err_summary = "; ".join(odm_errors[:3])
