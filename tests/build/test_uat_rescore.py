@@ -231,3 +231,46 @@ def test_stamp_rewrites_oids_and_adds_item_name_to_an_older_workbook():
     # the derived name is always the tail of the predicted OID
     for b, a in zip(before, after):
         assert str(b["Item_OID"]).upper().endswith("_" + str(a["Item_Name"]).upper()), a["UAT Case ID"]
+
+
+# ── Rows the evaluation calls "Not Testable via ODM" are not loaded ──────────
+
+def _loaded_items(label):
+    """{logical participant: [(form, item_oid, value)]} the builder would load."""
+    with open(os.path.join(_ANALYSIS, _RUNS[label]), "rb") as f:
+        rows = uat_loader._parse_uat_cases(f.read())
+    loaded = {}
+    for pid, prows in uat_loader._group_by_participant(rows).items():
+        xml = uat_loader._build_odm_xml("S_X", "SITE", "SS_1", "P1", prows)
+        items = []
+        for form_chunk in xml.split('<FormData FormOID="')[1:]:
+            form = form_chunk.split('"', 1)[0]
+            for item_chunk in form_chunk.split("</FormData>")[0].split('<ItemData ItemOID="')[1:]:
+                item, rest = item_chunk.split('"', 1)
+                items.append((form, item, rest.split('Value="', 1)[1].split('"', 1)[0]))
+        loaded[pid] = items
+    return rows, loaded
+
+
+@pytest.mark.parametrize("label", ["Detroit", "Precision"])
+def test_builder_skips_rows_the_evaluation_calls_not_testable(label):
+    rows, loaded = _loaded_items(label)
+    not_testable = {
+        (r["Participant_ID"], r["Form_OID"], r["Item_OID"], r["Load_Value"])
+        for r in rows
+        if uat_loader._not_testable_via_odm(
+            r["Load_Value"], r["Expected Result"], r["Scenario"])}
+    assert not_testable
+    for pid, items in loaded.items():
+        for form, item, value in items:
+            assert (pid, form, item, value) not in not_testable
+
+
+def test_detroit_negative_cases_are_no_longer_written():
+    """The future-date CM case (P003) and MONDISFREE=-1 (P001) were loaded on 2026-10-06."""
+    _, loaded = _loaded_items("Detroit")
+    assert ("F_CM", "I_CONCO_CMSTDTC") not in {(f, i) for f, i, _ in loaded.get("UAT-P003", [])}
+    assert ("F_FOLLOWUP", "I_FOLLO_MONDISFREE", "-1") not in loaded["UAT-P001"]
+    # the happy-path CM dates on P001 and P002 still load
+    assert any(i == "I_CONCO_CMSTDTC" for _, i, _ in loaded["UAT-P001"])
+    assert any(i == "I_CONCO_CMSTDTC" for _, i, _ in loaded["UAT-P002"])
