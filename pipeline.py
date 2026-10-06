@@ -3028,7 +3028,16 @@ async def create_oc_study(subdomain, struct_json, is_production=False,
                 if item_id:
                     await append_log(item_id, f"BLOCKED: {_sso_msg}")
                     await set_status(item_id, COL["pipeline_status"], STATUS["failed"])
-                return
+                # Return the normal result shape plus the flag. A bare `return` here handed None to the caller, which then died on
+                # result["study_url"] with "'NoneType' object is not subscriptable" and hid this actionable message.
+                return {
+                    "study_url":       study_url,
+                    "study_uuid":      study_uuid,
+                    "board_imported":  board_imported,
+                    "board_error":     board_error,
+                    "forms_publish":   forms_publish.to_dict() if forms_publish else None,
+                    "session_expired": _sso_msg,
+                }
             for err in forms_publish.errors[:5]:
                 print(f"  form-upload error: {err}", flush=True)
             for _conf in forms_publish.conflicts[:5]:
@@ -6964,6 +6973,9 @@ async def run_pipeline(item_id):
                             f"{fp['forms_total']} succeeded"
                             + (f" — errors: {fp['errors'][:2]}"
                                if fp['errors'] else ""))
+                    if result.get("session_expired"):
+                        # The study and board exist, but the forms could not be uploaded: fail the chain with the real message.
+                        raise RuntimeError(result["session_expired"])
                     print(f"Chain D complete: {study_url} "
                           f"(board_imported={board_imported})", flush=True)
                 except Exception as e:
