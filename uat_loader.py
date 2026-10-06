@@ -749,7 +749,11 @@ def _build_odm_xml(study_oid: str, site_oid: str,
                     elif _fname_clean.upper().startswith(_expected_prefix.upper()):
                         _item_oid = _fname_clean  # already fully qualified
                     else:
-                        _item_oid = f"I_{_form_short}_{_fname_clean}"
+                        # Same form, so the same OID prefix as the row's own
+                        # item (I_<first 5 letters of the form title>_).
+                        _pm = re.match(r"^(I_[A-Za-z0-9]+_)", item_oid)
+                        _item_oid = (f"{_pm.group(1)}{_fname_clean}" if _pm
+                                     else f"I_{_form_short}_{_fname_clean}")
                     (events
                      .setdefault(ev, {})
                      .setdefault(rk, {})
