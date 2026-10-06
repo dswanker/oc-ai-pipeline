@@ -906,10 +906,16 @@ async def _test_one_form(
                 lv   = str(row_dict.get("Load_Value") or "").strip()
                 exp  = str(row_dict.get("Expected Result") or "").strip()
                 item = str(row_dict.get("Item_OID") or "").strip()
-                # Extract field name from item OID: "I_DOMAIN_FIELDNAME"
-                # Split on "_" with maxsplit=2, take the last part — handles
+                # Field name: the Item_Name column when present (the loader
+                # writes it; a real OID can carry a random suffix such as
+                # I_DEMOG_DIN_2803, so the name cannot be read off the OID).
+                # Otherwise extract it from the item OID "I_DOMAIN_FIELDNAME":
+                # split on "_" with maxsplit=2, take the last part — handles
                 # compound field names like I_DEMOG_AGE_DISP → "AGE_DISP"
-                if item.count("_") >= 2:
+                _item_name = str(row_dict.get("Item_Name") or "").strip()
+                if _item_name:
+                    field_name = _item_name
+                elif item.count("_") >= 2:
                     field_name = item.split("_", 2)[2]
                 elif "_" in item:
                     field_name = item.split("_")[-1]

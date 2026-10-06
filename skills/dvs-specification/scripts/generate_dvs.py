@@ -174,6 +174,9 @@ UAT_COLS = [
     # Cols 19-25 are populated by DVS skill from XLSForm metadata
     "Study_Event_OID", "Event_Repeat_Key", "Form_OID",
     "Item_Group_OID", "Item_OID", "Participant_ID", "Load_Order", "Load_Value",
+    # Col 27: XLSForm item name. Item_OID is a prediction (OpenClinica can add
+    # a random suffix); the loader maps Form_OID + Item_Name to the real OID.
+    "Item_Name",
 ]
 UAT_WIDTHS = {
     "UAT Case ID": 12, "Status": 12, "Related Check ID": 14, "Scenario": 32,
