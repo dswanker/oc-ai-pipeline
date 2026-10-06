@@ -1183,6 +1183,17 @@ def _evaluate_uat_cases(
         lv      = str(row[col_idx["Load_Value"]       - 1].value or "").strip()
         expected = str(row[col_idx["Expected Result"] - 1].value or "").strip()
 
+        # A calculation is not run by the ODM import, so reading the field
+        # back says nothing about it. Report these as Not Run with the reason
+        # instead of a Fail (or a blank) that reads like a study defect.
+        scenario = str(row[col_idx["Scenario"] - 1].value or "") if "Scenario" in col_idx else ""
+        if scenario.startswith(("Calc path", "Calculated field")):
+            row[col_idx["Test Result"]   - 1].value = "Not Run"
+            row[col_idx["Status"]        - 1].value = "Not Run"
+            row[col_idx["Actual Result"] - 1].value = NOT_VERIFIABLE_VIA_ODM
+            skipped += 1
+            continue
+
         if not ev_oid or not fo_oid or not ig_oid or not lv:
             skipped += 1
             continue
@@ -1210,9 +1221,7 @@ def _evaluate_uat_cases(
         job_msg = (job_failures or {}).get((pkey, item_oid), "")
 
         # Rows the ODM load cannot test (and _build_odm_xml did not load)
-        not_testable = _not_testable_via_odm(
-            lv, expected,
-            row[col_idx["Scenario"] - 1].value if "Scenario" in col_idx else "")
+        not_testable = _not_testable_via_odm(lv, expected, scenario)
 
         if not_testable:
             row[col_idx["Test Result"]    - 1].value = "Not Run"
@@ -1263,6 +1272,38 @@ def _evaluate_uat_cases(
 
 
 # ── DVS stamping ──────────────────────────────────────────────────────────────
+
+# What a UAT result does and does not show. Written into the UAT_Setup tab of
+# every results workbook. Keep in step with _UAT_SETUP_ROWS in
+# skills/dvs-specification/scripts/generate_dvs.py.
+UAT_LIMITS_TOPIC = "What UAT Cannot Confirm"
+UAT_LIMITS_TEXT = (
+    "The automated load writes values through the OpenClinica data import, which "
+    "does not run form logic. A Pass means only that the value was stored for that "
+    "participant and read back unchanged. It is NOT evidence that (1) a field that "
+    "pulls its value from another form or event is filled in, or that the original "
+    "question it replaces is hidden, or (2) a calculated field computes the right "
+    "value. Calc path and calculated-field cases are reported Not Run for this "
+    "reason. Confirm both by hand in the form: enter the source values, open the "
+    "dependent form, and check that the pulled or calculated value appears, is "
+    "read-only, and is blank when a source value is missing."
+)
+NOT_VERIFIABLE_VIA_ODM = (
+    "Not verifiable via ODM: the import does not run form logic. "
+    "Check the calculated value in the form."
+)
+
+
+def _ensure_uat_limits_note(wb) -> None:
+    """Make sure the results workbook says what UAT cannot confirm."""
+    if "UAT_Setup" not in wb.sheetnames:
+        return
+    ws = wb["UAT_Setup"]
+    for row in ws.iter_rows(values_only=True):
+        if row and str(row[0] or "").strip() == UAT_LIMITS_TOPIC:
+            return
+    ws.append([UAT_LIMITS_TOPIC, UAT_LIMITS_TEXT])
+
 
 def _stamp_dvs(dvs_bytes: bytes, stamp_map: dict,
                item_oid_map: dict = None) -> bytes:
@@ -1324,6 +1365,8 @@ def _stamp_dvs(dvs_bytes: bytes, stamp_map: dict,
             if entry:
                 ws.cell(row=row_num, column=item_col,  value=entry["item_oid"])
                 ws.cell(row=row_num, column=group_col, value=entry["item_group_oid"])
+
+    _ensure_uat_limits_note(wb)
 
     out = io.BytesIO()
     wb.save(out)
