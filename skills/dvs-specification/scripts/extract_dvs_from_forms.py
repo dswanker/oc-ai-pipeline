@@ -378,6 +378,9 @@ def _check_types_for_row(row):
         is_cross_form = "_CF" in relevant
         checks.append({
             "check_type": "Cross-form" if is_cross_form else "Conditional Display",
+            # A relevant rule shows or hides the field whatever its check type
+            # is called; UAT cases for it are shown/hidden cases.
+            "source":     "relevant",
             "severity":   "Soft",
             "expression": relevant,
             "message":    _synthesize_message(relevant, "relevant"),
@@ -602,8 +605,59 @@ def _evaluate_gate(expr, ctx):
 
 # ── UAT test case inference ─────────────────────────────────────────────────
 
-def _infer_test_cases(check, row, choices_for_field, ctx=None, world=None):
-    """Generate a list of UAT test case dicts for this check."""
+def _is_truthy(val):
+    return str(val or "").strip().lower() in ("yes", "true", "true()", "1")
+
+
+def _is_calculated_field(row):
+    """True when the value is produced by the form, not typed by a user.
+
+    A `calculate` row, or a row with a calculation that is read-only (the
+    display pattern for computed values). A boundary value cannot be entered
+    into such a field; its rules can only be exercised through its sources.
+    """
+    if not isinstance(row, dict):
+        return False
+    row_type = str(row.get("type") or "").strip().lower()
+    if row_type == "calculate":
+        return True
+    return bool(row.get("calculation")) and _is_truthy(row.get("readonly"))
+
+
+def _calc_inputs(refs, form_fields, form_choices, ctx):
+    """Typed sample values for the source fields of a calculation.
+
+    Returns (loadable, not_loadable): loadable is [(name, value)] for source
+    fields a user enters on this form, with a value of the field's own type;
+    not_loadable lists sources that are themselves calculated or pulled from
+    another form or event, which cannot be set on this form.
+    """
+    loadable, not_loadable = [], []
+    seen = set()
+    for ref in refs:
+        if ref in seen:
+            continue
+        seen.add(ref)
+        src = (form_fields or {}).get(ref)
+        if (src is None or _is_calculated_field(src)
+                or src.get("bind::oc:external")):
+            not_loadable.append(ref)
+            continue
+        value = _sample_for_field(ref, str(src.get("type") or "").lower(),
+                                  _choices_for_field(src, form_choices), ctx or {})
+        loadable.append((ref, str(value)))
+    return loadable, not_loadable
+
+
+def _infer_test_cases(check, row, choices_for_field, ctx=None, world=None,
+                      form_fields=None, form_choices=None):
+    """Generate a list of UAT test case dicts for this check.
+
+    A case may carry "load_value" when what the loader should load differs
+    from the human-readable "input_data" ("" = nothing to load).
+    form_fields: {field name: survey row} for the form, used to type the
+    source fields of calculations.
+    """
     if world is None:
         world = {}
     check_type  = check["check_type"]
@@ -612,6 +666,20 @@ def _infer_test_cases(check, row, choices_for_field, ctx=None, world=None):
     row_type    = str(row.get("type") or "").lower()
     field_name  = row.get("name") or ""
     field_label = row.get("label") or field_name or ""
+
+    # Rules on a calculated field cannot be tested by entering a value: the
+    # field is read-only and the ODM import does not run the calculation.
+    # (Its relevant rule and the calculation itself keep their own cases.)
+    if (_is_calculated_field(row) and check_type != "Calculation"
+            and check.get("source") != "relevant"):
+        rule = ("is filled in" if check_type == "Required"
+                else f"satisfies {expr[:60]}")
+        return [{
+            "scenario":   f"Calculated field: {check_type.lower()} rule is exercised through its source fields",
+            "input_data": "(calculated: set the source fields in the form)",
+            "load_value": "",
+            "expected":   f"Manual check: with valid source fields the calculated value {rule}.",
+        }]
 
     # Required → blank-sad + populated-happy
     if check_type == "Required":
@@ -628,29 +696,38 @@ def _infer_test_cases(check, row, choices_for_field, ctx=None, world=None):
 
     # Calculation — one case showing inputs → expected
     if check_type == "Calculation":
-        refs = re.findall(r"\$\{(\w+)\}", expr)
+        refs = list(dict.fromkeys(re.findall(r"\$\{(\w+)\}", expr)))
         if refs:
-            sample_inputs = ", ".join(
-                f"{r}={_sample_for_field(r, '', [], ctx) if ctx else '<sample>'}"
-                for r in refs[:4]
-            )
+            loadable, not_loadable = _calc_inputs(refs, form_fields, form_choices, ctx)
+            load_value = ", ".join(f"{n}={v}" for n, v in loadable)
+            input_data = load_value
+            if not_loadable:
+                note = (f"{', '.join(not_loadable)}: calculated or pulled from "
+                        f"another form, set at its source")
+                input_data = f"{load_value} ({note})" if load_value else f"({note})"
             return [{
                 "scenario":   f"Calc path: populate {', '.join(refs[:4])}",
-                "input_data": sample_inputs,
+                "input_data": input_data,
+                "load_value": load_value,
                 "expected":   f"Field {field_label or check['expression'][:30]} displays correctly computed value per formula.",
             }]
         return [{
             "scenario":   "Calc path: trigger calculation",
-            "input_data": "Populate any source fields with valid values, then verify the calculated value displays correctly.",
+            "input_data": "Open the form and verify the calculated value displays correctly.",
+            "load_value": "",
             "expected":   "Calculated value displays.",
         }]
 
-    # Conditional Display — shown vs hidden
-    if check_type == "Conditional Display":
+    # Conditional Display (any relevant rule, cross-form or not) — shown vs hidden
+    if check_type == "Conditional Display" or check.get("source") == "relevant":
         gate = re.search(r"\$\{(\w+)\}", expr)
         gate_field = gate.group(1) if gate else None
         target = field_label or row.get("name", "(this field)")
         sat_val, fail_val = _evaluate_gate(expr, ctx)
+        # An empty gate value is a real condition ("the source is blank"), so
+        # say so instead of leaving the input unreadable as "FIELD=".
+        sat_val  = sat_val  if str(sat_val)  != "" else "(blank)"
+        fail_val = fail_val if str(fail_val) != "" else "(blank)"
         if gate_field:
             return [
                 {"scenario":   f"Shown path: gate field {gate_field} satisfies the rule",
@@ -672,9 +749,30 @@ def _infer_test_cases(check, row, choices_for_field, ctx=None, world=None):
     # Constraint / Cross-form — parse for structured UAT generation
     parsed = _parse_constraint(expr)
 
+    # `. = ${OTHER}` (confirm-your-email style): the value must repeat OTHER
+    same_as = re.fullmatch(r"\.\s*=\s*\$\{(\w+)\}", expr.strip())
+    if same_as:
+        ref = same_as.group(1)
+        src = (form_fields or {}).get(ref) or {}
+        ref_val = str(_sample_for_field(ref, str(src.get("type") or "text").lower(),
+                                        _choices_for_field(src, form_choices), ctx or {}))
+        return [
+            {"scenario":   f"Happy path: value equals ${{{ref}}}",
+             "input_data": f"{ref}={ref_val}, then this value={ref_val}",
+             "expected":   "No constraint error. Form saves."},
+            {"scenario":   f"Sad path: value differs from ${{{ref}}}",
+             "input_data": f"{ref}={ref_val}, then this value={ref_val}_DIFFERENT",
+             "expected":   f"Constraint fires. Message: {msg_short}"},
+        ]
+
     # Unparseable — fallback to generic, but still try to give concrete values
     if parsed["kind"] == "unparseable":
         sat_val, fail_val = _evaluate_gate(expr, ctx)
+        # A blank input is a case in its own right, never an empty cell
+        if str(sat_val) == "":
+            sat_val = "(leave blank)"
+        if str(fail_val) == "":
+            fail_val = "(leave blank)"
         # If gate eval also returned generic placeholders, fall back to type sample
         if sat_val.startswith("(") or sat_val.startswith("Set "):
             sat_val = _sample_value_for_type(row_type, choices_for_field,
@@ -716,6 +814,8 @@ def _infer_test_cases(check, row, choices_for_field, ctx=None, world=None):
         lo_is_incl = "min_inclusive" in parts
         hi_is_incl = "max_inclusive" in parts
         mid = (lo + hi) / 2
+        if row_type == "integer":
+            mid = int(mid)   # a whole-number field cannot store 182.5
         below = lo - 1 if lo_is_incl else lo
         above = hi + 1 if hi_is_incl else hi
         at_min = lo if lo_is_incl else lo + 1
@@ -1050,11 +1150,45 @@ def _uat_row(uat_id, check_id, form_id, field_name, field_label, case,
         "Item_OID":          item_oid,
         "Participant_ID":    "UAT-P001",
         "Load_Order":        "",        # set below by caller if needed
-        "Load_Value":        case.get("input_data", ""),
+        "Load_Value":        case.get("load_value", case.get("input_data", "")),
         # The XLSForm item name. OpenClinica may suffix the real item OID
         # (I_DEMOG_DIN_2803), so the loader looks the OID up by form + name.
         "Item_Name":         field_name,
     }
+
+
+# ── Participant slots ─────────────────────────────────────────────────────────
+
+_UI_ONLY_EXPECTED = ("error shown", "Form does not save", "Constraint fires",
+                     "Subject is ineligible")
+
+
+def _odm_slots(uat_case):
+    """The (form, item OID, event) slots a UAT row writes when loaded via ODM.
+
+    Mirrors uat_loader: an empty set means the loader does not load the row.
+    A "Calc path" row writes its source fields, not its own item, so it holds
+    those slots: two rows that write the same item never share a participant.
+    """
+    fo   = str(uat_case.get("Form_OID", "") or "")
+    item = str(uat_case.get("Item_OID", "") or "")
+    ev   = str(uat_case.get("Study_Event_OID", "") or "")
+    lv   = str(uat_case.get("Load_Value", "") or "").strip()
+    expected = str(uat_case.get("Expected Result", "") or "")
+    lv_lower = lv.lower()
+    if (not lv or lv_lower == "(leave blank)" or "then" in lv_lower
+            or lv.upper().startswith("SE_")
+            or any(x in expected for x in _UI_ONLY_EXPECTED)
+            or any(x in expected.upper() for x in ("VISIBLE", "HIDDEN", "RELEVANT"))):
+        return set()
+    if "=" in lv and not lv.startswith("20"):
+        if "Calc path" not in str(uat_case.get("Scenario", "")):
+            return set()   # gate row: set in the browser, not loaded
+        name = str(uat_case.get("Item_Name", "") or "")
+        prefix = item[:-len(name)] if name and item.endswith(name) else ""
+        return {(fo, f"{prefix}{part.split('=', 1)[0].strip()}", ev)
+                for part in lv.split(",") if "=" in part}
+    return {(fo, item, ev)}
 
 
 # ── Main extraction function ──────────────────────────────────────────────────
@@ -1149,6 +1283,9 @@ def extract_dvs_data(struct_json, forms_json):
                 if form_default_ig is None:
                     form_default_ig = ig
 
+        form_fields = {r.get("name"): r for r in survey
+                       if isinstance(r, dict) and r.get("name")}
+
         for row_idx, row in enumerate(survey, start=2):
             if not isinstance(row, dict):
                 continue
@@ -1185,7 +1322,9 @@ def extract_dvs_data(struct_json, forms_json):
                 # Infer UAT cases — variable count per check
                 inferred_cases = _infer_test_cases(check, row, choices_for_field,
                                                    ctx=sample_ctx,
-                                                   world=cross_form_world)
+                                                   world=cross_form_world,
+                                                   form_fields=form_fields,
+                                                   form_choices=choices)
                 uat_ids_for_this_check = []
                 for case in inferred_cases:
                     uat_counter += 1
@@ -1325,35 +1464,26 @@ def extract_dvs_data(struct_json, forms_json):
     _slot_by_participant = {}   # participant_id -> set of (fo, item, ev) slots
     _max_p = 1
     for _uc in uat_cases:
-        _fo   = str(_uc.get("Form_OID", "") or "")
-        _item = str(_uc.get("Item_OID", "") or "")
-        _ev   = str(_uc.get("Study_Event_OID", "") or "")
-        _lv   = str(_uc.get("Load_Value", "") or "").strip()
-        # Only assign distinct participants for rows that actually load a value
-        # (leave_blank, has_then, and visibility rows are not loaded via ODM)
-        _lv_lower = _lv.lower()
-        _is_loadable = (
-            _lv
-            and _lv_lower != "(leave blank)"
-            and "then" not in _lv_lower
-            and not _lv.upper().startswith("SE_")
-        )
-        if not _is_loadable:
+        _slots = _odm_slots(_uc)
+        # Only rows the loader actually loads need a participant of their own
+        # (blank, multi-step, gate, constraint-fires and visibility rows are
+        # not loaded via ODM; Playwright runs them on UAT-P001).
+        if not _slots:
             _uc["Participant_ID"] = "UAT-P001"
             continue
-        _slot = (_fo, _item, _ev)
         _assigned = False
         for _pnum in range(1, _max_p + 1):
             _pid = f"UAT-P{_pnum:03d}"
-            if _slot not in _slot_by_participant.setdefault(_pid, set()):
-                _slot_by_participant[_pid].add(_slot)
+            _taken = _slot_by_participant.setdefault(_pid, set())
+            if not (_slots & _taken):
+                _taken |= _slots
                 _uc["Participant_ID"] = _pid
                 _assigned = True
                 break
         if not _assigned:
             _max_p += 1
             _pid = f"UAT-P{_max_p:03d}"
-            _slot_by_participant[_pid] = {_slot}
+            _slot_by_participant[_pid] = set(_slots)
             _uc["Participant_ID"] = _pid
     print(f"[dvs] Participant assignment: {_max_p} participant(s) for {len(uat_cases)} UAT rows", flush=True)
 
