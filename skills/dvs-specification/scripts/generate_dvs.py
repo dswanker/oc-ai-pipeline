@@ -270,7 +270,27 @@ _UAT_SETUP_ROWS = [
      "Two columns in UAT_Cases are blank in this DVS and are stamped by the loader "
      "at runtime: Site_OID (the OID of the dated site created for this run) and "
      "Participant_Key (the run-scoped full participant key). These are written back "
-     "to the DVS Results file uploaded to monday.com after the run completes."),
+     "to the DVS Results file uploaded to monday.com after the run completes. "
+     "Item_OID and Item_Group_OID in this DVS are predictions: OpenClinica can add a "
+     "random suffix to an item OID when two forms share an item name. The loader "
+     "looks up the real OIDs in the published study by Form_OID and Item_Name and "
+     "writes them into the DVS Results file."),
+    ("How Results Are Scored",
+     "Each case is loaded into its own participant (Participant_ID) and compared "
+     "with the value stored for that participant. Cases that expect an error, a "
+     "hidden or visible field, or a multi-step setup are not loaded; they are "
+     "reported Not Run (Not Testable via ODM) unless the browser step runs them."),
+    # Keep in step with UAT_LIMITS_TEXT in uat_loader.py
+    ("What UAT Cannot Confirm",
+     "The automated load writes values through the OpenClinica data import, which "
+     "does not run form logic. A Pass means only that the value was stored for that "
+     "participant and read back unchanged. It is NOT evidence that (1) a field that "
+     "pulls its value from another form or event is filled in, or that the original "
+     "question it replaces is hidden, or (2) a calculated field computes the right "
+     "value. Calc path and calculated-field cases are reported Not Run for this "
+     "reason. Confirm both by hand in the form: enter the source values, open the "
+     "dependent form, and check that the pulled or calculated value appears, is "
+     "read-only, and is blank when a source value is missing."),
     ("If a Run Fails",
      "If the loader fails partway through, a partial site and participants may exist "
      "in OC4 Test. These can be left in place — they are harmless, clearly dated, "

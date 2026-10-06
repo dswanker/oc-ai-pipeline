@@ -274,3 +274,37 @@ def test_detroit_negative_cases_are_no_longer_written():
     # the happy-path CM dates on P001 and P002 still load
     assert any(i == "I_CONCO_CMSTDTC" for _, i, _ in loaded["UAT-P001"])
     assert any(i == "I_CONCO_CMSTDTC" for _, i, _ in loaded["UAT-P002"])
+
+
+# ── The results say what UAT cannot confirm ──────────────────────────────────
+
+def test_calc_rows_are_not_run_with_the_reason_never_pass_or_fail():
+    wb_bytes, clinical_data, job_failures = _load_run("Detroit")
+    scored = _cases(uat_loader._evaluate_uat_cases(wb_bytes, {}, clinical_data, job_failures))
+    calc = [c for c in scored if str(c["Scenario"]).startswith("Calc path")]
+    assert calc
+    for c in calc:
+        assert c["Test Result"] == "Not Run"
+        assert c["Actual Result"] == uat_loader.NOT_VERIFIABLE_VIA_ODM
+
+
+def test_results_workbook_states_what_uat_cannot_confirm():
+    with open(os.path.join(_ANALYSIS, _RUNS["Detroit"]), "rb") as f:
+        stamped = uat_loader._stamp_dvs(f.read(), {})
+    def topics(data):
+        ws = openpyxl.load_workbook(io.BytesIO(data), data_only=True)["UAT_Setup"]
+        return {str(r[0]): str(r[1]) for r in ws.iter_rows(values_only=True) if r and r[0]}
+    text = topics(stamped)[uat_loader.UAT_LIMITS_TOPIC]
+    assert "does not run form logic" in text
+    assert "another form or event" in text and "calculated field" in text
+    # stamping twice does not repeat the note
+    again = openpyxl.load_workbook(io.BytesIO(uat_loader._stamp_dvs(stamped, {})))["UAT_Setup"]
+    assert sum(1 for r in again.iter_rows(values_only=True)
+               if r and r[0] == uat_loader.UAT_LIMITS_TOPIC) == 1
+
+
+def test_generated_dvs_carries_the_same_statement():
+    sys.path.insert(0, os.path.join(_REPO, "skills", "dvs-specification", "scripts"))
+    import generate_dvs
+    setup = dict(generate_dvs._UAT_SETUP_ROWS)
+    assert setup[uat_loader.UAT_LIMITS_TOPIC] == uat_loader.UAT_LIMITS_TEXT
