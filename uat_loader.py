@@ -896,6 +896,41 @@ async def _fetch_clinical_data(
     return lookup
 
 
+def _add_participant_data(clinical_data: dict, participant_key: str,
+                          participant_data: dict) -> None:
+    """Add one participant's read-back to the shared lookup, keyed by participant.
+
+    Each UAT case for an item is loaded into a different participant, so the
+    participant must be part of the key: without it the last participant read
+    overwrites the others and every case is compared with that one value.
+    """
+    pkey = str(participant_key or "").strip()
+    for coords, value in (participant_data or {}).items():
+        clinical_data[(pkey,) + tuple(coords)] = value
+
+
+def _job_failures_from_imports(odm_imports: list) -> dict:
+    """{(participant_key, item_oid_upper): message} from each import's job log.
+
+    Every import is for one participant, so its Failed rows belong to that
+    participant only.
+    """
+    import csv as _csv
+    failures: dict = {}
+    for imp in odm_imports or []:
+        pkey = str(imp.get("participant_key") or "").strip()
+        log_text = (imp.get("result") or {}).get("log", "") or ""
+        if not log_text:
+            continue
+        for fr in _csv.DictReader(io.StringIO(log_text)):
+            if (fr.get("Status") or "").strip() != "Failed":
+                continue
+            item_oid = (fr.get("ItemOID") or "").strip().upper()
+            if item_oid:
+                failures[(pkey, item_oid)] = (fr.get("Message") or "").strip()
+    return failures
+
+
 def _evaluate_uat_cases(
     dvs_bytes: bytes,
     stamp_map: dict,
@@ -903,19 +938,19 @@ def _evaluate_uat_cases(
     job_failures: dict = None,
 ) -> bytes:
     """
-    job_failures: {(item_oid_upper): message} from ODM job CSV Failed rows
-    """
-    """
-    For each row in UAT_Cases, look up the stored value in clinical_data
-    and compare against Expected Result.  Writes:
+    For each row in UAT_Cases, look up the value stored for that row's own
+    participant in clinical_data and compare it with Load_Value.  Writes:
         - Status         → 'Pass', 'Fail', or 'Not Run'
         - Actual Result  → what OC returned (or blank)
         - Test Result    → 'Pass', 'Fail', or 'Not Run'
         - Execution Date → UTC timestamp (Pass/Fail rows only)
 
-    clinical_data: merged lookup from all participants:
-        (event_oid_upper, form_oid_upper, ig_oid_upper, item_oid_upper)
-        → stored_value
+    clinical_data: lookup built with _add_participant_data:
+        (participant_key, event_oid_upper, form_oid_upper, ig_oid_upper,
+         item_oid_upper) → stored_value
+
+    job_failures: {(participant_key, item_oid_upper): message} from the ODM
+        job logs (see _job_failures_from_imports)
 
     stamp_map: { logical_pid → {site_oid, participant_key, oc_oid} }
 
@@ -982,12 +1017,21 @@ def _evaluate_uat_cases(
             skipped += 1
             continue
 
-        # Lookup key — all uppercase to match _fetch_clinical_data keys
-        key = (ev_oid, fo_oid, ig_oid, item_oid)
+        # The participant this case was loaded into: the stamped
+        # Participant_Key, or the stamp_map entry for the logical ID.
+        pkey = ""
+        if "Participant_Key" in col_idx:
+            pkey = str(row[col_idx["Participant_Key"] - 1].value or "").strip()
+        if not pkey and "Participant_ID" in col_idx:
+            _pid = str(row[col_idx["Participant_ID"] - 1].value or "").strip()
+            pkey = str((stamp_map or {}).get(_pid, {}).get("participant_key") or "").strip()
+
+        # Lookup key — OIDs uppercase to match _fetch_clinical_data keys
+        key = (pkey, ev_oid, fo_oid, ig_oid, item_oid)
         stored = clinical_data.get(key)
 
-        # Check if this item failed in the ODM import job
-        job_msg = (job_failures or {}).get(item_oid, "")
+        # Check if this item failed in this participant's ODM import job
+        job_msg = (job_failures or {}).get((pkey, item_oid), "")
 
         # Classify non-loadable rows as Not Testable via ODM
         lv_lower = lv.lower()
@@ -1329,6 +1373,7 @@ async def run_uat_loader(item_id: str, fo_titles: dict = None) -> dict:
             )
             result["odm_imports"].append({
                 "participant": run_key,
+                "participant_key": confirmed_id,
                 "rows":        len(rows),
                 "result":      import_result,
             })
@@ -1403,7 +1448,9 @@ async def run_uat_loader(item_id: str, fo_titles: dict = None) -> dict:
                 participant_data = await _fetch_clinical_data(
                     subdomain, study_oid, oc_oid, token
                 )
-                clinical_data.update(participant_data)
+                _add_participant_data(
+                    clinical_data, info.get("participant_key", ""),
+                    participant_data)
                 await append_log(item_id,
                     f"UAT Loader: read {len(participant_data)} item "
                     f"values for {logical_pid}")
@@ -1471,19 +1518,8 @@ async def run_uat_loader(item_id: str, fo_titles: dict = None) -> dict:
         await append_log(item_id,
             "UAT Loader: evaluating UAT cases against clinical data...")
         try:
-            # Build job_failures: item_oid_upper -> error message
-            _job_failures = {}
-            _all_log = ""
-            for _imp in result.get("odm_imports", []):
-                _all_log += _imp.get("result", {}).get("log", "") or ""
-            if _all_log:
-                import csv as _csv2, io as _io2
-                for _fr in _csv2.DictReader(_io2.StringIO(_all_log)):
-                    if (_fr.get("Status") or "").strip() == "Failed":
-                        _ioid = (_fr.get("ItemOID") or "").strip().upper()
-                        _msg  = (_fr.get("Message") or "").strip()
-                        if _ioid:
-                            _job_failures[_ioid] = _msg
+            _job_failures = _job_failures_from_imports(
+                result.get("odm_imports", []))
             stamped_bytes = _evaluate_uat_cases(
                 stamped_bytes, stamp_map, clinical_data, _job_failures
             )
