@@ -1,0 +1,64 @@
+{
+  "id": "customer.bioivt.stage_other_rows",
+  "title": "BioIVT: Other, specify boxes for stage group",
+  "kind": "structured",
+  "scope": "customer",
+  "scope_id": "bioIVT",
+  "status": "active",
+  "natural_key": "bioivt_stage_other_rows",
+  "description": "Adds an Other, specify box after Stage group on Oncology and Confirmed Stage Group on the BioIVT oncology form, shown only when Other is chosen.",
+  "rationale": "Approved rule: every converted field keeps an Other, specify box.",
+  "target": "field",
+  "applies_when": {
+    "any_of": [
+      {
+        "form.form_id": "ONCOLOGY",
+        "field.name": "TUMSTGE"
+      },
+      {
+        "form.form_id": "BIOIVTONC",
+        "field.name": "CONFSTGROUP"
+      }
+    ]
+  },
+  "effect": {
+    "match": {
+      "on": "field.name",
+      "cases": {
+        "TUMSTGE": {
+          "insert_after": {
+            "name": "{self}_OTH",
+            "type": "text",
+            "label": "Other stage group, specify",
+            "relevant": "${{self}}='other'"
+          }
+        },
+        "CONFSTGROUP": {
+          "insert_after": {
+            "name": "{self}_OTH",
+            "type": "text",
+            "label": "Other confirmed stage group, specify",
+            "relevant": "${{self}}='other'"
+          }
+        }
+      }
+    }
+  },
+  "created_at": "2026-10-06T00:00:00Z",
+  "created_by": "human:dswanker",
+  "source": "BioIVT Option C update; approved by Dan",
+  "tags": [
+    "bioivt",
+    "phase_3",
+    "other_specify"
+  ],
+  "history": [
+    {
+      "at": "2026-10-06T00:00:00Z",
+      "by": "human:dswanker",
+      "action": "created",
+      "status": "active",
+      "note": "Stage group and therapy outcome update."
+    }
+  ]
+}

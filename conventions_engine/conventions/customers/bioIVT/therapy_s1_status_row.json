@@ -1,0 +1,41 @@
+{
+  "id": "customer.bioivt.therapy_s1_status_row",
+  "title": "BioIVT: a Therapy status question after Therapy Outcome",
+  "kind": "structured",
+  "scope": "customer",
+  "scope_id": "bioIVT",
+  "status": "active",
+  "natural_key": "bioivt_therapy_s1_status_row",
+  "description": "Adds a Therapy status question (ongoing, completed, discontinued, unknown, other) right after the original Therapy Outcome question. Step 1 of the ordered therapy chain.",
+  "rationale": "The real Therapy Outcome answers mix status words (ongoing 15%, completed) with response words; status gets its own question.",
+  "target": "field",
+  "applies_when": {
+    "form.form_id": "ONCOLOGY",
+    "field.name": "THEROUTC"
+  },
+  "effect": {
+    "insert_after": {
+      "name": "THER_STATUS",
+      "type": "text",
+      "label": "Therapy status",
+      "inherit_relevant": true
+    }
+  },
+  "created_at": "2026-10-06T00:00:00Z",
+  "created_by": "human:dswanker",
+  "source": "BioIVT Option C update; approved by Dan",
+  "tags": [
+    "bioivt",
+    "phase_3",
+    "therapy"
+  ],
+  "history": [
+    {
+      "at": "2026-10-06T00:00:00Z",
+      "by": "human:dswanker",
+      "action": "created",
+      "status": "active",
+      "note": "Stage group and therapy outcome update."
+    }
+  ]
+}

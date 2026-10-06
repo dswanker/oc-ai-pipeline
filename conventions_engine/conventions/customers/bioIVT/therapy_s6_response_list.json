@@ -1,0 +1,37 @@
+{
+  "id": "customer.bioivt.therapy_s6_response_list",
+  "title": "BioIVT: Response to therapy becomes a pick list",
+  "kind": "structured",
+  "scope": "customer",
+  "scope_id": "bioIVT",
+  "status": "active",
+  "natural_key": "bioivt_therapy_s6_response_list",
+  "description": "Gives the Response to therapy question its pick list (RECIST categories, unknown, other). Step 6 of the ordered therapy chain. use_canonical_list cannot sit inside a match, so each list has its own convention.",
+  "rationale": "Approved list.",
+  "target": "field",
+  "applies_when": {
+    "form.form_id": "ONCOLOGY",
+    "field.name": "THER_RESP"
+  },
+  "effect": {
+    "use_canonical_list": "bioivt_therapy_response"
+  },
+  "created_at": "2026-10-06T00:00:00Z",
+  "created_by": "human:dswanker",
+  "source": "BioIVT Option C update; approved by Dan",
+  "tags": [
+    "bioivt",
+    "phase_3",
+    "choice_list",
+    "therapy"
+  ],
+  "history": [
+    {
+      "at": "2026-10-06T00:00:00Z",
+      "by": "human:dswanker",
+      "action": "created",
+      "status": "active",
+      "note": "Stage group and therapy outcome update."
+    }
+  ]
+}

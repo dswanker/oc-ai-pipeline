@@ -1,0 +1,45 @@
+{
+  "id": "customer.bioivt.stage_group_list",
+  "title": "BioIVT: stage group becomes a pick list",
+  "kind": "structured",
+  "scope": "customer",
+  "scope_id": "bioIVT",
+  "status": "active",
+  "natural_key": "bioivt_stage_group_list",
+  "description": "Turns the free-text Stage question on Oncology and Confirmed Stage Group on the BioIVT oncology form into a pick list of stage groups (0, I, IA, IB, II, IIA, IIB, III, IIIA, IIIB, IIIC, IV) with an Other, specify box.",
+  "rationale": "Real Detroit answers are stage groups (II 4,771; IIA 4,203; IIB 3,174; IIIA; IV; I). Stages outside the list go in Other, specify.",
+  "target": "field",
+  "applies_when": {
+    "any_of": [
+      {
+        "form.form_id": "ONCOLOGY",
+        "field.name": "TUMSTGE"
+      },
+      {
+        "form.form_id": "BIOIVTONC",
+        "field.name": "CONFSTGROUP"
+      }
+    ]
+  },
+  "effect": {
+    "use_canonical_list": "bioivt_stage_group"
+  },
+  "created_at": "2026-10-06T00:00:00Z",
+  "created_by": "human:dswanker",
+  "source": "BioIVT Option C update; approved by Dan",
+  "tags": [
+    "bioivt",
+    "phase_3",
+    "choice_list",
+    "stage"
+  ],
+  "history": [
+    {
+      "at": "2026-10-06T00:00:00Z",
+      "by": "human:dswanker",
+      "action": "created",
+      "status": "active",
+      "note": "Stage group and therapy outcome update."
+    }
+  ]
+}

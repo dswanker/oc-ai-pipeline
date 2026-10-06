@@ -1,0 +1,38 @@
+{
+  "list_name": "canon_bioivt_therapy_status",
+  "multi_select": false,
+  "description": "Status of a cancer therapy. The old free-text Therapy Outcome question mixed status words (ongoing, completed) with response words (stable, progressive); status is now its own question.",
+  "source": "Approved by Dan 2026-10-06; the most common status answers in the Detroit data are 'ongoing' and 'completed'.",
+  "choices": [
+    {
+      "name": "ongoing",
+      "label": "Ongoing",
+      "cdash_code": "ONGOING",
+      "is_extension": false
+    },
+    {
+      "name": "completed",
+      "label": "Completed",
+      "cdash_code": "COMPLETED",
+      "is_extension": false
+    },
+    {
+      "name": "discontinued",
+      "label": "Discontinued",
+      "cdash_code": "DISCONTINUED",
+      "is_extension": false
+    },
+    {
+      "name": "unknown",
+      "label": "Unknown",
+      "cdash_code": "UNKNOWN",
+      "is_extension": false
+    },
+    {
+      "name": "other",
+      "label": "Other",
+      "cdash_code": "OTHER",
+      "is_extension": true
+    }
+  ]
+}

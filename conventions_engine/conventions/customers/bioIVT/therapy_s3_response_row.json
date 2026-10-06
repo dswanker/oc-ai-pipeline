@@ -1,0 +1,41 @@
+{
+  "id": "customer.bioivt.therapy_s3_response_row",
+  "title": "BioIVT: a Response to therapy question after Therapy status",
+  "kind": "structured",
+  "scope": "customer",
+  "scope_id": "bioIVT",
+  "status": "active",
+  "natural_key": "bioivt_therapy_s3_response_row",
+  "description": "Adds a Response to therapy question (RECIST categories) after the Therapy status question and its Other box. Step 3 of the ordered therapy chain: anchored on the status Other box, so it lands after it.",
+  "rationale": "Disease response is the other thing the old free-text answers held (stable, progressive disease, complete response).",
+  "target": "field",
+  "applies_when": {
+    "form.form_id": "ONCOLOGY",
+    "field.name": "THER_STATUS_OTH"
+  },
+  "effect": {
+    "insert_after": {
+      "name": "THER_RESP",
+      "type": "text",
+      "label": "Response to therapy",
+      "inherit_relevant": true
+    }
+  },
+  "created_at": "2026-10-06T00:00:00Z",
+  "created_by": "human:dswanker",
+  "source": "BioIVT Option C update; approved by Dan",
+  "tags": [
+    "bioivt",
+    "phase_3",
+    "therapy"
+  ],
+  "history": [
+    {
+      "at": "2026-10-06T00:00:00Z",
+      "by": "human:dswanker",
+      "action": "created",
+      "status": "active",
+      "note": "Stage group and therapy outcome update."
+    }
+  ]
+}
