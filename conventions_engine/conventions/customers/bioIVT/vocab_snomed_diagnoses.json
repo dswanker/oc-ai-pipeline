@@ -6,7 +6,7 @@
   "scope_id": "bioIVT",
   "status": "active",
   "natural_key": "bioivt_vocab_snomed_diagnoses",
-  "description": "Turns five free-text diagnosis questions (donor diagnosis, specimen diagnosis on Follow-up, Outcome and Oncology, confirmed diagnosis) into a type-ahead lookup over real SNOMED CT concept ids. DEMONSTRATION list: real codes, partial, not clinically reviewed; licences to be confirmed before real use.",
+  "description": "Turns eight free-text questions about conditions (donor diagnosis; specimen diagnosis on Follow-up, Outcome and Oncology; confirmed diagnosis; medication indication; cause of death; reason for hospitalisation) into a type-ahead lookup over real SNOMED CT concept ids. DEMONSTRATION list: real codes, partial, not clinically reviewed; licences to be confirmed before real use.",
   "rationale": "Option C: diagnoses coded to SNOMED CT at the point of entry.",
   "target": "field",
   "applies_when": {
@@ -30,6 +30,18 @@
       {
         "form.form_id": "BIOIVTONC",
         "field.name": "DIAG_CONF"
+      },
+      {
+        "form.form_id": "CM",
+        "field.name": "CMINDIC"
+      },
+      {
+        "form.form_id": "DD",
+        "field.name": "PRCDTH"
+      },
+      {
+        "form.form_id": "MH",
+        "field.name": "MHHOSPREASON"
       }
     ]
   },
@@ -54,6 +66,13 @@
       "action": "created",
       "status": "active",
       "note": "Phase 2 build for the client demonstration."
+    },
+    {
+      "at": "2026-10-06T02:50:24Z",
+      "by": "human:dswanker",
+      "action": "edited",
+      "status": "active",
+      "note": "Added medication indication (CM), cause of death (DD) and reason for hospitalisation (MH) to the SNOMED CT lookup and its Other rows."
     }
   ]
 }

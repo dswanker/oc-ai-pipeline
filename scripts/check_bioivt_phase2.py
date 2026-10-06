@@ -57,7 +57,7 @@ check('list sizes within the planned range (RxNorm<=10k, SNOMED<=8k, LOINC<=4k)'
 # ---------------------------------------------------------------- Detroit: the lookups
 D, DB = after['Detroit'], before['Detroit']
 EXPECT = {'rxnorm_demo.csv': [('PSORIASIS', 'ORALSTER'), ('PSORIASIS', 'TOP'), ('PSORIASIS', 'OTHR'), ('CM', 'CMTRT')],
-          'snomed_demo.csv': [('INCEXC', 'DONOR_DIAGNOSIS'), ('FOLLOWUP', 'SPECDIAG'), ('OUTCOME', 'SPECDIAG'), ('ONCOLOGY', 'SPECIDIAG'), ('BIOIVT' + 'ONC', 'DIAG_CONF'), ('MH', 'DONDIAG')],
+          'snomed_demo.csv': [('INCEXC', 'DONOR_DIAGNOSIS'), ('FOLLOWUP', 'SPECDIAG'), ('OUTCOME', 'SPECDIAG'), ('ONCOLOGY', 'SPECIDIAG'), ('BIOIVT' + 'ONC', 'DIAG_CONF'), ('MH', 'DONDIAG'), ('CM', 'CMINDIC'), ('DD', 'PRCDTH')],
           'loinc_demo.csv': [('ONCOLOGY', 'OTHTEST'), ('TESTRES', 'OTHTEST'), ('ONCOLOGY', 'MARKOTH')],
           'ucum_units_demo.csv': [('ONCOLOGY', 'BLDUNIT'), ('ONCOLOGY', 'MARKUNIT'), ('TESTRES', 'BLDUNIT')]}
 for f, fl in EXPECT.items():
@@ -87,7 +87,7 @@ check('every list a form references is registered in the spec so the builder wri
 old_total = sum(len(v.encode()) for v in D['_omop_vocab_files'].values()) * len(D['forms'])
 new_total = sum(len(D['_omop_vocab_files'][c].encode()) for fid in refs for c in refs[fid])
 print(f'      (upload volume of list files per run: old behaviour {old_total/1e6:.1f} MB across {len(D["forms"])} forms -> now {new_total/1e6:.1f} MB across {len(refs)} forms that use them)')
-check('lists are attached only to forms that use them (new volume is a fraction of the old)', new_total < old_total / 3 and set(refs) == {'CM', 'MH', 'PSORIASIS', 'INCEXC', 'FOLLOWUP', 'OUTCOME', 'ONCOLOGY', 'BIOIVTONC', 'TESTRES', 'RA', 'LUPUS'}, sorted(refs))
+check('lists are attached only to forms that use them (new volume is a fraction of the old)', new_total < old_total / 3 and set(refs) == {'CM', 'MH', 'PSORIASIS', 'INCEXC', 'FOLLOWUP', 'OUTCOME', 'ONCOLOGY', 'BIOIVTONC', 'TESTRES', 'RA', 'LUPUS', 'DD'}, sorted(refs))
 
 # ---------------------------------------------------------------- DIN
 for st in ('Detroit', 'Precision'):
@@ -124,7 +124,9 @@ exp_added = {(a, n + '_OTH') for a, n in SINGLE_OTH + MULTI} | {(a, n + '_U') fo
 exp_changed -= {('CM', 'CMTRT'), ('MH', 'DONDIAG')}   # these two already use the real lists in BOTH builds (the code registry, not a convention); only their Other row is new
 check('DETROIT: exactly the expected questions changed or were added, none removed, nothing else touched', ch == exp_changed and add == exp_added and not rem, (sorted(ch ^ exp_changed)[:6], sorted(add ^ exp_added)[:6], sorted(rem)[:3]))
 chp, addp, remp = rowdiff(before['Precision'], after['Precision'])
-check("PRECISION: only the DIN rule (3 questions) and the medication lookup on CM.CMTRT (+ its Other row) changed", chp == {('DM', 'DIN'), ('DM', 'FOLLOW_DIN'), ('DMONC', 'DIN')} | ({('CM', 'CMTRT')} if before['Precision'] and rows(before['Precision'], 'CM')['CMTRT']['type'] != rows(after['Precision'], 'CM')['CMTRT']['type'] else set()) and addp == {('CM', 'CMTRT_OTH')} and not remp, (sorted(chp), sorted(addp)))
+check("PRECISION: only the DIN rule (3 questions), the medication and indication lookups on CM, and the hospitalisation-reason lookup on MH changed (each with its Other row)",
+      chp == {('DM', 'DIN'), ('DM', 'FOLLOW_DIN'), ('DMONC', 'DIN'), ('CM', 'CMINDIC'), ('MH', 'MHHOSPREASON')} | ({('CM', 'CMTRT')} if before['Precision'] and rows(before['Precision'], 'CM')['CMTRT']['type'] != rows(after['Precision'], 'CM')['CMTRT']['type'] else set())
+      and addp == {('CM', 'CMTRT_OTH'), ('CM', 'CMINDIC_OTH'), ('MH', 'MHHOSPREASON_OTH')} and not remp, (sorted(chp), sorted(addp)))
 
 # ---------------------------------------------------------------- structure
 def dangling(spec):
