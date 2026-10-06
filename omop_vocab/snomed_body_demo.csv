@@ -1,0 +1,812 @@
+name,label
+OTHER,Other (not in list)
+7832008,Abdominal aorta structure
+128476009,Accessory parathyroid gland structure
+129122007,Accessory thyroid
+46926004,Acinus of parotid gland
+23451007,Adrenal structure
+41244000,All cardiac valves
+87584003,All parathyroid glands
+110804000,"Anus and rectum, CS"
+123956007,Anus part
+119203005,Aorta part
+279626007,Appendix of head of epididymis
+279601003,Appendix of testis
+66754008,Appendix structure
+54247002,Ascending aorta structure
+9040008,Ascending colon structure
+68171009,Axillary lymph node structure
+91470000,Axillary region structure
+312538005,Axillary vessel
+280081000,Base of adrenal gland
+134315000,Bilateral adrenal glands
+7035006,Bile duct mucous membrane structure
+372166008,Bile duct part
+28273000,Bile duct structure
+87612001,Blood
+120638006,Bone marrow part
+119186007,Bone part
+84667006,Bone structure of cervical vertebra
+118495001,Bone structure of distal humerus
+71341001,Bone structure of femur
+84167007,Bone structure of foot
+85050009,Bone structure of humerus
+91609006,Bone structure of mandible
+113197003,Bone structure of rib
+20760004,Bone structure of shaft of humerus
+12611008,Bone structure of tibia
+420345000,Bone structure of vertebra
+272690006,Border of mandible
+91745004,Both cardiac atria
+30641009,Both lacrimal glands
+119235005,Brain part
+384763002,Brain region
+119238007,Brain stem part
+127957002,Brain stem spino-olivary tract
+12738006,Brain structure
+15926001,Brainstem structure
+360442003,Brainstem tract
+119184005,Breast part
+76752008,Breast structure
+88410004,Bronchial mucous gland
+372170000,Bronchial part
+955009,Bronchial structure
+85546005,Bronchial submucosa
+110735002,"Bronchus and alveolus, CS"
+110734003,"Bronchus and aorta, CS"
+110731006,"Bronchus and liver, CS"
+110736001,"Bronchus and lung, CS"
+110729002,"Bronchus and pleura, CS"
+277927007,Cardiac border
+91744000,Cardiac chamber structure
+277712000,Cardiac internal structure
+280511002,Cardiac plexus
+10746000,Cardiac septum structure
+17401000,Cardiac valve structure
+21814001,Cardiac ventricular structure
+272657006,Cardiac wall structure
+110871007,"Cecum and abdominal wall, CS"
+110799005,"Cecum and sigmoid colon, CS"
+32713005,Cecum structure
+180952004,Cerebellopontine angle meninges
+2209009,Cerebral basal surface structure
+56982009,Cerebral dorsum structure
+87463005,Cerebral fornix structure
+372073000,Cerebral hemisphere structure
+372171001,Cerebral lobe part
+314139009,Cerebral lobe structure
+78976001,Cerebral medial surface structure
+279106007,Cerebral nucleus
+36159002,Cerebral peduncle structure
+279337001,Cerebral sulcus
+68523003,Cerebral white matter structure
+65216001,Cerebrospinal fluid
+83678007,Cerebrum
+314794007,Cervical canal wall structure
+60075002,Cervical esophagus structure
+33299002,Cervical fascia structure
+81105003,Cervical lymph node structure
+72260008,Cervical plexus structure
+54785003,Cervical spinal cord structure
+129167000,Cervical spine joint structure
+71252005,Cervix uteri structure
+244237006,Chest wall artery
+110800009,"Colon and sigmoid colon, CS"
+372174009,Colon part
+71854001,Colon structure
+42978003,Colonic epithelium
+413196009,Colonic loop
+90132000,Colonic serosa
+61647009,Colonic submucosa
+52010009,Colonic subserosa
+304912006,Condyle of femur
+280514005,Deep cardiac plexus
+59513003,Deep cervical plexus
+32622004,Descending colon structure
+5798000,Diaphragm structure
+32967008,Diaphragma sellae
+361435005,Dorsal pancreatic bud
+245387009,Dorsal pancreatic duct
+110785006,"Duodenum and colon, CS"
+110784005,"Duodenum and duodenum, CS"
+110782009,"Duodenum and ileum, CS"
+110783004,"Duodenum and jejunum, CS"
+27394002,Ear hair
+48800003,Ear lobule structure
+119262002,Ear part
+117590005,Ear structure
+308793001,Embryonic cardiac structure
+78696007,Endocrine pancreatic structure
+302553009,Entire abdomen
+181127006,Entire adrenal gland
+181262009,Entire anus
+181298001,Entire aorta
+181255000,Entire appendix
+362162009,Entire ascending colon
+731698002,Entire bone of femur
+244247009,Entire bronchial artery
+278980009,Entire bronchial cartilage
+199401001,Entire bronchial lumen
+727271007,Entire bronchial submucosa
+198293000,Entire bronchial vein
+732006008,Entire cardiac internal structure
+181256004,Entire cecum
+180924008,Entire cerebellum
+263353005,Entire cerebrum
+244571001,Entire cervical disc
+181453009,Entire cervix uteri
+181608004,Entire chest wall
+362165006,Entire descending colon
+181247007,Entire duodenum
+278867007,Entire endometrium
+322749003,Entire esophageal gland
+322648002,Entire esophageal lumen
+304046009,Entire esophageal vein
+181245004,Entire esophagus
+245332008,Entire external mammary lymph node
+245399002,Entire hepatic duct
+278191001,Entire hepatic vein
+181923006,Entire humerus
+714844009,Entire hypothalamic-pituitary-testicular axis
+181249005,Entire ileum
+43210002,Entire inferior vesical artery
+421997006,Entire internal mammary lymph node
+728266002,Entire internal mammary node
+254584004,Entire intramural part of myometrium
+181248002,Entire jejunum
+181147003,Entire lacrimal gland
+181254001,Entire large intestine
+730182004,Entire layer of cerebrum
+1240429002,Entire left bronchial vein
+73810003,Entire left ovarian vein
+243436005,Entire left renal pelvis
+90988008,Entire left testicular vein
+727217002,Entire mammary gland sinus
+361721009,Entire mammary lobule
+204340007,Entire mammary region
+181812008,Entire mandible
+181217005,Entire mediastinum
+362879001,Entire meninges
+261433004,Entire mesentery of ascending colon
+261528001,Entire mesentery of descending colon
+782665005,Entire mucous membrane of ascending colon
+782686005,Entire mucous membrane of descending colon
+782687001,Entire mucous membrane of transverse colon
+727115004,Entire multiple mammary glands
+279879004,Entire myometrium
+263481003,Entire nasal cavity
+181200003,Entire nasopharynx
+362710002,Entire omentum
+263376008,Entire oropharynx
+1304250001,Entire ostium of paranasal sinus
+244280002,Entire ovarian artery
+361111009,Entire ovarian follicle
+279916003,Entire ovarian ligament
+280527009,Entire ovarian plexus
+278193003,Entire ovarian vein
+730163008,Entire pancreatic bud
+181278006,Entire pancreatic duct
+264492008,Entire pancreatic vein
+303335005,Entire paranasal sinus wall
+181121007,Entire parathyroid gland
+181234002,Entire parotid gland
+181211006,Entire pharynx
+181125003,Entire pituitary gland
+245432009,Entire rectal ampulla
+728806006,Entire rectal artery
+259740004,Entire rectal lumen
+730133004,Entire rectal plexus
+729499005,Entire rectal vein
+362168008,Entire rectosigmoid
+245429006,Entire rectosigmoid junction
+181261002,Entire rectum
+362221007,Entire renal pelvis
+53500001,Entire right testicular vein
+265794003,Entire scrotum
+362698002,Entire serous membrane of peritoneum
+362166007,Entire sigmoid colon
+244266009,Entire splenic artery
+728522000,Entire splenic bed
+362592006,Entire splenic capsule
+280524002,Entire splenic plexus
+726860009,Entire splenic pulp
+278029005,Entire splenic vein
+282802003,Entire splenic venules
+254507008,Entire submucous part of myometrium
+254660004,Entire subserous part of myometrium
+113268007,Entire superior vesical artery
+244281003,Entire testicular artery
+279664009,Entire testicular plexus
+264496006,Entire testicular vein
+787840004,Entire testicular vein within scrotum
+181431007,Entire testis
+362600004,Entire thoracic duct
+302551006,Entire thorax
+118507000,Entire thymus
+181117000,Entire thyroid gland
+303420005,Entire thyroid vein
+362163004,Entire transverse colon
+731371007,Entire tributary of vesical vein
+283094004,Entire ureteral branch of testicular artery
+281063008,Entire uterine vein
+244405007,Entire vena cava
+244307000,Entire vesical artery
+280529007,Entire vesical plexus
+253424005,Entire vesical surface of uterus
+12683000,Entire vesical vein
+31510008,Entire vesical venous plexus
+85950006,Esophageal adventitia
+302185003,Esophageal and/or gastric structures
+82082004,Esophageal mucous membrane structure
+360961009,Esophageal muscle
+119211000,Esophageal part
+277765007,Esophageal sphincter
+32849002,Esophageal structure
+30817008,Esophageal submucosa structure
+24696004,Esophageal venous plexus
+501000202103,Esophageal wall structure
+110772008,"Esophagus and esophagus, CS"
+245273007,External mammary lymph node group
+392262008,Eyebrow structure
+80243003,Eyelid structure
+119228002,Fallopian tube part
+119190009,Femur part
+56459004,Foot structure
+244419007,Frontal meninges
+116368001,Gallbladder part
+28231008,Gallbladder structure
+68560004,Gastric corpus structure
+64977002,Gastric epithelium
+414003,Gastric fundus structure
+9654004,Gastric mucous gland
+34986001,Gastric muscularis structure
+1353004,Gastric serosa
+52459002,Gastric submucosa
+53755000,Gastric subserosa
+5928000,Great cardiac vein structure
+35366003,Greater omentum structure
+280912000,Groin hair
+280387007,Groin skin crease
+372186007,Half of mandible
+120577001,Hand part
+85562004,Hand structure
+90228003,Hard palate structure
+361453004,Head fold
+51354009,Head of mandible
+12872006,Head of rib structure
+123850002,Head part
+69536005,Head structure
+287283006,Heart internal mammary artery implant
+119202000,Heart part
+80891009,Heart structure
+386108004,Heart tissue
+76015000,Hepatic artery
+48781005,Hepatic capsule structure
+88391003,Hepatic lacunae structure
+15878004,Hepatic lobule structure
+277746004,High superior vena cava
+5366008,Hippocampal structure
+264838002,Hole in omentum
+119525000,Humerus part
+110858009,"Ileum and abdominal wall, CS"
+110791008,"Ileum and cecum, CS"
+110786007,"Ileum and colon, CS"
+110794000,"Ileum and ileum, CS"
+110789000,"Ileum and rectum, CS"
+110793006,"Ileum and sigmoid colon, CS"
+110857004,"Ileum and skin, CS"
+110792001,"Ileum and transverse colon, CS"
+110790009,"Ileum and vagina, CS"
+245542009,Inferior parathyroid gland
+64131007,Inferior vena cava structure
+58549005,Interlobular mammary connective tissue structure
+245282001,Internal mammary lymph node group
+279135004,Internal mammary lymphatic trunk
+245340002,Internal mammary node
+110856008,"Jejunum and abdominal wall, CS"
+110795004,"Jejunum and cecum, CS"
+110787003,"Jejunum and colon, CS"
+110611003,"Jejunum and ileum, CS"
+110788008,"Jejunum and jejunum, CS"
+110855007,"Jejunum and skin, CS"
+119219003,Kidney part
+64033007,Kidney structure
+49076000,Knee joint structure
+417419005,Lacrimal gland duct opening
+372193006,Lacrimal gland part
+13561001,Lacrimal gland structure
+272757003,Large intestine acupuncture points
+245457004,Large intestine mesentery
+119214008,Large intestine part
+303417002,Larynx and/or tracheal structures
+360478008,Layer of cerebellum
+360468005,Layer of cerebrum
+361640008,Left bronchial vein
+80984007,Left lacrimal gland structure
+9642004,Left superior vena cava
+40768004,Left thorax structure
+110635008,Left uterine adnexa
+63404006,Lesser omentum structure
+14631006,Ligament of omentum
+129123002,Lingual thyroid
+77232000,Lingula of cerebellum
+372197007,Lip part
+48477009,Lip structure
+119216005,Liver part
+10200004,Liver structure
+39582006,Lobar bronchus structure
+277747008,Low superior vena cava
+27033000,Lower abdomen structure
+264073004,Lower renal calyx
+361427007,Lung bud
+34922002,Lung field
+119199005,Lung part
+314253000,Lung root
+39607008,Lung structure
+314250002,Lung surface
+245256005,Lymph node group
+312502003,Lymph node structure of trunk
+102297006,Main bronchus structure
+74805009,Mammary gland sinus
+79802009,Mammary lobule structure
+119533004,Mandible part
+180953009,Meninges of clivus
+244431009,Meninges of convexity
+180954003,Meninges of foramen magnum
+120611004,Meninges part
+360574007,Microscopic pancreatic duct structure
+360552001,Microscopic thyroid structure
+180951006,Middle fossa meninges
+69608005,Middle mediastinum structure
+127945006,Mouth region part
+123851003,Mouth region structure
+57511008,Multiple mammary glands
+279549004,Nasal cavity structure
+110721004,"Nasopharynx and esophagus, CS"
+181926003,Neck of humerus
+123959000,Neck part
+45048000,Neck structure
+273242002,Nogier auricular cerebrum
+120578006,Nose part
+372202000,Omentum part
+27398004,Omentum structure
+280541000,Orbital cavity
+280548006,Orbital fascia
+77886003,Orbital margin structure
+280545009,Orbital space
+282047003,Orbital vein
+304043001,Ovarian endocrine structure
+24162005,Ovarian follicle structure
+119227007,Ovarian part
+15497006,Ovarian structure
+75573002,Palatine tonsillar structure
+119218006,Pancreas part
+360344003,Pancreatic artery
+360398004,Pancreatic bud
+69930009,Pancreatic duct structure
+15776009,Pancreatic structure
+120228005,Paranasal sinus part
+361472004,Parathyroid gland artery
+111002,Parathyroid structure
+372203005,Parotid gland part
+45289007,Parotid gland structure
+245419004,Part of duodenum
+360896005,Part of myometrium
+372228002,Part of renal pelvis structure
+128180007,Pelvic appendix
+119230000,Penis part
+312535008,Pharynx and/or larynx structures
+56329008,Pituitary structure
+50863008,Plasma
+91381003,Pleural cavity structure
+119200008,Pleural part
+116006008,Pleural sac structure
+3120008,Pleural structure
+279593004,Pole of testis
+110686003,"Pons and cerebellum, CS"
+41216001,Prostate
+119231001,Prostate part
+34133003,Prostatic duct structure
+279689003,Prostatic gland structure
+280530002,Prostatic plexus
+71553001,Prostatic urethra structure
+277967008,Rectal artery
+15079008,Rectal mucous membrane structure
+314753004,Rectal plexus
+71683001,Rectal submucosa
+280820002,Rectal vein
+81922002,Rectosigmoid structure
+372237002,Rectum part
+34402009,Rectum structure
+511000202101,Rectum wall structure
+279880001,Region of cervix uteri
+279542008,Region of nose
+58223001,Renal area cribrosa structure
+38060002,Renal corpuscle structure
+32041000,Renal papilla structure
+110866000,"Renal pelvis and skin, CS"
+25990002,Renal pelvis structure
+16097006,Renal pyramid structure
+66558008,Renal sinus structure
+58471003,Renal tubule structure
+119536007,Rib part
+361641007,Right bronchial vein
+18855009,Right lacrimal gland structure
+245374003,Right thoracic lymph duct
+51872008,Right thorax structure
+110634007,Right uterine adnexa
+256897009,Saliva
+86961006,Salivary duct structure
+86442000,Salivary gland capsule
+76837008,Salivary gland lobe structure
+24106005,Salivary gland lobule
+119215009,Salivary gland part
+385294005,Salivary gland structure
+67922002,Serum
+372239004,Sigmoid colon part
+60184004,Sigmoid colon structure
+306801009,Skeletal muscle part
+127954009,Skeletal muscle structure
+372074006,Skeletal muscle structure of chest wall
+1240405009,Skeletal muscle structure of left hip
+1240406005,Skeletal muscle structure of right hip
+79984008,Skeletal muscle system structure
+426215008,Skeletal muscle tissue
+314820002,Skin layer
+119181002,Skin part
+39937001,Skin structure
+276742007,Skull foramen
+45480009,Small intestine epithelium
+63588008,Small intestine lamina propria
+4369007,Small intestine mucous membrane structure
+119213002,Small intestine part
+8266009,Small intestine serosa
+691000,Small intestine submucosa
+17758003,Small intestine subserosa
+49460000,Soft palate structure
+87784001,Soft tissue
+75559006,Spinal cord meninges structure
+119404002,Spinal cord part
+2748008,Spinal cord structure
+314224001,Spinal cord sulcus
+120613001,Spleen part
+262167004,Splenic bed
+46929006,Splenic capsule structure
+13515001,Splenic pulp
+27579002,Splenic red pulp
+9081000,Splenic sinusoid
+78961009,Splenic structure
+272778000,Stomach acupuncture points
+119212007,Stomach part
+69695003,Stomach structure
+75609008,Stomach wall structure
+113288006,Structure of accessory pancreatic duct
+11843008,Structure of angle of mandible
+76386002,Structure of anterior mediastinum
+73800007,Structure of appendix epiploica
+113287001,Structure of appendix fibrosa of liver
+67937003,Structure of axillary artery
+368536000,Structure of axillary fascia
+422543003,Structure of axillary fossa
+74858004,Structure of axillary nerve
+83151009,Structure of axillary soft tissues
+68705008,Structure of axillary vein
+113298000,Structure of basal meninges
+11048003,Structure of body of mandible
+3572006,Structure of body of vertebra
+8935007,Structure of brain meninges
+64468002,Structure of bronchial artery
+20826001,Structure of bronchial cartilage
+5926001,Structure of bronchial lumen
+20976003,Structure of bronchial vein
+207065009,Structure of cardiac ganglia
+85439003,Structure of cardiac vein
+80447000,Structure of cerebral aqueduct
+88556005,Structure of cerebral artery
+37035000,Structure of cerebral cingulum
+40146001,Structure of cerebral cortex
+279165009,Structure of cerebral gyrus
+68351006,Structure of cerebral vein
+56739004,Structure of cervical canal of uterus
+344738001,Structure of cervical myotome
+281247006,Structure of cervical nervous system
+36545001,Structure of cervical pleura
+32308008,Structure of cervical spinal canal
+62378004,Structure of cervical spinal nerve
+726663008,Structure of cervical trachea
+122494005,Structure of cervical vertebral column
+6533001,Structure of colonic haustra
+66559000,Structure of common hepatic artery
+725502003,Structure of common hepatic duct
+119551003,Structure of condyle of humerus
+91731005,Structure of deep cervical artery
+15650002,Structure of deep cervical vein
+20728007,Structure of diaphragmatic pleura
+85774003,Structure of distal portion of ileum
+113367000,Structure of dorsal aorta
+206034008,Structure of esophageal artery
+1306837006,Structure of esophageal epithelium
+34899004,Structure of esophageal gland
+1279635005,Structure of esophageal lamina propria
+55977007,Structure of esophageal lumen
+11899006,Structure of esophageal lymph node
+90895003,Structure of esophageal vein
+421988007,Structure of external mammary lymph node
+368785007,Structure of eyelashes
+90046002,Structure of fallopian tube lumen
+367600009,Structure of gastric artery
+87206002,Structure of gastric foveola
+1331936000,Structure of gastric gland
+48231002,Structure of gastric lumen
+64157005,Structure of gastric plexus
+65743007,Structure of gastric rugae
+110568007,Structure of gastric vein
+56341001,Structure of great cerebral vein
+23114008,Structure of gum of maxilla
+2812003,Structure of head of femur
+81965001,Structure of head of humerus
+37424004,Structure of hepatic acinus
+18112008,Structure of hepatic artery proper
+56732008,Structure of hepatic duct
+61492009,Structure of hepatic lymph node
+35328001,Structure of hepatic plexus
+271942000,Structure of hepatic sinusoid
+8993003,Structure of hepatic vein
+714843003,Structure of hypothalamic-pituitary-testicular axis
+63473001,Structure of inferior rectal artery
+48557000,Structure of inferior rectal plexus
+75168003,Structure of inferior thyroid vein
+284057003,Structure of inferior vesical artery
+48027003,Structure of internal mammary lymphatic vessel
+85210000,Structure of intramural part of myometrium
+26552008,Structure of joint of foot
+417266007,Structure of lacrimal gland duct
+14742008,Structure of large intestine
+56047006,Structure of lateral abdominal wall
+12003004,Structure of left adrenal gland
+199599008,Structure of left bronchial lumen
+736637009,Structure of left bronchus
+23771002,Structure of left gastric artery
+49253009,Structure of left gastric vein
+64281006,Structure of left hepatic duct
+273202007,Structure of left hepatic vein
+76059009,Structure of left inferior parathyroid gland
+1163584001,Structure of left lacrimal gland duct
+782927001,Structure of left ovarian follicle
+259343000,Structure of left ovarian vein
+44178003,Structure of left parotid gland
+275309004,Structure of left renal artery
+38594006,Structure of left renal pelvis
+275809009,Structure of left renal vein
+40941005,Structure of left superior parathyroid gland
+367708009,Structure of left testicular vein
+63239009,Structure of left testis
+1332276003,Structure of left uterine artery
+30181001,Structure of lobe of parotid gland
+119281005,Structure of lobe of thyroid gland
+1284828009,Structure of lumen of lacrimal gland duct
+13482005,Structure of lymph node of head
+42135007,Structure of lymphatic vessel of mammary gland
+1230031000,Structure of main pancreatic duct
+32655009,Structure of mammary region
+86671006,Structure of mediastinum of testis
+6009002,Structure of mesentery of ascending colon
+62406002,Structure of mesentery of descending colon
+85033007,Structure of mesentery of sigmoid colon
+88634001,Structure of middle cardiac nerve
+73580002,Structure of middle cardiac vein
+273099000,Structure of middle hepatic vein
+57967006,Structure of middle rectal artery
+17630002,Structure of middle rectal plexus
+20188000,Structure of middle thyroid vein
+782662008,Structure of mucous membrane of ascending colon
+782861003,Structure of mucous membrane of cecum
+782682007,Structure of mucous membrane of descending colon
+782685009,Structure of mucous membrane of sigmoid colon
+782683002,Structure of mucous membrane of transverse colon
+29627003,Structure of neck of femur
+49200000,Structure of neck of mandible
+72184008,Structure of neck of rib
+74335009,Structure of neck of talus
+363654007,Structure of orbit proper
+45343002,Structure of orbital gyrus
+13898006,Structure of orbital opening
+32206009,Structure of orbital septum
+1304251002,Structure of ostium of left paranasal sinus
+1304248009,Structure of ostium of paranasal sinus
+1304252009,Structure of ostium of right paranasal sinus
+12052000,Structure of ovarian artery
+15398002,Structure of ovarian plexus
+976004,Structure of ovarian vein
+20066003,Structure of pancreatic acinus
+11081002,Structure of pancreatic incisura
+77778009,Structure of pancreatic lymph node
+2504000,Structure of pancreatic plexus
+8059004,Structure of pancreatic vein
+77220004,Structure of paranasal sinus wall
+371402001,Structure of parenchyma of thyroid
+66475004,Structure of parietal serous membrane of peritoneum
+71097005,Structure of parotid gland capsule
+6731002,Structure of pleural recess
+76720008,Structure of primary ovarian follicle
+7435002,Structure of proper ovarian ligament
+819982004,Structure of prostatic artery
+28584006,Structure of prostatic fascia
+87195004,Structure of prostatic isthmus
+63612007,Structure of prostatic muscle
+84140001,Structure of prostatic utricle
+23938008,Structure of ramus of mandible
+32611003,Structure of rectal ampulla
+49832006,Structure of rectosigmoid junction
+2841007,Structure of renal artery
+48563009,Structure of renal plexus
+84924000,Structure of renal segment
+27788008,Structure of renal tubular neck
+56400007,Structure of renal vein
+14221007,Structure of rete testis
+29392005,Structure of right adrenal gland
+199499006,Structure of right bronchial lumen
+736638004,Structure of right bronchus
+34990004,Structure of right gastric artery
+16625006,Structure of right gastric vein
+78000005,Structure of right hepatic duct
+272998002,Structure of right hepatic vein
+782928006,Structure of right ovarian follicle
+259368003,Structure of right ovarian vein
+85706002,Structure of right parotid gland
+54444007,Structure of right renal pelvis
+275910003,Structure of right renal vein
+367709001,Structure of right testicular vein
+15598003,Structure of right testis
+1332277007,Structure of right uterine artery
+2330002,Structure of segmental bronchial branches
+72372004,Structure of serous membrane of pelvic peritoneum
+15425007,Structure of serous membrane of peritoneum
+42321004,Structure of short gastric vein
+102288007,Structure of skeletal muscle of shoulder
+49082002,Structure of small cardiac vein
+30315005,Structure of small intestine
+95937008,Structure of soft tissues of face
+127960009,Structure of soft tissues of head
+95940008,Structure of soft tissues of hip
+127961008,Structure of soft tissues of neck
+36464005,Structure of splenic arterioles
+22083002,Structure of splenic artery
+280824006,Structure of splenic lymph node
+82200002,Structure of splenic plexus
+35819009,Structure of splenic vein
+82818006,Structure of splenic venules
+77629005,Structure of submucous part of myometrium
+52077003,Structure of subserous part of myometrium
+2539000,Structure of superior rectal artery
+24981001,Structure of superior rectal plexus
+18209004,Structure of superior thyroid vein
+283984006,Structure of superior vesical artery
+27175001,Structure of testicular artery
+86064000,Structure of testicular plexus
+31688004,Structure of testicular vein
+786711003,Structure of testicular vein within scrotum
+3553006,Structure of thyroid capsule
+39039000,Structure of thyroid follicle
+51652001,Structure of thyroid foramen
+60894006,Structure of thyroid lobule
+34841000,Structure of thyroid notch
+9880000,Structure of thyroid tubercle
+90553001,Structure of thyroid vein
+314626006,Structure of tibial epiphysis
+80769008,Structure of tibial lymph node
+45879002,Structure of tibial tuberosity
+23655005,Structure of tracheal gland
+25075003,Structure of tracheal lumen
+64292007,Structure of tracheal muscle
+159530000,Structure of tracheal vein
+1344751004,Structure of transplanted pituitary gland
+423585006,Structure of tributary of vesical vein
+11217004,Structure of ureteral branch of testicular artery
+294150001,Structure of urethral artery
+63202008,Structure of urethral lumen
+87528003,Structure of urethral meatus
+48367006,Structure of urinary bladder cavity
+23043003,Structure of uterine adnexa
+91079009,Structure of uterine artery
+84569004,Structure of uterine end of ovary
+17149004,Structure of uterine ligament
+76195004,Structure of uterine serosa
+6649009,Structure of uterine subserosa
+41880007,Structure of uterine tubal plicae
+113294003,Structure of uterine tubal serosa
+60028002,Structure of uterine vein
+245485002,Structure of uterine wall
+4093007,Structure of vagus nerve bronchial branch
+35532006,Structure of vena cava
+85234005,Structure of vertebral artery
+63492004,Structure of vertebral ganglion
+1277008,Structure of vertebral nerve
+56725004,Structure of vertebral plexus
+23664000,Structure of vertebral vein
+43380006,Structure of vesical artery
+81036009,Structure of vesical plexus
+51273006,Structure of vesical surface of uterus
+295061002,Structure of vesical vein
+295162007,Structure of vesical venous plexus
+50703002,Structure of visceral serous membrane of peritoneum
+456141000124105,Structure of wall of splenic artery
+4956003,Subcutaneous tissue structure of back
+5520004,Subcutaneous tissue structure of chin
+43163003,Subcutaneous tissue structure of face
+38157007,Subcutaneous tissue structure of foot
+20152005,Subcutaneous tissue structure of hand
+90181003,Subcutaneous tissue structure of head
+24797004,Subcutaneous tissue structure of heel
+49742004,Subcutaneous tissue structure of hip
+6991009,Subcutaneous tissue structure of jaw
+83820000,Subcutaneous tissue structure of knee
+68889007,Subcutaneous tissue structure of lip
+87292006,Subcutaneous tissue structure of lower leg
+81853001,Subcutaneous tissue structure of neck
+68406005,Subcutaneous tissue structure of nose
+13349008,Subcutaneous tissue structure of shin
+3039001,Subcutaneous tissue structure of thigh
+30284001,Subcutaneous tissue structure of toe
+87367005,Subcutaneous tissue structure of upper arm
+68726008,Substernal thyroid
+71274004,Superior mediastinum structure
+245540001,Superior parathyroid gland
+48345005,Superior vena cava structure
+12424003,Terminal aorta structure
+304042006,Testicular endocrine structure
+119232008,Testicular part
+40689003,Testis structure
+113262008,Thoracic aorta structure
+1732005,Thoracic duct structure
+9875009,Thymus gland structure
+362895001,Thymus part
+52940008,Thyroid cartilage structure
+362892003,Thyroid part
+69748006,Thyroid structure
+119191008,Tibia part
+181351007,Tibial artery
+306783000,Tibial plateau structure
+181405005,Tibial vein structure
+312532006,Tibial vessel
+74318005,Tibialis posterior muscle structure
+119207006,Tongue part
+21974007,Tongue structure
+261419004,Tonsillar node
+119197007,Tracheal part
+44567001,Tracheal structure
+110543005,Transplanted soft tissue
+485005,Transverse colon structure
+80581009,Upper abdomen structure
+360798002,Upper limb joint cavity
+264241002,Upper renal calyx
+119220009,Ureter part
+361528000,Ureteric bud
+87953007,Ureteric structure
+119222001,Urethra part
+32061006,Urethral gland structure
+361531004,Urethral groove
+13648007,Urethral structure
+277868004,Urethral wall
+119221008,Urinary bladder part
+89837001,Urinary bladder structure
+78014005,Urine
+280704004,Uterine membrane structure
+245369006,Uterine node
+272665009,Uterine segment
+35039007,Uterine structure
+245489008,Uterine submucosa
+119225004,Uterus part
+119224000,Vaginal part
+76784001,Vaginal structure
+280379006,Vault meninges
+361437002,Ventral pancreatic bud
+245388004,Ventral pancreatic duct
+279993007,Vertebral epiphysis
+280734009,Vertebral foramen
+263276005,Vertebral level
+119187003,Vertebral part
+64104009,Vesicular ovarian follicle structure
+372243000,Vulval part
+279975006,Vulval vein
+314723006,Wall of oropharynx

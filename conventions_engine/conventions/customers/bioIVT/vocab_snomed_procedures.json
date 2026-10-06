@@ -1,0 +1,52 @@
+{
+  "id": "customer.bioivt.vocab_snomed_procedures",
+  "title": "BioIVT: surgical procedure questions become a type-ahead SNOMED CT procedures lookup",
+  "kind": "structured",
+  "scope": "customer",
+  "scope_id": "bioIVT",
+  "status": "active",
+  "natural_key": "bioivt_vocab_snomed_procedures",
+  "description": "Turns the free-text Surgical Procedure question on Oncology, Follow-up and Outcome into a type-ahead lookup over real SNOMED CT procedure codes (1,900 procedures). Detroit sites also enter specimen-collection procedures here (real data: 'Blood draw' 8,275 answers, 'CSF Collection' 5,670), so the list includes them alongside resections, biopsies and organ removals. DEMONSTRATION list: real codes, partial, not clinically reviewed; licences to be confirmed before real use.",
+  "rationale": "Dan asked for the Surgical Procedure to be added. Values chosen from what Detroit sites actually enter.",
+  "target": "field",
+  "applies_when": {
+    "any_of": [
+      {
+        "form.form_id": "ONCOLOGY",
+        "field.name": "SURGIPROC"
+      },
+      {
+        "form.form_id": "FOLLOWUP",
+        "field.name": "SURGPROC"
+      },
+      {
+        "form.form_id": "OUTCOME",
+        "field.name": "SURGPROC"
+      }
+    ]
+  },
+  "effect": {
+    "use_vocabulary": {
+      "file": "snomed_procedures_demo.csv"
+    }
+  },
+  "created_at": "2026-10-06T00:00:00Z",
+  "created_by": "human:dswanker",
+  "source": "BioIVT Option C build for the client demonstration; approved by Dan",
+  "tags": [
+    "bioivt",
+    "phase_2",
+    "vocabulary",
+    "snomed",
+    "procedures"
+  ],
+  "history": [
+    {
+      "at": "2026-10-06T00:00:00Z",
+      "by": "human:dswanker",
+      "action": "created",
+      "status": "active",
+      "note": "Phase 2 build for the client demonstration."
+    }
+  ]
+}

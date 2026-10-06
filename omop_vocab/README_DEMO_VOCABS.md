@@ -11,6 +11,9 @@ Every list starts with an `OTHER` row so a term that is not in the list can stil
 | `snomed_demo.csv` | 7,137 | HL7 public terminology server (tx.fhir.org) | Real SNOMED CT concept ids for disease families relevant to BioIVT (autoimmune, cancers, neurology, cardiometabolic, infectious ...) |
 | `loinc_demo.csv` | 3,500 | NLM Clinical Tables (LOINC) | Real LOINC codes for quantitative lab tests on ordinary specimens (method-neutral names preferred) |
 | `ucum_units_demo.csv` | 67 | curated | Common UCUM unit codes |
+| `snomed_procedures_demo.csv` | 1,913 | HL7 public terminology server | SNOMED CT procedures: surgery plus the specimen-collection procedures Detroit sites enter (blood draw, CSF collection). Built by `build_demo_vocabs_oncology.py` |
+| `snomed_body_demo.csv` | 810 | HL7 public terminology server | SNOMED CT body structures at organ and region level, plus Blood, Cerebrospinal fluid, Urine, Saliva (used as locations in the real data) |
+| `icdo3_topography_demo.csv` | 82 | SEER ICD-O-3 Site/Type list (seer.cancer.gov/icd-o-3) | ICD-O-3 tumour site groups; the stored code is the SEER site recode range (subsite codes such as C34.1 are not included) |
 
 Regenerate with `.venv/bin/python3 omop_vocab/build_demo_vocabs.py` (needs internet; no keys).
 
@@ -24,6 +27,7 @@ Regenerate with `.venv/bin/python3 omop_vocab/build_demo_vocabs.py` (needs inter
 * This material contains content from LOINC (http://loinc.org). LOINC is copyright Regenstrief Institute, Inc. and the LOINC Committee and is available at no cost under the license at http://loinc.org/license. LOINC is a registered United States trademark of Regenstrief Institute, Inc.
 * This material includes SNOMED Clinical Terms (SNOMED CT), used by permission of SNOMED International. SNOMED CT is a registered trademark of SNOMED International. A licence is required for production use.
 * RxNorm is a registered trademark of the U.S. National Library of Medicine (NLM). This product uses publicly available data courtesy of NLM, NIH, DHHS. NLM is not responsible for the product and does not endorse or recommend it.
+* ICD-O-3 site groups come from the SEER Site/Type validation list published by the US National Cancer Institute. ICD-O-3 is published by the World Health Organization; confirm terms before production use.
 * UCUM (Unified Code for Units of Measure) is copyright Regenstrief Institute, Inc. and is free to use.
 
 ## Size

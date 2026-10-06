@@ -13,7 +13,7 @@ with contextlib.redirect_stdout(io.StringIO()):
     from omop_coding import _apply_omop_coding
 PHASE2 = ['vocab_rxnorm_single', 'vocab_rxnorm_multi', 'vocab_snomed_diagnoses', 'vocab_loinc_tests', 'vocab_units', 'lab_values_numeric', 'lab_unit_rows',
           'vocab_other_specify', 'vocab_other_specify_multi', 'din_max_length', 'autofill_demographics', 'calc_months_disease_free', 'calc_months_survived',
-          'calc_months_survived_death_lookup']
+          'calc_months_survived_death_lookup', 'vocab_snomed_procedures', 'vocab_snomed_body_structure', 'vocab_icdo3_topography']
 SPECS = {'Detroit': 'tmp/Detroit_DS_Study_Specification_CORRECTED_v8.json', 'Precision': 'tmp/PrecisionMed_Study_Specification_CORRECTED_v6.json'}
 def build(raw, name):
     s = copy.deepcopy(raw)
@@ -44,7 +44,7 @@ def rowdiff(b, a):
     return ch, add, rem
 
 # ---------------------------------------------------------------- vocabulary files
-V = {n: list(csv.DictReader(open(f'omop_vocab/{n}.csv'))) for n in ('rxnorm_demo', 'snomed_demo', 'loinc_demo', 'ucum_units_demo')}
+V = {n: list(csv.DictReader(open(f'omop_vocab/{n}.csv'))) for n in ('rxnorm_demo', 'snomed_demo', 'loinc_demo', 'ucum_units_demo', 'snomed_procedures_demo', 'snomed_body_demo', 'icdo3_topography_demo')}
 for n, rr in V.items():
     codes = [x['name'] for x in rr]
     check(f'{n}.csv: header name,label; first row OTHER; no duplicate codes; {len(rr)-1} entries', list(rr[0].keys()) == ['name', 'label'] and codes[0] == 'OTHER' and len(codes) == len(set(codes)))
@@ -59,7 +59,10 @@ D, DB = after['Detroit'], before['Detroit']
 EXPECT = {'rxnorm_demo.csv': [('PSORIASIS', 'ORALSTER'), ('PSORIASIS', 'TOP'), ('PSORIASIS', 'OTHR'), ('CM', 'CMTRT')],
           'snomed_demo.csv': [('INCEXC', 'DONOR_DIAGNOSIS'), ('FOLLOWUP', 'SPECDIAG'), ('OUTCOME', 'SPECDIAG'), ('ONCOLOGY', 'SPECIDIAG'), ('BIOIVT' + 'ONC', 'DIAG_CONF'), ('MH', 'DONDIAG'), ('CM', 'CMINDIC'), ('DD', 'PRCDTH')],
           'loinc_demo.csv': [('ONCOLOGY', 'OTHTEST'), ('TESTRES', 'OTHTEST'), ('ONCOLOGY', 'MARKOTH')],
-          'ucum_units_demo.csv': [('ONCOLOGY', 'BLDUNIT'), ('ONCOLOGY', 'MARKUNIT'), ('TESTRES', 'BLDUNIT')]}
+          'ucum_units_demo.csv': [('ONCOLOGY', 'BLDUNIT'), ('ONCOLOGY', 'MARKUNIT'), ('TESTRES', 'BLDUNIT')],
+          'snomed_procedures_demo.csv': [('ONCOLOGY', 'SURGIPROC'), ('FOLLOWUP', 'SURGPROC'), ('OUTCOME', 'SURGPROC')],
+          'snomed_body_demo.csv': [('ONCOLOGY', 'ANALOC'), ('BIOIVTONC', 'ANATLOC'), ('FOLLOWUP', 'ANATLOC'), ('OUTCOME', 'ANATLOC')],
+          'icdo3_topography_demo.csv': [('ONCOLOGY', 'TUMLOCA'), ('BIOIVTONC', 'TUM_LOC_CONF')]}
 for f, fl in EXPECT.items():
     check(f'{f}: all {len(fl)} planned fields are type-ahead lookups', all(rows(D, fid)[n]['type'] == f'select_one_from_file {f}' and rows(D, fid)[n].get('appearance') == 'minimal autocomplete' for fid, n in fl), [(a, b, rows(D, a)[b]['type']) for a, b in fl if rows(D, a)[b]['type'] != f'select_one_from_file {f}'])
 MULTI = [('OUTCOME', n) for n in ('CHEMO_AGENTS', 'MTT_AGENTS', 'IMMUNO_AGENTS', 'HORMONE_AGENTS')]
@@ -83,7 +86,7 @@ for f in D['forms']:
         m = re.search(r'select_(?:one|multiple)_from_file\s+(\S+\.csv)', str(r.get('type', '')))
         if m: refs[f['form_id']].add(m.group(1))
 allref = set().union(*refs.values())
-check('every list a form references is registered in the spec so the builder writes it', allref <= set(D['_omop_vocab_files']) and allref == {'rxnorm_demo.csv', 'snomed_demo.csv', 'loinc_demo.csv', 'ucum_units_demo.csv'}, allref)
+check('every list a form references is registered in the spec so the builder writes it', allref <= set(D['_omop_vocab_files']) and allref == {'rxnorm_demo.csv', 'snomed_demo.csv', 'loinc_demo.csv', 'ucum_units_demo.csv', 'snomed_procedures_demo.csv', 'snomed_body_demo.csv', 'icdo3_topography_demo.csv'}, allref)
 old_total = sum(len(v.encode()) for v in D['_omop_vocab_files'].values()) * len(D['forms'])
 new_total = sum(len(D['_omop_vocab_files'][c].encode()) for fid in refs for c in refs[fid])
 print(f'      (upload volume of list files per run: old behaviour {old_total/1e6:.1f} MB across {len(D["forms"])} forms -> now {new_total/1e6:.1f} MB across {len(refs)} forms that use them)')

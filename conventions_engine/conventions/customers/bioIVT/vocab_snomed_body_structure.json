@@ -1,0 +1,56 @@
+{
+  "id": "customer.bioivt.vocab_snomed_body_structure",
+  "title": "BioIVT: anatomic location questions become a type-ahead SNOMED CT body structure lookup",
+  "kind": "structured",
+  "scope": "customer",
+  "scope_id": "bioIVT",
+  "status": "active",
+  "natural_key": "bioivt_vocab_snomed_body_structure",
+  "description": "Turns the free-text Anatomic Location question on Oncology, the BioIVT oncology form, Follow-up and Outcome into a type-ahead lookup over real SNOMED CT body structure codes at organ and region level (about 480 terms), plus Blood, Cerebrospinal fluid, Urine and Saliva, which Detroit sites also enter as a location. DEMONSTRATION list: real codes, partial, not clinically reviewed; licences to be confirmed before real use.",
+  "rationale": "Dan's decision: SNOMED CT for anatomic location. Real answers are organ level (Lung, Breast, Colon, Blood, Uterus, Stomach).",
+  "target": "field",
+  "applies_when": {
+    "any_of": [
+      {
+        "form.form_id": "ONCOLOGY",
+        "field.name": "ANALOC"
+      },
+      {
+        "form.form_id": "BIOIVTONC",
+        "field.name": "ANATLOC"
+      },
+      {
+        "form.form_id": "FOLLOWUP",
+        "field.name": "ANATLOC"
+      },
+      {
+        "form.form_id": "OUTCOME",
+        "field.name": "ANATLOC"
+      }
+    ]
+  },
+  "effect": {
+    "use_vocabulary": {
+      "file": "snomed_body_demo.csv"
+    }
+  },
+  "created_at": "2026-10-06T00:00:00Z",
+  "created_by": "human:dswanker",
+  "source": "BioIVT Option C build for the client demonstration; approved by Dan",
+  "tags": [
+    "bioivt",
+    "phase_2",
+    "vocabulary",
+    "snomed",
+    "anatomy"
+  ],
+  "history": [
+    {
+      "at": "2026-10-06T00:00:00Z",
+      "by": "human:dswanker",
+      "action": "created",
+      "status": "active",
+      "note": "Phase 2 build for the client demonstration."
+    }
+  ]
+}

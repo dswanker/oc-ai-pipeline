@@ -28,7 +28,7 @@ raw = json.load(open(SPEC_PATH))
 # Phase 2 conventions also change some of the same forms, so compare Phase 1 alone: 'after' = Phase 1 present and Phase 2 absent.
 PHASE2 = ['vocab_rxnorm_single', 'vocab_rxnorm_multi', 'vocab_snomed_diagnoses', 'vocab_loinc_tests', 'vocab_units', 'lab_values_numeric', 'lab_unit_rows',
           'vocab_other_specify', 'vocab_other_specify_multi', 'din_max_length', 'autofill_demographics', 'calc_months_disease_free', 'calc_months_survived',
-          'calc_months_survived_death_lookup']
+          'calc_months_survived_death_lookup', 'vocab_snomed_procedures', 'vocab_snomed_body_structure', 'vocab_icdo3_topography']
 def root_without(slugs):
     r = Path(tempfile.mkdtemp()); shutil.copytree(ROOT / 'conventions_engine' / 'conventions', r / 'conventions')
     for slug in slugs:

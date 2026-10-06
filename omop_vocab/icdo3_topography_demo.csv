@@ -1,0 +1,84 @@
+name,label
+OTHER,Other (not in list)
+C319,"Accessory sinus, nos (C319)"
+"C740-C741,C749","Adrenal glands (C740-C741,C749)"
+"C210-C212,C218","Anal canal & anus (C210-C212,C218)"
+C181,Appendix (C181)
+C019,Base of tongue (C019)
+"C420, C421, C424","Blood, bone marrow, & hematopoietic sys (C420, C421, C424)"
+"C400-C403,C408-C409,C412-C414,C418-C419","Bones & joints (excl skull and face, mandible) (C400-C403,C408-C409,C412-C414,C418-C419)"
+C410,Bones of skull and face (C410)
+"C710-C714, C717-C719, C720-C725","Brain, & cranial nerves, & spinal cord, (excl. ventricle, cerebellum) (C710-C714, C717-C719, C720-C725)"
+"C500-C506,C508-C509","Breast (C500-C506,C508-C509)"
+C716,Cerebellum (C716)
+"C530-C531,C538-C539","Cervix uteri (C530-C531,C538-C539)"
+"C490-C496,C498-C499","Connective & soft tissue (C490-C496,C498-C499)"
+"C540-C543,C548-C549","Corpus uteri (C540-C543,C548-C549)"
+C752,Craniopharyngeal duct (C752)
+"C630, C631, C637-C639","Epididymis, spermatic cord, male genital, nos (C630, C631, C637-C639)"
+"C150-C155,C158-C159","Esophagus (C150-C155,C158-C159)"
+C699,"Eye, nos (C699)"
+C694,Eyeball (C694)
+C570,Fallopian tube (C570)
+"C239-C241,C248-C249","Gallbladder & extrahepatic bile ducts (C239-C241,C248-C249)"
+"C030-C031,C039-C041,C048-C052,C058-C062,C068-C069","Gum, floor of mouth, & other mouth (C030-C031,C039-C041,C048-C052,C058-C062,C068-C069)"
+C380,Heart (C380)
+"C129-C132,C138-C139","Hypopharynx (C129-C132,C138-C139)"
+C760-C768,Ill-defined (C760-C768)
+C221,Intrahepatic bile ducts (C221)
+C649,Kidney (C649)
+"C180, C182-C189, C199","Large intestine, (excl. appendix) (C180, C182-C189, C199)"
+"C320-C323,C328-C329","Larynx (C320-C323,C328-C329)"
+"C000-C006,C008-C009","Lip (C000-C006,C008-C009)"
+C220,Liver (C220)
+"C340-C343,C348-C349","Lung & bronchus (C340-C343,C348-C349)"
+"C770-C775,C778-C779","Lymph nodes (C770-C775,C778-C779)"
+C411,Mandible (C411)
+"C381-C383, C388","Mediastinum (C381-C383, C388)"
+"C700-C701,C709","Meninges (cerebral,spinal) (C700-C701,C709)"
+C301,Middle ear (C301)
+C300,Nasal cavity (including nasal cartilage) (C300)
+"C110,C112-C113,C118-C119","Nasopharynx (excl posterior wall) (C110,C112-C113,C118-C119)"
+"C690-C691, C693, C695-C698","Orbit & lacrimal gland, (excl. retina, eye, nos) (C690-C691, C693, C695-C698)"
+"C090-C091,C098-C104,C108-C109","Oropharnyx (C090-C091,C098-C104,C108-C109)"
+"C754-C755,C758-C759","Other endocrine glands (C754-C755,C758-C759)"
+"C571-C574,C577-C579","Other female genital (excl fallopian tube) (C571-C574,C577-C579)"
+C728-C729,Other nervous system (C728-C729)
+"C680-C681,C688-C689","Other urinary organs (C680-C681,C688-C689)"
+C569,Ovary (C569)
+"C250-C254,C257-C259","Pancreas (C250-C254,C257-C259)"
+C750,Parathyroid gland (C750)
+"C600-C602,C608-C609","Penis (C600-C602,C608-C609)"
+"C470-C476,C478-C479","Peripheral nerves (C470-C476,C478-C479)"
+"C140,C142,C148","Pharynx (C140,C142,C148)"
+C753,Pineal gland (C753)
+C751,Pituitary gland (C751)
+C589,Placenta (C589)
+C384,Pleura (C384)
+C111,Posterior wall of nasopharynx (C111)
+C619,Prostate gland (C619)
+C209,Rectum (C209)
+"C659, C669","Renal pelvis, ureter (C659, C669)"
+"C390,C398-C399","Respiratory, nos (C390,C398-C399)"
+C423,Reticulo-endothelial (C423)
+C692,Retina (C692)
+"C480-C482,C488","Retroperitoneum & peritoneum (C480-C482,C488)"
+"C079-C081,C088-C089","Salivary gland (C079-C081,C088-C089)"
+C632,Scrotum (C632)
+"C310-C313, C318","Sinuses (C310-C313, C318)"
+C440-C449,Skin (C440-C449)
+"C170-C173,C178-C179","Small intestine (C170-C173,C178-C179)"
+C422,Spleen (C422)
+"C160-C166,C168-C169","Stomach (C160-C166,C168-C169)"
+"C620-C621,C629","Testis (C620-C621,C629)"
+C379,Thymus (C379)
+C739,Thyroid gland (C739)
+"C020-C024,C028-C029","Tongue (excl base of tongue) (C020-C024,C028-C029)"
+C339,Trachea (C339)
+C809,Unknown (C809)
+"C260,C268-C269","Unspecified digest. organs (C260,C268-C269)"
+C670-C679,Urinary bladder (C670-C679)
+C559,"Uterus, nos (C559)"
+"C510-C512,C518, C529","Vagina & labia (C510-C512,C518, C529)"
+C715,Ventricle (C715)
+C519,"Vulva, nos (C519)"

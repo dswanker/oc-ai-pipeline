@@ -16,6 +16,9 @@ TITLES = {
     "snomed_demo.csv": "SNOMED CT diagnoses",
     "loinc_demo.csv": "LOINC laboratory tests",
     "ucum_units_demo.csv": "UCUM units",
+    "snomed_procedures_demo.csv": "SNOMED CT procedures",
+    "snomed_body_demo.csv": "SNOMED CT body structures",
+    "icdo3_topography_demo.csv": "ICD-O-3 tumour sites",
 }
 
 

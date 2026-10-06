@@ -86,6 +86,42 @@
       {
         "form.form_id": "MH",
         "field.name": "DONDIAG"
+      },
+      {
+        "form.form_id": "ONCOLOGY",
+        "field.name": "SURGIPROC"
+      },
+      {
+        "form.form_id": "FOLLOWUP",
+        "field.name": "SURGPROC"
+      },
+      {
+        "form.form_id": "OUTCOME",
+        "field.name": "SURGPROC"
+      },
+      {
+        "form.form_id": "ONCOLOGY",
+        "field.name": "ANALOC"
+      },
+      {
+        "form.form_id": "BIOIVTONC",
+        "field.name": "ANATLOC"
+      },
+      {
+        "form.form_id": "FOLLOWUP",
+        "field.name": "ANATLOC"
+      },
+      {
+        "form.form_id": "OUTCOME",
+        "field.name": "ANATLOC"
+      },
+      {
+        "form.form_id": "ONCOLOGY",
+        "field.name": "TUMLOCA"
+      },
+      {
+        "form.form_id": "BIOIVTONC",
+        "field.name": "TUM_LOC_CONF"
       }
     ]
   },
@@ -115,6 +151,13 @@
     },
     {
       "at": "2026-10-06T02:50:24Z",
+      "by": "human:dswanker",
+      "action": "edited",
+      "status": "active",
+      "note": "Added medication indication (CM), cause of death (DD) and reason for hospitalisation (MH) to the SNOMED CT lookup and its Other rows."
+    },
+    {
+      "at": "2026-10-06T04:10:22Z",
       "by": "human:dswanker",
       "action": "edited",
       "status": "active",
