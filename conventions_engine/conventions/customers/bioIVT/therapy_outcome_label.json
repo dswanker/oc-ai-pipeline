@@ -1,0 +1,39 @@
+{
+  "id": "customer.bioivt.therapy_outcome_label",
+  "title": "BioIVT: original Therapy Outcome question points to the two new ones",
+  "kind": "structured",
+  "scope": "customer",
+  "scope_id": "bioIVT",
+  "status": "active",
+  "natural_key": "bioivt_therapy_outcome_label",
+  "description": "Relabels the original free-text Therapy Outcome question so people know to use the new Therapy status and Response questions. The question itself stays (nothing is deleted).",
+  "rationale": "Standing rule: never delete a field.",
+  "target": "field",
+  "applies_when": {
+    "form.form_id": "ONCOLOGY",
+    "field.name": "THEROUTC"
+  },
+  "effect": {
+    "set": {
+      "field.label": "Therapy outcome (original free text; use the two questions below)"
+    }
+  },
+  "created_at": "2026-10-06T00:00:00Z",
+  "created_by": "human:dswanker",
+  "source": "BioIVT Option C update; approved by Dan",
+  "tags": [
+    "bioivt",
+    "phase_3",
+    "label",
+    "therapy"
+  ],
+  "history": [
+    {
+      "at": "2026-10-06T00:00:00Z",
+      "by": "human:dswanker",
+      "action": "created",
+      "status": "active",
+      "note": "Stage group and therapy outcome update."
+    }
+  ]
+}

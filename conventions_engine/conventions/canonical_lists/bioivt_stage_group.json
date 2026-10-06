@@ -1,0 +1,86 @@
+{
+  "list_name": "canon_bioivt_stage_group",
+  "multi_select": false,
+  "description": "Generic TNM stage groups (0 to IV with the common sub-stages) plus Other. Deliberately not a copy of the AJCC stage tables, which are copyrighted and differ by cancer type and edition. Values chosen from what Detroit sites actually enter (I, II, IIA, IIB, IIIA, IV) and approved by Dan.",
+  "source": "Approved by Dan 2026-10-06; values seen in the Detroit data. Stages not in this list go in Other, specify.",
+  "choices": [
+    {
+      "name": "0",
+      "label": "Stage 0",
+      "cdash_code": "0",
+      "is_extension": false
+    },
+    {
+      "name": "I",
+      "label": "Stage I",
+      "cdash_code": "I",
+      "is_extension": false
+    },
+    {
+      "name": "IA",
+      "label": "Stage IA",
+      "cdash_code": "IA",
+      "is_extension": false
+    },
+    {
+      "name": "IB",
+      "label": "Stage IB",
+      "cdash_code": "IB",
+      "is_extension": false
+    },
+    {
+      "name": "II",
+      "label": "Stage II",
+      "cdash_code": "II",
+      "is_extension": false
+    },
+    {
+      "name": "IIA",
+      "label": "Stage IIA",
+      "cdash_code": "IIA",
+      "is_extension": false
+    },
+    {
+      "name": "IIB",
+      "label": "Stage IIB",
+      "cdash_code": "IIB",
+      "is_extension": false
+    },
+    {
+      "name": "III",
+      "label": "Stage III",
+      "cdash_code": "III",
+      "is_extension": false
+    },
+    {
+      "name": "IIIA",
+      "label": "Stage IIIA",
+      "cdash_code": "IIIA",
+      "is_extension": false
+    },
+    {
+      "name": "IIIB",
+      "label": "Stage IIIB",
+      "cdash_code": "IIIB",
+      "is_extension": false
+    },
+    {
+      "name": "IIIC",
+      "label": "Stage IIIC",
+      "cdash_code": "IIIC",
+      "is_extension": false
+    },
+    {
+      "name": "IV",
+      "label": "Stage IV",
+      "cdash_code": "IV",
+      "is_extension": false
+    },
+    {
+      "name": "other",
+      "label": "Other",
+      "cdash_code": "OTHER",
+      "is_extension": true
+    }
+  ]
+}

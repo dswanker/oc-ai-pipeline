@@ -14,6 +14,7 @@ with contextlib.redirect_stdout(io.StringIO()):
 PHASE2 = ['vocab_rxnorm_single', 'vocab_rxnorm_multi', 'vocab_snomed_diagnoses', 'vocab_loinc_tests', 'vocab_units', 'lab_values_numeric', 'lab_unit_rows',
           'vocab_other_specify', 'vocab_other_specify_multi', 'din_max_length', 'autofill_demographics', 'calc_months_disease_free', 'calc_months_survived',
           'calc_months_survived_death_lookup', 'vocab_snomed_procedures', 'vocab_snomed_body_structure', 'vocab_icdo3_topography']
+PHASE3 = ['stage_group_list', 'stage_labels', 'tnm_format_check', 'therapy_outcome_label', 'therapy_s1_status_row', 'therapy_s3_response_row', 'therapy_s2_status_other', 'therapy_s4_response_other', 'therapy_s5_status_list', 'therapy_s6_response_list', 'stage_other_rows']
 SPECS = {'Detroit': 'tmp/Detroit_DS_Study_Specification_CORRECTED_v8.json', 'Precision': 'tmp/PrecisionMed_Study_Specification_CORRECTED_v6.json'}
 def build(raw, name):
     s = copy.deepcopy(raw)
@@ -22,10 +23,13 @@ def build(raw, name):
         run_study_spec_files(s, customer_subdomain='bioIVT'); s = _apply_omop_coding(s, 'OMOP_CDM')
     return s
 r = Path(tempfile.mkdtemp()); shutil.copytree(ROOT / 'conventions_engine' / 'conventions', r / 'conventions')
-for slug in PHASE2: (r / 'conventions' / 'customers' / 'bioIVT' / f'{slug}.json').unlink()
+r3 = Path(tempfile.mkdtemp()); shutil.copytree(ROOT / 'conventions_engine' / 'conventions', r3 / 'conventions')   # root without the later (phase 3) conventions
+for slug in PHASE3: (r3 / 'conventions' / 'customers' / 'bioIVT' / f'{slug}.json').unlink()
+for slug in PHASE2 + PHASE3: (r / 'conventions' / 'customers' / 'bioIVT' / f'{slug}.json').unlink()
 raws = {k: json.load(open(v)) for k, v in SPECS.items()}
+real = conventions_engine._default_data_root; conventions_engine._default_data_root = lambda: r3
 after = {k: build(v, k) for k, v in raws.items()}
-real = conventions_engine._default_data_root; conventions_engine._default_data_root = lambda: r
+conventions_engine._default_data_root = lambda: r
 # the registry (omop_coding) now points at real lists even in the 'before' build; fine, the registry is not a convention
 before = {k: build(v, k) for k, v in raws.items()}; conventions_engine._default_data_root = real
 results = []

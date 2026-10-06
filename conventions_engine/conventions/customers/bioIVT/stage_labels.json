@@ -1,0 +1,56 @@
+{
+  "id": "customer.bioivt.stage_labels",
+  "title": "BioIVT: the two stage questions say what they hold",
+  "kind": "structured",
+  "scope": "customer",
+  "scope_id": "bioIVT",
+  "status": "active",
+  "natural_key": "bioivt_stage_labels",
+  "description": "Relabels Oncology 'UICC Stage' to 'TNM classification (for example T2N0M0)' and 'Stage' to 'Stage group'. The two questions hold different things, so both stay.",
+  "rationale": "Real data: 'UICC Stage' holds TNM strings (T3N0M0, T2N0M0), 'Stage' holds stage groups (II, IIA, IIB). The old labels did not say so.",
+  "target": "field",
+  "applies_when": {
+    "form.form_id": "ONCOLOGY",
+    "field.name": {
+      "in": [
+        "UICCSTGE",
+        "TUMSTGE"
+      ]
+    }
+  },
+  "effect": {
+    "match": {
+      "on": "field.name",
+      "cases": {
+        "UICCSTGE": {
+          "set": {
+            "field.label": "TNM classification (for example T2N0M0)"
+          }
+        },
+        "TUMSTGE": {
+          "set": {
+            "field.label": "Stage group"
+          }
+        }
+      }
+    }
+  },
+  "created_at": "2026-10-06T00:00:00Z",
+  "created_by": "human:dswanker",
+  "source": "BioIVT Option C update; approved by Dan",
+  "tags": [
+    "bioivt",
+    "phase_3",
+    "label",
+    "stage"
+  ],
+  "history": [
+    {
+      "at": "2026-10-06T00:00:00Z",
+      "by": "human:dswanker",
+      "action": "created",
+      "status": "active",
+      "note": "Stage group and therapy outcome update."
+    }
+  ]
+}

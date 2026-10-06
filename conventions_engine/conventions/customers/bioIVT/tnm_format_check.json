@@ -1,0 +1,56 @@
+{
+  "id": "customer.bioivt.tnm_format_check",
+  "title": "BioIVT: TNM classification gets a format check",
+  "kind": "structured",
+  "scope": "customer",
+  "scope_id": "bioIVT",
+  "status": "active",
+  "natural_key": "bioivt_tnm_format_check",
+  "description": "Adds a warning (not a block: the check is soft unless marked strict) when a TNM classification does not look like T2N0M0, allowing the c, p, y, r, a prefixes, T0 to T4 with letters, Tis and TX, N0 to N3 with letters and NX, and M0, M1 and MX. Applies to the four TNM questions.",
+  "rationale": "Real answers are TNM strings; a format check keeps them consistent without blocking unusual legacy values.",
+  "target": "field",
+  "applies_when": {
+    "any_of": [
+      {
+        "form.form_id": "ONCOLOGY",
+        "field.name": "UICCSTGE"
+      },
+      {
+        "form.form_id": "BIOIVTONC",
+        "field.name": "CONFTNMSTG"
+      },
+      {
+        "form.form_id": "FOLLOWUP",
+        "field.name": "TNMSTG"
+      },
+      {
+        "form.form_id": "OUTCOME",
+        "field.name": "AJCC_TNM_DLC"
+      }
+    ]
+  },
+  "effect": {
+    "set": {
+      "field.constraint": "regex(., '^[cpyraCPYRA]{0,3}[Tt](X|x|0|is|[1-4][a-dA-D]?)[ ]*[cpyraCPYRA]{0,3}[Nn](X|x|[0-3][a-cA-C]?)[ ]*[cpyraCPYRA]{0,3}[Mm](X|x|0|1[a-cA-C]?)$')",
+      "field.constraint_message": "Enter the TNM classification, for example T2N0M0."
+    }
+  },
+  "created_at": "2026-10-06T00:00:00Z",
+  "created_by": "human:dswanker",
+  "source": "BioIVT Option C update; approved by Dan",
+  "tags": [
+    "bioivt",
+    "phase_3",
+    "constraint",
+    "stage"
+  ],
+  "history": [
+    {
+      "at": "2026-10-06T00:00:00Z",
+      "by": "human:dswanker",
+      "action": "created",
+      "status": "active",
+      "note": "Stage group and therapy outcome update."
+    }
+  ]
+}

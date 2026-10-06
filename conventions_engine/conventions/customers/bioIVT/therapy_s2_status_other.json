@@ -1,0 +1,42 @@
+{
+  "id": "customer.bioivt.therapy_s2_status_other",
+  "title": "BioIVT: Other, specify box after Therapy status",
+  "kind": "structured",
+  "scope": "customer",
+  "scope_id": "bioIVT",
+  "status": "active",
+  "natural_key": "bioivt_therapy_s2_status_other",
+  "description": "Adds the Other, specify box after Therapy status, shown only when Other is chosen. Step 2 of the ordered therapy chain (conventions run in id order).",
+  "rationale": "Approved rule: every converted field keeps an Other, specify box.",
+  "target": "field",
+  "applies_when": {
+    "form.form_id": "ONCOLOGY",
+    "field.name": "THER_STATUS"
+  },
+  "effect": {
+    "insert_after": {
+      "name": "{self}_OTH",
+      "type": "text",
+      "label": "Other therapy status, specify",
+      "relevant": "${{self}}='other'"
+    }
+  },
+  "created_at": "2026-10-06T00:00:00Z",
+  "created_by": "human:dswanker",
+  "source": "BioIVT Option C update; approved by Dan",
+  "tags": [
+    "bioivt",
+    "phase_3",
+    "other_specify",
+    "therapy"
+  ],
+  "history": [
+    {
+      "at": "2026-10-06T00:00:00Z",
+      "by": "human:dswanker",
+      "action": "created",
+      "status": "active",
+      "note": "Stage group and therapy outcome update."
+    }
+  ]
+}

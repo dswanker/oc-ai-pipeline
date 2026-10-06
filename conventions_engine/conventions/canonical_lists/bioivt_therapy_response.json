@@ -1,0 +1,50 @@
+{
+  "list_name": "canon_bioivt_therapy_response",
+  "multi_select": false,
+  "description": "Response to therapy using the RECIST 1.1 response categories (complete response, partial response, stable disease, progressive disease, not evaluable) plus Unknown and Other. This is the standard way tumour response is recorded; it is not taken from a licensed list.",
+  "source": "Approved by Dan 2026-10-06; RECIST 1.1 response categories.",
+  "choices": [
+    {
+      "name": "complete_response",
+      "label": "Complete response",
+      "cdash_code": "COMPLETE_RESPONSE",
+      "is_extension": false
+    },
+    {
+      "name": "partial_response",
+      "label": "Partial response",
+      "cdash_code": "PARTIAL_RESPONSE",
+      "is_extension": false
+    },
+    {
+      "name": "stable_disease",
+      "label": "Stable disease",
+      "cdash_code": "STABLE_DISEASE",
+      "is_extension": false
+    },
+    {
+      "name": "progressive_disease",
+      "label": "Progressive disease",
+      "cdash_code": "PROGRESSIVE_DISEASE",
+      "is_extension": false
+    },
+    {
+      "name": "not_evaluable",
+      "label": "Not evaluable",
+      "cdash_code": "NOT_EVALUABLE",
+      "is_extension": false
+    },
+    {
+      "name": "unknown",
+      "label": "Unknown",
+      "cdash_code": "UNKNOWN",
+      "is_extension": false
+    },
+    {
+      "name": "other",
+      "label": "Other",
+      "cdash_code": "OTHER",
+      "is_extension": true
+    }
+  ]
+}
