@@ -449,6 +449,125 @@ def _safe_int(val, default=999) -> int:
         return default
 
 
+# ── Real item OIDs from the published study metadata ─────────────────────────
+#
+# OpenClinica builds an item OID as I_<first 5 letters of the form title>_<name>
+# and, when a later form collides on that prefix and name, appends a random
+# 4-digit suffix (F_DM has I_DEMOG_DIN, F_DMONC has I_DEMOG_DIN_2803). The
+# suffix is assigned at upload, so the DVS can only carry a predicted OID. The
+# loader reads the real OIDs from the study metadata and corrects the rows.
+
+async def _fetch_study_metadata(subdomain: str, study_oid: str, token: str) -> str:
+    """GET the study's ODM metadata (no clinical data). Returns XML text, or ""."""
+    from urllib.parse import quote as _quote
+    url = (
+        f"{_pages_base(subdomain)}/pages/auth/api/clinicaldata"
+        f"/{_quote(study_oid, safe='')}/*/*/*"
+        f"?clinicalData=n&includeMetadata=y&includeDN=n"
+        f"&includeAudits=n&showArchived=n"
+    )
+    try:
+        async with httpx.AsyncClient(timeout=120) as client:
+            resp = await client.get(url, headers={
+                "Authorization": f"Bearer {token}",
+                "Accept":        "application/xml",
+            })
+        if not resp.is_success:
+            print(f"[uat_loader] study metadata GET HTTP {resp.status_code} "
+                  f"— body: {resp.text[:300]}", flush=True)
+            return ""
+        return resp.text or ""
+    except Exception as e:
+        print(f"[uat_loader] study metadata GET failed: {e}", flush=True)
+        return ""
+
+
+def _parse_item_oid_map(metadata_xml: str) -> dict:
+    """Map (FORM_OID, ITEM NAME), both uppercase, to the real OIDs.
+
+    Returns {(form_oid, item_name): {"item_oid": ..., "item_group_oid": ...}}.
+    FormDef/ItemGroupRef and ItemGroupDef/ItemRef give membership;
+    ItemDef/@Name gives the item name. Empty dict if the XML cannot be read.
+    """
+    import xml.etree.ElementTree as _ET
+    if not (metadata_xml or "").strip():
+        return {}
+    ns = "{http://www.cdisc.org/ns/odm/v1.3}"
+    try:
+        root = _ET.fromstring(metadata_xml.encode("utf-8"))
+    except Exception as e:
+        print(f"[uat_loader] study metadata parse error: {e}", flush=True)
+        return {}
+    item_names = {i.get("OID"): (i.get("Name") or "")
+                  for i in root.iter(ns + "ItemDef")}
+    group_items = {g.get("OID"): [r.get("ItemOID") for r in g.findall(ns + "ItemRef")]
+                   for g in root.iter(ns + "ItemGroupDef")}
+    oid_map: dict = {}
+    for form in root.iter(ns + "FormDef"):
+        form_oid = (form.get("OID") or "").strip().upper()
+        for ref in form.findall(ns + "ItemGroupRef"):
+            group_oid = ref.get("ItemGroupOID") or ""
+            for item_oid in group_items.get(group_oid, []):
+                name = (item_names.get(item_oid) or "").strip().upper()
+                if form_oid and name and item_oid:
+                    oid_map.setdefault((form_oid, name), {
+                        "item_oid": item_oid, "item_group_oid": group_oid})
+    return oid_map
+
+
+def _item_name_for_row(row: dict) -> str:
+    """The XLSForm item name a UAT_Cases row is about.
+
+    Uses the Item_Name column when the DVS has one. Older workbooks do not, so
+    fall back to the name the generator wrote into Test Steps
+    ("1. Navigate to FORM.NAME" / "1. Enter '...' for NAME"), then to the
+    predicted Item_OID with its I_<prefix>_ removed.
+    """
+    name = str(row.get("Item_Name") or "").strip()
+    if name:
+        return name
+    steps = str(row.get("Test Steps") or "")
+    m = (re.search(r"Navigate to [^.\s]+\.(\S+)", steps)
+         or re.search(r"Enter .* for (\S+)", steps))
+    if m:
+        return m.group(1).strip()
+    m = re.match(r"^I_[A-Za-z0-9]+_(.+)$", str(row.get("Item_OID") or "").strip())
+    return m.group(1) if m else ""
+
+
+def _real_oids_for_row(row: dict, item_oid_map: dict):
+    """(item_name, entry-or-None) for a row; entry holds the real OIDs."""
+    name = _item_name_for_row(row)
+    form_oid = str(row.get("Form_OID") or "").strip().upper()
+    if not (name and form_oid and item_oid_map):
+        return name, None
+    return name, item_oid_map.get((form_oid, name.upper()))
+
+
+def _apply_item_oid_map(rows: list, item_oid_map: dict) -> dict:
+    """Rewrite Item_OID / Item_Group_OID in the parsed rows to the real OIDs.
+
+    Sets Item_Name on every row. Returns counts: corrected, unchanged,
+    unresolved (form/name not in the metadata — the predicted OID is kept).
+    """
+    counts = {"corrected": 0, "unchanged": 0, "unresolved": 0}
+    for row in rows:
+        name, entry = _real_oids_for_row(row, item_oid_map)
+        if name:
+            row["Item_Name"] = name
+        if not entry:
+            counts["unresolved"] += 1
+            continue
+        if (str(row.get("Item_OID") or "").strip() == entry["item_oid"]
+                and str(row.get("Item_Group_OID") or "").strip() == entry["item_group_oid"]):
+            counts["unchanged"] += 1
+            continue
+        row["Item_OID"] = entry["item_oid"]
+        row["Item_Group_OID"] = entry["item_group_oid"]
+        counts["corrected"] += 1
+    return counts
+
+
 # ── ODM XML builder ───────────────────────────────────────────────────────────
 
 def _xml_escape(val: str) -> str:
@@ -507,8 +626,12 @@ def _validate_odm_xml(odm_xml: str) -> list[str]:
 
 def _build_odm_xml(study_oid: str, site_oid: str,
                    participant_oid: str, participant_id: str,
-                   rows: list) -> str:
+                   rows: list, item_oid_map: dict = None) -> str:
     """Build ODM XML for one participant's data rows.
+
+    item_oid_map: real OIDs from _parse_item_oid_map. The rows themselves are
+    corrected by _apply_item_oid_map before this is called; the map is used
+    here for the source items named inside "Calc path" Load_Values.
 
     participant_oid: OC's internal Participant OID (e.g. SS_UAT20260_8695) —
                      goes into SubjectKey, satisfies the ODM XSD.
@@ -584,7 +707,13 @@ def _build_odm_xml(study_oid: str, site_oid: str,
                     _fname_clean = _fname.strip()
                     _form_short = fo.replace('F_', '', 1) if fo.upper().startswith('F_') else fo
                     _expected_prefix = f"I_{_form_short}_"
-                    if _fname_clean.upper().startswith(_expected_prefix.upper()):
+                    _real = (item_oid_map or {}).get((fo.upper(), _fname_clean.upper()))
+                    _input_ig = ig
+                    if _real:
+                        # Source item's real OID and group from the study metadata
+                        _item_oid = _real["item_oid"]
+                        _input_ig = _real["item_group_oid"]
+                    elif _fname_clean.upper().startswith(_expected_prefix.upper()):
                         _item_oid = _fname_clean  # already fully qualified
                     else:
                         _item_oid = f"I_{_form_short}_{_fname_clean}"
@@ -592,7 +721,7 @@ def _build_odm_xml(study_oid: str, site_oid: str,
                      .setdefault(ev, {})
                      .setdefault(rk, {})
                      .setdefault(fo, {})
-                     .setdefault(ig, [])
+                     .setdefault(_input_ig, [])
                      .append((_item_oid, _fval.strip())))
             continue
 
@@ -1107,10 +1236,17 @@ def _evaluate_uat_cases(
 
 # ── DVS stamping ──────────────────────────────────────────────────────────────
 
-def _stamp_dvs(dvs_bytes: bytes, stamp_map: dict) -> bytes:
+def _stamp_dvs(dvs_bytes: bytes, stamp_map: dict,
+               item_oid_map: dict = None) -> bytes:
     """
     Write runtime Site_OID and Participant_Key into UAT_Cases sheet.
     stamp_map: { logical_pid -> {"site_oid": ..., "participant_key": ...} }
+
+    item_oid_map (from _parse_item_oid_map): when given, Item_OID and
+    Item_Group_OID are also rewritten to the OIDs OpenClinica really assigned,
+    so the evaluation and the results workbook use the same OIDs as the load.
+    The item name is kept in an Item_Name column (added if the DVS has none),
+    because the name can no longer be read off a suffixed OID.
     """
     wb = load_workbook(io.BytesIO(dvs_bytes))
     if "UAT_Cases" not in wb.sheetnames:
@@ -1141,6 +1277,25 @@ def _stamp_dvs(dvs_bytes: bytes, stamp_map: dict) -> bytes:
         if pid and pid in stamp_map:
             row[site_col - 1].value = stamp_map[pid]["site_oid"]
             row[key_col  - 1].value = stamp_map[pid]["participant_key"]
+
+    item_col  = col_idx.get("Item_OID")
+    group_col = col_idx.get("Item_Group_OID")
+    if item_oid_map and item_col and group_col and col_idx.get("Form_OID"):
+        name_col = col_idx.get("Item_Name")
+        if not name_col:
+            name_col = ws.max_column + 1
+            ws.cell(row=header_row_idx, column=name_col, value="Item_Name")
+        for row_num in range(header_row_idx + 1, ws.max_row + 1):
+            if not ws.cell(row=row_num, column=1).value:
+                continue
+            row_dict = {k: ws.cell(row=row_num, column=c).value
+                        for k, c in col_idx.items()}
+            name, entry = _real_oids_for_row(row_dict, item_oid_map)
+            if name:
+                ws.cell(row=row_num, column=name_col, value=name)
+            if entry:
+                ws.cell(row=row_num, column=item_col,  value=entry["item_oid"])
+                ws.cell(row=row_num, column=group_col, value=entry["item_group_oid"])
 
     out = io.BytesIO()
     wb.save(out)
@@ -1291,6 +1446,28 @@ async def run_uat_loader(item_id: str, fo_titles: dict = None) -> dict:
     token = await _get_oc_token(subdomain, oc_email=oc_email)
     stamp_map = {}
 
+    # ── Real item OIDs: correct the predicted OIDs before anything is loaded ──
+    item_oid_map: dict = {}
+    try:
+        item_oid_map = _parse_item_oid_map(
+            await _fetch_study_metadata(subdomain, study_oid, token))
+    except Exception as e:
+        await append_log(item_id,
+            f"UAT Loader: study metadata read failed (non-fatal): {e}")
+    if item_oid_map:
+        _oid_counts = _apply_item_oid_map(uat_rows, item_oid_map)
+        await append_log(
+            item_id,
+            f"UAT Loader: item OIDs checked against study metadata — "
+            f"{_oid_counts['corrected']} corrected, "
+            f"{_oid_counts['unchanged']} already right, "
+            f"{_oid_counts['unresolved']} not found (predicted OID kept)")
+    else:
+        await append_log(item_id,
+            "UAT Loader: study metadata unavailable — using the predicted "
+            "item OIDs from the DVS (forms with duplicate item names may fail "
+            "to import)")
+
     # ── Pass 1: Create ALL participants first ─────────────────────────────
     for logical_pid, rows in groups.items():
         p_suffix = logical_pid.replace("UAT-P", "P")
@@ -1348,7 +1525,8 @@ async def run_uat_loader(item_id: str, fo_titles: dict = None) -> dict:
                 _r0 = rows[0]
                 await append_log(item_id, f"UAT Loader: rows[0] ev={_r0.get('Study_Event_OID')!r} item={_r0.get('Item_OID')!r} val={str(_r0.get('Load_Value',''))[:20]!r}")
             odm_xml_full = _build_odm_xml(
-                study_oid, created_site_oid, oc_oid, confirmed_id, rows
+                study_oid, created_site_oid, oc_oid, confirmed_id, rows,
+                item_oid_map=item_oid_map,
             )
             odm_errors = _validate_odm_xml(odm_xml_full)
             if odm_errors:
@@ -1463,7 +1641,7 @@ async def run_uat_loader(item_id: str, fo_titles: dict = None) -> dict:
     if stamp_map:
         await append_log(item_id, "UAT Loader: stamping DVS with runtime OIDs...")
         try:
-            stamped_bytes = _stamp_dvs(dvs_bytes, stamp_map)
+            stamped_bytes = _stamp_dvs(dvs_bytes, stamp_map, item_oid_map)
         except Exception as e:
             stamped_bytes = dvs_bytes
             await append_log(item_id, f"UAT Loader: stamp failed (non-fatal): {e}")

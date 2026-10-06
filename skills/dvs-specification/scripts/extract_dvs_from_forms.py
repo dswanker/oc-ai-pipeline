@@ -1147,6 +1147,9 @@ def _uat_row(uat_id, check_id, form_id, field_name, field_label, case,
         "Participant_ID":    "UAT-P001",
         "Load_Order":        "",        # set below by caller if needed
         "Load_Value":        case.get("input_data", ""),
+        # The XLSForm item name. OpenClinica may suffix the real item OID
+        # (I_DEMOG_DIN_2803), so the loader looks the OID up by form + name.
+        "Item_Name":         field_name,
     }
 
 
@@ -1504,6 +1507,7 @@ def extract_dvs_data(struct_json, forms_json):
                 "Participant_ID":    "UAT-P001",
                 "Load_Order":        str(uat_counter),
                 "Load_Value":        _fval,
+                "Item_Name":         _fname,
             }
             uat_cases.append(_seed_row)
         if _seeds:
