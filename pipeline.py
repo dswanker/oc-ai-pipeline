@@ -4173,6 +4173,44 @@ def _fix_missing_choices(struct_json: dict) -> dict:
     return struct_json
 
 
+_CDISC_CT_FLAG_STATUSES = ("nonconformant", "mappable", "extended", "missing_list")
+
+
+async def _cdisc_ct_report_step(item_id, struct_json, protocol_num, version):
+    """CDISC Phase 1, report-only. Assesses every select_one/select_multiple
+    field in every form against CDISC Controlled Terminology (cdisc_ct.py).
+    Never modifies struct_json and never fails the run. Summary goes to the
+    monday log; per-field findings to stdout; full report JSON to the CT cache
+    volume under reports/."""
+    try:
+        import cdisc_ct
+        rep = await asyncio.to_thread(cdisc_ct.report, struct_json)
+        if rep is None:
+            print("[cdisc-ct] report skipped (CT unavailable or no spec)", flush=True)
+            return None
+        flagged = [r for r in rep["fields"] if r["status"] in _CDISC_CT_FLAG_STATUSES]
+        msg = (f"CDISC CT check (report only, CT {rep['ct_package_date']}): "
+               + ", ".join(f"{k} {v}" for k, v in sorted(rep["summary"].items())))
+        print(f"[cdisc-ct] {msg}", flush=True)
+        for r in flagged[:100]:
+            print(f"[cdisc-ct]   {r.get('form_id')}.{r['field']} -> {r.get('codelist')} "
+                  f"{r['status']} extra={r.get('extra_values')} map={r.get('synonym_matches')}",
+                  flush=True)
+        try:
+            d = os.path.join(cdisc_ct._cache_dir(), "reports")
+            os.makedirs(d, exist_ok=True)
+            fn = os.path.join(d, f"{protocol_num}_{version}_{int(time.time())}.json")
+            with open(fn, "w") as fh:
+                json.dump(rep, fh, indent=1)
+        except Exception as _se:
+            print(f"[cdisc-ct] report save failed: {_se}", flush=True)
+        await append_log(item_id, msg)
+        return rep
+    except Exception as e:
+        print(f"[cdisc-ct] report step failed (build continues): {e}", flush=True)
+        return None
+
+
 def _backfill_migration_fields(spec):
     """Add schedule_of_events + per-form migration lifecycle fields if
     missing. Idempotent — safe to call on every spec load."""
@@ -7078,6 +7116,11 @@ async def run_pipeline(item_id):
                     for _line in _tb_str.splitlines():
                         print(f"[chain_e_tb] {_line}", flush=True)
                     await append_log(item_id, f"Build Preview error: {e}")
+
+            # ── CDISC Phase 1 (report-only): CT conformance of every select field ──
+            # Never modifies struct_json, never fails the run. CDISC_CT_REPORT=0 disables.
+            if os.environ.get("CDISC_CT_REPORT", "1") != "0":
+                await _cdisc_ct_report_step(item_id, struct_json, protocol_num, version)
 
             # ── Launch all four chains in parallel ─────────────────────────────
             # return_exceptions=True prevents one chain's failure from cancelling
