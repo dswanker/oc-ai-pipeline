@@ -43,3 +43,6 @@ sessions/
 # test_publisher.py --capture-session. Same risk: live auth cookies.
 data/
 extension.zip
+
+# CDISC CT cache (cdisc_ct.py)
+.cache/
