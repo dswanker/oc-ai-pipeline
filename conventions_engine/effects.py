@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from . import ApplyResult, Mutation, Flag, DSLEvaluationError, EntityContext
-from .applies_when import _resolve_path, _SENTINEL_MISSING
+from .applies_when import _resolve_path, _SENTINEL_MISSING, render
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -81,14 +81,9 @@ _TEMPLATE_VAR = re.compile(r"\$\{([^}]+)\}")
 
 
 def _interpolate(template: str, ctx: EntityContext) -> str:
-    """Replace ${path} occurrences with resolved values."""
-    def _sub(m: "re.Match[str]") -> str:
-        path = m.group(1)
-        val = _resolve_path(path, ctx)
-        if val is _SENTINEL_MISSING:
-            return f"<unresolved:{path}>"
-        return str(val)
-    return _TEMPLATE_VAR.sub(_sub, template)
+    """Replace engine ${path} occurrences (incl. bindings and |filters) with resolved values.
+    Non-engine references such as an XLSForm ${AESTDAT} are left as written."""
+    return render(template, ctx, strict=True)
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -792,9 +787,48 @@ def _do_lookup_from(payload: Any, ctx: EntityContext, result: ApplyResult) -> No
                                           new_value=f"+{', '.join(r['name'] for r in insert)} after {me}"))
 
 
+def _do_add_constraint(payload: Any, ctx: EntityContext, result: ApplyResult) -> None:
+    """
+    Add an edit check to a field without overwriting its existing constraint.
+
+    Shape (field-scoped): "add_constraint": {"expr": "<XLSForm expression>", "message": "...",
+                                             "check_id": "<stable id, e.g. CORE-000022>"}
+    expr/message are templates: engine paths (${field.name}, ${start.name}, ${x.name|replace:A:B})
+    are substituted; XLSForm references (${AESTDAT}, .) are kept as written.
+    The check is ANDed with any existing constraint; the message is appended. Idempotent: a check whose
+    rendered expression is already part of the constraint is not added again. check_id is recorded in
+    field.edit_checks for traceability.
+    """
+    if ctx.kind != "field":
+        raise DSLEvaluationError(f"add_constraint requires field-scoped context, got {ctx.kind!r}")
+    if not isinstance(payload, dict) or not payload.get("expr"):
+        raise DSLEvaluationError("add_constraint payload needs 'expr'")
+    field = ctx.entity
+    expr = render(payload["expr"], ctx, strict=True).strip()
+    msg = render(payload.get("message", ""), ctx, strict=True).strip()
+    if "<unresolved:" in expr:
+        result.flags_raised.append(Flag(category="review_flags.edit_check_skipped",
+                                        message=f"{field.get('name')}: could not render check {expr!r}"))
+        return
+    check_id = payload.get("check_id")
+    if check_id and check_id not in (field.get("edit_checks") or []):
+        field.setdefault("edit_checks", []).append(check_id)
+    cur = str(field.get("constraint") or "").strip()
+    if expr in cur:
+        return
+    field["constraint"] = f"({cur}) and ({expr})" if cur else expr
+    if msg:
+        cm = str(field.get("constraint_message") or "").strip()
+        if msg not in cm:
+            field["constraint_message"] = f"{cm} {msg}" if cm else msg
+    result.mutations_made.append(Mutation(directive="add_constraint", path="field.constraint",
+                                          old_value=cur or None, new_value=field["constraint"]))
+
+
 DIRECTIVES = {
     "set":         _do_set,
     "ensure":      _do_ensure,
+    "add_constraint": _do_add_constraint,
     "require":     _do_require,
     "flag":        _do_flag,
     "append_to":   _do_append_to,

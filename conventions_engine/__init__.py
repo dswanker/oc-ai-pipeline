@@ -40,6 +40,9 @@ class EntityContext:
     parent: Optional[Dict[str, Any]]  # parent entity (form for fields, etc.)
     spec: Dict[str, Any]      # full spec
     path: str                 # human-readable path e.g. "forms[2].survey[5]"
+    # Fields found by has_field / has_sibling / study.has_field with "as": <name>;
+    # readable in later conditions and effects as ${<name>.<key>} (e.g. ${start.name}).
+    bindings: Dict[str, Any] = field(default_factory=dict)
 
 @dataclass
 class EvaluateResult:

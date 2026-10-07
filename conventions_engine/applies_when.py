@@ -35,7 +35,10 @@ def _resolve_path(path: str, ctx: EntityContext) -> Any:
     head = parts[0]
     rest = parts[1:]
 
-    if head == "study":
+    bindings = getattr(ctx, "bindings", None) or {}
+    if head in bindings:
+        current: Any = bindings[head]
+    elif head == "study":
         current: Any = ctx.spec
     elif head == "form":
         if ctx.kind == "form":
@@ -112,6 +115,77 @@ def _resolve_path_from_value(value: Any, path: str) -> Any:
 # ──────────────────────────────────────────────────────────────────────
 # Comparison operators
 # ──────────────────────────────────────────────────────────────────────
+
+# ──────────────────────────────────────────────────────────────────────
+# Templates: ${path|filter:arg:arg}
+# ──────────────────────────────────────────────────────────────────────
+#
+# Only engine paths are substituted (roots study/form/field/event/choice and
+# names bound with "as"). Anything else, e.g. an XLSForm reference ${AESTDAT},
+# is left exactly as written. Filters:
+#   replace:OLD:NEW     strip_suffix:X     strip_prefix:X     upper     lower
+
+_ROOTS = ("study", "form", "field", "event", "choice")
+# Innermost-first: ${${start.name}} renders start.name, leaving the XLSForm reference ${AESTDAT}.
+_TEMPLATE = re.compile(r"\$\{([^${}]+)\}")
+
+
+def _apply_filter(val: str, spec: str) -> str:
+    name, *args = spec.split(":")
+    if name == "replace" and len(args) == 2:
+        return val.replace(args[0], args[1])
+    if name == "strip_suffix" and len(args) == 1:
+        return val[: -len(args[0])] if args[0] and val.endswith(args[0]) else val
+    if name == "strip_prefix" and len(args) == 1:
+        return val[len(args[0]):] if val.startswith(args[0]) else val
+    if name == "upper":
+        return val.upper()
+    if name == "lower":
+        return val.lower()
+    raise DSLEvaluationError(f"Unknown template filter {spec!r}")
+
+
+def render(template: str, ctx: EntityContext, strict: bool = False) -> str:
+    """Substitute engine paths in a template. Non-engine ${...} is left verbatim.
+    strict=True replaces an unresolvable engine path with <unresolved:path>; otherwise it is left as is."""
+    bindings = getattr(ctx, "bindings", None) or {}
+
+    def _sub(m: "re.Match[str]") -> str:
+        expr = m.group(1)
+        path, *filters = expr.split("|")
+        head = path.split(".")[0]
+        if head not in _ROOTS and head not in bindings:
+            # XLSForm references are plain identifiers; a dotted path is an engine path left unbound.
+            return f"<unresolved:{path}>" if (strict and "." in path) else m.group(0)
+        val = _resolve_path(path, ctx)
+        if val is _SENTINEL_MISSING:
+            return f"<unresolved:{path}>" if strict else m.group(0)
+        out = str(val)
+        for f in filters:
+            out = _apply_filter(out, f)
+        return out
+    return _TEMPLATE.sub(_sub, template)
+
+
+def _render_where(obj: Any, ctx: EntityContext) -> Any:
+    """Render templates inside a where block against the OUTER context before probing candidates."""
+    if isinstance(obj, str):
+        return render(obj, ctx) if "${" in obj else obj
+    if isinstance(obj, dict):
+        return {k: _render_where(v, ctx) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_render_where(v, ctx) for v in obj]
+    return obj
+
+
+def _bind(ctx: EntityContext, payload: Dict[str, Any], candidate: Dict[str, Any], form: Dict[str, Any]) -> None:
+    name = payload.get("as")
+    if not name:
+        return
+    if name in _ROOTS:
+        raise DSLEvaluationError(f"'as' name {name!r} is reserved")
+    ctx.bindings[name] = {**candidate, "_form_id": form.get("form_id")}
+
 
 def _op_equals(actual: Any, expected: Any) -> bool:
     return actual == expected
@@ -256,7 +330,7 @@ def _eval_has_field(payload: Dict[str, Any], ctx: EntityContext) -> bool:
     """form.has_field — existential quantifier over form.survey."""
     if not isinstance(payload, dict) or "where" not in payload:
         raise DSLEvaluationError("form.has_field requires a 'where' sub-expression")
-    where = payload["where"]
+    where = _render_where(payload["where"], ctx)
     form = _get_form_for_quantifier(ctx)
     survey = form.get("survey", []) or []
     for i, candidate in enumerate(survey):
@@ -266,6 +340,7 @@ def _eval_has_field(payload: Dict[str, Any], ctx: EntityContext) -> bool:
         )
         # Fresh discarded soft_hints — probe results don't leak guidance.
         if _eval_block(where, temp_ctx, []).matched:
+            _bind(ctx, payload, candidate, form)
             return True
     return False
 
@@ -278,7 +353,7 @@ def _eval_has_sibling(payload: Dict[str, Any], ctx: EntityContext) -> bool:
         )
     if not isinstance(payload, dict) or "where" not in payload:
         raise DSLEvaluationError("field.has_sibling requires a 'where' sub-expression")
-    where = payload["where"]
+    where = _render_where(payload["where"], ctx)
     scope = payload.get("scope", "same_form")
     if scope not in ("same_form", "same_itemgroup"):
         raise DSLEvaluationError(
@@ -301,7 +376,29 @@ def _eval_has_sibling(payload: Dict[str, Any], ctx: EntityContext) -> bool:
             spec=ctx.spec, path=f"<has_sibling-probe[{i}]>",
         )
         if _eval_block(where, temp_ctx, []).matched:
+            _bind(ctx, payload, candidate, form)
             return True
+    return False
+
+
+def _eval_study_has_field(payload: Dict[str, Any], ctx: EntityContext) -> bool:
+    """study.has_field — existential quantifier over every form's survey (cross-form rules).
+    "other_forms": true (default) skips the current entity's own form. "where" may test form.* too."""
+    if not isinstance(payload, dict) or "where" not in payload:
+        raise DSLEvaluationError("study.has_field requires a 'where' sub-expression")
+    where = _render_where(payload["where"], ctx)
+    own = ctx.parent if ctx.kind in ("field", "choice") else (ctx.entity if ctx.kind == "form" else None)
+    for fi, form in enumerate(ctx.spec.get("forms", []) or []):
+        if not isinstance(form, dict) or (payload.get("other_forms", True) and form is own):
+            continue
+        for i, candidate in enumerate(form.get("survey", []) or []):
+            if not isinstance(candidate, dict):
+                continue
+            temp_ctx = EntityContext(kind="field", entity=candidate, parent=form, spec=ctx.spec,
+                                     path=f"<study_has_field-probe[{fi}][{i}]>")
+            if _eval_block(where, temp_ctx, []).matched:
+                _bind(ctx, payload, candidate, form)
+                return True
     return False
 
 
@@ -350,6 +447,11 @@ def _eval_block(block: Dict[str, Any], ctx: EntityContext,
 
         if key == "field.has_sibling":
             if not _eval_has_sibling(val, ctx):
+                return EvaluateResult(matched=False, soft_hints=soft_hints)
+            continue
+
+        if key == "study.has_field":
+            if not _eval_study_has_field(val, ctx):
                 return EvaluateResult(matched=False, soft_hints=soft_hints)
             continue
 

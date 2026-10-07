@@ -334,3 +334,32 @@ Intersection logic is implemented in the engine for the operators
 defined above. For hybrid and advisory conventions, semantic conflict
 detection is skipped (their behavior is too unstructured to compare
 mechanically). Natural-key check still applies.
+
+## Bindings, templates, cross-form quantifier, add_constraint (2026-10-07)
+
+**Bindings.** `form.has_field`, `field.has_sibling` and `study.has_field` accept `"as": "<name>"`. The first
+matching field is bound for the rest of the convention (later conditions and the effect) and read as
+`${<name>.<key>}`; `${<name>._form_id}` is the form it was found on. Reserved names: study, form, field,
+event, choice.
+
+**Templates.** `${path|filter:arg}` in `where` values and in effect text. Only engine paths (the roots above
+plus bound names) are substituted; XLSForm references such as `${AESTDAT}` are left as written. Rendering is
+innermost-first, so `${${start.name}}` becomes the XLSForm reference `${AESTDAT}`. Filters: `replace:OLD:NEW`,
+`strip_suffix:X`, `strip_prefix:X`, `upper`, `lower`.
+
+**study.has_field.** Like `form.has_field` but over every form, for cross-form rules. `"other_forms": true`
+(default) skips the current entity's own form; `where` may test `form.*` of the candidate.
+
+**add_constraint** (field-scoped effect). `{"expr": ..., "message": ..., "check_id": ...}`. ANDs the check
+with any existing constraint (never overwrites), appends the message, records `check_id` in
+`field.edit_checks`, is idempotent, and raises `review_flags.edit_check_skipped` instead of writing when a
+template does not resolve.
+
+Example (end date on or after its matching start date, any domain):
+```json
+{"applies_when": {"field.name": {"matches": "^.*ENDAT$"},
+                  "field.has_sibling": {"where": {"field.name": "${field.name|replace:ENDAT:STDAT}"}, "as": "start"}},
+ "effect": {"add_constraint": {"expr": ". = '' or ${${start.name}} = '' or . >= ${${start.name}}",
+                               "message": "End date must be on or after the start date.",
+                               "check_id": "CDISC.DATE_ORDER"}}}
+```
