@@ -215,7 +215,8 @@ def _build_ws(wb, quote, title, is_internal):
         plat_d = pc.get('platform_discount_display','0%')
         bundle = pc.get('use_bundle', False)
         rates_date = pc.get('rates_effective_date', 'unknown')
-        src    = f"(rates effective {rates_date})"
+        # Rates effective date is internal-only (see SKILL.md Internal vs Client table)
+        src    = f"(rates effective {rates_date})" if is_internal else ""
 
         hdr_text = (f"SUBSCRIPTION FEES  —  {seg} | {dur['months']} mo | "
                     f"Vol disc: {vol_d}" +

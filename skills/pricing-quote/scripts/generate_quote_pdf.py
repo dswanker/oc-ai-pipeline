@@ -359,7 +359,8 @@ def _subscriptions(story, quote, is_internal):
     plat_disc = pc.get('platform_discount_display', '0%')
     bundle    = pc.get('use_bundle', False)
     rates_date = pc.get('rates_effective_date', 'unknown')
-    src_note  = f"(rates effective {rates_date})"
+    # Rates effective date is internal-only (see SKILL.md Internal vs Client table)
+    src_note  = f"Rates effective {rates_date}." if is_internal else ""
 
     story.append(Paragraph(
         f"Subscription fees for <b>{seg_label}</b> segment — "
@@ -367,7 +368,7 @@ def _subscriptions(story, quote, is_internal):
         f"Volume/term discount: <b>{vol_disc}</b>. "
         + (f"Platform discount: <b>{plat_disc}</b>. " if pc.get('use_platform_discount') else "")
         + (f"Core Bundle pricing applied. " if bundle else "")
-        + f"Rates {src_note}.",
+        + src_note,
         st["body"]))
     story.append(Spacer(1, 6))
 
