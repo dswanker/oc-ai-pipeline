@@ -133,3 +133,14 @@ def test_apply_is_idempotent():
 def test_safe_name():
     assert c.safe_name("NOT RECOVERED/NOT RESOLVED") == "NOT_RECOVERED_NOT_RESOLVED"
     assert c.safe_name("5 MG") == "c_5_MG"
+
+
+def test_retired_codelist_uses_as_collected():
+    rows = ROWS + [("C128689", "", "Yes", "Race As Collected", "RACEC", "", "", ""),
+                   ("C41261", "C128689", "", "", "WHITE", "", "", "White"),
+                   ("C16352", "C128689", "", "", "BLACK OR AFRICAN AMERICAN", "", "", "Black or African American")]
+    ct = c.CTPackage(c._parse_evs(HDR + "".join("\t".join(r) + "\n" for r in rows)), "test", "2026-01-01")
+    std = c.Standards(ct, CRF_SPECS, CDASHIG)  # CDASHIG names RACE -> C74457, absent from this release
+    cl, by, note = c.bind(std, "RACE", ["WHITE"])
+    assert cl["short_name"] == "RACEC" and by == "cdashig" and note is None
+    assert c.bind(std, "AEREL", ["NOT"])[2] == "sponsor_defined_per_cdashig"

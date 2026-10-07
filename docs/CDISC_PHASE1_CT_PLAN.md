@@ -36,6 +36,8 @@ explicit upgrade for new studies.
 CDISC_CT_APPLY=0 disables the layer. On any error the spec is returned unchanged.
 
 ## Known gaps
-- RACE (C74457) and ETHNIC (C66790) are not in CT 2026-09-25 (only RACEC/ETHNICC): left as is, flagged.
+- RACE (C74457) and ETHNIC (C66790) are not in CT 2026-09-25. General rule: a retired codelist falls back
+  to the variable's "As Collected" codelist (RACEC, ETHNICC); with none, the field is left as is and flagged.
+- Value matching tries the choice label before the choice code (the label carries the study's meaning).
 - CDASH subset codelists named by CDASHIG v2.3 (C78417-C78431) are retired; the general codelist is used.
-- Claude still writes lists for fields that get CDISC lists (token saving is a later, separate change).
+- Claude still writes lists for fields that get CDISC lists: see TODO/TODO-cdisc-prompt-list-removal.md.

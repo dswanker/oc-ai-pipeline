@@ -219,6 +219,12 @@ def _overlap(cl, values):
     return sum(1 for v in values if _to_submission(cl, v))
 
 
+def _as_collected(ct, name):
+    """The variable's "As Collected" codelist (e.g. RACE -> RACEC), if the release has one."""
+    cl = ct.get(name + "C")
+    return cl if cl and cl["name"].lower().endswith("as collected") else None
+
+
 def bind(std, var, values=()):
     """Returns (codelist, bound_by, note). Order: CDASHIG -> COSMoS CRF specialization -> name rules.
     CDASHIG is authoritative: a variable it defines without a codelist is sponsor-defined and is
@@ -231,7 +237,12 @@ def bind(std, var, values=()):
             return None, None, "sponsor_defined_per_cdashig"
         present = [ct.get_code(c) for c in codes if ct.get_code(c)]
         if not present:
-            return None, None, "codelist_not_in_release:" + ";".join(codes)
+            # Codelist retired from this release: use the variable's "As Collected" codelist when
+            # CDISC publishes one (RACE -> RACEC, ETHNIC -> ETHNICC); otherwise report, never guess.
+            ac = _as_collected(ct, name)
+            if ac is None:
+                return None, None, "codelist_not_in_release:" + ";".join(codes)
+            present = [ac]
         # Several codelists listed (general + CDASH subset, or alternatives such as DSDECOD):
         # the one matching most study values wins; ties go to the last listed (the CDASH subset).
         best = max(range(len(present)), key=lambda i: (_overlap(present[i], values), i))
@@ -243,7 +254,7 @@ def bind(std, var, values=()):
     cl, bound_by, note = None, None, None
     spec = std.crf_specs.get(name)
     if spec:
-        cl = ct.get_code(spec["codelist"])
+        cl = ct.get_code(spec["codelist"]) or _as_collected(ct, name)
         bound_by = "crf_specialization"
         if not cl:
             return None, None, "codelist_not_in_release:" + spec["codelist"]
@@ -251,8 +262,8 @@ def bind(std, var, values=()):
         cl, bound_by = ct.get(name), "exact"
     elif len(name) > 4 and name[:2].isalpha() and ct.get(name[2:]):
         cl, bound_by = ct.get(name[2:]), "domain_prefix"
-    elif ct.get(name + "C") and ct.get(name + "C")["name"].lower().endswith("as collected"):
-        cl, bound_by = ct.get(name + "C"), "as_collected"
+    elif _as_collected(ct, name):
+        cl, bound_by = _as_collected(ct, name), "as_collected"
     else:
         ny = ct.get("NY")
         mapped = {_to_submission(ny, v) for v in values} if ny else set()
@@ -286,7 +297,7 @@ def resolve(std, cl, var, existing):
     terms = cl["terms"]
     mapped, unmapped = [], []
     for n, lab in existing:
-        sv = _to_submission(cl, n) or _to_submission(cl, lab)
+        sv = _to_submission(cl, lab) or _to_submission(cl, n)
         if sv:
             if sv not in mapped:
                 mapped.append(sv)
@@ -352,7 +363,7 @@ def _renames(cl, existing, new_names):
     """Old choice name -> new choice name, plus old names that no longer exist."""
     ren, dropped = {}, []
     for n, lab in existing:
-        sv = _to_submission(cl, n) or _to_submission(cl, lab)
+        sv = _to_submission(cl, lab) or _to_submission(cl, n)
         cand = safe_name(sv) if sv else safe_name(n)
         if cand in new_names:
             ren[n] = cand
