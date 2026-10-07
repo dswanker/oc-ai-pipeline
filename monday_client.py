@@ -29,6 +29,8 @@ COL = {
     "pricing_quote":     "file_mm2g16gn",
     "edc_build":         "file_mm2h51qw",
     "dvs_output":        "file_mm2hhwmk",
+    "sdtm_mapping_xlsx": "file_mm7xk7mw",    # SDTM Mapping Spec (XLSX), Chain A
+    "sdtm_mapping_pdf":  "file_mm7xnxj6",    # SDTM Mapping Spec (PDF), Chain A
     "calendaring_output": "file_mm3te0de",   # Calendaring Output
     # Status + logging
     "pipeline_status":   "color_mm2h9g3m",

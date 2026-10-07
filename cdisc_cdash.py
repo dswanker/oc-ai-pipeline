@@ -45,7 +45,8 @@ def load_cdashig_fields():
                        "question": (r.get("Question Text") or "").strip(), "prompt": (r.get("Prompt") or "").strip(),
                        "instruction": (r.get("Case Report Form Completion Instructions") or "").strip(),
                        "core": (r.get("CDASHIG Core") or "").strip(), "type": (r.get("Type") or "").strip(),
-                       "sdtm_target": (r.get("SDTMIG Target") or "").strip()}
+                       "sdtm_target": (r.get("SDTMIG Target") or "").strip(),
+                       "mapping": (r.get("Mapping Instructions") or "").strip()}
                 # first row wins; a later scenario row only fills gaps
                 out[(dom, var)] = rec if cur is None else {k: cur[k] or rec[k] for k in cur}
     _MEMO["fields"] = out
@@ -71,6 +72,10 @@ def _resolve(fields, by_var, domain, var):
     for c in cands:  # variable carries its domain prefix (AESEV -> AE)
         if var.startswith(c["domain"]):
             return c
+    targets = {c["sdtm_target"] for c in cands if c["sdtm_target"]}
+    if cands and len(targets) <= 1:
+        # generic variable (VISIT, VISDAT): one SDTM target (or none) across every domain it appears in
+        return next((c for c in cands if c["sdtm_target"]), cands[0])
     return None
 
 

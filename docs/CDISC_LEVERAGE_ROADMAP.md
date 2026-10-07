@@ -46,6 +46,12 @@ Caveat: CT gives codes, not copyrighted item wording for licensed instruments.
 2.0 forms, HTML CRFs and SDTM-annotated CRFs from them.
 Use: standard form templates (VS, LB, ...), domain recognition, annotated CRF generation.
 
+## 4b. SDTM Mapping Specification (SHIPPED)
+`sdtm_mapping.py`, Chain A: `{protocol}_SDTM_Mapping_Specification_{version}.xlsx/.pdf` to monday columns
+`SDTM Mapping Spec (XLSX)` (file_mm7xk7mw) and `SDTM Mapping Spec (PDF)` (file_mm7xnxj6). One row per data field:
+customer field -> CDASH concept (+qualifier) -> SDTM domain.variable, value-level detail, CT, Confidence + Basis
+(High: customer alias / CDASH name; Medium: Claude validated; None: not mapped). Proposed mapping for review.
+
 ## 5. Annotated CRF (aCRF), new deliverable
 Same POC produces SDTM-annotated CRFs. Pipeline already knows each CDASH field's SDTM target (section 1).
 

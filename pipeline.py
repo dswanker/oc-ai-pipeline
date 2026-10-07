@@ -6655,6 +6655,26 @@ async def run_pipeline(item_id):
                     )
                     print(f"Chain A complete — pdf:{len(spec_files['pdf'])} bytes "
                           f"xlsx:{len(spec_files['xlsx'])} bytes", flush=True)
+                    # SDTM Mapping Specification (standalone XLSX + PDF). Never fails Chain A.
+                    try:
+                        import sdtm_mapping
+                        _map = await loop.run_in_executor(None, lambda: sdtm_mapping.build_files(struct_json))
+                        await asyncio.gather(
+                            upload_file(item_id, COL["sdtm_mapping_xlsx"],
+                                f"{protocol_num}_SDTM_Mapping_Specification_{version}.xlsx", _map["xlsx"]),
+                            upload_file(item_id, COL["sdtm_mapping_pdf"],
+                                f"{protocol_num}_SDTM_Mapping_Specification_{version}.pdf", _map["pdf"]),
+                        )
+                        _ms = _map["summary"]
+                        _bc = _ms["by_confidence_basis"]
+                        await append_log(item_id,
+                            f"SDTM Mapping Specification: {_ms['mapped']} of {_ms['fields']} fields mapped "
+                            f"(high {sum(v for k, v in _bc.items() if k.startswith('High'))}, "
+                            f"medium/review {sum(v for k, v in _bc.items() if k.startswith('Medium'))}, "
+                            f"not mapped {_bc.get('None / Not mapped', 0)})")
+                    except Exception as _sm_e:
+                        print(f"[sdtm-mapping] failed (Chain A continues): {_sm_e}", flush=True)
+                        await append_log(item_id, f"SDTM Mapping Specification could not be generated: {_sm_e}")
                 except Exception as e:
                     import traceback as _tb
                     tb_str = _tb.format_exc()

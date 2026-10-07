@@ -7,7 +7,7 @@ from test_cdisc_ct import STD
 
 def _rec(dom, var, instr="", prompt="", core="HR", target=None):
     return {"domain": dom, "variable": var, "label": var, "question": "", "prompt": prompt,
-            "instruction": instr, "core": core, "type": "Char", "sdtm_target": target or var}
+            "instruction": instr, "core": core, "type": "Char", "sdtm_target": target or var, "mapping": ""}
 
 
 FIELDS = {
