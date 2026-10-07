@@ -76,7 +76,12 @@ eCRF + aCRF from BCs -> Define-XML -> trial design domains -> CORE -> SDTM (sdtm
 This is the open-source counterpart of the OC AI Pipeline; reuse its parts instead of AI generation.
 
 ## Build order
-1. CDASH field definitions layer (section 1).
+1. CDASH field definitions layer (section 1). SHIPPED: `cdisc_cdash.py` adds row["cdash"]
+   (domain, variable, Core, SDTM target) to every CDASH field and CDASHIG completion instructions as hints
+   on CDASH-default fields with no hint (designer notes, raw-code text, placeholders and identifiers
+   filtered). Not shipped: HR-completeness check (CDASHIG findings are normalized, CRFs are horizontal;
+   needs scenario-aware logic) and writing OC4 briefdescription/description (Participant Matrix headings,
+   limits unverified).
 2. Standard edit-check library (section 2).
 3. QRS instruments for ePRO forms (section 3).
 Then aCRF, CORE output validation, USDM input, submission artifacts.

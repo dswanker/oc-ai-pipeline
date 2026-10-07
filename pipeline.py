@@ -4222,10 +4222,18 @@ def _apply_cdisc_ct(struct_json, crf_files=None, oc_files=None):
             print("[cdisc-ct] standards unavailable; CDISC layer skipped this run", flush=True)
             return struct_json
         out = _copy.deepcopy(struct_json)
-        decisions = cdisc_ct.apply_to_spec(out, std, _cdisc_protected_vars(crf_files, oc_files))
+        protected = _cdisc_protected_vars(crf_files, oc_files)
+        decisions = cdisc_ct.apply_to_spec(out, std, protected)
         summary = cdisc_ct.summarize(decisions)
-        out.setdefault("study_meta", {})["cdisc_standards"] = {**std.versions, "summary": summary}
+        try:
+            import cdisc_cdash
+            cdash_summary = cdisc_cdash.apply_to_spec(out, std, protected)
+        except Exception as _ce:
+            cdash_summary = {"skipped": f"CDASH field layer failed: {_ce}"}
+        out.setdefault("study_meta", {})["cdisc_standards"] = {**std.versions, "summary": summary,
+                                                               "cdash": cdash_summary}
         print(f"[cdisc-ct] applied (CT {std.ct.version}{', pinned' if pinned else ''}): {summary}", flush=True)
+        print(f"[cdisc-cdash] {cdash_summary}", flush=True)
         return out
     except Exception as e:
         print(f"[cdisc-ct] CDISC layer failed (spec unchanged, build continues): {e}", flush=True)
@@ -4245,6 +4253,10 @@ async def _cdisc_ct_log_step(item_id, struct_json):
                f"{a.get('kept', 0)} kept from customer/OC standards, "
                f"{a.get('no_cdisc_codelist', 0)} with no CDISC codelist, "
                f"{s.get('expressions_rewritten', 0)} skip-logic expressions updated")
+        cd = cs.get("cdash") or {}
+        if cd.get("fields_with_cdash_metadata") is not None:
+            msg += (f"; CDASH metadata on {cd['fields_with_cdash_metadata']} fields, "
+                    f"{cd.get('hints_added', 0)} help texts added")
         if s.get("not_in_release"):
             msg += f"; codelists not in this CT release: {', '.join(n.split(':', 1)[1] for n in s['not_in_release'])}"
         await append_log(item_id, msg)
