@@ -4173,42 +4173,83 @@ def _fix_missing_choices(struct_json: dict) -> dict:
     return struct_json
 
 
-_CDISC_CT_FLAG_STATUSES = ("nonconformant", "mappable", "extended", "missing_list")
+def _cdisc_protected_vars(crf_files, oc_files):
+    """Variables whose choice lists come from customer CRF standards or OC standards inputs.
+    Decided from the files themselves (never from Claude's source tags). CDISC CT never touches them."""
+    protected = set()
+    try:
+        for (_form, var) in (_parse_crf_standards_choices(crf_files or []) or {}):
+            if var:
+                protected.add(str(var).upper())
+    except Exception as e:
+        print(f"[cdisc-ct] customer standards scan failed (treating none as protected): {e}", flush=True)
+    for fname, data in (oc_files or []):
+        try:
+            kind = _detect_oc_standard_type(data)
+            if kind == "XLSFORM_ZIP":
+                for form in (_read_zip_xlsforms(data).get("forms") or {}).values():
+                    for row in form.get("survey") or []:
+                        t = str(row.get("type") or "").strip().lower()
+                        if t.startswith(("select_one ", "select_multiple ")) and row.get("name"):
+                            protected.add(str(row["name"]).strip().upper())
+            elif kind == "ODM_XML":
+                import xml.etree.ElementTree as _ET
+                for el in _ET.fromstring(data).iter():
+                    if el.tag.split("}")[-1] == "ItemDef" and any(
+                            c.tag.split("}")[-1] == "CodeListRef" for c in el):
+                        if el.get("Name"):
+                            protected.add(el.get("Name").strip().upper())
+        except Exception as e:
+            print(f"[cdisc-ct] OC standards scan failed for {fname}: {e}", flush=True)
+    return protected
 
 
-async def _cdisc_ct_report_step(item_id, struct_json, protocol_num, version):
-    """CDISC Phase 1, report-only. Assesses every select_one/select_multiple
-    field in every form against CDISC Controlled Terminology (cdisc_ct.py).
-    Never modifies struct_json and never fails the run. Summary goes to the
-    monday log; per-field findings to stdout; full report JSON to the CT cache
-    volume under reports/."""
+def _apply_cdisc_ct(struct_json, crf_files=None, oc_files=None):
+    """CDISC layer of the source hierarchy, deterministic (no AI):
+    customer standards -> OC standards -> CDISC CT for fields that default to CDASH.
+    A study keeps the CT version stamped on its spec; new studies get the manifest version.
+    Never fails the run: on any error the spec is returned unchanged.
+    CDISC_CT_APPLY=0 disables."""
+    import copy as _copy
+    if os.environ.get("CDISC_CT_APPLY", "1") == "0" or not isinstance(struct_json, dict):
+        return struct_json
     try:
         import cdisc_ct
-        rep = await asyncio.to_thread(cdisc_ct.report, struct_json)
-        if rep is None:
-            print("[cdisc-ct] report skipped (CT unavailable or no spec)", flush=True)
-            return None
-        flagged = [r for r in rep["fields"] if r["status"] in _CDISC_CT_FLAG_STATUSES]
-        msg = (f"CDISC CT check (report only, CT {rep['ct_package_date']}): "
-               + ", ".join(f"{k} {v}" for k, v in sorted(rep["summary"].items())))
-        print(f"[cdisc-ct] {msg}", flush=True)
-        for r in flagged[:100]:
-            print(f"[cdisc-ct]   {r.get('form_id')}.{r['field']} -> {r.get('codelist')} "
-                  f"{r['status']} extra={r.get('extra_values')} map={r.get('synonym_matches')}",
-                  flush=True)
-        try:
-            d = os.path.join(cdisc_ct._cache_dir(), "reports")
-            os.makedirs(d, exist_ok=True)
-            fn = os.path.join(d, f"{protocol_num}_{version}_{int(time.time())}.json")
-            with open(fn, "w") as fh:
-                json.dump(rep, fh, indent=1)
-        except Exception as _se:
-            print(f"[cdisc-ct] report save failed: {_se}", flush=True)
-        await append_log(item_id, msg)
-        return rep
+        sm = struct_json.get("study_meta") if isinstance(struct_json.get("study_meta"), dict) else {}
+        pinned = (sm.get("cdisc_standards") or {}).get("ct_version")
+        std = cdisc_ct.load_standards(pinned)
+        if std is None:
+            print("[cdisc-ct] standards unavailable; CDISC layer skipped this run", flush=True)
+            return struct_json
+        out = _copy.deepcopy(struct_json)
+        decisions = cdisc_ct.apply_to_spec(out, std, _cdisc_protected_vars(crf_files, oc_files))
+        summary = cdisc_ct.summarize(decisions)
+        out.setdefault("study_meta", {})["cdisc_standards"] = {**std.versions, "summary": summary}
+        print(f"[cdisc-ct] applied (CT {std.ct.version}{', pinned' if pinned else ''}): {summary}", flush=True)
+        return out
     except Exception as e:
-        print(f"[cdisc-ct] report step failed (build continues): {e}", flush=True)
-        return None
+        print(f"[cdisc-ct] CDISC layer failed (spec unchanged, build continues): {e}", flush=True)
+        return struct_json
+
+
+async def _cdisc_ct_log_step(item_id, struct_json):
+    """Post the CDISC layer summary for this build to the monday log."""
+    try:
+        cs = ((struct_json or {}).get("study_meta") or {}).get("cdisc_standards") or {}
+        s = cs.get("summary") or {}
+        if not cs:
+            return
+        a = s.get("actions") or {}
+        msg = (f"CDISC CT {cs.get('ct_version')} (CDASHIG {cs.get('cdashig') or 'n/a'}): "
+               f"{a.get('cdisc_ct_applied', 0)} pick lists from CDISC, "
+               f"{a.get('kept', 0)} kept from customer/OC standards, "
+               f"{a.get('no_cdisc_codelist', 0)} with no CDISC codelist, "
+               f"{s.get('expressions_rewritten', 0)} skip-logic expressions updated")
+        if s.get("not_in_release"):
+            msg += f"; codelists not in this CT release: {', '.join(n.split(':', 1)[1] for n in s['not_in_release'])}"
+        await append_log(item_id, msg)
+    except Exception as e:
+        print(f"[cdisc-ct] log step failed: {e}", flush=True)
 
 
 def _backfill_migration_fields(spec):
@@ -5712,6 +5753,7 @@ async def run_pipeline(item_id):
                         # OC-9 backstop: apply to edited-XLSX path as well
                         struct_json = _enforce_common_visit(struct_json)
                         struct_json = _enforce_form_visits(struct_json, _crf_files, customer_conventions)
+                        struct_json = _apply_cdisc_ct(struct_json, _crf_files, _oc_files)
                         struct_json = _fix_missing_choices(struct_json)
                         struct_json = _backfill_migration_fields(struct_json)
                         struct_json = _sanitize_form_titles(struct_json)
@@ -5859,6 +5901,7 @@ async def run_pipeline(item_id):
             struct_json = json.loads(spec_bytes.decode("utf-8"))
             struct_json = _enforce_common_visit(struct_json)
             struct_json = _enforce_form_visits(struct_json, _crf_files, customer_conventions)
+            struct_json = _apply_cdisc_ct(struct_json, _crf_files, _oc_files)
             struct_json = _fix_missing_choices(struct_json)
             struct_json = _backfill_migration_fields(struct_json)
             struct_json = _sanitize_form_titles(struct_json)
@@ -6048,6 +6091,7 @@ async def run_pipeline(item_id):
                     struct_json = json.loads(_existing_spec.decode("utf-8"))
                     struct_json = _enforce_common_visit(struct_json)
                     struct_json = _enforce_form_visits(struct_json, _crf_files, customer_conventions)
+                    struct_json = _apply_cdisc_ct(struct_json, _crf_files, _oc_files)
                     struct_json = _fix_missing_choices(struct_json)
                     struct_json = _backfill_migration_fields(struct_json)
                     struct_json = _sanitize_form_titles(struct_json)
@@ -6372,6 +6416,7 @@ async def run_pipeline(item_id):
             # forms live only there. Deterministic fix-up if Claude missed it.
             struct_json = _enforce_common_visit(struct_json)
             struct_json = _enforce_form_visits(struct_json, _crf_files, customer_conventions)
+            struct_json = _apply_cdisc_ct(struct_json, _crf_files, _oc_files)
             struct_json = _fix_missing_choices(struct_json)
             struct_json = _backfill_migration_fields(struct_json)
             struct_json = _sanitize_form_titles(struct_json)
@@ -7117,10 +7162,8 @@ async def run_pipeline(item_id):
                         print(f"[chain_e_tb] {_line}", flush=True)
                     await append_log(item_id, f"Build Preview error: {e}")
 
-            # ── CDISC Phase 1 (report-only): CT conformance of every select field ──
-            # Never modifies struct_json, never fails the run. CDISC_CT_REPORT=0 disables.
-            if os.environ.get("CDISC_CT_REPORT", "1") != "0":
-                await _cdisc_ct_report_step(item_id, struct_json, protocol_num, version)
+            # ── CDISC layer summary for this build (applied earlier by _apply_cdisc_ct) ──
+            await _cdisc_ct_log_step(item_id, struct_json)
 
             # ── Launch all four chains in parallel ─────────────────────────────
             # return_exceptions=True prevents one chain's failure from cancelling

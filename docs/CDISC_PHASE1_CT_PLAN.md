@@ -1,50 +1,41 @@
-# CDISC Phase 1: Controlled Terminology for every build
+# CDISC Phase 1: CDISC Controlled Terminology in the source hierarchy
 
-Scope: the pipeline in general. Every study, every form, every select field. No customer- or
-protocol-specific rules, form IDs or field lists anywhere in the code.
+Scope: the pipeline in general. No customer-, protocol- or form-specific rules anywhere.
 
-## Problem
-Choice lists today come from Claude's generation plus customer CHOICES.csv. Nothing checks them
-against CDISC CT. Failure modes: invented or misspelled codes, missing lists (select field references
-a list that was never defined), and inconsistent lists for the same concept across forms and studies.
-`_fix_missing_choices` handles the missing-list case by deleting the field.
+## Hierarchy (per pick-list field, decided in code, no AI)
+1. Customer standards (CHOICES.csv etc.): used as given, never changed.
+2. OC standards input (OC4 XLSForm ZIP / ODM XML): used as given, never changed.
+3. Otherwise the field defaults to CDASH and gets its list from CDISC (`cdisc_ct.apply_to_spec`).
+4. No CDISC codelist for the field (sponsor-defined per CDASHIG): left as is.
+Customer conventions (conventions_engine, customer-scoped) run later and still win.
 
-## Design
-1. CT source module (`cdisc_ct.py`), one interface, swappable backend:
-   - Now: NCI EVS quarterly files (SDTM + CDASH terminology). No key needed. EVS is CDISC's CT publisher.
-   - Later: CDISC Library API, same interface.
-   - Cached on the Railway volume; pinned CT package date; refresh is explicit, not per run.
-2. Field-to-codelist binding (general rule, applied to every select_one/select_multiple):
-   - Now: CDISC variable name -> codelist short name (e.g. SEX -> SEX, AESEV -> AESEV), then
-     domain-prefix removal (AEACN -> ACN, CMROUTE -> ROUTE), then Y/N-typed fields -> NY.
-     Fields that do not bind are left alone (sponsor-defined lists like AE causality).
-   - Later: exact binding from CDASHIG variable metadata (Library).
-3. Apply after spec extraction, before build, in all build paths:
-   - Non-extensible codelist: submission values must be CT values; a subset is allowed.
-   - Extensible codelist: CT values plus customer additions allowed.
-   - Customer CHOICES.csv / conventions still win on labels and on which values are offered.
-   - Non-conformant values are flagged in QA, never silently dropped. Fields are never deleted.
-4. `_fix_missing_choices`: when a field binds to a codelist, fill the list from CT instead of
-   deleting the field. Unbound + undefined keeps today's behaviour, logged.
-5. Prompting: give Claude the relevant CT codelists as reference so generation starts correct.
-6. Traceability: record CT package date and per-field codelist code (NCI C-code) in the Study Spec
-   JSON; show CT version on the Study Spec PDF and in the DVS.
+Protected fields are found from the input files themselves (`pipeline._cdisc_protected_vars`),
+never from Claude's source tags. Runs at all four spec-finalization points, before
+`_fix_missing_choices`, so a bindable missing list is filled instead of the field being deleted.
 
-## Verification
-- Unit tests on the binding rule and the conformance check (synthetic forms).
-- Run the post-processor over existing specs in the repo and report bound / conformant /
-  extended / non-conformant counts, without changing output first (report-only mode).
-- Then enable enforcement behind an env flag; default on once the report looks right.
+## Sources (pinned in cdisc_standards/manifest.json; see cdisc_standards/README.md)
+- CT: NCI EVS dated SDTM Terminology archive file (public). CDISC Library API is not used.
+- Binding: CDASHIG metadata (member file, never committed), then COSMoS CRF specializations, then name rules.
+- Values and labels: COSMoS CRF specializations (CDISC's recommended value list per variable).
 
-## What changes when the Library API key works
-- Backend swap from EVS to Library behind the same interface. CT content is the same data.
-- Binding rule replaced by exact CDASHIG variable -> codelist metadata. Fewer unbound fields.
-- Unlocks Phase 2 (CDASH field metadata), Phase 3 (Biomedical Concepts), and CORE rule metadata.
-- Phase 1 design, enforcement rules and QA output do not change.
+## Value rules
+- CDISC recommends values: use them (study subset kept only if every study value maps).
+- No recommendation: study values that all map keep their selection with CT codes.
+- Unmapped values: small non-extensible codelist -> full codelist; extensible -> mapped + sponsor
+  extensions; a value still used by skip logic is kept and flagged rather than breaking the form.
+- Choice names are XLSForm-safe (DOSE_NOT_CHANGED); exact submission value + C-code stored on the choice.
+- Skip-logic expressions are rewritten when a choice name changes.
+- A codelist CDISC names that the pinned release lacks is reported, never guessed.
 
-## Library API status (2026-10-07)
-- Portal subscription "CDISC Library API" is Active under dswanker@mac.com.
-- Key in Railway is valid (gateway accepts it) but every content endpoint returns
-  401 "Members-only content". Header `api-key`, host https://api.library.cdisc.org/api are correct.
-- Next checks: API Tester on the portal with the same key; confirm Railway key matches the portal
-  primary key; ask CDISC support to link the account to the member organization.
+## Versioning
+Every build stamps `study_meta.cdisc_standards` (CT version, CRF specialization file, CDASHIG
+version, summary). A study keeps its stamped CT version on reruns; bumping manifest.json is an
+explicit upgrade for new studies.
+
+## Switches
+CDISC_CT_APPLY=0 disables the layer. On any error the spec is returned unchanged.
+
+## Known gaps
+- RACE (C74457) and ETHNIC (C66790) are not in CT 2026-09-25 (only RACEC/ETHNICC): left as is, flagged.
+- CDASH subset codelists named by CDASHIG v2.3 (C78417-C78431) are retired; the general codelist is used.
+- Claude still writes lists for fields that get CDISC lists (token saving is a later, separate change).

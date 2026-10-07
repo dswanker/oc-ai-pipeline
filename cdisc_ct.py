@@ -1,45 +1,71 @@
-"""cdisc_ct.py: CDISC Controlled Terminology for the OC AI Pipeline (Phase 1).
+"""cdisc_ct.py: deterministic CDISC standards layer for the OC AI Pipeline. No AI, no tokens.
 
-Source today: NCI EVS SDTM Terminology (NCI EVS is CDISC's official CT publisher).
-The backend is swappable: a CDISC Library API loader can replace _parse_evs()/load()
-behind the same CTPackage interface once Library access works.
+Sources, pinned in cdisc_standards/manifest.json:
+  * Controlled Terminology: NCI EVS dated SDTM Terminology archive file (public).
+    NCI EVS is CDISC's official CT publisher; the dated file makes every build reproducible.
+  * CDASH CRF specializations: CDISC COSMoS (public, MIT), vendored in cdisc_standards/cosmos/.
+    Gives CDISC's recommended value list and display labels per CDASH variable.
+  * CDASHIG metadata: CDISC member download. NEVER committed (the repo is public). Read from
+    CDISC_STANDARDS_DIR (default /data/cdisc_standards on Railway, .cache/cdisc_standards locally).
+    Gives the exact CDASH variable -> codelist binding. Optional: without it, binding falls back
+    to the COSMoS codelist, then to general name rules.
 
-Report-only: nothing in this module changes build output. It binds every
-select_one/select_multiple field to a CT codelist using general rules (never
-study-, customer- or form-specific) and reports conformance.
+Hierarchy (applied by pipeline._apply_cdisc_ct): customer standards and OC standards choice
+lists are never touched. Only fields that default to CDASH get CDISC CT here.
 
-CLI:  python3 cdisc_ct.py [--refresh] spec1.json [spec2.json ...]
+CLI:  python3 cdisc_ct.py [--refresh] spec1.json [spec2.json ...]   (report only)
 """
-import csv, io, json, os, sys, time, urllib.request
+import csv, io, json, os, re, sys, urllib.request
 from collections import Counter
-from email.utils import parsedate_to_datetime
 
-EVS_SDTM_URL = "https://evs.nci.nih.gov/ftp1/CDISC/SDTM/SDTM%20Terminology.txt"
+_HERE = os.path.dirname(os.path.abspath(__file__))
+STANDARDS_REPO_DIR = os.path.join(_HERE, "cdisc_standards")
+EVS_CURRENT_URL = "https://evs.nci.nih.gov/ftp1/CDISC/SDTM/SDTM%20Terminology.txt"
+EVS_ARCHIVE_URL = "https://evs.nci.nih.gov/ftp1/CDISC/SDTM/Archive/SDTM%20Terminology%20{v}.txt"
+FULL_LIST_MAX = 30  # a codelist up to this size may be used whole on a CRF
 
 
-def _cache_dir():
-    d = os.environ.get("CDISC_CT_DIR") or (
-        "/data/cdisc_ct" if os.path.isdir("/data")
-        else os.path.join(os.path.dirname(os.path.abspath(__file__)), ".cache", "cdisc_ct"))
+def manifest():
+    with open(os.path.join(STANDARDS_REPO_DIR, "manifest.json")) as fh:
+        return json.load(fh)
+
+
+def _local_dir(env, railway, local):
+    d = os.environ.get(env) or (railway if os.path.isdir("/data") else os.path.join(_HERE, ".cache", local))
     os.makedirs(d, exist_ok=True)
     return d
 
 
-class CTPackage:
-    """A loaded CT package: codelists keyed by CDISC submission short name."""
+def _cache_dir():
+    return _local_dir("CDISC_CT_DIR", "/data/cdisc_ct", "cdisc_ct")
 
-    def __init__(self, codelists, source, package_date):
+
+def member_dir():
+    return _local_dir("CDISC_STANDARDS_DIR", "/data/cdisc_standards", "cdisc_standards")
+
+
+# ── Controlled Terminology ──────────────────────────────────────────────────────
+
+class CTPackage:
+    """A pinned CT release: codelists by submission short name and by NCI C-code."""
+
+    def __init__(self, codelists, source, version):
         self.codelists = codelists
+        self.by_code = {cl["code"]: cl for cl in codelists.values()}
         self.source = source
-        self.package_date = package_date
+        self.version = version
+        self.package_date = version  # backwards-compatible name
 
     def get(self, short_name):
         return self.codelists.get((short_name or "").strip().upper())
 
+    def get_code(self, c_code):
+        return self.by_code.get((c_code or "").strip())
+
 
 def _parse_evs(text):
     rows = csv.reader(io.StringIO(text), delimiter="\t")
-    next(rows, None)  # header
+    next(rows, None)
     cls, terms = {}, []
     for r in rows:
         if len(r) < 8:
@@ -59,139 +85,449 @@ def _parse_evs(text):
     return {cl["short_name"].upper(): cl for cl in cls.values() if cl["short_name"]}
 
 
-def load(refresh=False):
-    """Load the pinned CT package from cache. Downloads only when no cache exists
-    or refresh=True (CT updates are an explicit action, not per pipeline run).
-    Returns None if CT is unavailable; callers must degrade gracefully."""
-    d = _cache_dir()
-    raw_p, meta_p = os.path.join(d, "sdtm_terminology.txt"), os.path.join(d, "meta.json")
-    meta = json.load(open(meta_p)) if os.path.exists(meta_p) else {}
+_CT_MEMO = {}
+
+
+def load(version=None, refresh=False):
+    """Load a pinned CT release (default: manifest ct_version). Downloads the dated EVS archive
+    file once per version and caches it. Returns None if unavailable; callers degrade gracefully."""
+    version = version or manifest()["ct_version"]
+    if version in _CT_MEMO and not refresh:
+        return _CT_MEMO[version]
+    raw_p = os.path.join(_cache_dir(), f"sdtm_terminology_{version}.txt")
+    url = EVS_ARCHIVE_URL.format(v=version)
     if refresh or not os.path.exists(raw_p):
         try:
-            req = urllib.request.Request(EVS_SDTM_URL, headers={"User-Agent": "oc-ai-pipeline"})
-            with urllib.request.urlopen(req, timeout=120) as resp:
-                body, lm = resp.read(), resp.headers.get("Last-Modified")
+            req = urllib.request.Request(url, headers={"User-Agent": "oc-ai-pipeline"})
+            with urllib.request.urlopen(req, timeout=180) as resp:
+                body = resp.read()
+            if not body.startswith(b"Code\t"):
+                raise ValueError("EVS returned something other than a CT text file")
             with open(raw_p, "wb") as fh:
                 fh.write(body)
-            meta = {"source": EVS_SDTM_URL, "fetched_at": time.time(),
-                    "package_date": (parsedate_to_datetime(lm).date().isoformat()
-                                     if lm else time.strftime("%Y-%m-%d"))}
-            with open(meta_p, "w") as fh:
-                json.dump(meta, fh)
-            print(f"[cdisc-ct] downloaded CT package {meta['package_date']}", flush=True)
+            print(f"[cdisc-ct] downloaded CT {version}", flush=True)
         except Exception as e:
             if not os.path.exists(raw_p):
-                print(f"[cdisc-ct] CT unavailable (download failed, no cache): {e}", flush=True)
+                print(f"[cdisc-ct] CT {version} unavailable (download failed, no cache): {e}", flush=True)
                 return None
-            print(f"[cdisc-ct] refresh failed, using cached CT: {e}", flush=True)
+            print(f"[cdisc-ct] refresh failed, using cached CT {version}: {e}", flush=True)
     with open(raw_p, encoding="utf-8", errors="replace") as fh:
-        codelists = _parse_evs(fh.read())
-    return CTPackage(codelists, meta.get("source", EVS_SDTM_URL), meta.get("package_date", "unknown"))
+        pkg = CTPackage(_parse_evs(fh.read()), url, version)
+    _CT_MEMO[version] = pkg
+    return pkg
 
 
-def bind(ct, field_name, values):
-    """General field -> codelist binding. Returns (codelist, rule) or (None, None).
-    1. exact: CDISC variable name equals a codelist short name (SEX, RACE, AESEV)
-    2. domain_prefix: drop a 2-letter domain prefix (AEACN -> ACN, CMROUTE -> ROUTE)
-    3. as_collected: fall back to an "As Collected" codelist (RACE -> RACEC)
-    4. yes_no_values: the field's values map to NY by code, preferred term or synonym
-    The CDISC Library's CDASHIG variable metadata will replace rules 1-2 when available."""
-    name = (field_name or "").strip().upper()
-    cl = ct.get(name)
-    if cl:
-        return cl, "exact"
-    if len(name) > 4 and name[:2].isalpha():
-        cl = ct.get(name[2:])
-        if cl:
-            return cl, "domain_prefix"
-    # "As Collected" codelists (e.g. RACE -> RACEC, ETHNIC -> ETHNICC in current CT)
-    cl = ct.get(name + "C")
-    if cl and cl["name"].lower().endswith("as collected"):
-        return cl, "as_collected"
-    ny = ct.get("NY")
-    if ny:
-        mapped = {_to_submission(ny, v) for v in values if str(v).strip()}
-        if mapped and None not in mapped and {"Y", "N"} <= mapped:
-            return ny, "yes_no_values"
-    return None, None
+# ── CDASH metadata: COSMoS CRF specializations (public) + CDASHIG (member, optional) ──
+
+def _split(s):
+    return [x.strip() for x in (s or "").split(";") if x.strip()]
+
+
+def load_crf_specs():
+    """CDASH variable -> CDISC CRF specialization (codelist, recommended values, display labels).
+    Per variable, the first row that carries a value list wins; otherwise the first row."""
+    p = os.path.join(STANDARDS_REPO_DIR, "cosmos", manifest()["crf_specializations_file"])
+    out = {}
+    with open(p, encoding="utf-8-sig", newline="") as fh:
+        for r in csv.DictReader(fh):
+            var = (r.get("variable_name") or "").strip().upper()
+            if not var or not r.get("codelist"):
+                continue
+            values, displays = _split(r.get("value_list")), _split(r.get("value_display_list"))
+            cur = out.get(var)
+            if cur is None or (not cur["values"] and values):
+                out[var] = {"codelist": r["codelist"].strip(), "values": values,
+                            "displays": displays if len(displays) == len(values) else [],
+                            "selection": (r.get("selection_type") or "").strip()}
+    return out
+
+
+def load_cdashig():
+    """CDASH variable -> list of CDISC codelist C-codes (general first, CDASH subset after),
+    from the member CDASHIG metadata CSV. Returns {} when the file is not present."""
+    m = manifest()
+    p = os.path.join(member_dir(), m.get("cdashig_file", ""))
+    if not m.get("cdashig_file") or not os.path.exists(p):
+        return {}
+    out = {}
+    with open(p, encoding="utf-8-sig", newline="") as fh:
+        for r in csv.DictReader(fh):
+            var = (r.get("CDASHIG Variable") or "").strip().upper()
+            codes = _split(r.get("CDISC CT Codelist Code(s), Subset Codes(s)"))
+            if var:
+                # Union across all rows (scenarios/domains) for the variable, in first-seen order.
+                # [] = CDASHIG defines the variable with no CDISC codelist anywhere.
+                cur = out.setdefault(var, [])
+                cur.extend(c for c in codes if c not in cur)
+    return out
+
+
+class Standards:
+    """Everything the deterministic layer needs, with the versions used (stamped on each build)."""
+
+    def __init__(self, ct, crf_specs, cdashig):
+        self.ct, self.crf_specs, self.cdashig = ct, crf_specs, cdashig
+        m = manifest()
+        self.versions = {"ct_version": ct.version, "ct_source": ct.source,
+                         "crf_specializations": m["crf_specializations_file"],
+                         "cdashig": m.get("cdashig_version") if cdashig else None}
+
+
+def load_standards(ct_version=None):
+    ct = load(ct_version)
+    if ct is None:
+        return None
+    return Standards(ct, load_crf_specs(), load_cdashig())
+
+
+# ── Binding: which CDISC codelist governs a field ───────────────────────────────
+
+def safe_name(value):
+    """XLSForm-safe choice name from a CDISC submission value (same rule as customer choices)."""
+    s = re.sub(r"_+", "_", re.sub(r"[^A-Za-z0-9_]", "_", str(value))).strip("_")
+    return "c_" + s if (not s or s[0].isdigit()) else s
 
 
 def _to_submission(cl, value):
-    """Map a value to the codelist's submission value by code, preferred term or synonym."""
-    v = str(value).strip().upper()
+    """Map a value to the codelist's submission value by code, safe name, preferred term or synonym."""
+    v = str(value or "").strip().upper()
+    if not v:
+        return None
     if v in cl["terms"]:
         return cl["terms"][v]["value"]
     for t in cl["terms"].values():
-        if v == t["preferred_term"].upper() or v in {s.upper() for s in t["synonyms"]}:
+        if (v == safe_name(t["value"]).upper() or v == t["preferred_term"].upper()
+                or v in {s.upper() for s in t["synonyms"]}):
             return t["value"]
     return None
 
 
-def assess_field(ct, row, form_choices):
-    rtype = (row.get("type") or "").strip()
-    list_name = rtype.split(" ", 1)[1].strip() if " " in rtype else ""
-    opts = [c for c in form_choices
-            if (c.get("list_name") or "").strip().lower() == list_name.lower()]
-    values = [str(c.get("name", "")).strip() for c in opts]
-    res = {"field": row.get("name"), "list_name": list_name, "n_values": len(values)}
-    cl, rule = bind(ct, row.get("name"), values)
-    if not cl:
-        res["status"] = "unbound"
-        return res
-    terms = cl["terms"]
-    extra = [v for v in values if v.upper() not in terms]
-    case_mismatch = [v for v in values if v.upper() in terms and terms[v.upper()]["value"] != v]
-    syn_map = {v: s for v in extra for s in [_to_submission(cl, v)] if s}
-    if not values:
-        status = "missing_list"
-    elif not extra:
-        status = "conformant" if len(values) == len(terms) else "subset"
-    elif len(syn_map) == len(extra):
-        status = "mappable"  # every non-CT value maps to a CT submission value
-    elif cl["extensible"]:
-        status = "extended"
+def field_variable(field_name, std):
+    """CDASH variable for a spec field. Handles OC item names like I_AE_AESEV."""
+    name = (field_name or "").strip().upper()
+    cands = [name]
+    if name.startswith("I_") and name.count("_") >= 2:
+        parts = name.split("_")
+        cands += ["_".join(parts[2:]), parts[-1]]
+    for c in cands:
+        if c in std.cdashig or c in std.crf_specs:
+            return c
+    return name
+
+
+def _overlap(cl, values):
+    return sum(1 for v in values if _to_submission(cl, v))
+
+
+def bind(std, var, values=()):
+    """Returns (codelist, bound_by, note). Order: CDASHIG -> COSMoS CRF specialization -> name rules.
+    CDASHIG is authoritative: a variable it defines without a codelist is sponsor-defined and is
+    never bound by a fallback. A codelist CDISC names but the pinned release lacks is reported,
+    never guessed. Fallback bindings (not CDASHIG) require at least one study value to match."""
+    ct, name, values = std.ct, (var or "").strip().upper(), [v for v in values if str(v).strip()]
+    if name in std.cdashig:
+        codes = std.cdashig[name]
+        if not codes:
+            return None, None, "sponsor_defined_per_cdashig"
+        present = [ct.get_code(c) for c in codes if ct.get_code(c)]
+        if not present:
+            return None, None, "codelist_not_in_release:" + ";".join(codes)
+        # Several codelists listed (general + CDASH subset, or alternatives such as DSDECOD):
+        # the one matching most study values wins; ties go to the last listed (the CDASH subset).
+        best = max(range(len(present)), key=lambda i: (_overlap(present[i], values), i))
+        cl = present[best]
+        if values and cl["extensible"] and _overlap(cl, values) == 0:
+            # Nothing the study collects is in the codelist: applying CT would only relabel the list.
+            return None, None, f"no_value_overlap:{cl['short_name']}"
+        return cl, "cdashig", None
+    cl, bound_by, note = None, None, None
+    spec = std.crf_specs.get(name)
+    if spec:
+        cl = ct.get_code(spec["codelist"])
+        bound_by = "crf_specialization"
+        if not cl:
+            return None, None, "codelist_not_in_release:" + spec["codelist"]
+    elif ct.get(name):
+        cl, bound_by = ct.get(name), "exact"
+    elif len(name) > 4 and name[:2].isalpha() and ct.get(name[2:]):
+        cl, bound_by = ct.get(name[2:]), "domain_prefix"
+    elif ct.get(name + "C") and ct.get(name + "C")["name"].lower().endswith("as collected"):
+        cl, bound_by = ct.get(name + "C"), "as_collected"
     else:
-        status = "nonconformant"
-    res.update(codelist=cl["short_name"], codelist_code=cl["code"], extensible=cl["extensible"],
-               bound_by=rule, status=status, extra_values=extra,
-               case_mismatch=case_mismatch, synonym_matches=syn_map)
-    return res
+        ny = ct.get("NY")
+        mapped = {_to_submission(ny, v) for v in values} if ny else set()
+        if values and None not in mapped and {"Y", "N"} <= mapped:
+            return ny, "yes_no_values", None
+        return None, None, None
+    if values and _overlap(cl, values) == 0:
+        return None, None, f"no_value_overlap:{cl['short_name']}"
+    return cl, bound_by, note
 
 
-def report(spec, ct=None):
-    """Assess every select field in a Study Spec JSON. Returns None if CT unavailable."""
-    ct = ct or load()
-    if ct is None or not isinstance(spec, dict):
-        return None
-    fields = []
-    for f in spec.get("forms", []) or []:
+# ── Resolution: which values a CDASH-default field gets ─────────────────────────
+
+def _ct_label(term):
+    v = term["value"]
+    if len(v) <= 3 and term["preferred_term"]:
+        return term["preferred_term"]
+    return v.title() if v.isupper() else v
+
+
+def resolve(std, cl, var, existing):
+    """Deterministic value list for a CDASH-default field bound to codelist `cl`.
+    existing: [(name, label)] from the spec. Returns dict(choices, rule, unmapped) or None (leave as is).
+      1. CDISC recommends values for this variable (COSMoS): use them; keep a study subset only
+         when every study value maps into the recommendation.
+      2. No recommendation: study values that all map to CT keep their selection, with CT codes.
+      3. Some values do not map: small non-extensible codelist -> full codelist; extensible ->
+         mapped values plus the rest as sponsor extensions; large non-extensible -> mapped values
+         plus the rest, flagged nonconformant.
+      4. No values at all: small codelist -> full codelist; large -> leave (nothing to choose from)."""
+    terms = cl["terms"]
+    mapped, unmapped = [], []
+    for n, lab in existing:
+        sv = _to_submission(cl, n) or _to_submission(cl, lab)
+        if sv:
+            if sv not in mapped:
+                mapped.append(sv)
+        else:
+            unmapped.append((n, lab))
+    spec = std.crf_specs.get(var)
+    rec, rec_lab = [], {}
+    if spec and spec["codelist"] == cl["code"]:
+        rec = [v for v in spec["values"] if v.upper() in terms]
+        rec_lab = {v.upper(): d for v, d in zip(spec["values"], spec["displays"])}
+
+    def ct_choice(sv):
+        t = terms[sv.upper()]
+        return {"name": safe_name(t["value"]), "label": rec_lab.get(sv.upper()) or _ct_label(t),
+                "submission_value": t["value"], "code": t["code"], "extension": False}
+
+    ext = []
+    if rec:
+        mset = {m.upper() for m in mapped}
+        if existing and mset and not unmapped and mset < {r.upper() for r in rec}:
+            values, rule = [r for r in rec if r.upper() in mset], "subset_of_cdisc_recommended"
+        else:
+            values, rule = rec, "cdisc_recommended"
+        if unmapped and cl["extensible"]:
+            values = values + [m for m in mapped if m.upper() not in {v.upper() for v in values}]
+            ext = [{"name": safe_name(n), "label": lab or n, "submission_value": None, "code": None,
+                    "extension": True} for n, lab in unmapped]
+            rule += "_plus_extensions"
+    elif existing and not unmapped:
+        full = {k for k in terms}
+        values = mapped
+        rule = "full_codelist" if {m.upper() for m in mapped} == full else "mapped_to_ct"
+        if rule == "full_codelist":
+            values = [t["value"] for t in terms.values()]  # canonical order, stable across runs
+    elif not existing:
+        if len(terms) > FULL_LIST_MAX:
+            return None
+        values, rule = [t["value"] for t in terms.values()], "full_codelist"
+    elif not cl["extensible"] and len(terms) <= FULL_LIST_MAX:
+        values, rule = [t["value"] for t in terms.values()], "full_codelist"
+    else:
+        values = mapped
+        rule = "mapped_plus_extensions" if cl["extensible"] else "mapped_with_nonconformant"
+        ext = [{"name": safe_name(n), "label": lab or n, "submission_value": None, "code": None,
+                "extension": True} for n, lab in unmapped]
+    out, seen = [], set()
+    for c in [ct_choice(v) for v in values] + ext:
+        if c["name"].upper() not in seen:
+            seen.add(c["name"].upper())
+            out.append(c)
+    return {"choices": out, "rule": rule, "unmapped": [n for n, _ in unmapped]}
+
+
+# ── Apply to a Study Spec (CDASH-default fields only) ───────────────────────────
+
+def _select(row):
+    t = (row.get("type") or "").strip() if isinstance(row, dict) else ""
+    kind, _, ln = t.partition(" ")
+    return (kind, ln.strip()) if kind.lower() in ("select_one", "select_multiple") and ln.strip() else (None, None)
+
+
+def _renames(cl, existing, new_names):
+    """Old choice name -> new choice name, plus old names that no longer exist."""
+    ren, dropped = {}, []
+    for n, lab in existing:
+        sv = _to_submission(cl, n) or _to_submission(cl, lab)
+        cand = safe_name(sv) if sv else safe_name(n)
+        if cand in new_names:
+            ren[n] = cand
+        elif n not in new_names:
+            dropped.append(n)
+    return ren, dropped
+
+
+def _is_expr_key(k):
+    base = str(k).split("::")[0].lower()
+    return base not in ("name", "type", "cdisc_ct") and not base.startswith(("label", "hint", "media"))
+
+
+def _rewrite_refs(form, field, renames, dropped):
+    """Rewrite ${field} = 'old', 'old' = ${field}, selected(${field}, 'old') in this form's survey.
+    Returns (number of expressions changed, dropped values still referenced)."""
+    ref = r"\$\{" + re.escape(str(field)) + r"\}"
+    changed, still = 0, set()
+    for row in form.get("survey") or []:
+        if not isinstance(row, dict):
+            continue
+        for k, v in list(row.items()):
+            if not isinstance(v, str) or "${" + str(field) + "}" not in v or not _is_expr_key(k):
+                continue
+            new = v
+            for old, nw in renames.items():
+                if old == nw:
+                    continue
+                o = re.escape(old)
+                rep = lambda m: m.group(1) + m.group(2) + nw + m.group(2)
+                new = re.sub(r"(" + ref + r"\s*!?=\s*)(['\"])" + o + r"\2", rep, new)
+                new = re.sub(r"(selected\(\s*" + ref + r"\s*,\s*)(['\"])" + o + r"\2", rep, new)
+                new = re.sub(r"(['\"])" + o + r"\1(\s*!?=\s*" + ref + r")",
+                             lambda m: m.group(1) + nw + m.group(1) + m.group(2), new)
+            for old in dropped:
+                if re.search(ref + r"[^'\"]{0,12}(['\"])" + re.escape(old) + r"\1", new) or \
+                        re.search(r"(['\"])" + re.escape(old) + r"\1\s*!?=\s*" + ref, new):
+                    still.add(old)
+            if new != v:
+                row[k] = new
+                changed += 1
+    return changed, sorted(still)
+
+
+def _referenced(form, field, values):
+    """Values of `field` that this form's expressions compare against."""
+    ref = r"\$\{" + re.escape(str(field)) + r"\}"
+    found = set()
+    for row in form.get("survey") or []:
+        for k, v in (row.items() if isinstance(row, dict) else []):
+            if not isinstance(v, str) or "${" + str(field) + "}" not in v or not _is_expr_key(k):
+                continue
+            for val in values:
+                o = re.escape(val)
+                if (re.search(ref + r"\s*!?=\s*(['\"])" + o + r"\1", v)
+                        or re.search(r"selected\(\s*" + ref + r"\s*,\s*(['\"])" + o + r"\1", v)
+                        or re.search(r"(['\"])" + o + r"\1\s*!?=\s*" + ref, v)):
+                    found.add(val)
+    return sorted(found)
+
+
+def apply_to_spec(spec, std, protected_vars=frozenset()):
+    """Give every CDASH-default select field its CDISC CT list. Fields whose variable is in
+    protected_vars (customer or OC standards lists) and lists injected from customer CRF
+    standards are never changed. Idempotent. Returns per-field decisions."""
+    protected = {p.upper() for p in protected_vars}
+    decisions = []
+    for f in spec.get("forms") or []:
         if not isinstance(f, dict):
             continue
-        choices = f.get("choices") or []
+        fid, choices = f.get("form_id"), f.setdefault("choices", [])
+        lists = {}
+        for c in choices:
+            if isinstance(c, dict):
+                lists.setdefault(str(c.get("list_name") or "").strip(), []).append(c)
+        ours = {ln for ln, rows in lists.items() if rows and all(r.get("source") == "CDISC_CT" for r in rows)}
+        made, repointed = {}, set()
         for row in f.get("survey") or []:
-            if not isinstance(row, dict):
+            kind, ln = _select(row)
+            if not kind:
                 continue
-            t = (row.get("type") or "").strip().lower()
-            if t.startswith("select_one ") or t.startswith("select_multiple "):
-                r = assess_field(ct, row, choices)
-                r["form_id"] = f.get("form_id")
-                fields.append(r)
-    return {"ct_source": ct.source, "ct_package_date": ct.package_date,
-            "summary": dict(Counter(r["status"] for r in fields)),
-            "bound_by": dict(Counter(r.get("bound_by") for r in fields if r.get("bound_by"))),
-            "fields": fields}
+            var = field_variable(row.get("name"), std)
+            d = {"form_id": fid, "field": row.get("name"), "variable": var, "list_name": ln}
+            rows = lists.get(ln, [])
+            if var in protected or str(row.get("name", "")).upper() in protected or \
+                    any(r.get("source") == "crf_standards_injection" for r in rows):
+                decisions.append({**d, "tier": "customer_or_oc_standard", "action": "kept"})
+                continue
+            existing = [(str(r.get("name", "")).strip(), str(r.get("label", "")).strip()) for r in rows]
+            cl, bound_by, note = bind(std, var, [n for n, _ in existing])
+            if not cl:
+                decisions.append({**d, "tier": "cdash_default", "action": "no_cdisc_codelist", "note": note})
+                continue
+            res = resolve(std, cl, var, existing)
+            if res is None:
+                decisions.append({**d, "tier": "cdash_default", "action": "left_as_is",
+                                  "codelist": cl["short_name"], "note": "large codelist, no study values"})
+                continue
+            names = {c["name"] for c in res["choices"]}
+            _, dropped0 = _renames(cl, existing, names)
+            kept = _referenced(f, row.get("name"), dropped0)
+            if kept:
+                # A value still used by skip logic or checks is kept (flagged) rather than breaking the form.
+                lab = dict(existing)
+                res["choices"] += [{"name": safe_name(n), "label": lab.get(n) or n, "submission_value": None,
+                                    "code": None, "extension": True} for n in kept if safe_name(n) not in names]
+                res["rule"] += "_kept_referenced"
+            content = tuple(c["name"] for c in res["choices"])
+            new = "ct_" + cl["short_name"].lower()
+            if res["rule"] not in ("cdisc_recommended", "full_codelist"):
+                # Named by content, so fields with the same CDISC value set share one list.
+                tail = "_".join(content).lower()
+                if len(tail) > 24:
+                    import hashlib
+                    tail = hashlib.sha1("|".join(content).encode()).hexdigest()[:8]
+                new += "_" + tail
+            if (new in lists and new not in ours) or (new in made and made[new] != content):
+                new += "_cdisc"
+            if new not in made:
+                made[new] = content
+                choices[:] = [c for c in choices if not (isinstance(c, dict) and c.get("list_name") == new)]
+                choices.extend({"list_name": new, "name": c["name"], "label": c["label"], "source": "CDISC_CT",
+                                "cdisc_submission_value": c["submission_value"], "cdisc_code": c["code"],
+                                "cdisc_codelist": cl["code"], "sponsor_extension": c["extension"]}
+                               for c in res["choices"])
+            if ln != new:
+                repointed.add(ln)
+            row["type"] = f"{kind} {new}"
+            ren, dropped = _renames(cl, existing, {c["name"] for c in res["choices"]})
+            n_expr, refs_dropped = _rewrite_refs(f, row.get("name"), ren, dropped)
+            prev = row.get("cdisc_ct") if isinstance(row.get("cdisc_ct"), dict) else {}
+            unmapped_hist = list(prev.get("unmapped_values") or []) \
+                if prev.get("codelist_code") == cl["code"] else []
+            unmapped_hist += [u for u in res["unmapped"] if u not in unmapped_hist]
+            row["cdisc_ct"] = {"codelist": cl["short_name"], "codelist_code": cl["code"],
+                               "extensible": cl["extensible"], "rule": res["rule"], "bound_by": bound_by,
+                               "ct_version": std.ct.version, "unmapped_values": unmapped_hist}
+            decisions.append({**d, "tier": "cdash_default", "action": "cdisc_ct_applied", "list_name": new,
+                              "codelist": cl["short_name"], "rule": res["rule"], "bound_by": bound_by,
+                              "unmapped_values": res["unmapped"], "dropped_values": dropped,
+                              "expressions_rewritten": n_expr,
+                              "expressions_referencing_dropped_values": refs_dropped})
+        still = {_select(r)[1] for r in (f.get("survey") or []) if _select(r)[1]}
+        f["choices"] = [c for c in choices if not (isinstance(c, dict) and c.get("list_name") in repointed
+                                                    and c.get("list_name") not in still)]
+    return decisions
+
+
+def summarize(decisions):
+    return {"actions": dict(Counter(d["action"] for d in decisions)),
+            "rules": dict(Counter(d["rule"] for d in decisions if d.get("rule"))),
+            "bound_by": dict(Counter(d["bound_by"] for d in decisions if d.get("bound_by"))),
+            "not_in_release": sorted({d["note"] for d in decisions
+                                      if str(d.get("note") or "").startswith("codelist_not_in_release")}),
+            "expressions_rewritten": sum(d.get("expressions_rewritten", 0) for d in decisions),
+            "expressions_referencing_dropped_values": [
+                f"{d['form_id']}.{d['field']}:{d['expressions_referencing_dropped_values']}"
+                for d in decisions if d.get("expressions_referencing_dropped_values")]}
 
 
 if __name__ == "__main__":
+    import copy
     args = [a for a in sys.argv[1:] if a != "--refresh"]
-    pkg = load(refresh="--refresh" in sys.argv)
-    if pkg is None:
-        sys.exit("CT unavailable")
-    print(f"CT {pkg.package_date}: {len(pkg.codelists)} codelists from {pkg.source}")
+    if "--refresh" in sys.argv:
+        load(refresh=True)
+    std = load_standards()
+    if std is None:
+        sys.exit("CDISC standards unavailable")
+    print(f"Standards: {std.versions}  CDASHIG vars={len(std.cdashig)}  COSMoS vars={len(std.crf_specs)}")
     for p in args:
-        rep = report(json.load(open(p)), pkg)
-        print(f"\n== {os.path.basename(p)}  {rep['summary']}  bound_by={rep['bound_by']}")
-        for r in rep["fields"]:
-            if r["status"] not in ("unbound", "conformant", "subset"):
-                print(f"  {r['form_id']}.{r['field']} -> {r.get('codelist')} {r['status']} "
-                      f"extra={r['extra_values']} syn={r['synonym_matches']}")
+        spec = copy.deepcopy(json.load(open(p)))
+        dec = apply_to_spec(spec, std)
+        print(f"\n== {os.path.basename(p)}  {summarize(dec)}")
+        for d in dec:
+            if d["action"] == "cdisc_ct_applied" and d["rule"] not in ("mapped_to_ct", "subset_of_cdisc_recommended"):
+                print(f"  {d['form_id']}.{d['field']} -> {d['list_name']} [{d['rule']}, {d['bound_by']}]"
+                      + (f" unmapped={d['unmapped_values']}" if d["unmapped_values"] else "")
+                      + (f" dropped={d['dropped_values']}" if d["dropped_values"] else ""))

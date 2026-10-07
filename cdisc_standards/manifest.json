@@ -1,0 +1,8 @@
+{
+  "ct_version": "2026-09-25",
+  "crf_specializations_file": "cdisc_crf_specializations_2026-06-30.csv",
+  "cdashig_file": "CDASHIG_v2_3.csv",
+  "cdashig_version": "2.3",
+  "sdtmig_file": "SDTMIG_v3_4.csv",
+  "sdtmig_version": "3.4"
+}
