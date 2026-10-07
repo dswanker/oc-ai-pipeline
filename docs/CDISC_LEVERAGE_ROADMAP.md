@@ -82,6 +82,8 @@ This is the open-source counterpart of the OC AI Pipeline; reuse its parts inste
    filtered). Not shipped: HR-completeness check (CDASHIG findings are normalized, CRFs are horizontal;
    needs scenario-aware logic) and writing OC4 briefdescription/description (Participant Matrix headings,
    limits unverified).
-2. Standard edit-check library (section 2).
+2. Standard edit-check library (section 2). Foundations SHIPPED: conventions engine bindings, template
+   filters, study.has_field (cross-form), add_constraint; concept tagging (`cdisc_concepts.py`: row concept +
+   qualifier from customer aliases, CDASH names, validated Claude call) so checks match non-CDASH forms.
 3. QRS instruments for ePRO forms (section 3).
 Then aCRF, CORE output validation, USDM input, submission artifacts.

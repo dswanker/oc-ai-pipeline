@@ -4240,6 +4240,41 @@ def _apply_cdisc_ct(struct_json, crf_files=None, oc_files=None):
         return struct_json
 
 
+async def _tag_concepts(item_id, struct_json, customer_subdomain="", client_name=""):
+    """Tag every data field with the CDASH concept it represents (cdisc_concepts.py), whatever it is named,
+    so edit-check conventions work on CDASH and non-CDASH forms. Runs on the complete study, right before
+    the conventions engine. Customer aliases and CDASH names are deterministic; one validated Claude call
+    covers the rest (CDISC_CONCEPTS_AI=0 skips it; CDISC_CONCEPTS=0 skips tagging). Never fails a build."""
+    if os.environ.get("CDISC_CONCEPTS", "1") == "0" or not isinstance(struct_json, dict):
+        return
+    try:
+        import cdisc_ct, cdisc_concepts
+        sm = struct_json.setdefault("study_meta", {})
+        std = cdisc_ct.load_standards((sm.get("cdisc_standards") or {}).get("ct_version"))
+        if std is None:
+            print("[cdisc-concepts] standards unavailable; tagging skipped", flush=True)
+            return
+        det = cdisc_concepts.tag_deterministic(struct_json, std,
+                                               cdisc_concepts.load_aliases(customer_subdomain, client_name))
+        ai = {"skipped": "CDISC_CONCEPTS_AI=0"}
+        if os.environ.get("CDISC_CONCEPTS_AI", "1") != "0":
+            req = cdisc_concepts.build_request(struct_json, std)
+            if req:
+                text = await call_claude(req[0], extra_text=req[1], max_tokens=16000, cache_prompt=False)
+                ai = cdisc_concepts.apply_ai_response(struct_json, std, text)
+            else:
+                ai = {"skipped": "nothing untagged"}
+        cov = cdisc_concepts.summary(struct_json)
+        sm.setdefault("cdisc_standards", {})["concepts"] = {"deterministic": det, "claude": ai, "coverage": cov}
+        print(f"[cdisc-concepts] deterministic={det} claude={ai} coverage={cov}", flush=True)
+        tagged = sum(v for k, v in cov.items() if k != "untagged")
+        await append_log(item_id, f"CDASH concepts: {tagged} of {tagged + cov.get('untagged', 0)} fields tagged "
+                                  f"({cov.get('customer_alias', 0)} customer alias, {cov.get('cdash_name', 0)} CDASH name, "
+                                  f"{cov.get('claude', 0)} Claude-validated)")
+    except Exception as e:
+        print(f"[cdisc-concepts] tagging failed (build continues): {e}", flush=True)
+
+
 async def _cdisc_ct_log_step(item_id, struct_json):
     """Post the CDISC layer summary for this build to the monday log."""
     try:
@@ -5814,6 +5849,7 @@ async def run_pipeline(item_id):
                             )
                             _user_change_paths = {r["field_path"] for r in _user_changes}
 
+                            await _tag_concepts(item_id, struct_json, oc_subdomain, client_name)
                             apply_conventions(struct_json, study_id=_study_id,
                                               customer_subdomain=oc_subdomain,
                                               client_name=client_name)
@@ -5924,6 +5960,7 @@ async def run_pipeline(item_id):
                 from conventions_engine import apply_conventions
                 _study_id = (struct_json.get("study_meta") or {}).get("protocol_number") or protocol_num
                 _vendor_slug = _vendor_slug_from_display_name(mig_result.get("source_system"))
+                await _tag_concepts(item_id, struct_json, oc_subdomain, client_name)
                 apply_conventions(struct_json, study_id=_study_id,
                                   customer_subdomain=oc_subdomain,
                                   migration_source=_vendor_slug,
@@ -6463,6 +6500,7 @@ async def run_pipeline(item_id):
                 # apply only on migration path (Path M). If non-migration builds need
                 # vendor conventions in future, extract the column at build entry and
                 # thread it through as migration_source here.
+                await _tag_concepts(item_id, struct_json, oc_subdomain, client_name)
                 apply_conventions(struct_json, study_id=_study_id,
                                   customer_subdomain=oc_subdomain,
                                   client_name=client_name)
