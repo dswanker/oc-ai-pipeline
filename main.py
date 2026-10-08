@@ -22,6 +22,22 @@ from gmail_oauth import (
 from monday_client import COL, PIPELINE_CONFIG_ITEM_ID, download_column_file
 from migration_pipeline import MIGRATIONS_HUB_COLUMNS
 
+def _admin_ok(provided) -> bool:
+    """True only when ADMIN_SECRET is set AND the provided header matches it (constant-time). Fails closed: an unset
+    secret authorises nobody (never fall back to a default, the repo is public)."""
+    expected = os.environ.get("ADMIN_SECRET", "")
+    return bool(expected) and bool(provided) and hmac.compare_digest(str(provided), expected)
+
+
+def _require_admin(provided) -> None:
+    """Raise 503 when ADMIN_SECRET is not set, 403 when the header is missing or wrong."""
+    if not os.environ.get("ADMIN_SECRET", ""):
+        raise HTTPException(status_code=503, detail="ADMIN_SECRET env var not set — endpoint disabled. "
+                                                    "Set it on Railway before calling.")
+    if not _admin_ok(provided):
+        raise HTTPException(status_code=403, detail="unauthorized")
+
+
 app = FastAPI()
 
 # CORS — the Syndeo UI (mapping-ui) is a separate Railway service that
@@ -248,9 +264,7 @@ async def clear_upload_record_oids(request: Request):
 @app.post("/admin/full-reset")
 async def full_reset(request: Request, body: dict):
     """Clear ALL output file columns + reset all status/text columns for a full re-run."""
-    admin_secret = os.environ.get("ADMIN_SECRET", "oc-admin-2026")
-    if request.headers.get("X-Admin-Secret", "") != admin_secret:
-        raise HTTPException(status_code=403, detail="unauthorized")
+    _require_admin(request.headers.get("X-Admin-Secret", ""))
     item_id = str(body.get("item_id", ""))
     if not item_id:
         raise HTTPException(status_code=400, detail="item_id required")
@@ -483,9 +497,7 @@ async def clear_session(
     email: str = "dswanker@openclinica.com",
 ):
     """Delete the saved Playwright session so next run forces re-auth (captures EU cookies)."""
-    admin_secret = os.environ.get("ADMIN_SECRET", "oc-admin-2026")
-    if request.headers.get("X-Admin-Secret", "") != admin_secret:
-        raise HTTPException(status_code=403, detail="unauthorized")
+    _require_admin(request.headers.get("X-Admin-Secret", ""))
     from pathlib import Path
     path = Path(f"/data/browser_sessions/{email}.json")
     if path.exists():
@@ -540,9 +552,7 @@ async def sample_odm(
     Useful for sharing with OC engineering for debugging.
     Gated by X-Admin-Secret header.
     """
-    admin_secret = os.environ.get("ADMIN_SECRET", "oc-admin-2026")
-    if request.headers.get("X-Admin-Secret", "") != admin_secret:
-        raise HTTPException(status_code=403, detail="unauthorized")
+    _require_admin(request.headers.get("X-Admin-Secret", ""))
     from uat_loader import (
         get_item, download_column_file, _parse_uat_cases,
         _build_odm_xml, COL
@@ -586,9 +596,7 @@ async def probe_oc_apis(
     subdomain: str = "cust1",
 ):
     """Fetch OpenAPI docs for participant-service and data-service using a live token."""
-    admin_secret = os.environ.get("ADMIN_SECRET", "oc-admin-2026")
-    if request.headers.get("X-Admin-Secret", "") != admin_secret:
-        raise HTTPException(status_code=403, detail="unauthorized")
+    _require_admin(request.headers.get("X-Admin-Secret", ""))
     from pipeline import _get_oc_token
     import httpx as _httpx
     token = await _get_oc_token(subdomain)
@@ -632,17 +640,14 @@ async def test_slow_forms_endpoint(
 ):
     """Run the slow-forms diagnostic and return the result dict.
 
-    Gated by X-Admin-Secret header against the ADMIN_SECRET env var
-    (default fallback "oc-admin-2026" so local invocations work
-    without env wiring).
+    Gated by X-Admin-Secret header against the ADMIN_SECRET env var (no fallback: when it is
+    not set the endpoint is disabled; set ADMIN_SECRET locally to run it).
 
     Returns the dict from test_slow_forms.run_test() — see that
     function's docstring for the response shape. Per-form prints
     still flow to server stdout so Railway logs show live progress.
     """
-    expected_secret = os.environ.get("ADMIN_SECRET", "oc-admin-2026")
-    if x_admin_secret != expected_secret:
-        raise HTTPException(status_code=403, detail="unauthorized")
+    _require_admin(x_admin_secret)
     from test_slow_forms import run_test
     return await run_test()
 
@@ -1001,7 +1006,7 @@ async def dry_run_board_json(request: Request):
     Body: {"item_id": "12717239658"}
     """
     secret = request.headers.get("X-Admin-Secret", "")
-    if secret != os.environ.get("ADMIN_SECRET", "oc-admin-2026"):
+    if not _admin_ok(secret):
         return {"status": "unauthorized"}
 
     body_bytes = await request.body()
@@ -1083,7 +1088,7 @@ async def regen_dvs_route(request: Request, background_tasks: BackgroundTasks):
     Requires X-Admin-Secret header and item_id in body.
     """
     secret = request.headers.get("X-Admin-Secret", "")
-    if secret != os.environ.get("ADMIN_SECRET", "oc-admin-2026"):
+    if not _admin_ok(secret):
         return {"status": "unauthorized"}
 
     body_bytes = await request.body()
@@ -1202,7 +1207,7 @@ async def run_email_intake_route(request: Request,
     Requires X-Admin-Secret header.
     """
     secret = request.headers.get("X-Admin-Secret", "")
-    if secret != os.environ.get("ADMIN_SECRET", ""):
+    if not _admin_ok(secret):
         return {"status": "unauthorized"}
 
     body_bytes = await request.body()
@@ -1356,8 +1361,7 @@ async def gmail_auth_status(monday_user_id: str, request: Request):
     Returns: {connected: bool, gmail_address: str, expires_at: int}
     """
     secret = request.headers.get("X-Admin-Secret", "")
-    if secret != os.environ.get("ADMIN_SECRET", ""):
-        raise HTTPException(status_code=403, detail="unauthorized")
+    _require_admin(secret)
 
     from gmail_oauth import load_token
     token = load_token(monday_user_id)
