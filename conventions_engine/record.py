@@ -39,13 +39,15 @@ def _maybe_record_customer_vendor_conflict(
     for ov in overrode:
         if ov.scope != "vendor":
             continue
-        bucket.append({
+        item = {
             "natural_key": nk,
             "customer_id": customer_id,
             "vendor_slug": ov.scope_id,
             "winner": "customer",
             "losing_effect_summary": ov.would_have_done,
-        })
+        }
+        if item not in bucket:
+            bucket.append(item)
 
 
 def _summarize_effects(effects_done: ApplyResult) -> str:
@@ -133,9 +135,47 @@ def _extract_mutations(effects_done: ApplyResult, applied_to: str,
     return out
 
 
+def _merge_entry(into: Dict[str, Any], new: Dict[str, Any]) -> None:
+    """Fold a repeat application (same convention, same entity, e.g. a later pass) into the existing entry:
+    mutations are combined (no duplicates), the summary is the latest unless the latest did nothing."""
+    seen = {repr(m) for m in into.get("mutations") or []}
+    for m in new.get("mutations") or []:
+        if repr(m) not in seen:
+            into.setdefault("mutations", []).append(m)
+            seen.add(repr(m))
+    if new.get("mutations") or not into.get("effect_summary"):
+        into["effect_summary"] = new.get("effect_summary")
+    if new.get("overrode"):
+        into["overrode"] = new["overrode"]
+
+
+def build_index(spec: Dict[str, Any]) -> Dict[tuple, int]:
+    """Compact study_meta.conventions_engine_applied to one entry per (convention, entity) and return
+    {(convention_id, applied_to): position}. Earlier builds appended a new entry on every pass, so a spec
+    re-run several times carried thousands of duplicates (PrTK05: 11,213 entries, 2.4 MB)."""
+    ensure_section(spec)
+    log = spec["study_meta"]["conventions_engine_applied"]
+    index: Dict[tuple, int] = {}
+    compact: List[Dict[str, Any]] = []
+    for e in log:
+        if not isinstance(e, dict):
+            continue
+        key = (e.get("convention_id"), e.get("applied_to"))
+        if key in index:
+            _merge_entry(compact[index[key]], e)
+        else:
+            index[key] = len(compact)
+            compact.append(e)
+    spec["study_meta"]["conventions_engine_applied"] = compact
+    conflicts = spec["study_meta"].get("customer_vendor_conflicts") or []
+    spec["study_meta"]["customer_vendor_conflicts"] = [c for i, c in enumerate(conflicts)
+                                                       if c not in conflicts[:i]]
+    return index
+
+
 def record_application(spec: Dict[str, Any], convention: Dict[str, Any],
                        applied_to: str, effects_done: ApplyResult,
-                       overrode: List[Overridden]) -> None:
+                       overrode: List[Overridden], index: Dict[tuple, int] = None) -> None:
     """Append one conventions_engine_applied entry to study_meta.
 
     Entry shape:
@@ -175,5 +215,12 @@ def record_application(spec: Dict[str, Any], convention: Dict[str, Any],
             for ov in overrode
         ]
 
-    spec["study_meta"]["conventions_engine_applied"].append(entry)
+    log = spec["study_meta"]["conventions_engine_applied"]
+    key = (entry["convention_id"], applied_to)
+    if index is not None and key in index and index[key] < len(log):
+        _merge_entry(log[index[key]], entry)      # same convention, same entity: one entry, not one per pass
+    else:
+        log.append(entry)
+        if index is not None:
+            index[key] = len(log) - 1
     _maybe_record_customer_vendor_conflict(spec, convention, overrode)

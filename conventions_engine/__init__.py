@@ -241,6 +241,8 @@ def apply_conventions(
     resolved_list: List[ResolvedConvention] = cascade.resolve(loaded)
 
     prompt_blocks: List[str] = []
+    # One log entry per (convention, entity) across passes; compacts specs bloated by earlier builds.
+    _log_index = record.build_index(spec)
     # Customer standard forms are never changed: what would change is collected as proposals instead.
     standard_proposals = customer_standard.begin_pass(spec)
 
@@ -277,6 +279,7 @@ def apply_conventions(
                 applied_to=entity_ctx.path,
                 effects_done=applied,
                 overrode=resolved.overrode,
+                index=_log_index,
             )
 
             prompt_blocks.append(
@@ -295,8 +298,10 @@ def apply_conventions(
 
     # Park prompt-injection text under study_meta so prompts.py can
     # pluck it out later. Phase C wires the actual injection.
+    # One copy of each convention's guidance: it was appended once per matched entity (PrTK05: 11 MB,
+    # 38,658 lines, 114 distinct).
     spec.setdefault("study_meta", {})["conventions_prompt_block"] = (
-        render.render_prompt_block(prompt_blocks)
+        render.render_prompt_block(list(dict.fromkeys(b for b in prompt_blocks if b)))
     )
 
     return spec
