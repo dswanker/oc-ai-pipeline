@@ -1234,9 +1234,25 @@ def extract_dvs_data(struct_json, forms_json):
 
     _proposals = (((struct_json or {}).get("study_meta") or {}).get("ai_edit_checks") or {}).get("proposals") or []         if isinstance(struct_json, dict) else []
 
+    _dm_open = [d for d in ((struct_json or {}).get("study_meta") or {}).get("edit_check_decisions") or []
+                if isinstance(struct_json, dict) and d.get("action") == "add" and d.get("status") == "needs_build_team"]
+    _dm_seen = set()
+
     def _proposal_rows(fid):
-        """AI-proposed checks for this form: listed for review (Status Proposed), not in the build."""
+        """AI-proposed checks for this form (Status Proposed) and DM requests the pipeline could not build
+        (Status Needs Build Team): listed for review, not in the build."""
         out = []
+        for d in _dm_open:
+            df = str(d.get("form") or "")
+            if (fid not in (df, "F_" + df) and df != "F_" + fid) or d.get("key") in _dm_seen:
+                continue
+            _dm_seen.add(d.get("key"))
+            out.append({
+                "Action": "", "Check Source": "DM-Added", "Check ID": "", "Rule / Proposal ID": "",
+                "Status": "Needs Build Team", "Check Name": f"{fid}.{d.get('item') or '(form)'} — DM request",
+                "Plain-English Description": d.get("description"), "Target Form OID": fid,
+                "Target Item Name": d.get("item") or "", "Source Section": "DM request (not in build)",
+                "Notes": d.get("note") or "", "Check Type": "Constraint"})
         for p in _proposals:
             pf = str(p.get("target_form") or "")
             if fid not in (pf, "F_" + pf) and pf != "F_" + fid:
@@ -1369,7 +1385,7 @@ def extract_dvs_data(struct_json, forms_json):
                     check, form_filename, row_idx))
 
     # AI-proposed checks: listed under their form (right after its last check), Status Proposed.
-    if _proposals:
+    if _proposals or _dm_open:
         _merged, _done = [], set()
         for _i, _r in enumerate(dvs_oc4):
             _merged.append(_r)
@@ -1378,6 +1394,11 @@ def extract_dvs_data(struct_json, forms_json):
             if _fid and _fid != _nxt and _fid not in _done:
                 _merged.extend(_proposal_rows(_fid))
                 _done.add(_fid)
+        # forms with no checks of their own yet: their proposals / DM requests go at the end
+        for _f in [str(p.get("target_form") or "") for p in _proposals] + [str(d.get("form") or "") for d in _dm_open]:
+            if _f and _f not in _done and "F_" + _f not in _done:
+                _merged.extend(_proposal_rows(_f))
+                _done.add(_f)
         dvs_oc4[:] = _merged
 
     # ── SE_COMMON backstop: ensure repeating forms have ≥1 directly-loadable row ──

@@ -7,7 +7,9 @@ form from an edited DVS. Only DVS files with the Action column use this path; ol
   Delete   any check       -> the clause / show-when / required flag is removed; engine checks are suppressed so the
                               rules engine never re-adds them
   Change   any check       -> query message updated (a changed plain-English logic description needs translation)
-  Add      new row         -> plain-English translation (separate step); recorded as pending until then
+  Add      new row         -> plain-English description translated by AI into a structured check, validated
+                              against the study and applied as DM.nnn (Check Source DM-Added); anything that
+                              cannot be expressed safely is "needs_build_team", never guessed
 
 Every decision is recorded in study_meta.edit_check_decisions with its outcome.
 """
@@ -171,11 +173,32 @@ def _change(spec, row):
     return "pending", "logic changes from the plain-English description are translated in a later step"
 
 
-def apply_actions(spec, rows):
-    """Apply DM decisions to the spec. Returns {"applied", "already", "failed", "pending", "results": [...]}."""
+def apply_actions(spec, rows, add_translations=None):
+    """Apply DM decisions to the spec. add_translations: {add_key: translation} for Add rows (from the AI call in the
+    pipeline); None means translation was not available this run. Returns counts + per-row results."""
     results = []
+    done_adds = {}
+    for d in (spec.get("study_meta") or {}).get("edit_check_decisions") or []:
+        if d.get("action") == "add" and d.get("status") in ("applied", "already", "needs_build_team"):
+            done_adds.setdefault(d.get("key"), d)
     for row in rows or []:
         act = row["Action"]
+        if act == "add":
+            key = _add_key(row)
+            if key in done_adds:
+                prev = done_adds[key]
+                if prev.get("status") == "needs_build_team":  # same wording as before: same outcome, no new AI call
+                    status, note = "needs_build_team", prev.get("note") or "needs the build team"
+                else:
+                    status, note = "already", "added on an earlier run"
+            elif add_translations is None:
+                status, note = "pending", "plain-English translation not available on this run"
+            else:
+                status, note = _apply_add(spec, row, add_translations.get(key))
+            results.append({"action": act, "key": key, "check_id": "", "rule_id": "",
+                            "form": row.get("Target Form OID"), "item": row.get("Target Item Name"),
+                            "description": row.get("Plain-English Description"), "status": status, "note": note})
+            continue
         try:
             if act == "approve":
                 status, note = _approve(spec, row)
@@ -186,7 +209,7 @@ def apply_actions(spec, rows):
             elif act == "change":
                 status, note = _change(spec, row)
             else:
-                status, note = "pending", "plain-English additions are translated in a later step"
+                status, note = "unsupported", f"unknown action {act!r}"
         except Exception as e:
             status, note = "failed", f"error: {e}"
         results.append({"action": act, "check_id": row.get("Check ID"), "rule_id": row.get("Rule / Proposal ID"),
@@ -195,5 +218,71 @@ def apply_actions(spec, rows):
     dec = spec.setdefault("study_meta", {}).setdefault("edit_check_decisions", [])
     dec.extend(results)
     summ = {k: sum(1 for r in results if r["status"] == k) for k in ("applied", "already", "failed", "pending",
-                                                                      "not_found", "unsupported")}
+                                                                      "not_found", "unsupported", "needs_build_team")}
     return {**summ, "results": results}
+
+
+# ── DM plain-English additions ──────────────────────────────────────────────────
+
+ADD_PROMPT = """You translate data managers' plain-English edit-check requests into structured checks for an
+OpenClinica EDC study. The STUDY (forms, visits, fields, choices, existing checks) and the numbered REQUESTS follow.
+
+For each request return exactly one entry. If it can be expressed as "target_field OPERATOR source_field" (optionally
+only when a field on the target form equals a choice code), return the check; otherwise return "cannot" with a short
+reason (e.g. needs a calculation, a range of constants, or a field that does not exist).
+Answer ONLY with JSON, no prose, no code fences:
+{"results": [{"index": <request number>, "target_form": "...", "target_field": "...", "operator": ">=|>|<=|<|=|!=",
+              "source_form": "...", "source_field": "...", "when": {"field": "...", "equals": "<code>"} (optional),
+              "message": "<query text for the site, under 120 characters>"}
+             | {"index": <request number>, "cannot": "<reason>"}]}
+Use only form ids, field names and choice codes that appear in the STUDY. Dates compare with dates, numbers with numbers.
+"""
+
+
+def _add_key(row):
+    return _norm(f"{row.get('Target Form OID')}|{row.get('Target Item Name')}|{row.get('Plain-English Description')}").lower()
+
+
+def pending_adds(spec, rows):
+    """Add rows that still need translation (not already applied from an earlier upload of the same DVS)."""
+    done = {d.get("key") for d in (spec.get("study_meta") or {}).get("edit_check_decisions") or []
+            if d.get("action") == "add" and d.get("status") in ("applied", "already", "needs_build_team")}
+    return [r for r in rows or [] if r["Action"] == "add" and r.get("Plain-English Description")
+            and _add_key(r) not in done]
+
+
+def build_add_request(spec, adds):
+    import ai_edit_checks as ai
+    _p, study = ai.build_request(spec)
+    reqs = "\n".join(f"{i}. form {r.get('Target Form OID') or '(any)'} | item {r.get('Target Item Name') or '(any)'} | "
+                     f"{r.get('Plain-English Description')}" for i, r in enumerate(adds, 1))
+    return ADD_PROMPT, study + "\n\nREQUESTS:\n" + reqs
+
+
+def parse_add_response(text, adds):
+    """{index: proposal-dict | {"cannot": reason}} for the add rows (1-based index)."""
+    t = str(text or "").strip()
+    t = t[t.find("{"): t.rfind("}") + 1] if "{" in t else "{}"
+    try:
+        res = json.loads(t).get("results") or []
+    except Exception:
+        return {}
+    return {int(r["index"]): r for r in res if isinstance(r, dict) and str(r.get("index", "")).isdigit()
+            and 1 <= int(r["index"]) <= len(adds)}
+
+
+def _apply_add(spec, row, translation):
+    import ai_edit_checks as ai
+    if translation is None:
+        return "needs_build_team", "no translation was produced"
+    if translation.get("cannot"):
+        return "needs_build_team", f"not expressible as a standard check: {translation['cannot']}"
+    norm, why = ai._resolve(spec, translation)
+    if why:
+        return "needs_build_team", f"translation did not validate against the study ({why})"
+    n = 1 + sum(1 for f in _forms(spec) for r in f.get("survey") or [] if isinstance(r, dict)
+                for c in (r.get("edit_checks") or []) if str(c).startswith("DM."))
+    prop = {**norm, "id": f"DM.{n:03d}", "rationale": f"DM request: {row.get('Plain-English Description')}"}
+    if ai.apply_proposal(spec, prop, source="DM-Added"):
+        return "applied", f"added as {prop['id']}: {norm['message']}"
+    return "needs_build_team", "could not be built on the current study"

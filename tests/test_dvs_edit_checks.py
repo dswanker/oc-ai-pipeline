@@ -82,5 +82,5 @@ def test_workbook_dropdowns_follow_headers_and_machine_data_hidden():
     letter = {h: openpyxl.utils.get_column_letter(i) for i, h in enumerate(hdr, 1)}
     dvs = {str(d.sqref).split(":")[0].rstrip("0123456789"): str(d.formula1) for d in ws.data_validations.dataValidation}
     assert "Delete,Change,Approve,Reject,Add" in dvs[letter["Action"]]
-    assert "$K$7" in dvs[letter["Status"]] and "Lookups!$B$" in dvs[letter["Check Type"]]
+    assert "$K$8" in dvs[letter["Status"]] and "Lookups!$B$" in dvs[letter["Check Type"]]
     assert ws.column_dimensions[letter["Machine Data"]].hidden is True

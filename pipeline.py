@@ -6706,12 +6706,27 @@ async def run_pipeline(item_id):
                     _acts = None
                     print(f"[dvs-edits] could not read edited DVS: {_pe}", flush=True)
                 if _acts is not None:
-                    _res = _dvse.apply_actions(struct_json, _acts)
+                    # DM plain-English "Add" rows: one AI call translates them into structured checks (validated
+                    # before anything is applied). Adds already applied on an earlier upload are not re-translated.
+                    _trans = {}
+                    _adds = _dvse.pending_adds(struct_json, _acts)
+                    if _adds and os.environ.get("AI_EDIT_CHECKS", "1") != "0":
+                        try:
+                            _ap, _ax = _dvse.build_add_request(struct_json, _adds)
+                            _at = await call_claude(_ap, extra_text=_ax, max_tokens=6000, cache_prompt=False)
+                            _by_idx = _dvse.parse_add_response(_at, _adds)
+                            _trans = {_dvse._add_key(r): _by_idx.get(i) for i, r in enumerate(_adds, 1)}
+                        except Exception as _te:
+                            print(f"[dvs-edits] add translation failed: {_te}", flush=True)
+                            _trans = None
+                    _res = _dvse.apply_actions(struct_json, _acts, _trans)
                     edited_dvs_xlsx = None  # build with the deterministic EDC builder from the updated spec
-                    _bad = [r for r in _res["results"] if r["status"] in ("failed", "not_found", "unsupported")]
+                    _bad = [r for r in _res["results"] if r["status"] in ("failed", "not_found", "unsupported",
+                                                                            "needs_build_team")]
                     await append_log(item_id,
                         f"DVS edits: {len(_acts)} rows with an Action; applied {_res['applied']}, already in place "
-                        f"{_res['already']}, pending translation {_res['pending']}, not applied {len(_bad)}"
+                        f"{_res['already']}, pending {_res['pending']}, needs build team {_res['needs_build_team']}, "
+                        f"not applied {len(_bad) - _res['needs_build_team']}"
                         + ("".join(f"\n  - {r['action'].title()} {r['form']}.{r['item']} ({r['check_id']}): {r['note']}"
                                    for r in _bad[:15])))
                     try:

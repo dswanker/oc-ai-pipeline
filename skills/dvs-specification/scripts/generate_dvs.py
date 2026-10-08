@@ -346,12 +346,13 @@ def _finish_dvs_oc4(wb, ws, rows, tmpl_dv, tmpl_cf):
     last = max(1000, 4 + len(rows) + 300)
     if "Lookups" in wb.sheetnames:
         lk = wb["Lookups"]
-        if "Proposed" not in [lk[f"K{i}"].value for i in range(2, 12)]:
-            nxt = next(i for i in range(2, 30) if lk[f"K{i}"].value in (None, ""))
-            lk[f"K{nxt}"] = "Proposed"
+        for status in ("Proposed", "Needs Build Team"):
+            if status not in [lk[f"K{i}"].value for i in range(2, 12)]:
+                nxt = next(i for i in range(2, 30) if lk[f"K{i}"].value in (None, ""))
+                lk[f"K{nxt}"] = status
     for hdr, formula in tmpl_dv:
         if hdr in letter:
-            f = formula.replace("$K$6", "$K$7") if hdr == "Status" else formula
+            f = formula.replace("$K$6", "$K$8") if hdr == "Status" else formula
             dv = DataValidation(type="list", formula1=f, allow_blank=True)
             ws.add_data_validation(dv)
             dv.add(f"{letter[hdr]}4:{letter[hdr]}{last}")
@@ -364,7 +365,7 @@ def _finish_dvs_oc4(wb, ws, rows, tmpl_dv, tmpl_cf):
     ws.add_data_validation(act)
     act.add(f"{letter['Action']}4:{letter['Action']}{last}")
     ws.column_dimensions[letter["Machine Data"]].hidden = True
-    shade = {"AI-Proposed": "FDEBD0", "DM-Added": "E8DAEF"}
+    shade = {"AI-Proposed": "FDEBD0", "DM-Added": "E8DAEF"}  # DM rows needing the build team are shaded too
     for i, r in enumerate(rows):
         color = shade.get(str(r.get("Check Source") or ""))
         if color:

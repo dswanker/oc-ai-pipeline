@@ -96,3 +96,40 @@ def test_builder_keeps_combined_and_dm_messages():
     with contextlib.redirect_stdout(io.StringIO()):
         out = {r["name"]: r["constraint_message"] for r in _normalize_constraint_messages(rows)}
     assert out == {"A": "Not future. After X.", "B": "Date cannot be in the future.", "C": "DM wording."}
+
+
+def test_dm_plain_english_adds():
+    spec = _engine(consent_spec())
+    rows = [{"Action": "add", "Target Form OID": "F_AE", "Target Item Name": "ONSET",
+             "Plain-English Description": "AE start must be on or after the visit date."},
+            {"Action": "add", "Target Form OID": "DM", "Target Item Name": "",
+             "Plain-English Description": "Birth year must be after 1900."},
+            {"Action": "add", "Target Form OID": "F_AE", "Target Item Name": "",
+             "Plain-English Description": "AE start must equal the moon landing date."}]
+    adds = dvs_edits.pending_adds(spec, rows)
+    assert len(adds) == 3
+    prompt, extra = dvs_edits.build_add_request(spec, adds)
+    assert "REQUESTS:" in extra and "1. form F_AE | item ONSET" in extra
+    scripted = json.dumps({"results": [
+        {"index": 1, "target_form": "F_AE", "target_field": "ONSET", "operator": ">=", "source_form": "DM",
+         "source_field": "VISDAT", "message": "AE start must be on or after the visit date."},
+        {"index": 2, "cannot": "needs a constant comparison"},
+        {"index": 3, "target_form": "F_AE", "target_field": "ONSET", "operator": "=", "source_form": "DM",
+         "source_field": "MOONDAT", "message": "x"}]})
+    by_idx = dvs_edits.parse_add_response("```json\n" + scripted + "\n```", adds)
+    trans = {dvs_edits._add_key(r): by_idx.get(i) for i, r in enumerate(adds, 1)}
+    res = dvs_edits.apply_actions(spec, rows, trans)
+    assert [r["status"] for r in res["results"]] == ["applied", "needs_build_team", "needs_build_team"]
+    onset = _row(spec, "F_AE", "ONSET")
+    assert "DM.001" in onset["edit_checks"] and "${VISDAT_CF}" in onset["constraint"]
+    assert any(d.get("source") == "DM-Added" for d in onset["edit_check_details"])
+    assert dvs_edits.pending_adds(spec, rows) == []                       # nothing re-sent to the AI
+    again = dvs_edits.apply_actions(spec, rows, {})
+    assert [r["status"] for r in again["results"]] == ["already", "needs_build_team", "needs_build_team"]
+    wb = openpyxl.load_workbook(io.BytesIO(_dvs_bytes(spec)))
+    ws = wb["DVS_OC4"]; col = {c.value: c.column for c in ws[3]}
+    dm = [(ws.cell(r, col["Check Source"]).value, ws.cell(r, col["Status"]).value,
+           ws.cell(r, col["Plain-English Description"]).value) for r in range(4, ws.max_row + 1)
+          if ws.cell(r, col["Check Source"]).value == "DM-Added"]
+    assert ("DM-Added", "Needs Build Team", "Birth year must be after 1900.") in dm
+    assert any(s == "Draft" for _, s, _ in dm)                               # DM.001 is in the build
