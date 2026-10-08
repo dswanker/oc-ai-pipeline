@@ -11,7 +11,7 @@ mid / at-max / above). Non-range checks emit 2+ cases with concrete sample
 data.
 """
 
-import re
+import json, re
 from datetime import date, timedelta
 
 
@@ -356,19 +356,23 @@ def _check_types_for_row(row):
         return checks
 
     if constraint:
-        is_cross_form = "_CF" in constraint
-        checks.append({
-            "check_type": "Cross-form" if is_cross_form else "Constraint",
-            "severity":   "Hard",
-            "expression": constraint,
-            "message":    cons_message or _synthesize_message(constraint, "constraint"),
-            "oc4_pattern": "Cross-form XPath (instance('clinicaldata'))" if is_cross_form else "Local constraint (XPath)",
-        })
+        # An engine-combined constraint "(A) and (B)" is several checks: one DVS row (and UAT set) per clause.
+        for clause in (_split_and_clauses(constraint) or [constraint]):
+            is_cross_form = "_CF" in clause
+            checks.append({
+                "check_type": "Cross-form" if is_cross_form else "Constraint",
+                "meta_kind":  "Constraint",
+                "severity":   "Hard",
+                "expression": clause,
+                "message":    cons_message or _synthesize_message(clause, "constraint"),
+                "oc4_pattern": "Cross-form XPath (instance('clinicaldata'))" if is_cross_form else "Local constraint (XPath)",
+            })
 
     if required in ("yes", "true", "1"):
         checks.append({
             "check_type": "Required",
             "severity":   "Hard",
+            "meta_kind":  "Required",
             "expression": "required=yes",
             "message":    "This field is required.",
             "oc4_pattern": "Required column",
@@ -378,6 +382,7 @@ def _check_types_for_row(row):
         is_cross_form = "_CF" in relevant
         checks.append({
             "check_type": "Cross-form" if is_cross_form else "Conditional Display",
+            "meta_kind":  "Conditional Display",
             "severity":   "Soft",
             "expression": relevant,
             "message":    _synthesize_message(relevant, "relevant"),
@@ -980,9 +985,16 @@ def _infer_test_cases_single(check, row, choices_for_field, ctx=None, world=None
 
 # ── Row builders (one per sheet) ──────────────────────────────────────────────
 
-def _dvs_row(check_id, qt_id, uat_ids, form_id, field_name, field_label, check):
+def _dvs_row(check_id, qt_id, uat_ids, form_id, field_name, field_label, check, meta=None, cf_sources=None):
     target_item_oid = f"{form_id}.{field_name}" if field_name else ""
     source_form_oid = source_item_oid = source_event_oid = ""
+    helper = ""
+    for ref in re.findall(r"\$\{(\w+)\}", check["expression"]):
+        if ref in (cf_sources or {}):
+            src = cf_sources[ref]
+            source_form_oid, source_item, source_event_oid = src[0], src[1], (src[2] if len(src) > 2 else "")
+            source_item_oid, helper = f"{src[0]}.{source_item}", ref
+            break
     if "_CF" in check["expression"] or "FormOID=" in check["expression"]:
         m = re.search(r"@FormOID='([^']+)'", check["expression"])
         if m: source_form_oid = m.group(1)
@@ -998,12 +1010,17 @@ def _dvs_row(check_id, qt_id, uat_ids, form_id, field_name, field_label, check):
     else:
         business_purpose = f"Enforce {check['check_type'].lower()} on {form_id}.{field_name}"
 
+    meta = meta or {}
     return {
+        "Action":                  "",
+        "Check Source":            meta.get("source", ""),
+        "Rule / Proposal ID":      meta.get("rule_id", ""),
+        "Plain-English Description": meta.get("plain", ""),
         "Check ID":                check_id,
         "Status":                  "Draft",
         "Check Name":              check_name,
-        "Business Purpose":        business_purpose,
-        "Protocol Reference":      "(mirrored from XLSForm)",
+        "Business Purpose":        meta.get("rationale") or business_purpose,
+        "Protocol Reference":      meta.get("protocol_reference") or meta.get("rule_id") or "(mirrored from XLSForm)",
         "Source Section":          f"XLSForm: {form_id}",
         "Check Type":              check["check_type"],
         "Severity":                check["severity"],
@@ -1016,10 +1033,10 @@ def _dvs_row(check_id, qt_id, uat_ids, form_id, field_name, field_label, check):
         "Target Item Name":        field_name,
         "Target Item OID":         target_item_oid,
         "Source Form OID(s)":      source_form_oid,
-        "Source Item Name(s)":     "",
+        "Source Item Name(s)":     source_item_oid.split(".", 1)[1] if "." in source_item_oid else "",
         "Source Item OID(s)":      source_item_oid,
         "Helper Calculate Item Needed?": "Yes" if "_CF" in check["expression"] else "No",
-        "Helper Item OID":         "",
+        "Helper Item OID":         f"{form_id}.{helper}" if helper else "",
         "OC4 Logic Pattern":       check["oc4_pattern"],
         "Expression / Calculation": check["expression"],
         "Constraint / Required / Relevant Message": check["message"],
@@ -1200,6 +1217,51 @@ def extract_dvs_data(struct_json, forms_json):
             if _fid and _ftitle:
                 _form_prefix_map[_key] = _oc_form_prefix(_ftitle)
 
+    # Check metadata (source / rule id / plain English) from the Study Spec, via edit_check_meta when available.
+    try:
+        from edit_check_meta import check_meta as _meta_fn
+    except Exception:
+        _meta_fn = None
+    _all_struct_forms = [f for f in (struct_json or {}).get("forms") or [] if isinstance(f, dict)] \
+        if isinstance(struct_json, dict) else []
+
+    def _struct_for(fid):
+        for f in _all_struct_forms:
+            sid = str(f.get("form_id") or "")
+            if fid in (sid, "F_" + sid) or sid == "F_" + fid:
+                return f, {r.get("name"): r for r in f.get("survey") or [] if isinstance(r, dict)}
+        return None, {}
+
+    _proposals = (((struct_json or {}).get("study_meta") or {}).get("ai_edit_checks") or {}).get("proposals") or []         if isinstance(struct_json, dict) else []
+
+    def _proposal_rows(fid):
+        """AI-proposed checks for this form: listed for review (Status Proposed), not in the build."""
+        out = []
+        for p in _proposals:
+            pf = str(p.get("target_form") or "")
+            if fid not in (pf, "F_" + pf) and pf != "F_" + fid:
+                continue
+            cf = p.get("cross_form") or ""
+            out.append({
+                "Action": "", "Check Source": "AI-Proposed", "Check ID": p.get("id"), "Rule / Proposal ID": p.get("id"),
+                "Status": "Proposed", "Check Name": f"{fid}.{p.get('target_field')} — Constraint (AI-proposed)",
+                "Plain-English Description": p.get("message"),
+                "Business Purpose": p.get("rationale") or "", "Protocol Reference": p.get("protocol_reference") or "",
+                "Source Section": "AI-proposed (not in build until Approved)", "Check Type": "Constraint",
+                "Severity": "Soft", "Trigger Point": "Real-time on form entry",
+                "crossform_references": cf.split(".")[0] if cf else "",
+                "Target Form OID": fid, "Target Item Name": p.get("target_field"),
+                "Target Item OID": f"{fid}.{p.get('target_field')}",
+                "Source Form OID(s)": cf.split(".")[0] if cf else "", "Source Item Name(s)": cf.split(".", 1)[1] if cf else "",
+                "Source Item OID(s)": cf, "Helper Calculate Item Needed?": "Yes" if cf else "No",
+                "OC4 Logic Pattern": "Cross-form XPath (instance('clinicaldata'))" if cf else "Local constraint (XPath)",
+                "Expression / Calculation": p.get("logic"), "Constraint / Required / Relevant Message": p.get("message"),
+                "Notes": f"Category: {p.get('category') or 'n/a'}. Set Action = Approve to add to the build.",
+                "Machine Data": json.dumps({k: p.get(k) for k in ("id", "target_form", "target_field", "operator",
+                                            "source_form", "source_field", "when", "message", "rationale",
+                                            "protocol_reference", "category")})})
+        return out
+
     forms = forms_json.get("forms", {}) if isinstance(forms_json, dict) else {}
     for form_filename in sorted(forms.keys()):
         form_data = forms[form_filename] or {}
@@ -1231,7 +1293,8 @@ def extract_dvs_data(struct_json, forms_json):
             calc = str((r or {}).get("calculation") or "") if isinstance(r, dict) else ""
             m = re.search(r"FormOID='([^']+)'.*?ItemName='([^']+)'", calc)
             if m and "instance('clinicaldata')" in calc:
-                _cf[r.get("name")] = (m.group(1), m.group(2))
+                ev = re.search(r"StudyEventOID='([^']+)'", calc)
+                _cf[r.get("name")] = (m.group(1), m.group(2), ev.group(1) if ev else "")
         cross_form_world["__cf_sources__"] = _cf
 
         # field -> its choice codes, so gate (relevance) test values are always real options
@@ -1288,13 +1351,34 @@ def extract_dvs_data(struct_json, forms_json):
                     _row["Load_Order"] = str(uat_counter)
                     uat_cases.append(_row)
 
+                _sf, _srows = _struct_for(form_id)
+                _cmeta = {}
+                if _meta_fn and _sf is not None:
+                    try:
+                        _cmeta = _meta_fn(_sf, _srows.get(field_name, row), check["expression"],
+                                          check.get("meta_kind", check["check_type"]), _all_struct_forms)
+                    except Exception:
+                        _cmeta = {}
                 dvs_oc4.append(_dvs_row(
                     check_id, qt_id, uat_ids_for_this_check,
-                    form_id, field_name, field_label, check))
+                    form_id, field_name, field_label, check,
+                    meta=_cmeta, cf_sources=cross_form_world.get("__cf_sources__")))
 
                 protocol_extraction.append(_pe_row(
                     check_id, form_id, field_name, field_label,
                     check, form_filename, row_idx))
+
+    # AI-proposed checks: listed under their form (right after its last check), Status Proposed.
+    if _proposals:
+        _merged, _done = [], set()
+        for _i, _r in enumerate(dvs_oc4):
+            _merged.append(_r)
+            _fid = _r.get("Target Form OID")
+            _nxt = dvs_oc4[_i + 1].get("Target Form OID") if _i + 1 < len(dvs_oc4) else None
+            if _fid and _fid != _nxt and _fid not in _done:
+                _merged.extend(_proposal_rows(_fid))
+                _done.add(_fid)
+        dvs_oc4[:] = _merged
 
     # ── SE_COMMON backstop: ensure repeating forms have ≥1 directly-loadable row ──
     # CM, DV, AESAE and other SE_COMMON forms often have NO loadable UAT rows —

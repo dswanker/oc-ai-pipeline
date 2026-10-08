@@ -1,13 +1,10 @@
-"""edit_checks_sheet.py: the "Edit Checks" sheet of the DVS workbook. One row per check in the study, organized by
-form: what it does in plain English, its exact logic, where it came from (Source), what other form/item it reads
-(Cross-Form Dependency), plus AI-proposed checks that are NOT in the build until approved. DMs edit the Action column
-(Delete / Change / Approve / Reject) and add rows (Action = Add, plain-English description) for the next run.
+"""edit_check_meta.py: metadata for every check written into the DVS (DVS_OC4 sheet): where it came from (Check
+Source + rule/proposal id), a plain-English description, rationale/protocol reference, and the cross-form source it
+reads. Used by the DVS extractor (skills/dvs-specification) so DVS_OC4 is the single editable list of checks:
+build checks + AI-proposed checks (Status Proposed until a DM approves) + DM-added rows (Action = Add).
 """
 import json, os, re
 
-COLUMNS = ["Action", "Source", "Check ID", "Form", "Item", "Item Label", "Cross-Form Dependency", "Check Type",
-           "Plain-English Description", "Logic", "Query Message", "Rationale / Protocol Reference", "Status",
-           "Machine Data"]  # hidden: structured definition used when the sheet is read back
 ACTIONS = ["Delete", "Change", "Approve", "Reject", "Add"]
 
 _REF = re.compile(r"\$\{(\w+)\}")
@@ -159,124 +156,34 @@ def describe_relevant(rel, cx):
     return "Shown only when its condition is met (see Logic column)."
 
 
-def _built_rows(forms_json, form_id):
-    forms = (forms_json or {}).get("forms") or {}
-    for key in (f"{form_id}.xlsx", f"F_{form_id}.xlsx"):
-        if key in forms:
-            return {r.get("name"): r for r in (forms[key] or {}).get("survey") or [] if isinstance(r, dict)}
-    return {}
 
 
-def build_rows(struct_json, forms_json=None):
-    """All checks in the study (by form), then AI proposals for that form. List of dicts keyed by COLUMNS."""
+def check_meta(struct_form, struct_row, clause, check_type, all_forms):
+    """Metadata for one DVS check on struct_row. check_type: Constraint | Required | Conditional Display | other.
+    Returns {source, rule_id, plain, rationale, protocol_reference}."""
     gids = _global_ids()
-    all_forms = [f for f in (struct_json or {}).get("forms") or [] if isinstance(f, dict)]
-    proposals = (((struct_json or {}).get("study_meta") or {}).get("ai_edit_checks") or {}).get("proposals") or []
-    rows = []
-    for f in all_forms:
-        fid = str(f.get("form_id") or "")
-        built = _built_rows(forms_json, fid)
-        survey = [{**r, **{k: built[r.get("name")][k] for k in ("constraint", "constraint_message", "relevant", "required")
-                           if r.get("name") in built and k in built[r.get("name")]}}
-                  for r in f.get("survey") or [] if isinstance(r, dict)]
-        cx = _FormCtx(f, survey, all_forms)
-        for r in survey:
-            name, t = r.get("name"), str(r.get("type") or "").lower()
-            if not name or t in _NON_DATA or t == "calculate":
-                continue
-            exprs = r.get("edit_check_exprs") or {}
-            by_clause = {" ".join(str(v).split()): k for k, v in exprs.items() if v}
-            details = {d.get("id"): d for d in r.get("edit_check_details") or [] if isinstance(d, dict)}
-            set_by = r.get("edit_check_set_by") or {}
-            base = {"Action": "", "Form": fid, "Item": name, "Item Label": str(r.get("label") or ""), "Status": "In build"}
-            con = str(r.get("constraint") or "").strip()
-            if con:
-                for n, clause in enumerate(_split_and(con), 1):
-                    cid = by_clause.get(" ".join(clause.split()))
-                    det = details.get(cid) or {}
-                    src = det.get("source") or (source_of_check_id(cid) if cid else
-                                                source_of_convention(set_by.get("constraint"), gids))
-                    rows.append({**base, "Source": src, "Check ID": cid or f"{fid}.{name}.C{n}",
-                                 "Cross-Form Dependency": cx.dependency(clause), "Check Type": "Constraint",
-                                 "Plain-English Description": describe(clause, name, cx), "Logic": clause,
-                                 "Query Message": str(r.get("constraint_message") or ""),
-                                 "Rationale / Protocol Reference": " ".join(
-                                     x for x in (det.get("rationale"), det.get("protocol_reference")) if x)})
-            rel = str(r.get("relevant") or "").strip()
-            if rel:
-                rows.append({**base, "Source": source_of_convention(set_by.get("relevant"), gids),
-                             "Check ID": f"{fid}.{name}.SHOW", "Cross-Form Dependency": cx.dependency(rel),
-                             "Check Type": "Show-when", "Plain-English Description": describe_relevant(rel, cx),
-                             "Logic": rel, "Query Message": "", "Rationale / Protocol Reference": ""})
-            if str(r.get("required") or "").strip().lower() in ("yes", "true", "1"):
-                rows.append({**base, "Source": source_of_convention(set_by.get("required"), gids),
-                             "Check ID": f"{fid}.{name}.REQ", "Cross-Form Dependency": "", "Check Type": "Required",
-                             "Plain-English Description": f"{cx.lab(name)} is required" + (" when shown." if rel else "."),
-                             "Logic": "required", "Query Message": str(r.get("required_message") or ""),
-                             "Rationale / Protocol Reference": ""})
-        for p in proposals:
-            if str(p.get("target_form")) != fid:
-                continue
-            rows.append({"Action": "", "Source": "AI-Proposed", "Check ID": p.get("id"), "Form": fid,
-                         "Item": p.get("target_field"), "Item Label": cx.labels.get(p.get("target_field"), ""),
-                         "Cross-Form Dependency": (p.get("cross_form") or "") + (" (any visit)" if p.get("cross_form") else ""),
-                         "Check Type": "Constraint", "Plain-English Description": p.get("message"),
-                         "Logic": p.get("logic"), "Query Message": p.get("message"),
-                         "Rationale / Protocol Reference": " ".join(
-                             x for x in (p.get("rationale"), p.get("protocol_reference")) if x),
-                         "Status": "Proposed: not in build until Approved",
-                         "Machine Data": json.dumps({k: p.get(k) for k in ("id", "target_form", "target_field", "operator",
-                                                     "source_form", "source_field", "when", "message", "rationale",
-                                                     "protocol_reference", "category")})})
-    return rows
-
-
-def add_sheet(xlsx_path, struct_json, forms_json=None):
-    """Append the 'Edit Checks' sheet (and a short guide) to the DVS workbook. Never raises."""
-    try:
-        import openpyxl
-        from openpyxl.styles import Alignment, Font, PatternFill
-        from openpyxl.worksheet.datavalidation import DataValidation
-        from openpyxl.utils import get_column_letter
-        rows = build_rows(struct_json, forms_json)
-        wb = openpyxl.load_workbook(xlsx_path)
-        ws = wb.create_sheet("Edit Checks")
-        ws.append(COLUMNS)
-        head, band = Font(bold=True, color="FFFFFF"), PatternFill("solid", fgColor="1B3A6B")
-        fills = {"AI-Proposed": "FDEBD0", "DM-Added": "E8DAEF"}
-        for c in ws[1]:
-            c.font, c.fill = head, band
-            c.alignment = Alignment(wrap_text=True, vertical="center")
-        for r in rows:
-            ws.append([r.get(c, "") for c in COLUMNS])
-            for c in ws[ws.max_row]:
-                c.alignment = Alignment(wrap_text=True, vertical="top")
-            if r["Source"] in fills:
-                for c in ws[ws.max_row]:
-                    c.fill = PatternFill("solid", fgColor=fills[r["Source"]])
-        for i, w in enumerate([10, 22, 22, 12, 16, 28, 26, 13, 52, 46, 40, 40, 22, 10], 1):
-            ws.column_dimensions[get_column_letter(i)].width = w
-        ws.column_dimensions[get_column_letter(len(COLUMNS))].hidden = True
-        dv = DataValidation(type="list", formula1='"' + ",".join(ACTIONS) + '"', allow_blank=True)
-        ws.add_data_validation(dv)
-        dv.add(f"A2:A{max(ws.max_row + 200, 300)}")
-        ws.freeze_panes = "B2"
-        ws.auto_filter.ref = f"A1:{get_column_letter(len(COLUMNS) - 1)}{max(ws.max_row, 2)}"
-        g = wb.create_sheet("Edit Checks Guide")
-        for line in [
-            ["How to use the Edit Checks sheet"],
-            ["Every check in the study is listed by form. Leave Action blank to keep a check as it is."],
-            ["Delete: remove the check from the build.   Change: edit Plain-English Description and/or Query Message."],
-            ["Approve / Reject: for AI-Proposed rows (orange). Nothing proposed is in the build until Approved."],
-            ["Add: add a new row with Form, Item (optional), and a Plain-English Description. Logic is filled in by the pipeline."],
-            ["Upload the edited DVS and re-run. Results appear in the Status column of the regenerated sheet."],
-            ["Source: CDISC CORE (rule id), CDISC Standard, Global Rule, Customer Rule, Study Build, AI-Proposed, DM-Added."],
-            ["Cross-Form Dependency: the other form and item (and visit) this check reads."]]:
-            g.append(line)
-        g["A1"].font = Font(bold=True, size=13)
-        g.column_dimensions["A"].width = 120
-        wb.save(xlsx_path)
-        return len(rows)
-    except Exception as e:
-        print(f"Edit Checks sheet skipped: {e}", flush=True)
-        return None
+    survey = [r for r in (struct_form or {}).get("survey") or [] if isinstance(r, dict)]
+    cx = _FormCtx(struct_form or {}, survey, all_forms or [])
+    row = struct_row or {}
+    name = row.get("name")
+    set_by = row.get("edit_check_set_by") or {}
+    out = {"source": "Study Build", "rule_id": "", "plain": "", "rationale": "", "protocol_reference": ""}
+    if check_type == "Constraint":
+        exprs = row.get("edit_check_exprs") or {}
+        cid = next((k for k, v in exprs.items() if v and " ".join(str(v).split()) == " ".join(str(clause).split())), None)
+        det = next((d for d in row.get("edit_check_details") or [] if isinstance(d, dict) and d.get("id") == cid), {})
+        out["source"] = det.get("source") or (source_of_check_id(cid) if cid else
+                                              source_of_convention(set_by.get("constraint"), gids))
+        out["rule_id"] = cid or ""
+        out["rationale"] = det.get("rationale") or ""
+        out["protocol_reference"] = det.get("protocol_reference") or ""
+        out["plain"] = describe(clause, name, cx)
+    elif check_type == "Conditional Display":
+        out["source"] = source_of_convention(set_by.get("relevant"), gids)
+        out["plain"] = describe_relevant(clause, cx)
+    elif check_type == "Required":
+        out["source"] = source_of_convention(set_by.get("required"), gids)
+        out["plain"] = f"{cx.lab(name)} is required" + (" when shown." if row.get("relevant") else ".")
+    if out["source"].startswith("CDISC CORE (") and not out["rule_id"]:
+        out["rule_id"] = out["source"][len("CDISC CORE ("):-1]
+    return out

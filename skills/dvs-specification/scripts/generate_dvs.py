@@ -127,7 +127,8 @@ PROTOCOL_EXTRACTION_WIDTHS = {
 }
 
 DVS_OC4_COLS = [
-    "Check ID", "Status", "Check Name", "Business Purpose",
+    "Action", "Check Source", "Check ID", "Rule / Proposal ID", "Status", "Check Name",
+    "Plain-English Description", "Business Purpose",
     "Protocol Reference", "Source Section", "Check Type", "Severity",
     "Trigger Point", "Event Scope", "Source Event OID(s)", "Current Event Needed?",
     "crossform_references", "Target Form OID", "Target Item Name", "Target Item OID",
@@ -135,9 +136,11 @@ DVS_OC4_COLS = [
     "Helper Calculate Item Needed?", "Helper Item OID", "OC4 Logic Pattern",
     "Expression / Calculation", "Constraint / Required / Relevant Message",
     "Query Text ID", "Expected Site Action", "Build Owner", "Priority",
-    "UAT Case ID(s)", "Notes"
+    "UAT Case ID(s)", "Notes", "Machine Data"
 ]
+DVS_ACTIONS = ["Delete", "Change", "Approve", "Reject", "Add"]
 DVS_OC4_WIDTHS = {
+    "Action": 10, "Check Source": 24, "Rule / Proposal ID": 16, "Plain-English Description": 50, "Machine Data": 10,
     "Check ID": 12, "Status": 12, "Check Name": 32, "Business Purpose": 36,
     "Protocol Reference": 16, "Source Section": 20, "Check Type": 22,
     "Severity": 14, "Trigger Point": 26, "Event Scope": 16,
@@ -334,6 +337,55 @@ def _write_cal_uat_sheet(ws, rows, meta, today):
 
 
 # ── Main build function ───────────────────────────────────────────────────────
+def _finish_dvs_oc4(wb, ws, rows, tmpl_dv, tmpl_cf):
+    """Re-attach template dropdowns/formatting by header, add the Action dropdown, the 'Proposed' status,
+    hide Machine Data, shade AI-proposed / DM-added rows, and add the how-to lines to README."""
+    from openpyxl.worksheet.datavalidation import DataValidation
+    from openpyxl.styles import PatternFill
+    letter = {h: get_column_letter(i) for i, h in enumerate(DVS_OC4_COLS, 1)}
+    last = max(1000, 4 + len(rows) + 300)
+    if "Lookups" in wb.sheetnames:
+        lk = wb["Lookups"]
+        if "Proposed" not in [lk[f"K{i}"].value for i in range(2, 12)]:
+            nxt = next(i for i in range(2, 30) if lk[f"K{i}"].value in (None, ""))
+            lk[f"K{nxt}"] = "Proposed"
+    for hdr, formula in tmpl_dv:
+        if hdr in letter:
+            f = formula.replace("$K$6", "$K$7") if hdr == "Status" else formula
+            dv = DataValidation(type="list", formula1=f, allow_blank=True)
+            ws.add_data_validation(dv)
+            dv.add(f"{letter[hdr]}4:{letter[hdr]}{last}")
+    for hdr, old_col, rule in tmpl_cf:
+        if hdr in letter:
+            for i, fml in enumerate(rule.formula or []):
+                rule.formula[i] = fml.replace(f"{old_col}4", f"{letter[hdr]}4")
+            ws.conditional_formatting.add(f"{letter[hdr]}4:{letter[hdr]}{last}", rule)
+    act = DataValidation(type="list", formula1='"' + ",".join(DVS_ACTIONS) + '"', allow_blank=True)
+    ws.add_data_validation(act)
+    act.add(f"{letter['Action']}4:{letter['Action']}{last}")
+    ws.column_dimensions[letter["Machine Data"]].hidden = True
+    shade = {"AI-Proposed": "FDEBD0", "DM-Added": "E8DAEF"}
+    for i, r in enumerate(rows):
+        color = shade.get(str(r.get("Check Source") or ""))
+        if color:
+            for col in range(1, len(DVS_OC4_COLS) + 1):
+                ws.cell(row=4 + i, column=col).fill = PatternFill("solid", fgColor=color)
+    if "README" in wb.sheetnames:
+        rm = wb["README"]
+        start = rm.max_row + 2
+        for j, line in enumerate([
+                "Editing checks (DVS_OC4)",
+                "Every check in the study is one DVS_OC4 row. Leave Action blank to keep a check as it is.",
+                "Action = Delete removes a check; Change: edit Plain-English Description and/or the message.",
+                "AI-proposed checks (orange, Status Proposed) are NOT in the build until Action = Approve (or Reject).",
+                "Action = Add: add a row with Target Form OID, Target Item Name (optional) and a Plain-English "
+                "Description; the logic is filled in by the pipeline.",
+                "Check Source: CDISC CORE (rule id), CDISC Standard, Global Rule, Customer Rule, Study Build, "
+                "AI-Proposed, DM-Added. Source Form/Item/Event columns show what a cross-form check reads.",
+                "Upload the edited DVS and re-run; results appear in Status."]):
+            rm.cell(row=start + j, column=1, value=line)
+
+
 def build_dvs(dvs_data, output_path):
     """
     Build DVS xlsx from dvs_data dict.
@@ -382,7 +434,24 @@ def build_dvs(dvs_data, output_path):
     # ── DVS_OC4 ───────────────────────────────────────────────────────────
     ws_dvs = wb["DVS_OC4"] if "DVS_OC4" in wb.sheetnames \
              else wb.create_sheet("DVS_OC4")
-    for row in ws_dvs.iter_rows(min_row=4):
+    # Template dropdowns / conditional formats are tied to column letters: remember them by HEADER so they
+    # can be re-attached to the same header after the column set changes.
+    _tmpl_hdr = {c.column_letter: str(c.value).strip() for c in ws_dvs[3] if c.value}
+    _tmpl_dv = []
+    for dv in list(ws_dvs.data_validations.dataValidation):
+        for rng in str(dv.sqref).split():
+            col = "".join(ch for ch in rng.split(":")[0] if ch.isalpha())
+            if col in _tmpl_hdr:
+                _tmpl_dv.append((_tmpl_hdr[col], dv.formula1))
+    ws_dvs.data_validations.dataValidation = []
+    _tmpl_cf = []
+    for cf in ws_dvs.conditional_formatting:
+        col = "".join(ch for ch in str(cf.sqref).split(":")[0] if ch.isalpha())
+        if col in _tmpl_hdr:
+            _tmpl_cf.extend((_tmpl_hdr[col], col, r) for r in cf.rules)
+    from openpyxl.formatting.formatting import ConditionalFormattingList
+    ws_dvs.conditional_formatting = ConditionalFormattingList()
+    for row in ws_dvs.iter_rows(min_row=3):
         for cell in row:
             cell.value = None
     _write_sheet(
@@ -393,6 +462,7 @@ def build_dvs(dvs_data, output_path):
         title_text=f"OpenClinica 4 Data Validation Specification  |  {meta.get('protocol_number','')}  |  {today}",
         start_data_row=4,
     )
+    _finish_dvs_oc4(wb, ws_dvs, dvs_data.get("dvs_oc4", []), _tmpl_dv, _tmpl_cf)
 
     # ── Query_Text_Library ────────────────────────────────────────────────
     ws_qt = wb["Query_Text_Library"] if "Query_Text_Library" in wb.sheetnames \

@@ -961,11 +961,6 @@ def run_dvs_xlsx(struct_json, forms_json):
         xlsx_path = os.path.join(tmp, f"{protocol}_DVS.xlsx")
         build_dvs(dvs_data, xlsx_path)
         _add_dvs_lookup_sheet(xlsx_path, struct_json)
-        try:
-            import edit_checks_sheet as _ecs  # every check by form + AI proposals; DM-editable
-            _ecs.add_sheet(xlsx_path, struct_json, forms_json)
-        except Exception as _ece:
-            print(f"Edit Checks sheet skipped: {_ece}", flush=True)
         return open(xlsx_path, "rb").read()
 
 def _extract_scheduling_block(struct_json):
