@@ -11,6 +11,9 @@ COL = {
     "crf_library":       "fileb5c8dt0c",  # Customer Specific CRF Standards
     "oc_standard":       "file_mm2mafjc",  # Customer OC4 XLSForm Standard(s)
     "usdm_input":        "file_mm7yx5qb",  # USDM JSON (input): sponsor USDM 4.0 study definition (usdm_input.py)
+    # "Reference OC Studies (up to 5)": study names / unique identifiers / OIDs, comma-separated. Their forms are
+    # fetched read-only from the item's own subdomain and used as customer standards (reference_studies.py).
+    "reference_studies": "text_mm7yy8kw",
     # Human-in-the-loop input columns
     "edited_spec_input": "file_mm2n3x71",    # Edited Study Specification XLSX
     "build_input":       "file_mm2nqghj",    # Edited Study Build Forms ZIP

@@ -4492,6 +4492,29 @@ def _protocol_text(protocol_bytes):
         return ""
 
 
+async def _fetch_reference_studies(item_id, subdomain, text):
+    """Forms of the studies named in "Reference OC Studies (up to 5)" (reference_studies.py): read-only GETs on the
+    item's own subdomain, fetched once per run, used as customer standard sources between an uploaded XLSForm and
+    an uploaded ODM. Never fails a build; what was fetched and what was skipped goes to the monday log.
+    REFERENCE_STUDIES=0 disables."""
+    try:
+        import reference_studies as _rs
+        import standards_match as _sm
+        if not str(text or "").strip() or not _sm.enabled() or not _rs.enabled():
+            return []
+        res = await _rs.fetch(subdomain, text)
+        if res.get("log"):
+            try:
+                await append_log(item_id, "\n".join(res["log"])[:4000])
+            except Exception:
+                pass
+        print(f"[reference-studies] timing: {res.get('timing')}", flush=True)
+        return res.get("referenced") or []
+    except Exception as e:
+        print(f"[reference-studies] skipped: {type(e).__name__}", flush=True)
+        return []
+
+
 def _load_standard_sources(oc_files, referenced=None):
     """Structured customer standard forms from the oc_standard column (and referenced OC studies), read once per
     run. Never raises: on error there are simply no standards."""
@@ -6084,7 +6107,9 @@ async def run_pipeline(item_id):
         protocol_bytes = _proto_result
         # Customer standard forms (standards_match.py): read once per run; every file is either used or named in
         # the monday log as not usable.
-        _std_sources = _load_standard_sources(_oc_files)
+        _ref_fetch = await _fetch_reference_studies(item_id, oc_subdomain,
+                                                    (cols.get(COL["reference_studies"]) or {}).get("text") or "")
+        _std_sources = _load_standard_sources(_oc_files, _ref_fetch)
         if _std_sources and _std_sources.get("files"):
             try:
                 import standards_match as _sm_log

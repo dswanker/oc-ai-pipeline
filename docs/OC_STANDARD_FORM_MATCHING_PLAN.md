@@ -49,7 +49,7 @@ Input column: `file_mm2mafjc` (`COL["oc_standard"]`, "Customer OC4 XLSForm Stand
 | 0 | One test command (`pytest`) runs all of `tests/` | Done |
 | 1 | Deterministic matching core for uploaded files (`standards_match.py`) | Done |
 | 2 | AI logic for logic-free standards and gap-filling (`ai_standard_logic.py`) | Done |
-| 3 | "Reference OC Studies (up to 5)" (referenced studies as a source) | See below |
+| 3 | "Reference OC Studies (up to 5)" (referenced studies as a source, `reference_studies.py`) | Done |
 
 ### Item 1: what was built
 
@@ -109,6 +109,35 @@ Input column: `file_mm2mafjc` (`COL["oc_standard"]`, "Customer OC4 XLSForm Stand
 - Accepted suggestions are DVS_OC4 rows, Status "Proposed", Check Source "AI-Suggested". Approve applies them
   through `dvs_edits` (`standards_match.apply_proposal`); Reject keeps them from being proposed again. The
   standard's own logic is never changed.
+
+### Item 3: "Reference OC Studies (up to 5)"
+
+- monday TEXT column "Reference OC Studies (up to 5)", id `text_mm7yy8kw`, `monday_client.COL["reference_studies"]`
+  (created by Dan). Value: up to 5 study names / unique identifiers / OIDs, comma-separated; more than 5: the first
+  5 are used and that is logged.
+- Resolved on the ITEM's own subdomain (`text_mm3aa7cx`) with the service account (`OC_API_USERNAME` /
+  `OC_API_PASSWORD`). READ-ONLY; only these calls (verified 2026-10-09 against cust1 / PrTK05):
+  1. `POST https://{sub}.build.openclinica.io/user-service/api/oauth/token` json `{username, password}`; the token
+     is the response text.
+  2. `GET https://{sub}.build.openclinica.io/study-service/api/studies?page=0&size=1000` (Bearer); header
+     `X-Total-Count`; paged when there are more. Matched on `uniqueIdentifier`, then `name`, then OID: exact
+     (case-insensitive) first, then a unique contains-match. Ambiguous or not found is logged and skipped.
+  3. Board id = the segment after `/b/` in `currentBoardUrl` (not the slug).
+     `GET https://{sub}.design.openclinica.io/api/boards/{boardId}` -> `cards` (forms).
+  4. Per distinct `formOcoid` among non-archived cards: the version whose `ocoid` equals the card's
+     `selected_form_version_ocoid`, else the latest non-archived; `uploadedFileLinks[0]` and the encrypted key from
+     `previewURL`. `GET https://{sub}.build.openclinica.io/form-service/api/encrypted-versions/{key}/artifacts/{file}`
+     returns the original XLSForm with all its logic. Forms with no version are listed as "no uploaded form".
+- The artifact URL works without sign-in: it is never logged or stored. Logs name studies, forms and files only.
+- 6 downloads at a time, 30 s per request, one retry, timing per study in the log; the fetch never fails a build.
+  Fetched once per run. Kill switch `REFERENCE_STUDIES=0`.
+- Fetched forms are sources labelled "referenced study <identifier>", between an uploaded XLSForm and an uploaded
+  ODM, in listed order. Two forms of one study whose ids differ only by the `F_` prefix count as the same form; the
+  first on the board is used and the other is logged as superseded.
+- cust1 findings (2026-10-08): 509 studies listed in about 2 s; PrTK05: 14 forms fetched in 2.5 to 3.9 s, 23 form
+  ids on the board have no uploaded version. The study list has no OID field on cust1, so a reference by OID cannot
+  resolve there. "CRS-135" is not an exact identifier on cust1 (49 studies contain it): it is reported as ambiguous
+  and skipped; the exact identifier must be entered (for example the full "CRS-135 ..." identifier).
 
 ### Decisions taken during the build (for Dan to confirm)
 
