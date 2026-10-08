@@ -359,8 +359,8 @@ def test_set_decision_needed_clears_with_none() -> None:
     stub.queue(_StubResponse(json_body={"data": {"change_column_value": {"id": "x"}}}))
     asyncio.run(client.set_decision_needed(123, None))
     value_str = stub.posts[0]["json"]["variables"]["v"]
-    # JSON-encoded null when clearing
-    assert json.loads(value_str) is None
+    # monday clears a status column with an empty object, not null (cbb1787, 2026-05-01)
+    assert json.loads(value_str) == {}
 
 
 def test_set_decision_needed_rejects_unknown() -> None:

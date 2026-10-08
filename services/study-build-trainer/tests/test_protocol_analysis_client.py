@@ -1,15 +1,9 @@
 """
-Tests for ``core.protocol_analysis_client``.
+Tests for core.protocol_analysis_client (current API: inline ANALYSIS_PROMPT, single-turn call, retry on rate limits).
 
-Pure-function tests use a fake skill folder under ``tests/fixtures/fake_skill/``
-so we never touch the real ``../../skills/protocol-analysis`` from a unit
-test. The end-to-end-with-stub-client test verifies that the assembled
-content blocks have the expected shape and that the API call wiring
-works without invoking the real network.
-
-Run as a script::
-
-    python tests/test_protocol_analysis_client.py
+History: this file originally tested a skill-folder loader (load_skill_prompt / DEFAULT_SKILL_DIR /
+build_content_blocks / extra_text). The client was rewritten around an inline prompt (see the 2026-05-06 reverts of
+Patches 14-14.2), so those tests were retired on 2026-10-08 and the behavioral ones rewritten against the current API.
 """
 from __future__ import annotations
 
@@ -18,313 +12,118 @@ import base64
 import sys
 from pathlib import Path
 
-# Standalone-script support — pytest doesn't need this.
+import httpx
+import pytest
+
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from core.protocol_analysis_client import (
-    DEFAULT_SKILL_DIR,
-    build_content_blocks,
-    load_skill_prompt,
-    run_protocol_analysis,
-)
-
-FAKE_SKILL_DIR = Path(__file__).parent / "fixtures" / "fake_skill"
+from core.protocol_analysis_client import ANALYSIS_PROMPT, run_protocol_analysis
 
 
-# ─── load_skill_prompt ────────────────────────────────────────────
-
-
-def test_load_skill_prompt_from_explicit_dir() -> None:
-    text = load_skill_prompt(FAKE_SKILL_DIR)
-    assert "TEST_SKILL_MARKER_42" in text
-
-
-def test_load_skill_prompt_returns_full_file() -> None:
-    """Whole SKILL.md is returned, not just a portion."""
-    text = load_skill_prompt(FAKE_SKILL_DIR)
-    assert text.startswith("# Test Skill")
-    assert text.rstrip().endswith("TEST_SKILL_MARKER_42")
-
-
-def test_load_skill_prompt_accepts_string_path() -> None:
-    """Path or string both work."""
-    text = load_skill_prompt(str(FAKE_SKILL_DIR))
-    assert "TEST_SKILL_MARKER_42" in text
-
-
-def test_load_skill_prompt_missing_dir_raises() -> None:
-    nonexistent = Path("/tmp/this_definitely_does_not_exist_42")
-    try:
-        load_skill_prompt(nonexistent)
-    except FileNotFoundError as exc:
-        # Error message should mention the path we looked at — that's
-        # the most common debug clue for a path-resolution bug.
-        assert str(nonexistent) in str(exc)
-    else:
-        raise AssertionError("Expected FileNotFoundError")
-
-
-def test_default_skill_dir_resolves_to_correct_relative_location() -> None:
-    """
-    ``DEFAULT_SKILL_DIR`` should point at
-    ``oc-ai-pipeline/skills/protocol-analysis/``, four levels up from
-    this module's file. We don't require the dir to exist (it does in
-    production but might not in test environments) — we just check the
-    path math is correct.
-    """
-    assert DEFAULT_SKILL_DIR.name == "protocol-analysis"
-    assert DEFAULT_SKILL_DIR.parent.name == "skills"
-    # The grandparent of skills/protocol-analysis is the pipeline root.
-    pipeline_root = DEFAULT_SKILL_DIR.parent.parent
-    # Sanity check: the path includes the trainer service folder
-    # somewhere underneath pipeline_root/services/.
-    assert (pipeline_root / "services").exists() or True  # not required
-
-
-# ─── build_content_blocks ─────────────────────────────────────────
-
-
-def test_content_blocks_includes_pdf_first() -> None:
-    blocks = build_content_blocks(b"PDF_CONTENT", "skill prompt here")
-    assert len(blocks) == 2
-    assert blocks[0]["type"] == "document"
-    assert blocks[0]["source"]["media_type"] == "application/pdf"
-    # The PDF should be base64-encoded
-    decoded = base64.standard_b64decode(blocks[0]["source"]["data"])
-    assert decoded == b"PDF_CONTENT"
-
-
-def test_content_blocks_skill_prompt_last() -> None:
-    blocks = build_content_blocks(b"PDF", "skill prompt here")
-    assert blocks[-1]["type"] == "text"
-    assert blocks[-1]["text"] == "skill prompt here"
-
-
-def test_content_blocks_inserts_extra_text_before_skill_prompt() -> None:
-    blocks = build_content_blocks(
-        b"PDF", "skill prompt", extra_text="curator note"
-    )
-    assert len(blocks) == 3
-    # Order: PDF, extra_text, skill_prompt
-    assert blocks[0]["type"] == "document"
-    assert blocks[1]["type"] == "text"
-    assert blocks[1]["text"] == "curator note"
-    assert blocks[2]["type"] == "text"
-    assert blocks[2]["text"] == "skill prompt"
-
-
-def test_content_blocks_skip_extra_text_when_empty() -> None:
-    blocks = build_content_blocks(b"PDF", "skill prompt", extra_text="")
-    assert len(blocks) == 2  # only PDF + skill prompt
-    assert blocks[1]["text"] == "skill prompt"
-
-
-# ─── run_protocol_analysis (with stub client) ─────────────────────
-
-
-class _StubResponseBlock:
-    """Mimics anthropic.types.TextBlock — only the .text attr we use."""
+class _Block:
     def __init__(self, text: str) -> None:
         self.text = text
 
 
-class _StubResponse:
-    def __init__(self, text: str) -> None:
-        self.content = [_StubResponseBlock(text)]
+class _Resp:
+    def __init__(self, *blocks) -> None:
+        self.content = list(blocks)
 
 
-class _StubMessages:
-    """Records call args; returns a canned response."""
-    def __init__(self, response_text: str) -> None:
-        self._response_text = response_text
+class _Messages:
+    """Records call kwargs; returns queued responses or raises queued exceptions."""
+    def __init__(self, *outcomes) -> None:
+        self._outcomes = list(outcomes)
         self.calls: list[dict] = []
 
     async def create(self, **kwargs):  # noqa: ANN201, ANN003
         self.calls.append(kwargs)
-        return _StubResponse(self._response_text)
+        out = self._outcomes.pop(0) if len(self._outcomes) > 1 else self._outcomes[0]
+        if isinstance(out, Exception):
+            raise out
+        return out
 
 
-class _StubAnthropicClient:
-    def __init__(self, response_text: str) -> None:
-        self.messages = _StubMessages(response_text)
+class _Client:
+    def __init__(self, *outcomes) -> None:
+        self.messages = _Messages(*outcomes)
 
 
-def test_run_protocol_analysis_round_trip_with_stub() -> None:
-    """End-to-end with a stub client: PDF in → response text out."""
+def _run(client, **kw):
+    return asyncio.run(run_protocol_analysis(b"%PDF-1.4 fake", client=client, **kw))
+
+
+def _rate_limit():
+    from anthropic import RateLimitError
+    req = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+    return RateLimitError("rate limited", response=httpx.Response(429, request=req), body=None)
+
+
+def test_round_trip_returns_response_text() -> None:
     canned = '{"sponsor": "Stub", "indication": "test"}'
-    client = _StubAnthropicClient(canned)
-
-    text = asyncio.run(run_protocol_analysis(
-        b"%PDF-1.4 fake pdf bytes",
-        skill_dir=FAKE_SKILL_DIR,
-        client=client,
-    ))
-    assert text == canned
+    assert _run(_Client(_Resp(_Block(canned)))) == canned
 
 
-def test_run_protocol_analysis_sends_correct_model() -> None:
-    """The model arg must reach client.messages.create as opus-4-7."""
-    client = _StubAnthropicClient('{"ok":1}')
-    asyncio.run(run_protocol_analysis(
-        b"PDF",
-        skill_dir=FAKE_SKILL_DIR,
-        client=client,
-    ))
-    assert client.messages.calls[0]["model"] == "claude-opus-4-7"
+def test_default_model_and_max_tokens() -> None:
+    client = _Client(_Resp(_Block("{}")))
+    _run(client)
+    call = client.messages.calls[0]
+    assert call["model"] == "claude-opus-4-7" and call["max_tokens"] == 16000
 
 
-def test_run_protocol_analysis_uses_explicit_model_override() -> None:
-    """Caller can override the model via the ``model=`` kwarg."""
-    client = _StubAnthropicClient('{"ok":1}')
-    asyncio.run(run_protocol_analysis(
-        b"PDF",
-        skill_dir=FAKE_SKILL_DIR,
-        client=client,
-        model="some-other-model",
-    ))
+def test_model_override() -> None:
+    client = _Client(_Resp(_Block("{}")))
+    _run(client, model="some-other-model")
     assert client.messages.calls[0]["model"] == "some-other-model"
 
 
-def test_run_protocol_analysis_max_tokens_default_16000() -> None:
-    client = _StubAnthropicClient('{"ok":1}')
-    asyncio.run(run_protocol_analysis(
-        b"PDF",
-        skill_dir=FAKE_SKILL_DIR,
-        client=client,
-    ))
-    assert client.messages.calls[0]["max_tokens"] == 16000
-
-
-def test_run_protocol_analysis_payload_shape() -> None:
-    """Verify the messages payload has the user-message + content shape."""
-    client = _StubAnthropicClient('{"ok":1}')
-    asyncio.run(run_protocol_analysis(
-        b"%PDF-1.4 hello",
-        skill_dir=FAKE_SKILL_DIR,
-        client=client,
-    ))
-    call = client.messages.calls[0]
-    messages = call["messages"]
-    assert len(messages) == 1
-    assert messages[0]["role"] == "user"
-    content = messages[0]["content"]
-    # PDF document block first, skill prompt last
+def test_payload_is_pdf_document_then_inline_prompt() -> None:
+    client = _Client(_Resp(_Block("{}")))
+    _run(client)
+    msgs = client.messages.calls[0]["messages"]
+    assert len(msgs) == 1 and msgs[0]["role"] == "user"
+    content = msgs[0]["content"]
+    assert len(content) == 2
     assert content[0]["type"] == "document"
-    assert content[-1]["type"] == "text"
-    assert "TEST_SKILL_MARKER_42" in content[-1]["text"]
+    assert base64.standard_b64decode(content[0]["source"]["data"]) == b"%PDF-1.4 fake"
+    assert content[1] == {"type": "text", "text": ANALYSIS_PROMPT}
 
 
-def test_run_protocol_analysis_supports_extra_text() -> None:
-    """``extra_text`` should appear between PDF and skill prompt."""
-    client = _StubAnthropicClient('{"ok":1}')
-    asyncio.run(run_protocol_analysis(
-        b"PDF",
-        skill_dir=FAKE_SKILL_DIR,
-        client=client,
-        extra_text="curator-supplied context",
-    ))
-    content = client.messages.calls[0]["messages"][0]["content"]
-    assert len(content) == 3
-    assert content[1]["type"] == "text"
-    assert content[1]["text"] == "curator-supplied context"
+def test_no_temperature_sent() -> None:
+    """Opus 4.7 rejects any temperature (incl. 0) with a 400; the client must never send it."""
+    client = _Client(_Resp(_Block("{}")))
+    _run(client)
+    assert "temperature" not in client.messages.calls[0]
 
 
-def test_run_protocol_analysis_concatenates_multi_block_response() -> None:
-    """If the SDK ever returns multi-block text, all blocks are concatenated."""
-
-    class _MultiBlockResponse:
-        def __init__(self) -> None:
-            self.content = [
-                _StubResponseBlock("part one "),
-                _StubResponseBlock("part two"),
-            ]
-
-    class _MultiBlockMessages:
-        async def create(self, **kwargs):  # noqa: ANN201, ANN003
-            return _MultiBlockResponse()
-
-    class _MultiBlockClient:
-        def __init__(self) -> None:
-            self.messages = _MultiBlockMessages()
-
-    text = asyncio.run(run_protocol_analysis(
-        b"PDF",
-        skill_dir=FAKE_SKILL_DIR,
-        client=_MultiBlockClient(),
-    ))
-    assert text == "part one part two"
+def test_multi_block_response_concatenated() -> None:
+    assert _run(_Client(_Resp(_Block("part one "), _Block("part two")))) == "part one part two"
 
 
-def test_run_protocol_analysis_skips_blocks_without_text_attr() -> None:
-    """Defensive: SDK might return non-text blocks (image, tool_use, etc.)."""
-
-    class _NonTextBlock:
-        # No .text attribute
+def test_blocks_without_text_are_skipped() -> None:
+    class _ToolUse:
         type = "tool_use"
-
-    class _MixedBlocksResponse:
-        def __init__(self) -> None:
-            self.content = [_NonTextBlock(), _StubResponseBlock("the actual text")]
-
-    class _MixedBlocksMessages:
-        async def create(self, **kwargs):  # noqa: ANN201, ANN003
-            return _MixedBlocksResponse()
-
-    class _MixedBlocksClient:
-        def __init__(self) -> None:
-            self.messages = _MixedBlocksMessages()
-
-    text = asyncio.run(run_protocol_analysis(
-        b"PDF",
-        skill_dir=FAKE_SKILL_DIR,
-        client=_MixedBlocksClient(),
-    ))
-    assert text == "the actual text"
+    assert _run(_Client(_Resp(_ToolUse(), _Block("the actual text")))) == "the actual text"
 
 
-def test_run_protocol_analysis_missing_skill_dir_raises() -> None:
-    """If the skill folder is wrong, fail clearly before the API call."""
-    client = _StubAnthropicClient('{"ok":1}')
-    bad = Path("/tmp/nonexistent_skill_dir_42")
-    try:
-        asyncio.run(run_protocol_analysis(
-            b"PDF",
-            skill_dir=bad,
-            client=client,
-        ))
-    except FileNotFoundError as exc:
-        assert "SKILL.md" in str(exc)
-    else:
-        raise AssertionError("Expected FileNotFoundError when skill_dir is bogus")
-    # And the API was never called.
-    assert client.messages.calls == []
+def test_rate_limit_is_retried_then_succeeds() -> None:
+    client = _Client(_rate_limit(), _Resp(_Block('{"ok": 1}')))
+    assert _run(client, initial_wait_seconds=0) == '{"ok": 1}'
+    assert len(client.messages.calls) == 2
 
 
-# ─── Script entry point ───────────────────────────────────────────
+def test_rate_limit_exhausting_retries_raises() -> None:
+    from anthropic import RateLimitError
+    client = _Client(_rate_limit())
+    with pytest.raises(RateLimitError):
+        _run(client, initial_wait_seconds=0, max_retries=2)
+    assert len(client.messages.calls) == 2
 
 
-if __name__ == "__main__":
-    import traceback
-
-    tests = [
-        v for k, v in sorted(globals().items())
-        if k.startswith("test_") and callable(v)
-    ]
-    failed: list[tuple[str, str]] = []
-    for t in tests:
-        try:
-            t()
-            print(f"  PASS  {t.__name__}")
-        except Exception:  # noqa: BLE001
-            failed.append((t.__name__, traceback.format_exc()))
-            print(f"  FAIL  {t.__name__}")
-
-    print()
-    print(f"Ran {len(tests)} tests, {len(failed)} failures.")
-    for name, tb in failed:
-        print()
-        print(f"── {name} ──")
-        print(tb)
-    sys.exit(1 if failed else 0)
+def test_other_errors_are_not_retried() -> None:
+    client = _Client(ValueError("bad request"))
+    with pytest.raises(ValueError):
+        _run(client, initial_wait_seconds=0)
+    assert len(client.messages.calls) == 1

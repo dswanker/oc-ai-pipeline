@@ -301,6 +301,8 @@ def _make_corpus_item(
     files: dict[str, list[dict[str, str]]] = {}
     if has_form:
         files["form_design"] = [{"asset_id": "f1", "name": "study.xml"}]
+        # Ingest requires BOTH the ODM XML and the final XLSForm ZIP (the validation gate)
+        files["final_xls_forms"] = [{"asset_id": "x1", "name": "build.zip"}]
     if has_protocol:
         files["protocol"] = [{"asset_id": "p1", "name": "protocol.pdf"}]
     if has_analysis:
@@ -328,6 +330,11 @@ def _make_cached_files(
         f = tmpdir / "study.xml"
         f.write_text("<odm/>")
         out["form_design"] = f
+        import zipfile
+        z = tmpdir / "build.zip"
+        with zipfile.ZipFile(z, "w") as zf:
+            zf.writestr("F_AE.xlsx", b"")
+        out["final_xls_forms"] = z
     if include_protocol:
         p = tmpdir / "protocol.pdf"
         p.write_bytes(b"%PDF-1.4 fake pdf bytes")
@@ -379,10 +386,12 @@ def test_happy_path_with_curator_supplied_analysis_json() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         tmpdir = Path(tmp)
         item = _make_corpus_item(has_analysis=True)
-        cached = _make_cached_files(
-            tmpdir, include_analysis=True,
-            analysis_content={"sponsor": "Curator Sponsor", "phase": "2"},
-        )
+        # The worker only trusts a curator analysis that is substantial (> 5 KB and > 5 keys); tiny files
+        # are treated as junk and the protocol is analysed instead (see _resolve_analysis).
+        curator = {"sponsor": "Curator Sponsor", "phase": "2", "indication": "prostate cancer",
+                   "therapeutic_area": "oncology", "study_meta": {"protocol_number": "CUR-1"},
+                   "notes": "x" * 6000}
+        cached = _make_cached_files(tmpdir, include_analysis=True, analysis_content=curator)
         worker, monday, extractor, embedder, store, runner = _make_worker(
             item=item, cached_files=cached,
         )
@@ -398,10 +407,10 @@ def test_happy_path_with_curator_supplied_analysis_json() -> None:
         indexed = store.added[0]
         assert indexed.pair_hash == "row_1234"
         assert indexed.has_protocol is True
-        # The embedded content should be the curator-supplied analysis
-        assert embedder.embed_calls[0] == {
-            "sponsor": "Curator Sponsor", "phase": "2"
-        }
+        # The embedded content should be the curator-supplied analysis (the worker may add derived keys,
+        # e.g. "forms", before embedding)
+        embedded = embedder.embed_calls[0]
+        assert {k: embedded[k] for k in curator} == curator
 
 
 def test_happy_path_runs_protocol_analysis_when_no_json() -> None:
@@ -422,10 +431,9 @@ def test_happy_path_runs_protocol_analysis_when_no_json() -> None:
         # The skill was called exactly once with the PDF bytes
         assert len(runner.calls) == 1
         assert runner.calls[0].startswith(b"%PDF-")
-        # The analysis JSON we embedded came from the skill response
-        assert embedder.embed_calls[0] == {
-            "sponsor": "Skill Sponsor", "phase": "3"
-        }
+        # The analysis JSON we embedded came from the skill response (plus derived keys such as "forms")
+        embedded = embedder.embed_calls[0]
+        assert (embedded["sponsor"], embedded["phase"]) == ("Skill Sponsor", "3")
         # And the generated analysis was cached to disk
         assert (cached["protocol"].parent / "analysis.generated.json").exists()
 
@@ -640,11 +648,12 @@ def test_failure_in_skill_call_marks_failed_and_writes_diagnostic() -> None:
         assert "Anthropic API exploded" in (job.error or "")
         # Nothing got indexed
         assert store.added == []
-        # Monday should show 'failed' status and 'investigate' decision
+        # Monday shows status 'failed' plus a diagnostic note. (A separate 'investigate' decision flag was
+        # removed as a duplicate failure signal in 1907866, 2026-05-01.)
         status_calls = monday.find_calls("set_ingest_status")
         assert status_calls[-1]["status_key"] == "failed"
-        dn_calls = monday.find_calls("set_decision_needed")
-        assert dn_calls[-1]["decision_key"] == "investigate_ingest_failure"
+        notes = monday.find_calls("set_long_text")
+        assert any("Ingest failed" in str(c.get("text", "")) for c in notes)
 
 
 def test_invalid_analysis_json_falls_through_to_running_skill() -> None:
