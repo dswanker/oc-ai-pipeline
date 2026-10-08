@@ -480,6 +480,44 @@ def _conditional_rec(entry):
     }
 
 
+# ── Study Configuration calendar (study_config.py) ───────────────────────────
+
+def _config_calendar(struct):
+    """event oid -> {"anchor", "offset", "auto_close"} from struct["study_configuration"] (deterministic: the
+    scheduling pass, else the visit labels of the Schedule of Activities). {} when there is no configuration."""
+    out = {}
+    cfg = struct.get("study_configuration") if isinstance(struct, dict) else None
+    for ev in (cfg or {}).get("events") or []:
+        if not isinstance(ev, dict) or not ev.get("oid"):
+            continue
+        cal = ev.get("calendar") or {}
+        sch = cal.get("scheduler") or {}
+
+        def _v(x):
+            return x.get("value") if isinstance(x, dict) else None
+
+        offset, close = _v(sch.get("offset_days")), _v(cal.get("auto_close_after_days"))
+        out[ev["oid"]] = {
+            "anchor": _v(sch.get("relative_event")) or None,
+            "offset": offset if isinstance(offset, (int, float)) and not isinstance(offset, bool) else None,
+            "auto_close": close if isinstance(close, (int, float)) and not isinstance(close, bool) and close > 0 else None,
+        }
+    return out
+
+
+def _dedupe_by_name(rules, warnings):
+    """Rule names identify a rule on the study (publishing updates by name): never emit two with one name."""
+    seen, out = set(), []
+    for r in rules:
+        n = r.get("name")
+        if n in seen:
+            warnings.append(f"Duplicate rule name '{n}' dropped (the first one is kept).")
+            continue
+        seen.add(n)
+        out.append(r)
+    return out
+
+
 # ── Main extraction function ─────────────────────────────────────────────────
 
 def extract_calendar_rules(struct_json, forms_json):
@@ -514,6 +552,27 @@ def extract_calendar_rules(struct_json, forms_json):
             "NEEDS_REVIEW (anchors and offsets are unknown from timepoints alone)."
         )
 
+    # Study Configuration calendar: the auto-close window where the scheduling entry has none, and, when there is
+    # no scheduling block at all, the relative event and offset read from the Schedule of Activities labels.
+    cfg_cal = _config_calendar(struct)
+    cfg_used = 0
+    for entry in entries:
+        c = cfg_cal.get(entry["event_oid"])
+        if not c:
+            continue
+        if entry["window_upper_days"] is None and c["auto_close"] is not None:
+            entry["window_upper_days"] = c["auto_close"]
+            entry["window_source"] = "study configuration"
+            cfg_used += 1
+        if not has_scheduling and c["anchor"] and c["offset"] is not None and c["anchor"] != entry["event_oid"]:
+            entry["anchor_event_oid"], entry["offset_target_days"] = c["anchor"], c["offset"]
+            cfg_used += 1
+    if cfg_used and not has_scheduling:
+        warnings.append(
+            "Relative events, offsets and auto-close windows were taken from the Study Configuration (visit labels "
+            "of the Schedule of Activities). Rules stay NEEDS_REVIEW."
+        )
+
     # Drop entries with no event_oid (cannot build a rule without a target).
     valid_entries = []
     for entry in entries:
@@ -532,7 +591,7 @@ def extract_calendar_rules(struct_json, forms_json):
         # the scheduling block is present. Pattern matches production Auto Close rules:
         # RUN_ON_SCHEDULE daily at 23:00:00, criteria on the target event with
         # offset=window_upper_days, range=-1 (rolling), closeEvent=True.
-        if has_scheduling and entry.get("window_upper_days") is not None:
+        if entry.get("window_upper_days") is not None:
             wud = entry["window_upper_days"]
             ac_rule = {
                 "name": f"{protocol_number}_autoclose_{event_oid}",
@@ -570,7 +629,7 @@ def extract_calendar_rules(struct_json, forms_json):
                     "range":        -1,
                 },
                 "_meta": {
-                    "confidence":          "HIGH",
+                    "confidence":          "NEEDS_REVIEW" if force_review else "HIGH",
                     "arm":                 entry.get("arm", "BOTH"),
                     "window_lower_days":   entry.get("window_lower_days"),
                     "window_upper_days":   wud,
@@ -605,6 +664,8 @@ def extract_calendar_rules(struct_json, forms_json):
     warnings.extend(tier3a_warnings)
     warnings.extend(tier3b_warnings)
     warnings.extend(tier3c_warnings)
+
+    rules = _dedupe_by_name(rules, warnings)
 
     return {
         "study_meta":                  study_meta,

@@ -157,6 +157,64 @@ def _calendar(spec, events, squashed):
     return out
 
 
+# ── Notifications (proposals only, rule-service format) ──────────────────────────
+
+REMINDER_DAYS_BEFORE = 3
+
+
+def _notification(name, event_oid, statuses, offset, when, subject, message):
+    """A rule-service notification rule (same API as the calendaring rules). The recipient is left empty: who is
+    notified is an operational decision, so a proposal is never published."""
+    return {"name": name, "condition": "$TRUE", "type": "RUN_ON_SCHEDULE", "schedule": "DAILY", "time": "09:00:00",
+            "criteria": {"type": "EVENT_CRITERIA", "eventOid": event_oid, "eventStatuses": list(statuses),
+                         "offset": int(offset), "when": when, "range": 0},
+            "actions": [{"type": "NOTIFICATION_ACTION", "ruleResultToTriggerOn": True, "toEmailAddress": "",
+                         "emailSubject": subject, "emailMessage": message, "textMessage": message,
+                         "toPhoneNumber": ""}]}
+
+
+def notification_proposals(event):
+    """Suggested notifications for one calendar event: a reminder before the visit, and an overdue notice when the
+    visit window has passed without data entry. Timing, subject and message are suggestions."""
+    cal = event.get("calendar") or {}
+    trig = ((cal.get("scheduler") or {}).get("trigger") or {}).get("value") or ""
+    if str(trig).startswith("none"):
+        return []
+    oid, name = event.get("oid"), event.get("name") or event.get("oid")
+    out = [{"kind": "Visit reminder", "source": SRC_DEFAULT, "status": "proposal (not published)",
+            "timing": f"{REMINDER_DAYS_BEFORE} day(s) before the event start date, daily at 09:00, while Scheduled",
+            "recipient": "to be decided (site coordinator or $participant)",
+            "rule": _notification(f"{name} Reminder", oid, ["SCHEDULED"], REMINDER_DAYS_BEFORE, "before",
+                                  "Upcoming visit: ${event.name}",
+                                  "Participant ${participant} at ${site.name} has ${event.name} scheduled in "
+                                  f"{REMINDER_DAYS_BEFORE} days.")}]
+    close = (cal.get("auto_close_after_days") or {}).get("value")
+    if isinstance(close, (int, float)) and not isinstance(close, bool) and close > 0:
+        out.append({"kind": "Visit overdue", "source": SRC_DEFAULT, "status": "proposal (not published)",
+                    "timing": f"{int(close)} day(s) after the event start date (end of the visit window), daily at "
+                              f"09:00, while Scheduled or Data Entry Started",
+                    "recipient": "to be decided (site coordinator, data manager)",
+                    "rule": _notification(f"{name} Overdue", oid, ["SCHEDULED", "DATA_ENTRY_STARTED"], int(close),
+                                          "after", "Visit window ended: ${event.name}",
+                                          "${event.name} for participant ${participant} at ${site.name} reached the "
+                                          "end of its visit window and is not complete.")})
+    return out
+
+
+NOTIFICATION_HEADERS = ["Event OID", "Notification", "Timing", "Recipient", "Subject", "Message", "Status"]
+
+
+def notification_rows(cfg):
+    rows = []
+    for e in (cfg or {}).get("events") or []:
+        for n in e.get("notifications") or []:
+            act = ((n.get("rule") or {}).get("actions") or [{}])[0]
+            rows.append([e.get("oid"), n.get("kind") + (f" ({n['source']})" if n.get("source") else ""), n.get("timing"),
+                         n.get("recipient"), act.get("emailSubject") or "", act.get("emailMessage") or "",
+                         n.get("status") or "proposal (not published)"])
+    return rows
+
+
 # ── Forms at events ──────────────────────────────────────────────────────────────
 
 def card_required(event_oid):
@@ -221,8 +279,9 @@ def build(spec, protocol_text=""):
     ev_out = []
     for oid, name in events:
         etype, rep = event_kind(oid)
-        ev_out.append({"oid": oid, "name": name, "type": val(etype), "repeating": val(rep),
-                       "calendar": cal[oid], "notifications": []})
+        ev = {"oid": oid, "name": name, "type": val(etype), "repeating": val(rep), "calendar": cal[oid]}
+        ev["notifications"] = notification_proposals(ev)
+        ev_out.append(ev)
     cfg = {"version": VERSION, "events": ev_out, "forms": _form_cards(spec, {oid for oid, _ in events}),
            "proposals": [], "sources": [SRC_PROTOCOL, SRC_DEFAULT, SRC_AI, SRC_DM]}
     old = spec.get("study_configuration") if isinstance(spec.get("study_configuration"), dict) else None
@@ -356,6 +415,11 @@ def sections(cfg):
             [11, 15, 7, 6, 11, 9, 5, 6, 14, 16]),
            ("FORMS AT EVENTS", "One row per form at an event (a card on the design board).", FORM_HEADERS,
             form_rows(cfg), [10, 7, 13, 5, 5, 5, 6, 9, 14, 7, 9, 10])]
+    if notification_rows(cfg):
+        out.append(("NOTIFICATIONS (PROPOSALS)", "Suggested notifications in the rule-service format. They are never "
+                    "published: recipients are an operational decision. Tokens such as ${participant}, ${event.name} "
+                    "and ${site.name} are filled in by OpenClinica (check the token list in the study designer).",
+                    NOTIFICATION_HEADERS, notification_rows(cfg), [10, 11, 22, 14, 13, 22, 8]))
     if cfg.get("sdv_items"):
         import sdv_proposals
         eps = cfg.get("sdv_endpoints") or []

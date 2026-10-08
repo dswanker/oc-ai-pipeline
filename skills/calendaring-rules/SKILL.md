@@ -54,3 +54,11 @@ Rules marked `confidence: NEEDS_REVIEW` should not be deployed to a live study u
 
 ## Execution Script
 python3 skills/calendaring-rules/scripts/extract_calendar_rules.py <study_spec.json>
+
+## Study Configuration calendar (2026-10-08)
+
+When the spec carries `study_configuration` (study_config.py), the extractor also emits an auto-close rule for every
+event with a visit window read from the Schedule of Activities, and, when there is no `scheduling` block, takes the
+relative event and offset from the configuration. Rule names are unique and unchanged, so publishing stays
+idempotent by name. Notifications are documented as proposals in the Study Configuration only; they are never part
+of the rules ZIP.

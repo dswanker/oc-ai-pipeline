@@ -225,6 +225,25 @@ generated, and rendered as the "STUDY CONFIGURATION" section of the PDF and the 
   live in the spec and the Study Specification only. Item OIDs are derived the same way as in the DVS
   (`I_<first 5 alphanumerics of the form title>_<ITEM>`); `versions` carries the form's settings version.
 
+### Item 4: event calendar and notifications (rule-service format)
+
+- `skills/calendaring-rules/scripts/extract_calendar_rules.py` reads the Study Configuration calendar:
+  - **Auto-close** rule for every event with a visit window, also when the scheduling entry has none (the window
+    then comes from the Schedule of Activities label): `RUN_ON_SCHEDULE`, `DAILY`, `23:00:00`, criteria
+    `EVENT_CRITERIA` on the event with statuses `SCHEDULED` / `DATA_ENTRY_STARTED`, `offset` = window days, `when`
+    `after`, `range` -1, action `EVENT_ACTION` with `closeEvent: true`. A window from the scheduling pass wins.
+  - Without a scheduling block, relative event and offset come from the configuration (rules stay `NEEDS_REVIEW`).
+  - The existing scheduler rules and all rule names are unchanged (publishing stays idempotent by name); a second
+    rule with an already used name is dropped with a warning. Relative scheduling uses `relativeEventOid` +
+    `startDateRelativeDays`, never together with `startDateExpression` (checked by `validate_rules`).
+  - Without a Study Configuration (`STUDY_CONFIG=0`) the generated rules are exactly as before.
+- **Notifications are proposals only**: `events[].notifications` in the Study Configuration, each with a complete
+  rule in the rule-service format (`RUN_ON_SCHEDULE`, `DAILY`, `09:00:00`, `EVENT_CRITERIA` with `when` before /
+  after, `NOTIFICATION_ACTION` with subject, message and text using `${participant}`, `${event.name}`,
+  `${site.name}`), a suggested timing, and **empty recipients**. Proposed: a reminder 3 days before each calendar
+  visit and an overdue notice at the end of the visit window. They are shown in the "NOTIFICATIONS (PROPOSALS)"
+  section, pass the rule validation, and are never written to the rules ZIP or published.
+
 ### Decisions taken during the build (for Dan to confirm)
 
 1. A matched form takes the standard's **form id** (needed to reproduce the customer's form and for cross-form
