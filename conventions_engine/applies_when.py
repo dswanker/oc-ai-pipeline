@@ -36,6 +36,9 @@ def _resolve_path(path: str, ctx: EntityContext) -> Any:
     rest = parts[1:]
 
     bindings = getattr(ctx, "bindings", None) or {}
+    if head == "field" and len(rest) == 1 and rest[0] in ("_yes_code", "_no_code") and ctx.kind == "field":
+        # The field's own Yes / No codes, read from its choice list (code, label or CDISC submission value).
+        return _yes_no_codes(ctx.entity, ctx.parent or {}).get(rest[0], _SENTINEL_MISSING)
     if head in bindings:
         current: Any = bindings[head]
     elif head == "study":

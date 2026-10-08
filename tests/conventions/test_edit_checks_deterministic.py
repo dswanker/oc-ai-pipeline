@@ -54,3 +54,16 @@ def test_idempotent():
     twice = copy.deepcopy(once); _run(twice)
     strip = lambda s: [[{k: v for k, v in r.items() if k != "conventions_applied"} for r in f["survey"]] for f in s["forms"]]
     assert strip(once) == strip(twice)
+
+
+def test_eligibility_checks_by_concept_qualifier():
+    spec = {"study_meta": {"protocol_number": "T"}, "forms": [{"form_id": "IE8200", "survey": [
+        {"type": "select_one ny", "name": "IEINC01", "label": "Age 18+", "concept": "IEORRES", "concept_qualifier": "INCLUSION"},
+        {"type": "select_one ny", "name": "IEEXC01", "label": "Pregnant", "concept": "IEORRES", "concept_qualifier": "EXCLUSION"},
+        {"type": "select_one ny", "name": "IEEXC02", "label": "Prior trial", "concept": "IEORRES",
+         "concept_qualifier": "EXCLUSION", "constraint": ". = 'N' or ${IEINC01} = 'N'"}],
+        "choices": [{"list_name": "ny", "name": "Y", "label": "Yes"}, {"list_name": "ny", "name": "N", "label": "No"}]}]}
+    rows = _run(spec)
+    assert rows["IE8200.IEINC01"]["constraint"] == ". = 'Y'" and rows["IE8200.IEINC01"]["edit_checks"] == ["CDISC.IE_INCLUSION"]
+    assert rows["IE8200.IEEXC01"]["constraint"] == ". = 'N'" and "Exclusion criterion present" in rows["IE8200.IEEXC01"]["constraint_message"]
+    assert rows["IE8200.IEEXC02"]["constraint"] == ". = 'N' or ${IEINC01} = 'N'"   # author's constraint left alone
