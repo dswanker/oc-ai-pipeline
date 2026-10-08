@@ -169,3 +169,12 @@ def test_pipeline_step_uploads_its_own_file_on_a_copy(monkeypatch):
     step2 = _step(uploads, logs, {})
     _run(step2(1, spec, "P", "v1", "", ""))
     assert uploads == [] and logs[-1].startswith("Annotated CRF could not be generated")
+
+
+def test_monday_columns_are_registered():
+    src = open(os.path.join(os.path.dirname(__file__), "..", "monday_client.py")).read()
+    tree = ast.parse(src)
+    col = next(ast.literal_eval(n.value) for n in tree.body if isinstance(n, ast.Assign)
+               and getattr(n.targets[0], "id", "") == "COL")
+    assert col["acrf_pdf"] == "file_mm7y8tr7" and col["usdm_input"] == "file_mm7yx5qb"
+    assert len(set(col.values())) >= len(col) - 1          # no accidental reuse (spec_xlsx_working is a known alias)

@@ -75,7 +75,7 @@ analysis on its own. Mapping-only runs reuse the saved spec (Path R); otherwise 
 Same POC produces SDTM-annotated CRFs. Pipeline already knows each CDASH field's SDTM target (section 1).
 
 SHIPPED: `acrf.py`, Chain A: `{protocol}_Annotated_CRF_{version}.pdf` to the monday file column
-`Annotated CRF (PDF)` (`monday_client.COL["acrf_pdf"]`). Landscape, Study Specification palette. One section per
+`Annotated CRF (PDF)` (file_mm7y8tr7, `monday_client.COL["acrf_pdf"]`; outputs dropdown label id 10). Landscape, Study Specification palette. One section per
 built form: question, response options with stored codes, and an annotation box per field taken from the SDTM
 Mapping Specification rows (`sdtm_mapping.build_rows` is the single source of truth): `DOMAIN.VARIABLE`,
 value-level lines ("when VSTESTCD = SYSBP"), `NOT SUBMITTED`, `SUPP<DOMAIN>.QVAL candidate`; AI-validated and
@@ -101,7 +101,7 @@ on trial design / mapped UAT data.
 `cdisc-jsonata-rules` has USDM test data (clean and dirty). See CDISC_DDF_RA_REFERENCE.md.
 
 SHIPPED: `usdm_input.py` (+ `pipeline._load_usdm_input`, `_apply_usdm`). A sponsor's USDM 4.0.x JSON in the
-monday file column `USDM JSON (input)` (`monday_client.COL["usdm_input"]`) makes the visit structure
+monday file column `USDM JSON (input)` (file_mm7yx5qb, `monday_client.COL["usdm_input"]`) makes the visit structure
 deterministic: encounters -> study events, scheduled activity instances (with sub-timelines and child activities)
 -> form placements, timings -> `spec["scheduling"]` (offsets and windows in days; the AI scheduling pass is
 skipped), arms / epochs / cells -> arms and arm applicability, eligibility criteria -> criteria rows. The
