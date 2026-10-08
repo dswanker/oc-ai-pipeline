@@ -1177,6 +1177,10 @@ def _evaluate_uat_cases(
         if not uid:
             continue  # don't count toward skipped — truly empty row
 
+        # Never overwrite a result the browser test already recorded.
+        if "Notes" in col_idx and str(row[col_idx["Notes"] - 1].value or "").startswith("Playwright"):
+            continue
+
         ev_oid  = str(row[col_idx["Study_Event_OID"]  - 1].value or "").strip().upper()
         fo_oid  = str(row[col_idx["Form_OID"]         - 1].value or "").strip().upper()
         ig_oid  = str(row[col_idx["Item_Group_OID"]   - 1].value or "").strip().upper()
@@ -1374,6 +1378,82 @@ def _stamp_dvs(dvs_bytes: bytes, stamp_map: dict,
 
 
 # ── Main entry point ──────────────────────────────────────────────────────────
+
+METHOD_ODM, METHOD_BROWSER, METHOD_MANUAL = "Data import (ODM)", "Browser (Playwright)", "Manual"
+
+
+def _case_sheet(wb):
+    """(worksheet, header row number, {header: column}) of the UAT_Cases sheet, or (None, None, {})."""
+    if "UAT_Cases" not in wb.sheetnames:
+        return None, None, {}
+    ws = wb["UAT_Cases"]
+    for row in ws.iter_rows(min_row=1, max_row=6):
+        hdr = {str(c.value).strip(): c.column for c in row if c.value}
+        if "UAT Case ID" in hdr:
+            return ws, row[0].row, hdr
+    return ws, None, {}
+
+
+def _finalize_test_methods(dvs_bytes: bytes, browser_status: str) -> tuple:
+    """Give every UAT case a Test Method and an Evidence line (traceability), and count the outcome.
+
+    Data import (ODM): scored against the value OpenClinica stored for that case's own participant.
+    Browser (Playwright): exercised in the real form (constraints, show/hide, required).
+    Manual: could not be automated on this run; Evidence says why (e.g. no browser session).
+    Returns (bytes, {method: {result: count}}).
+    """
+    import io as _io
+    import openpyxl as _ox
+    from playwright_uat import _classify_pw_row
+    wb = _ox.load_workbook(_io.BytesIO(dvs_bytes))
+    ws, hrow, col = _case_sheet(wb)
+    summary = {}
+    if ws is None or hrow is None:
+        return dvs_bytes, summary
+    for name in ("Test Method", "Evidence"):
+        if name not in col:
+            c = ws.max_column + 1
+            ws.cell(row=hrow, column=c, value=name)
+            col[name] = c
+    for r in range(hrow + 1, ws.max_row + 1):
+        get = lambda h: str(ws.cell(row=r, column=col[h]).value or "").strip() if h in col else ""
+        if not get("UAT Case ID"):
+            continue
+        result, actual, notes = get("Test Result"), get("Actual Result"), get("Notes")
+        if notes.startswith("Playwright"):
+            method, evidence = METHOD_BROWSER, actual or "Exercised in the form by the browser test."
+        elif result in ("Pass", "Fail") and actual and actual != "Not Testable via ODM":
+            method = METHOD_ODM
+            evidence = (f"{get('Participant_ID') or 'participant'}: loaded {get('Load_Value') or '(nothing)'}; "
+                        f"OpenClinica stored {actual}")
+        else:
+            row_dict = {h: ws.cell(row=r, column=c).value for h, c in col.items()}
+            automatable = _classify_pw_row(row_dict) is not None
+            method = METHOD_MANUAL
+            evidence = (f"Needs a manual check: the browser test {browser_status}." if automatable else
+                        "Needs a manual check: this case cannot be run by data import or the browser test "
+                        "(e.g. a calculated or cross-form value).")
+            if result not in ("Pass", "Fail"):
+                ws.cell(row=r, column=col["Test Result"], value="Not Run")
+        ws.cell(row=r, column=col["Test Method"], value=method)
+        if not get("Evidence"):
+            ws.cell(row=r, column=col["Evidence"], value=evidence)
+        res = get("Test Result") or "Not Run"
+        summary.setdefault(method, {}).setdefault(res, 0)
+        summary[method][res] += 1
+    buf = _io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue(), summary
+
+
+def _method_summary_text(summary: dict) -> str:
+    parts = []
+    for m in (METHOD_ODM, METHOD_BROWSER, METHOD_MANUAL):
+        if m in summary:
+            d = summary[m]
+            parts.append(f"{m}: {sum(d.values())} (" + ", ".join(f"{k} {v}" for k, v in sorted(d.items())) + ")")
+    return "; ".join(parts)
+
 
 async def run_uat_loader(item_id: str, fo_titles: dict = None) -> dict:
     """
@@ -1727,50 +1807,10 @@ async def run_uat_loader(item_id: str, fo_titles: dict = None) -> dict:
     else:
         stamped_bytes = dvs_bytes
 
-    # ── Step 9a: Playwright UAT for UI-only test cases ──────────────────
-    try:
-        from playwright_uat import run_playwright_uat
-        oc_email = (cols.get(COL.get("oc_email", "emailothn6i3m"), {}).get("text") or "").strip()
-        # Use the first participant's OC OID for Playwright
-        _first_oc_oid = next(iter(stamp_map.values()), {}).get("oc_oid", "")
-        if _first_oc_oid:
-            await append_log(item_id,
-                "UAT Loader: running Playwright UAT for UI-only cases...")
-            # Get fresh token + jsessionid for Playwright auth
-            _pw_token = await _get_oc_token(subdomain, oc_email=oc_email)
-            # Collect jsessionid from ODM imports — it's an active OC session
-            _jsessionid = ""
-            for _imp in result.get("odm_imports", []):
-                _js = _imp.get("result", {}).get("jsessionid", "")
-                if _js:
-                    _jsessionid = _js
-                    break
-            # Get study env UUID for build app navigation
-            _study_uuid = cols.get("text_mm3ggzga", {}).get("text", "").strip()
-            _test_env_uuid = result.get("test_env_uuid", "")
-            stamped_bytes = await run_playwright_uat(
-                stamped_bytes if stamp_map else dvs_bytes,
-                subdomain, _first_oc_oid, oc_email, stamp_map,
-                bearer_token=_pw_token,
-                jsessionid=_jsessionid,
-                study_uuid=_study_uuid,
-                study_env_uuid=_test_env_uuid,
-                fo_titles=fo_titles or {},
-            )
-    except Exception as _pw_err:
-        await append_log(item_id,
-            f"UAT Loader: Playwright UAT skipped — {_pw_err}")
-
-    # If no session file, let user know how to get Playwright tests enabled
-    import os as _os2
-    _oc_email = (cols.get("emailothn6i3m") or {}).get("text", "") or ""
-    _sess_file = f"/data/browser_sessions/{_oc_email}.json"
-    if _oc_email and not _os2.path.exists(_sess_file):
-        await append_log(item_id,
-            "⚠️ Playwright UI tests skipped — no browser session on file. "
-            "Run a full pipeline build from Monday to enable them.")
-
-    # ── Step 9b: Evaluate UAT cases (Pass/Fail) ───────────────────────────
+    # ── Step 9a: Evaluate UAT cases against the stored data (Pass/Fail) ───
+    # Runs BEFORE the browser step: it marks the cases a data import cannot test (constraints firing, show/hide,
+    # required) "Not Testable via ODM", and the browser step then runs exactly those. Running it afterwards (the
+    # old order) overwrote every browser result with "Not Run".
     if clinical_data:
         await append_log(item_id,
             "UAT Loader: evaluating UAT cases against clinical data...")
@@ -1783,6 +1823,54 @@ async def run_uat_loader(item_id: str, fo_titles: dict = None) -> dict:
         except Exception as e:
             await append_log(item_id,
                 f"UAT Loader: evaluation failed (non-fatal): {e}")
+
+    # ── Step 9b: Browser (Playwright) tests for the cases a data import cannot test ──
+    import os as _os2
+    _oc_email = (cols.get(COL.get("oc_email", "emailothn6i3m"), {}).get("text") or "").strip()
+    _sess_file = f"/data/browser_sessions/{_oc_email}.json"
+    _first_oc_oid = next(iter(stamp_map.values()), {}).get("oc_oid", "") if stamp_map else ""
+    if not _first_oc_oid:
+        browser_status = "was not attempted (no participants were created)"
+    elif not _oc_email or not _os2.path.exists(_sess_file):
+        # Without a saved login the browser cannot open the forms; running anyway records false failures.
+        browser_status = (f"was skipped: no saved browser login for {_oc_email or 'the OC email on this item'} "
+                          f"(run a full pipeline build from Monday to create one)")
+        await append_log(item_id, f"⚠️ UAT Loader: browser tests {browser_status.split(': ', 1)[-1]}")
+    else:
+        try:
+            from playwright_uat import run_playwright_uat
+            await append_log(item_id,
+                "UAT Loader: running browser (Playwright) tests for the cases a data import cannot test...")
+            _pw_token = await _get_oc_token(subdomain, oc_email=_oc_email)
+            _jsessionid = ""
+            for _imp in result.get("odm_imports", []):
+                _js = _imp.get("result", {}).get("jsessionid", "")
+                if _js:
+                    _jsessionid = _js
+                    break
+            _study_uuid = cols.get("text_mm3ggzga", {}).get("text", "").strip()
+            _test_env_uuid = result.get("test_env_uuid", "")
+            stamped_bytes = await run_playwright_uat(
+                stamped_bytes,
+                subdomain, _first_oc_oid, _oc_email, stamp_map,
+                bearer_token=_pw_token,
+                jsessionid=_jsessionid,
+                study_uuid=_study_uuid,
+                study_env_uuid=_test_env_uuid,
+                fo_titles=fo_titles or {},
+            )
+            browser_status = "ran but did not reach this case"
+        except Exception as _pw_err:
+            browser_status = f"failed ({str(_pw_err)[:150]})"
+            await append_log(item_id, f"UAT Loader: browser tests failed: {_pw_err}")
+
+    # ── Step 9c: Test Method + Evidence on every case; health summary ──────
+    try:
+        stamped_bytes, _summary = _finalize_test_methods(stamped_bytes, browser_status)
+        result["uat_summary"] = _summary
+        await append_log(item_id, "UAT results by method: " + (_method_summary_text(_summary) or "no cases"))
+    except Exception as e:
+        await append_log(item_id, f"UAT Loader: test-method summary failed (non-fatal): {e}")
 
     # ── Step 10: Upload stamped DVS ────────────────────────────────────────
     protocol_number = (

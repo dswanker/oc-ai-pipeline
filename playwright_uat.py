@@ -1352,9 +1352,16 @@ async def run_playwright_uat(
             row[col_idx["Execution Date"] - 1].value = date
             row[col_idx["Notes"] - 1].value = "Playwright"
 
-        for res in results:
+        for (key, form_rows), res in zip(by_form.items(), results):
             if isinstance(res, Exception):
                 print(f"[pw-uat] form task error: {res}", flush=True)
+                # record it on the form's cases, so the evidence says why they were not tested
+                for item in form_rows:
+                    row = item[0] if isinstance(item, (tuple, list)) else item
+                    row[col_idx["Actual Result"] - 1].value = f"Browser test error: {str(res)[:180]}"
+                    row[col_idx["Test Result"] - 1].value = "Not Run"
+                    row[col_idx["Notes"] - 1].value = "Playwright (error)"
+                skipped += len(form_rows)
                 continue
             p, f, s, row_results = res
             passed += p; failed += f; skipped += s
