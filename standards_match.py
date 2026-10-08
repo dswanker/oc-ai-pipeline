@@ -196,6 +196,25 @@ def _translated(el, child):
     return ""
 
 
+ODM_NAME_LABEL_FLAG = "label from ODM name, no question text"
+
+
+def _odm_label(it):
+    """(label, from_name) for an ODM item: the Question text; else the item Description; else the OpenClinica item
+    details (left item text, header, brief description, comment); else the item name (flagged for review)."""
+    label = _translated(it, "Question") or _translated(it, "Description")
+    if not label:
+        for tag in ("LeftItemText", "ItemHeader", "ItemSubHeader", "RightItemText"):
+            el = next((e for e in it.iter() if _l(e) == tag and (e.text or "").strip()), None)
+            if el is not None:
+                label = el.text.strip()
+                break
+    label = label or str(it.get("BriefDescription") or "").strip() or str(it.get("Comment") or "").strip()
+    if label:
+        return label, False
+    return str(it.get("Name") or it.get("OID") or ""), True
+
+
 def _list_name(name, taken):
     base = re.sub(r"[^A-Za-z0-9_]", "_", str(name or "LIST")).strip("_") or "LIST"
     out, n = base, 2
@@ -234,9 +253,9 @@ def parse_odm(data, file_name, source=SRC_ODM):
                         continue
                     row = {"type": _ODM_TYPES.get(str(it.get("DataType") or "text").lower(), "text"),
                            "name": it.get("Name") or it.get("OID"), "bind__oc_itemgroup": gname}
-                    label = _translated(it, "Question")
-                    if label:
-                        row["label"] = label
+                    row["label"], from_name = _odm_label(it)
+                    if from_name:  # never an empty label; a person should give the item its question text
+                        row["completion_status"], row["flag_reason"] = "FLAGGED", ODM_NAME_LABEL_FLAG
                     cl = next((c for c in it if _l(c) == "CodeListRef"), None)
                     ms = next((c for c in it.iter() if _l(c) == "MultiSelectListRef"), None)
                     src_list = (code_lists.get(cl.get("CodeListOID")) if cl is not None
@@ -613,7 +632,9 @@ def _splice(spec, pform, sform, basis, score, note):
     survey = []
     for r in sform["survey"]:
         row = copy.deepcopy(r)
-        row.update({"library_source": "CUSTOM", "completion_status": "COMPLETE", "flag_reason": ""})
+        row["library_source"] = "CUSTOM"
+        row.setdefault("completion_status", "COMPLETE")   # a parser flag (e.g. ODM label from the name) is kept
+        row.setdefault("flag_reason", "")
         survey.append(row)
     choices = [{**copy.deepcopy(c), "source": STATUS} for c in sform["choices"]]
     settings = copy.deepcopy(sform["settings"])
@@ -645,6 +666,11 @@ def _splice(spec, pform, sform, basis, score, note):
     pform["library_match"] = {"status": STATUS, "source_type": STATUS, "customer_form_name": pform["customer_form_name"],
                               "source": sform["source"], "fields_from_library": n_data,
                               "fields_extended_from_protocol": 0, "fields_from_cdash_default": 0}
+    named = [f"{new_id}.{r.get('name')}: {ODM_NAME_LABEL_FLAG}" for r in survey
+             if r.get("flag_reason") == ODM_NAME_LABEL_FLAG]
+    if named:
+        bucket = spec.setdefault("review_flags", {}).setdefault("customer_standard_label_from_name", [])
+        bucket.extend(x for x in named if x not in bucket)
     spec.setdefault("standards_originals", {})[new_id] = original
     _rename_refs(spec, old_id, new_id, pform)
     return {"protocol_form": old_id, "protocol_title": original.get("form_title"), "form_id": new_id,
@@ -675,6 +701,8 @@ def _restore(spec):
         _rename_refs(spec, f.get("form_id"), restored.get("form_id"), f)
         forms[i] = restored
     spec.pop("standards_originals", None)
+    if isinstance(spec.get("review_flags"), dict):
+        spec["review_flags"].pop("customer_standard_label_from_name", None)
     sm = spec.get("study_meta") if isinstance(spec.get("study_meta"), dict) else {}
     prev = sm.get("standards_match") or {}
     prev["proposals"] = []

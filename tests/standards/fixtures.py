@@ -75,6 +75,9 @@ ODM = """<?xml version="1.0" encoding="UTF-8"?>
    <ItemRef ItemOID="I_AE_AESEV" OrderNumber="4" Mandatory="No"/>
    <ItemRef ItemOID="I_AE_AEACN" OrderNumber="5" Mandatory="No"/>
    <ItemRef ItemOID="I_AE_AEWT" OrderNumber="6" Mandatory="No"/>
+   <ItemRef ItemOID="I_AE_AENOQ" OrderNumber="7" Mandatory="No"/>
+   <ItemRef ItemOID="I_AE_AEDESC" OrderNumber="8" Mandatory="No"/>
+   <ItemRef ItemOID="I_AE_AELEFT" OrderNumber="9" Mandatory="No"/>
   </ItemGroupDef>
   <ItemGroupDef OID="IG_MEDH_MH" Name="MH" Repeating="Yes">
    <ItemRef ItemOID="I_MEDH_MHTERM" OrderNumber="1" Mandatory="Yes"/>
@@ -87,6 +90,9 @@ ODM = """<?xml version="1.0" encoding="UTF-8"?>
   <ItemDef OID="I_AE_AESEV" Name="AESEV" DataType="text"><Question><TranslatedText>Severity</TranslatedText></Question><CodeListRef CodeListOID="CL_1"/></ItemDef>
   <ItemDef OID="I_AE_AEACN" Name="AEACN" DataType="text"><Question><TranslatedText>Action taken</TranslatedText></Question><OpenClinica:MultiSelectListRef MultiSelectListID="MSL_1"/></ItemDef>
   <ItemDef OID="I_AE_AEWT" Name="AEWT" DataType="float" SignificantDigits="1"><Question><TranslatedText>Weight at onset</TranslatedText></Question></ItemDef>
+  <ItemDef OID="I_AE_AENOQ" Name="AENOQ" DataType="text"/>
+  <ItemDef OID="I_AE_AEDESC" Name="AEDESC" DataType="text"><Description><TranslatedText>Event description text</TranslatedText></Description></ItemDef>
+  <ItemDef OID="I_AE_AELEFT" Name="AELEFT" DataType="text"><OpenClinica:ItemDetails><OpenClinica:ItemPresentInForm FormOID="F_AE"><OpenClinica:LeftItemText>Left item text label</OpenClinica:LeftItemText></OpenClinica:ItemPresentInForm></OpenClinica:ItemDetails></ItemDef>
   <ItemDef OID="I_MEDH_MHTERM" Name="MHTERM" DataType="text"><Question><TranslatedText>Condition</TranslatedText></Question></ItemDef>
   <ItemDef OID="I_MEDH_MHSTDAT" Name="MHSTDAT" DataType="date"><Question><TranslatedText>Start</TranslatedText></Question></ItemDef>
   <ItemDef OID="I_MEDH_MHENDAT" Name="MHENDAT" DataType="date"><Question><TranslatedText>End</TranslatedText></Question></ItemDef>

@@ -144,8 +144,11 @@ Input column: `file_mm2mafjc` (`COL["oc_standard"]`, "Customer OC4 XLSForm Stand
 1. A matched form takes the standard's **form id** (needed to reproduce the customer's form and for cross-form
    references between standard forms). If that id is already used by another form, the protocol form id is kept.
 2. Forms with **no CDASH domain** are matched only on an identical form id or title, and that is logged.
-3. An **ODM-only** standard has no layout or logic, so the form builder lays the form out as usual; ODM items without
-   a Question text keep their data type and have an empty label.
+3. An **ODM-only** standard has no layout or logic, so the form builder lays the form out as usual. An ODM item
+   without Question text never gets an empty label (Dan, 2026-10-08): the label falls back to the ODM item
+   Description, then the OpenClinica item details (left item text, header, brief description, comment), then the
+   item name. A label taken from the name is flagged on the field (`completion_status` FLAGGED, `flag_reason`
+   "label from ODM name, no question text") and listed in `review_flags.customer_standard_label_from_name`.
 4. The **version** in settings is stamped per build (OpenClinica needs a new version); all other settings are the
    customer's.
 

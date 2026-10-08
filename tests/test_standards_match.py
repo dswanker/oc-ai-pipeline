@@ -88,7 +88,7 @@ def test_odm_parser_structure_types_lists_and_no_logic():
     assert set(forms) == {"AE", "MEDH"}
     ae = forms["AE"]
     assert ae["has_logic"] is False and ae["format"] == "odm" and ae["title"] == "Adverse Events"
-    assert [r["name"] for r in ae["survey"]] == ["AETERM", "AESTDAT", "AEENDAT", "AESEV", "AEACN", "AEWT"]  # OrderNumber
+    assert [r["name"] for r in ae["survey"]] == ["AETERM", "AESTDAT", "AEENDAT", "AESEV", "AEACN", "AEWT", "AENOQ", "AEDESC", "AELEFT"]  # OrderNumber
     rows = {r["name"]: r for r in ae["survey"]}
     assert rows["AESTDAT"]["type"] == "date" and rows["AEWT"]["type"] == "decimal"
     assert rows["AESEV"]["type"] == "select_one AESEV" and rows["AEACN"]["type"] == "select_multiple AEACN_2" \
@@ -163,7 +163,7 @@ def test_idempotent_and_rematch_only_when_sources_change():
     assert sm.needs_match(once, other)
     form = _form(again, "AE")                                    # restored, then matched to the ODM's AE form
     assert form["customer_standard"]["source"] == "uploaded ODM"
-    assert [r["name"] for r in form["survey"]] == ["AETERM", "AESTDAT", "AEENDAT", "AESEV", "AEACN", "AEWT"]
+    assert [r["name"] for r in form["survey"]] == ["AETERM", "AESTDAT", "AEENDAT", "AESEV", "AEACN", "AEWT", "AENOQ", "AEDESC", "AELEFT"]
     assert again["schedule_of_events"]["form_placements"][0]["form_id"] == "AE"
     with contextlib.redirect_stdout(io.StringIO()):
         none = sm.apply(again, sm.load_sources([]))
@@ -458,3 +458,27 @@ def test_odm_standard_builds_without_changing_the_study_spec():
     plain = fx.spec()["forms"][1]
     plain["settings"] = {"form_title": "Vital Signs", "form_id": "VS"}
     assert {c: st for c, st, _n in run_qa_checks(plain, {})}["settings_complete"] == "FAIL"   # unchanged elsewhere
+
+
+def test_odm_item_without_question_text_never_gets_an_empty_label():
+    """Label fallback: Question, else the ODM item Description, else the OpenClinica item details, else the item
+    name with the review flag "label from ODM name, no question text"."""
+    ae = next(f for f in sm.parse_odm(fx.ODM, "standard.xml") if f["form_oid"] == "AE")
+    rows = {r["name"]: r for r in ae["survey"]}
+    assert all(str(r.get("label") or "").strip() for f in sm.parse_odm(fx.ODM, "standard.xml") for r in f["survey"])
+    assert rows["AETERM"]["label"] == "Event term" and "flag_reason" not in rows["AETERM"]
+    assert rows["AEDESC"]["label"] == "Event description text" and "flag_reason" not in rows["AEDESC"]
+    assert rows["AELEFT"]["label"] == "Left item text label" and "flag_reason" not in rows["AELEFT"]
+    assert rows["AENOQ"]["label"] == "AENOQ"
+    assert rows["AENOQ"]["flag_reason"] == "label from ODM name, no question text"
+    assert rows["AENOQ"]["completion_status"] == "FLAGGED"
+    out = _matched(xls=False)
+    row = next(r for r in _form(out, "AE")["survey"] if r["name"] == "AENOQ")
+    assert row["label"] == "AENOQ" and row["completion_status"] == "FLAGGED"
+    assert row["flag_reason"] == "label from ODM name, no question text"
+    assert out["review_flags"]["customer_standard_label_from_name"] == ["AE.AENOQ: label from ODM name, no question text"]
+    assert next(r for r in _form(out, "AE")["survey"] if r["name"] == "AETERM")["completion_status"] == "COMPLETE"
+    assert sm.integrity(out) == []
+    with contextlib.redirect_stdout(io.StringIO()):
+        gone = sm.apply(out, sm.load_sources([]))            # the standard is removed: its flags go with it
+    assert "customer_standard_label_from_name" not in gone["review_flags"]
