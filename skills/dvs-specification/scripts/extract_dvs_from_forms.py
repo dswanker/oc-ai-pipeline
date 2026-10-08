@@ -1148,7 +1148,7 @@ def _dvs_row(check_id, qt_id, uat_ids, form_id, field_name, field_label, check, 
         "Build Owner":             "",
         "Priority":                "",
         "UAT Case ID(s)":          ", ".join(uat_ids),
-        "Notes":                   "",
+        "Notes":                   meta.get("item_standard", ""),
     }
 
 

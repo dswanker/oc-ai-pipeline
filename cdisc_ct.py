@@ -70,17 +70,17 @@ def _parse_evs(text):
     for r in rows:
         if len(r) < 8:
             continue
-        code, parent, ext, name, sub, syn, _defn, pt = r[:8]
+        code, parent, ext, name, sub, syn, defn, pt = r[:8]
         if not parent:
             cls[code] = {"code": code, "short_name": sub.strip(), "name": name.strip(),
                          "extensible": ext.strip().lower() == "yes", "terms": {}}
         else:
-            terms.append((parent, code, sub.strip(), syn, pt))
-    for parent, code, sub, syn, pt in terms:
+            terms.append((parent, code, sub.strip(), syn, pt, defn))
+    for parent, code, sub, syn, pt, defn in terms:
         cl = cls.get(parent)
         if cl is not None:
             cl["terms"][sub.upper()] = {
-                "code": code, "value": sub, "preferred_term": pt.strip(),
+                "code": code, "value": sub, "preferred_term": pt.strip(), "definition": defn.strip(),
                 "synonyms": [s.strip() for s in syn.split(";") if s.strip()]}
     return {cl["short_name"].upper(): cl for cl in cls.values() if cl["short_name"]}
 
@@ -460,6 +460,10 @@ def apply_to_spec(spec, std, protected_vars=frozenset()):
             if var in protected or str(row.get("name", "")).upper() in protected or \
                     any(r.get("source") == "crf_standards_injection" for r in rows):
                 decisions.append({**d, "tier": "customer_or_oc_standard", "action": "kept"})
+                continue
+            if rows and all(r.get("source") == "CDISC_QRS" for r in rows):
+                # questionnaire response list set by cdisc_qrs.py (instrument codelist): not a CDASH variable list
+                decisions.append({**d, "tier": "cdash_default", "action": "qrs_response_codelist"})
                 continue
             existing = [(str(r.get("name", "")).strip(), str(r.get("label", "")).strip()) for r in rows]
             cl, bound_by, note = bind(std, var, [n for n, _ in existing])

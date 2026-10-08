@@ -3,14 +3,20 @@
 row["concept"]           = CDASHIG variable the field is equivalent to (e.g. "AESTDAT")
 row["concept_qualifier"] = optional test code / category / term telling repeated uses of one variable
                            apart: VSORRES+SYSBP, IEORRES+INCLUSION, SUNCF+TOBACCO, MHOCCUR+SURGERY
-row["concept_source"]    = "customer_alias" | "cdash_name" | "claude"
+row["concept_source"]    = "customer_alias" | "cdash_name" | "qrs_instrument" | "claude"
 
 Precedence (a higher source is never overwritten by a lower one):
   1. customer_alias  conventions_engine/conventions/concept_aliases/<customer>.json, deterministic
   2. cdash_name      the field name already is a CDASHIG variable, deterministic
-  3. claude          one small Claude call for fields still untagged; every answer is validated
+  3. qrs_instrument  questionnaire items matched to an instrument's CDISC test codes by item order
+                     (cdisc_qrs.tag_by_order), deterministic; runs after the AI tags it builds on
+  4. claude          one small Claude call for fields still untagged; every answer is validated
                      (variable must exist in CDASHIG, type must fit, high confidence only, one field
                      per concept per form) and anything that fails is discarded
+
+Questionnaires, ratings and scales (QRS): concept QSORRES / FTORRES / RSORRES + qualifier = the instrument's
+CDISC test code (e.g. QSORRES + PHQ0101). The AI may only use test codes of instruments the form names; the
+code is validated against the instrument's test-code codelist in CDISC CT.
 
 Runs after the whole study is defined and before the conventions engine, so edit-check conventions can
 match field.concept on CDASH and non-CDASH forms alike. Never fails a build.
@@ -22,7 +28,7 @@ import cdisc_ct
 import cdisc_cdash
 
 _NON_DATA = ("begin group", "end group", "begin repeat", "end repeat", "note")
-_RANK = {"customer_alias": 3, "cdash_name": 2, "claude": 1}
+_RANK = {"customer_alias": 3, "cdash_name": 2, "qrs_instrument": 1.5, "claude": 1}
 _DATE_TYPES = ("date", "datetime", "pdate")
 _QUAL_OK = re.compile(r"^[A-Z0-9_\-/]{1,40}$")
 
@@ -155,8 +161,29 @@ Rules:
 """
 
 
-def build_request(spec, std=None):
-    """(prompt, extra_text) for the untagged fields, or None when nothing needs Claude."""
+QRS_RULES = """
+Questionnaires, ratings and scales:
+- QRS INSTRUMENT ITEMS lists, for the forms named there, the instrument's items (test code | item).
+  A field that collects the answer to one of those items gets the concept shown on the INSTRUMENT line
+  (QSORRES, FTORRES or RSORRES) and qualifier = that item's test code (e.g. PHQ0101).
+- Use only test codes listed for an instrument offered for the field's own form. Match by item meaning and
+  item order. A total or subscale score field gets the instrument's total/subscale test code when one is listed.
+- "Was it done?", date, reason and comment fields are not questionnaire items: leave them out.
+"""
+
+
+def _qrs_index(std):
+    try:
+        import cdisc_qrs
+        return cdisc_qrs.build_index(std.ct) if std is not None else None
+    except Exception as e:
+        print(f"[cdisc-qrs] instrument index unavailable: {e}", flush=True)
+        return None
+
+
+def build_request(spec, std=None, qrs=True):
+    """(prompt, extra_text) for the untagged fields, or None when nothing needs Claude.
+    qrs=False leaves the questionnaire section out (CDISC_QRS=0)."""
     todo = untagged(spec)
     if not todo:
         return None
@@ -180,9 +207,22 @@ def build_request(spec, std=None):
     if vs:
         cat.append("\nVITAL SIGN TESTS (VS test code | test):")
         cat += [f"VS {k} | {v}" for k, v in sorted(vs.items())]
+    prompt = PROMPT
+    ix = _qrs_index(std) if qrs else None
+    if ix is not None:
+        import cdisc_qrs
+        todo_forms = {id(f) for f, _r in todo}
+        sub = {"forms": [f for f in spec.get("forms") or [] if id(f) in todo_forms]}
+        q_lines, per_form = cdisc_qrs.catalogue_lines(sub, ix)
+        if q_lines:
+            prompt = PROMPT + QRS_RULES
+            cat.append("\nQRS INSTRUMENT ITEMS (instrument id | category | name | concept; then test code | item):")
+            cat += q_lines
+            cat.append("Instruments offered per form: " + "; ".join(f"{f}: {', '.join(i)}"
+                                                                     for f, i in sorted(per_form.items()) if i))
     extra = "CATALOGUE (domain variable | label | type):\n" + "\n".join(cat) + \
             "\n\nFIELDS (form | field | type | label):\n" + "\n".join(lines)
-    return PROMPT, extra
+    return prompt, extra
 
 
 def _parse(text):
@@ -209,9 +249,12 @@ def _type_fits(row, concept, rec):
     return True
 
 
-def apply_ai_response(spec, std, response_text):
+def apply_ai_response(spec, std, response_text, qrs=True):
     """Validate Claude's tags and apply the ones that pass. Returns a summary with reasons for rejects."""
     fields, by_var = _fields_by_var()
+    ix = _qrs_index(std) if qrs else None
+    if ix is not None:
+        import cdisc_qrs
     rejects = {}
     accepted = 0
 
@@ -239,9 +282,21 @@ def apply_ai_response(spec, std, response_text):
             reject("already_tagged"); continue
         if tag.get("confidence") != "high":
             reject("not_high_confidence"); continue
+        qual = str(tag.get("qualifier") or "").strip().upper().replace(" ", "_") or None
+        if ix is not None and concept in cdisc_qrs.QRS_CONCEPTS and (qual in ix.by_testcd or concept not in by_var):
+            # questionnaire item: the test code must be in CDISC CT, belong to an instrument this form names,
+            # and the concept follows the instrument's domain (QS / FT / RS)
+            inst = ix.instrument_of(qual)
+            if inst is None:
+                reject("qrs_test_code_not_in_ct"); continue
+            if inst["id"] not in cdisc_qrs.candidates(form, ix):
+                reject("qrs_instrument_not_named_on_form"); continue
+            if str(row.get("type") or "").strip().lower().split(" ")[0] not in ("select_one", "integer", "decimal", "text"):
+                reject("type_mismatch"); continue
+            proposed.setdefault((id(form), cdisc_qrs.CONCEPT_BY_DOMAIN[inst["domain"]], qual), []).append(row)
+            continue
         if concept not in by_var:
             reject("concept_not_in_cdashig"); continue
-        qual = str(tag.get("qualifier") or "").strip().upper().replace(" ", "_") or None
         if qual and not _QUAL_OK.match(qual):
             reject("bad_qualifier"); continue
         if concept == "VSORRES" and (not qual or qual not in _vs_tests(std)):

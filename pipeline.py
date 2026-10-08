@@ -4240,7 +4240,34 @@ def _apply_cdisc_ct(struct_json, crf_files=None, oc_files=None):
         return struct_json
 
 
-async def _tag_concepts(item_id, struct_json, customer_subdomain="", client_name=""):
+def _apply_qrs(struct_json, std, protected=None):
+    """QRS instruments layer (cdisc_qrs.py), deterministic: questionnaire items matched to the instrument's CDISC
+    test codes by item order, then row["qrs"] metadata and, for CDASH-default items, the instrument's response
+    codelist with the numeric score per choice. protected=None (tier unknown): metadata only.
+    CDISC_QRS=0 disables. On any error the spec is left exactly as it was and the build continues."""
+    if os.environ.get("CDISC_QRS", "1") == "0" or not isinstance(struct_json, dict):
+        return None
+    try:
+        import copy as _copy
+        import cdisc_qrs
+        work = _copy.deepcopy(struct_json)
+        ix = cdisc_qrs.build_index(std.ct)
+        order = cdisc_qrs.tag_by_order(work, ix)
+        summary = cdisc_qrs.summarize(cdisc_qrs.apply_to_spec(work, std, protected))
+        summary["tagged_by_item_order"] = order["tagged"]
+        if not summary["items"]:
+            return None  # no questionnaire items: the spec is not touched at all
+        work.setdefault("study_meta", {}).setdefault("cdisc_standards", {})["qrs"] = summary
+        struct_json["forms"] = work["forms"]
+        struct_json["study_meta"] = work["study_meta"]
+        print(f"[cdisc-qrs] {summary}", flush=True)
+        return summary
+    except Exception as e:
+        print(f"[cdisc-qrs] QRS layer failed (spec unchanged, build continues): {e}", flush=True)
+        return None
+
+
+async def _tag_concepts(item_id, struct_json, customer_subdomain="", client_name="", qrs_protected=None):
     """Tag every data field with the CDASH concept it represents (cdisc_concepts.py), whatever it is named,
     so edit-check conventions work on CDASH and non-CDASH forms. Runs on the complete study, right before
     the conventions engine. Customer aliases and CDASH names are deterministic; one validated Claude call
@@ -4258,19 +4285,30 @@ async def _tag_concepts(item_id, struct_json, customer_subdomain="", client_name
                                                cdisc_concepts.load_aliases(customer_subdomain, client_name))
         ai = {"skipped": "CDISC_CONCEPTS_AI=0"}
         if os.environ.get("CDISC_CONCEPTS_AI", "1") != "0":
-            req = cdisc_concepts.build_request(struct_json, std)
+            _qrs_on = os.environ.get("CDISC_QRS", "1") != "0"
+            req = cdisc_concepts.build_request(struct_json, std, qrs=_qrs_on)
             if req:
                 text = await call_claude(req[0], extra_text=req[1], max_tokens=16000, cache_prompt=False)
-                ai = cdisc_concepts.apply_ai_response(struct_json, std, text)
+                ai = cdisc_concepts.apply_ai_response(struct_json, std, text, qrs=_qrs_on)
             else:
                 ai = {"skipped": "nothing untagged"}
+        qrs = _apply_qrs(struct_json, std, qrs_protected)
+        sm = struct_json.setdefault("study_meta", {})
         cov = cdisc_concepts.summary(struct_json)
         sm.setdefault("cdisc_standards", {})["concepts"] = {"deterministic": det, "claude": ai, "coverage": cov}
         print(f"[cdisc-concepts] deterministic={det} claude={ai} coverage={cov}", flush=True)
         tagged = sum(v for k, v in cov.items() if k != "untagged")
         await append_log(item_id, f"CDASH concepts: {tagged} of {tagged + cov.get('untagged', 0)} fields tagged "
                                   f"({cov.get('customer_alias', 0)} customer alias, {cov.get('cdash_name', 0)} CDASH name, "
-                                  f"{cov.get('claude', 0)} AI-validated)")
+                                  f"{cov.get('claude', 0)} AI-validated"
+                                  + (f", {cov['qrs_instrument']} questionnaire item order" if cov.get("qrs_instrument") else "")
+                                  + ")")
+        if qrs:
+            await append_log(item_id, f"Questionnaires (CDISC QRS): {qrs['items']} items of "
+                                      f"{', '.join(qrs['instruments']) or 'no recognized instrument'}; "
+                                      f"{qrs['actions'].get('response_codelist_applied', 0)} got the instrument's response "
+                                      f"codelist ({qrs['scored_items']} with numeric scores), "
+                                      f"{qrs['actions'].get('kept', 0)} customer/OC standard kept")
     except Exception as e:
         print(f"[cdisc-concepts] tagging failed (build continues): {e}", flush=True)
 
@@ -4312,6 +4350,139 @@ async def _sdtm_mapping_step(item_id, struct_json, protocol_num, version, custom
         print(f"[sdtm-mapping] failed: {e}", flush=True)
         try:
             await append_log(item_id, f"SDTM Mapping Specification could not be generated: {e}")
+        except Exception:
+            pass
+
+
+async def _load_usdm_input(item_id):
+    """Sponsor-provided USDM 4.0 JSON from the "USDM JSON (input)" file column (usdm_input.py), or None.
+    Only usdmVersion 4.0.x is accepted; anything else is rejected with a clear log line and the run continues
+    without USDM. USDM_INPUT=0 disables. Never raises."""
+    if os.environ.get("USDM_INPUT", "1") == "0" or not COL.get("usdm_input"):
+        return None
+    try:
+        data = await download_column_file(item_id, COL["usdm_input"])
+        if not data:
+            return None
+        import usdm_input
+        try:
+            structure, problems = usdm_input.read(data)
+        except usdm_input.UsdmError as e:
+            print(f"[usdm] {e}", flush=True)
+            await append_log(item_id, f"{e} The run continues without the USDM file.")
+            return None
+        n_place = len(usdm_input.placements(structure))
+        print(f"[usdm] USDM {structure['usdm_version']}: {len(structure['events'])} events, {n_place} placements, "
+              f"{len(problems)} schema finding(s)", flush=True)
+        await append_log(item_id,
+            f"USDM JSON (input): USDM {structure['usdm_version']} accepted. {len(structure['events'])} study events, "
+            f"{n_place} activity placements, {len(structure['arms'])} arm(s), "
+            f"{len(structure['eligibility'])} eligibility criteria. The visit structure comes from this file; "
+            f"the protocol analysis fills form content only."
+            + (f" Schema findings ({len(problems)}, not blocking): " + "; ".join(problems[:3])
+               + (" ..." if len(problems) > 3 else "") if problems else ""))
+        # CDISC CORE conformance rules on the USDM file (core_validation.py): only when a CORE engine is
+        # configured (CORE_ENGINE_CMD); offline from the engine's own cache; reported, never blocking.
+        try:
+            import core_validation
+            if core_validation.configured():
+                _core = await asyncio.get_event_loop().run_in_executor(None, lambda: core_validation.run_usdm(data))
+                if _core:
+                    await append_log(item_id, core_validation.log_line(_core))
+        except Exception as _ce:
+            print(f"[core] not run: {_ce}", flush=True)
+        return structure
+    except Exception as e:
+        print(f"[usdm] input could not be read (run continues without it): {e}", flush=True)
+        return None
+
+
+def _usdm_forms_catalog(crf_files):
+    """(form key, form name) pairs from the customer's FORMS.csv, for the USDM activity -> form rule layer."""
+    import csv
+    out = []
+    for fname, fdata in (crf_files or []):
+        if str(fname).upper() != "FORMS.CSV":
+            continue
+        try:
+            for row in csv.DictReader(io.StringIO(fdata.decode("utf-8-sig", errors="replace"))):
+                key = (row.get("Form Key") or "").strip()
+                name = next((row[k].strip() for k in ("Form Name", "Form Label", "Form Title", "Name", "Title")
+                             if (row.get(k) or "").strip()), "")
+                if key and name:
+                    out.append((key, name))
+        except Exception as e:
+            print(f"[usdm] FORMS.csv not usable for activity matching: {e}", flush=True)
+    return out
+
+
+def _apply_usdm(struct_json, usdm_structure, crf_files=None):
+    """Make the sponsor's USDM structure authoritative on a freshly analysed Study Spec (usdm_input.seed_spec):
+    events, scheduling (visit windows), form placements, arms. Runs before the customer-convention enforcement
+    steps, which still win. On any error the spec is returned unchanged and the build continues."""
+    if not usdm_structure or not isinstance(struct_json, dict) or os.environ.get("USDM_INPUT", "1") == "0":
+        return struct_json
+    try:
+        import copy as _copy
+        import cdisc_ct, usdm_input
+        out = _copy.deepcopy(struct_json)
+        summary = usdm_input.seed_spec(out, usdm_structure, cdisc_ct.load_standards(), _usdm_forms_catalog(crf_files))
+        print(f"[usdm] structure applied: {json.dumps({k: v for k, v in summary.items() if k != 'conditional_timelines'})[:900]}",
+              flush=True)
+        return out
+    except Exception as e:
+        print(f"[usdm] structure could not be applied (spec unchanged, build continues): {e}", flush=True)
+        return struct_json
+
+
+def _usdm_log_line(struct_json):
+    s = ((struct_json or {}).get("study_meta") or {}).get("usdm") or {}
+    if not s:
+        return ""
+    line = (f"USDM structure applied: {s.get('events')} events and {s.get('placements')} activity placements seeded; "
+            f"{s.get('forms_placed')} forms placed from the schedule of activities")
+    if s.get("unresolved_activities"):
+        line += (f"; {len(s['unresolved_activities'])} scheduled activities have no matching form (review): "
+                 + "; ".join(s["unresolved_activities"][:8]) + (" ..." if len(s["unresolved_activities"]) > 8 else ""))
+    if s.get("forms_without_activity"):
+        line += f"; {len(s['forms_without_activity'])} forms not named by an activity kept their own visits"
+    return line
+
+
+async def _acrf_step(item_id, struct_json, protocol_num, version, customer_subdomain="", client_name=""):
+    """Build and upload the Annotated CRF (acrf.py): the built forms with their SDTM annotations, drawn from the
+    same rows as the SDTM Mapping Specification. Works on a copy of the spec (chains read struct_json
+    concurrently); concept tags are prepared exactly as for the mapping specification. ACRF_OUTPUT=0 disables.
+    Never raises."""
+    if os.environ.get("ACRF_OUTPUT", "1") == "0":
+        print("[acrf] ACRF_OUTPUT=0: skipped", flush=True)
+        return
+    try:
+        import copy as _copy
+        import cdisc_ct, cdisc_concepts, acrf
+        if not COL.get("acrf_pdf"):
+            raise RuntimeError("monday column 'Annotated CRF (PDF)' is not registered (monday_client.COL['acrf_pdf'])")
+        spec = _copy.deepcopy(struct_json)
+        cs = ((spec.get("study_meta") or {}).get("cdisc_standards") or {})
+        if "concepts" not in cs:
+            await _tag_concepts(item_id, spec, customer_subdomain, client_name)
+        else:
+            std = cdisc_ct.load_standards(cs.get("ct_version"))
+            if std is not None:
+                cdisc_concepts.tag_deterministic(spec, std,
+                                                 cdisc_concepts.load_aliases(customer_subdomain, client_name))
+        loop = asyncio.get_event_loop()
+        out = await loop.run_in_executor(None, lambda: acrf.build_files(spec))
+        await upload_file(item_id, COL["acrf_pdf"], f"{protocol_num}_Annotated_CRF_{version}.pdf", out["pdf"])
+        s = out["summary"]
+        await append_log(item_id,
+            f"Annotated CRF: {s['forms']} forms, {s['annotated']} of {s['fields']} fields annotated "
+            f"({s['review']} marked for review), {s['not_submitted']} not submitted, "
+            f"{s['supp_candidates']} supplemental-qualifier candidates")
+    except Exception as e:
+        print(f"[acrf] failed: {e}", flush=True)
+        try:
+            await append_log(item_id, f"Annotated CRF could not be generated: {e}")
         except Exception:
             pass
 
@@ -5505,6 +5676,17 @@ async def run_pipeline(item_id):
                 "Study Specification JSON yet, so also select \"Protocol specification\" (first run), "
                 "or run it again after a Study Specification exists.")
 
+        # Annotated CRF: same gate as the SDTM Mapping Specification (it is drawn from the same mapping rows).
+        _acrf_requested = _want("annotated crf")
+        _acrf_allowed = _acrf_requested and (_spec_json_on_item or _want("protocol specification"))
+        if _acrf_requested and not _acrf_allowed:
+            print("[acrf] requested but no Study Specification JSON on the item and "
+                  "Protocol specification not selected: skipped", flush=True)
+            await append_log(item_id,
+                "Annotated CRF skipped: it needs a Study Specification. This item has no "
+                "Study Specification JSON yet, so also select \"Protocol specification\" (first run), "
+                "or run it again after a Study Specification exists.")
+
         create_study_val = cols.get(COL["create_study"], {}).get("value")
         try:
             parsed = json.loads(create_study_val or "{}")
@@ -5789,6 +5971,16 @@ async def run_pipeline(item_id):
         print(f"Protocol: {_proto_desc} | "
               f"CRF files ({len(_crf_files)}): {_crf_desc} | "
               f"OC files ({len(_oc_files)}): {_oc_desc}", flush=True)
+        # USDM JSON (input): a sponsor-provided USDM 4.0 study definition. Its visit structure (events, schedule
+        # of activities, windows, arms) is authoritative: passed to the analysis as context (the main prompt is
+        # unchanged) and enforced deterministically on the result (_apply_usdm).
+        _usdm_structure = await _load_usdm_input(item_id)
+        if _usdm_structure:
+            try:
+                import usdm_input as _usdm_mod
+                _protocol_extra_texts.append(_usdm_mod.context_text(_usdm_structure))
+            except Exception as _ue:
+                print(f"[usdm] context not added: {_ue}", flush=True)
         # Extract images from CRF Library files (screenshots ZIPs, PNGs, etc.)
         # and pass them to Claude during Study Spec generation so it can read
         # visit structure, SoA, and form layouts from source system screenshots.
@@ -5801,16 +5993,18 @@ async def run_pipeline(item_id):
 
         # ── Determine if analysis/chains are needed ───────────────────────────
         needs_analysis = (
-            _want("protocol specification") or _map_allowed
+            _want("protocol specification") or _map_allowed or _acrf_allowed
             or _want("protocol summary")
             or _want("price quote") or _want("study build zip")
             or _want("dvs")
             or (create_study and oc_subdomain)
         )
 
-        if _map_requested and not _map_allowed and not needs_analysis:
+        if ((_map_requested and not _map_allowed) or (_acrf_requested and not _acrf_allowed)) and not needs_analysis:
+            _blocked = " and ".join(n for n, r, a in (("SDTM Mapping Specification", _map_requested, _map_allowed),
+                                                      ("Annotated CRF", _acrf_requested, _acrf_allowed)) if r and not a)
             await set_status(item_id, COL["pipeline_status"], STATUS["failed"])
-            await append_log(item_id, "FAILED: nothing ran. SDTM Mapping Specification was the only output "
+            await append_log(item_id, f"FAILED: nothing ran. {_blocked} was the only output "
                                       "selected and it needs a Study Specification first (see above).")
             return
 
@@ -5940,7 +6134,8 @@ async def run_pipeline(item_id):
                             )
                             _user_change_paths = {r["field_path"] for r in _user_changes}
 
-                            await _tag_concepts(item_id, struct_json, oc_subdomain, client_name)
+                            await _tag_concepts(item_id, struct_json, oc_subdomain, client_name,
+                                                qrs_protected=_cdisc_protected_vars(_crf_files, _oc_files))
                             apply_conventions(struct_json, study_id=_study_id,
                                               customer_subdomain=oc_subdomain,
                                               client_name=client_name)
@@ -6051,7 +6246,8 @@ async def run_pipeline(item_id):
                 from conventions_engine import apply_conventions
                 _study_id = (struct_json.get("study_meta") or {}).get("protocol_number") or protocol_num
                 _vendor_slug = _vendor_slug_from_display_name(mig_result.get("source_system"))
-                await _tag_concepts(item_id, struct_json, oc_subdomain, client_name)
+                await _tag_concepts(item_id, struct_json, oc_subdomain, client_name,
+                                    qrs_protected=_cdisc_protected_vars(_crf_files, _oc_files))
                 apply_conventions(struct_json, study_id=_study_id,
                                   customer_subdomain=oc_subdomain,
                                   migration_source=_vendor_slug,
@@ -6552,6 +6748,13 @@ async def run_pipeline(item_id):
                 await set_status(item_id, "color_mm2h9g3m", "Build Error")
                 return
 
+            # USDM input: the sponsor's visit structure is authoritative for events and placements
+            # (deterministic; no-op without a USDM file). Customer conventions below still win.
+            if _usdm_structure:
+                struct_json = _apply_usdm(struct_json, _usdm_structure, _crf_files)
+                _usdm_line = _usdm_log_line(struct_json)
+                if _usdm_line:
+                    await append_log(item_id, _usdm_line)
             # OC-9 backstop: ensure SE_COMMON exists and AE/CM/DV/AESAE
             # forms live only there. Deterministic fix-up if Claude missed it.
             struct_json = _enforce_common_visit(struct_json)
@@ -6591,7 +6794,8 @@ async def run_pipeline(item_id):
                 # apply only on migration path (Path M). If non-migration builds need
                 # vendor conventions in future, extract the column at build entry and
                 # thread it through as migration_source here.
-                await _tag_concepts(item_id, struct_json, oc_subdomain, client_name)
+                await _tag_concepts(item_id, struct_json, oc_subdomain, client_name,
+                                    qrs_protected=_cdisc_protected_vars(_crf_files, _oc_files))
                 apply_conventions(struct_json, study_id=_study_id,
                                   customer_subdomain=oc_subdomain,
                                   client_name=client_name)
@@ -6775,7 +6979,8 @@ async def run_pipeline(item_id):
             async def chain_a():
                 _want_spec = _want("protocol specification")
                 _want_map = _map_allowed  # selected AND (spec JSON on item OR spec selected this run)
-                if not (_want_spec or _want_map):
+                _want_acrf = _acrf_allowed  # same gate as the mapping specification
+                if not (_want_spec or _want_map or _want_acrf):
                     return
                 if _want_spec:
                     print("Chain A: Generating Study Spec PDF + XLSX (local)...", flush=True)
@@ -6806,6 +7011,9 @@ async def run_pipeline(item_id):
                 # outputs dropdown), after the spec files so it sees the finished spec. Never fails Chain A.
                 if _want_map:
                     await _sdtm_mapping_step(item_id, struct_json, protocol_num, version, oc_subdomain, client_name)
+                # Annotated CRF: its own output ("Annotated CRF" in the outputs dropdown). Never fails Chain A.
+                if _want_acrf:
+                    await _acrf_step(item_id, struct_json, protocol_num, version, oc_subdomain, client_name)
 
             # ── Chain B: Protocol Summary JSON → PDF + Quote ───────────────────
             async def chain_b():

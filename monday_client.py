@@ -10,6 +10,7 @@ COL = {
     "protocol":          "files9__1",   # Protocol document — PDF, Word, or Google Doc link
     "crf_library":       "fileb5c8dt0c",  # Customer Specific CRF Standards
     "oc_standard":       "file_mm2mafjc",  # Customer OC4 XLSForm Standard(s)
+    "usdm_input":        "file_mm7yx5qb",  # USDM JSON (input): sponsor USDM 4.0 study definition (usdm_input.py)
     # Human-in-the-loop input columns
     "edited_spec_input": "file_mm2n3x71",    # Edited Study Specification XLSX
     "build_input":       "file_mm2nqghj",    # Edited Study Build Forms ZIP
@@ -31,6 +32,7 @@ COL = {
     "dvs_output":        "file_mm2hhwmk",
     "sdtm_mapping_xlsx": "file_mm7xk7mw",    # SDTM Mapping Spec (XLSX), Chain A
     "sdtm_mapping_pdf":  "file_mm7xnxj6",    # SDTM Mapping Spec (PDF), Chain A
+    "acrf_pdf":          "file_mm7y8tr7",    # Annotated CRF (PDF), Chain A; outputs label "Annotated CRF" (id 10)
     "calendaring_output": "file_mm3te0de",   # Calendaring Output
     # Status + logging
     "pipeline_status":   "color_mm2h9g3m",

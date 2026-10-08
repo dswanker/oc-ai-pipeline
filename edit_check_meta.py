@@ -160,7 +160,7 @@ def describe_relevant(rel, cx):
 
 def check_meta(struct_form, struct_row, clause, check_type, all_forms):
     """Metadata for one DVS check on struct_row. check_type: Constraint | Required | Conditional Display | other.
-    Returns {source, rule_id, plain, rationale, protocol_reference}."""
+    Returns {source, rule_id, plain, rationale, protocol_reference, item_standard}."""
     gids = _global_ids()
     survey = [r for r in (struct_form or {}).get("survey") or [] if isinstance(r, dict)]
     cx = _FormCtx(struct_form or {}, survey, all_forms or [])
@@ -168,6 +168,11 @@ def check_meta(struct_form, struct_row, clause, check_type, all_forms):
     name = row.get("name")
     set_by = row.get("edit_check_set_by") or {}
     out = {"source": "Study Build", "rule_id": "", "plain": "", "rationale": "", "protocol_reference": ""}
+    try:  # questionnaire items carry their instrument and response codelist (cdisc_qrs.py)
+        import cdisc_qrs
+        out["item_standard"] = cdisc_qrs.describe(row)
+    except Exception:
+        out["item_standard"] = ""
     if check_type == "Constraint":
         exprs = row.get("edit_check_exprs") or {}
         cid = next((k for k, v in exprs.items() if v and " ".join(str(v).split()) == " ".join(str(clause).split())), None)

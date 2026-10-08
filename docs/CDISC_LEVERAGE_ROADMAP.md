@@ -40,6 +40,21 @@ sample CRFs and scoring guidance.
 Use: standard item codes, response codes and numeric scores for ePRO and clinician-scale forms.
 Caveat: CT gives codes, not copyrighted item wording for licensed instruments.
 
+SHIPPED: `cdisc_qrs.py` (+ `cdisc_concepts.py`, `sdtm_mapping.py`, `edit_check_meta.py`, `pipeline._apply_qrs`).
+- Instrument index built from the pinned CT: 362 instruments (QS 252, RS 83, FT 27) with their test codes and
+  names; 87 response codelists; numeric scores for the responses whose STRESC definition quotes the original
+  response (the pairing CT itself publishes; nothing is inferred when CT paraphrases).
+- Tagging: concept QSORRES / FTORRES / RSORRES + qualifier = test code. The validated AI call may use only
+  test codes of instruments the form names (title, id, notes); deterministic matching by instrument and item
+  order fills the rest (concept_source `qrs_instrument`) and never guesses when counts or responses disagree.
+- CDASH-default select_one items get the instrument's response codelist (codes, CT labels, skip logic
+  rewritten); the score per choice is in `row["qrs"]["scores"]` (spec metadata for --STRESN). Customer and OC
+  standard fields get metadata only. Question labels are never changed.
+- SDTM Mapping Specification: `QS.QSORRES`, `QSTESTCD = <code>; QSCAT = <instrument>`. DVS_OC4 Notes show the
+  instrument, item and response codelist. Switch: `CDISC_QRS=0`.
+- Not shipped: instruments whose responses CT does not publish get test codes only; "the Same as" response
+  codelists are bound to the named item only.
+
 ## 4. Biomedical Concepts and CRF specializations
 `cdisc-org/COSMoS` (MIT): BCs, SDTM dataset specializations (dated releases), CRF specializations
 (already vendored in cdisc_standards/cosmos). `lexjansen/cdisc360i-pocs` bc_dss2crf generates ODM 1.3.2 /
@@ -59,13 +74,47 @@ analysis on its own. Mapping-only runs reuse the saved spec (Path R); otherwise 
 ## 5. Annotated CRF (aCRF), new deliverable
 Same POC produces SDTM-annotated CRFs. Pipeline already knows each CDASH field's SDTM target (section 1).
 
+SHIPPED: `acrf.py`, Chain A: `{protocol}_Annotated_CRF_{version}.pdf` to the monday file column
+`Annotated CRF (PDF)` (file_mm7y8tr7, `monday_client.COL["acrf_pdf"]`; outputs dropdown label id 10). Landscape, Study Specification palette. One section per
+built form: question, response options with stored codes, and an annotation box per field taken from the SDTM
+Mapping Specification rows (`sdtm_mapping.build_rows` is the single source of truth): `DOMAIN.VARIABLE`,
+value-level lines ("when VSTESTCD = SYSBP"), `NOT SUBMITTED`, `SUPP<DOMAIN>.QVAL candidate`; AI-validated and
+questionnaire item-order mappings are marked for review. Original reportlab code (the 360i POC was only the idea).
+Produced when "Annotated CRF" is selected in "What outputs would you like?" or when no output is selected. Same
+gate as the mapping specification: needs a Study Specification JSON on the item or "Protocol specification"
+selected in the run; never triggers a protocol analysis alone. Built on a copy of the spec. Switch: `ACRF_OUTPUT=0`.
+
 ## 6. Validate pipeline outputs with CORE (offline)
 CORE engine runs from its local cache (`-lr` local rules, `--cache-path`). USDM rules, SDTMIG rules for
 trial design and mapped UAT data.
 
+SHIPPED (USDM inputs): `core_validation.py` + `pipeline._load_usdm_input`. Verified offline (network blocked,
+no Library API key): cdisc-rules-engine 0.17.1 with its shipped `resources/cache` runs 207 USDM 4.0 rules in
+about 20 s per file (DDF-RA examples: 617 / 355 / 216 findings). The engine is an external command, not a
+pipeline dependency (it needs Python 3.12; the pipeline image is 3.11): active only when `CORE_ENGINE_CMD` is set
+(`CORE_ENGINE_DIR`, `CORE_CACHE_DIR` optional; `CORE_VALIDATE=0` disables). Findings go to the monday log and
+never block a build. Not shipped: installing the engine and its 462 MB cache in the Railway image; SDTMIG rules
+on trial design / mapped UAT data.
+
 ## 7. USDM input
 `cdisc-org/usdm` (pip `usdm`): USDM model classes + Excel importer. CORE has USDM v3/v4 rules;
 `cdisc-jsonata-rules` has USDM test data (clean and dirty). See CDISC_DDF_RA_REFERENCE.md.
+
+SHIPPED: `usdm_input.py` (+ `pipeline._load_usdm_input`, `_apply_usdm`). A sponsor's USDM 4.0.x JSON in the
+monday file column `USDM JSON (input)` (file_mm7yx5qb, `monday_client.COL["usdm_input"]`) makes the visit structure
+deterministic: encounters -> study events, scheduled activity instances (with sub-timelines and child activities)
+-> form placements, timings -> `spec["scheduling"]` (offsets and windows in days; the AI scheduling pass is
+skipped), arms / epochs / cells -> arms and arm applicability, eligibility criteria -> criteria rows. The
+structure is passed to the protocol analysis as context (prompts.py unchanged) and enforced on the result before
+the customer-convention steps, which still win. Other versions are rejected with a clear log line and the run
+continues without the file. Schema check from DDF-RA `dataStructure.yml` (findings logged, not blocking).
+Activity -> form: general rule layer (Biomedical Concept code, customer FORMS convention, CDISC domain name,
+form name, QRS instrument, CDISC test name, domain-name prefix); unresolved activities are listed for review
+(`study_meta.usdm`, `review_flags.usdm_review`). Switch: `USDM_INPUT=0`.
+Benchmark (`tests/usdm/benchmark.py`, DDF-RA examples vendored under CC-BY-4.0): events 100%, placement recall
+100%, placement accuracy 100% on CDISC_Pilot (12 events / 118 placements), EliLilly_NCT03421379 (7 / 49) and
+Alexion_NCT04573309 (50 / 376). Activity -> form against a generic one-form-per-domain library: 44% / 35% / 22%
+(the rest are protocol-specific activity names, listed for review; a real build matches on its own form titles).
 
 ## 8. Downstream submission artifacts
 `data-definition-engine` (Define-XML from USDM), `DataExchange-DDS` (data definition spec, LinkML),
@@ -95,5 +144,8 @@ This is the open-source counterpart of the OC AI Pipeline; reuse its parts inste
 2. Standard edit-check library (section 2). Foundations SHIPPED: conventions engine bindings, template
    filters, study.has_field (cross-form), add_constraint; concept tagging (`cdisc_concepts.py`: row concept +
    qualifier from customer aliases, CDASH names, validated Claude call) so checks match non-CDASH forms.
-3. QRS instruments for ePRO forms (section 3).
-Then aCRF, CORE output validation, USDM input, submission artifacts.
+3. QRS instruments for ePRO forms (section 3). SHIPPED: `cdisc_qrs.py`.
+4. Annotated CRF (section 5). SHIPPED: `acrf.py`.
+5. USDM 4.0 input (section 7). SHIPPED: `usdm_input.py`.
+6. CORE validation of USDM inputs (section 6). SHIPPED: `core_validation.py` (engine install is a deploy step).
+Then CORE validation of outputs (trial design, mapped UAT data), submission artifacts.
