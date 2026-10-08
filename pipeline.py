@@ -4354,6 +4354,91 @@ async def _sdtm_mapping_step(item_id, struct_json, protocol_num, version, custom
             pass
 
 
+async def _load_usdm_input(item_id):
+    """Sponsor-provided USDM 4.0 JSON from the "USDM JSON (input)" file column (usdm_input.py), or None.
+    Only usdmVersion 4.0.x is accepted; anything else is rejected with a clear log line and the run continues
+    without USDM. USDM_INPUT=0 disables. Never raises."""
+    if os.environ.get("USDM_INPUT", "1") == "0" or not COL.get("usdm_input"):
+        return None
+    try:
+        data = await download_column_file(item_id, COL["usdm_input"])
+        if not data:
+            return None
+        import usdm_input
+        try:
+            structure, problems = usdm_input.read(data)
+        except usdm_input.UsdmError as e:
+            print(f"[usdm] {e}", flush=True)
+            await append_log(item_id, f"{e} The run continues without the USDM file.")
+            return None
+        n_place = len(usdm_input.placements(structure))
+        print(f"[usdm] USDM {structure['usdm_version']}: {len(structure['events'])} events, {n_place} placements, "
+              f"{len(problems)} schema finding(s)", flush=True)
+        await append_log(item_id,
+            f"USDM JSON (input): USDM {structure['usdm_version']} accepted. {len(structure['events'])} study events, "
+            f"{n_place} activity placements, {len(structure['arms'])} arm(s), "
+            f"{len(structure['eligibility'])} eligibility criteria. The visit structure comes from this file; "
+            f"the protocol analysis fills form content only."
+            + (f" Schema findings ({len(problems)}, not blocking): " + "; ".join(problems[:3])
+               + (" ..." if len(problems) > 3 else "") if problems else ""))
+        return structure
+    except Exception as e:
+        print(f"[usdm] input could not be read (run continues without it): {e}", flush=True)
+        return None
+
+
+def _usdm_forms_catalog(crf_files):
+    """(form key, form name) pairs from the customer's FORMS.csv, for the USDM activity -> form rule layer."""
+    import csv
+    out = []
+    for fname, fdata in (crf_files or []):
+        if str(fname).upper() != "FORMS.CSV":
+            continue
+        try:
+            for row in csv.DictReader(io.StringIO(fdata.decode("utf-8-sig", errors="replace"))):
+                key = (row.get("Form Key") or "").strip()
+                name = next((row[k].strip() for k in ("Form Name", "Form Label", "Form Title", "Name", "Title")
+                             if (row.get(k) or "").strip()), "")
+                if key and name:
+                    out.append((key, name))
+        except Exception as e:
+            print(f"[usdm] FORMS.csv not usable for activity matching: {e}", flush=True)
+    return out
+
+
+def _apply_usdm(struct_json, usdm_structure, crf_files=None):
+    """Make the sponsor's USDM structure authoritative on a freshly analysed Study Spec (usdm_input.seed_spec):
+    events, scheduling (visit windows), form placements, arms. Runs before the customer-convention enforcement
+    steps, which still win. On any error the spec is returned unchanged and the build continues."""
+    if not usdm_structure or not isinstance(struct_json, dict) or os.environ.get("USDM_INPUT", "1") == "0":
+        return struct_json
+    try:
+        import copy as _copy
+        import cdisc_ct, usdm_input
+        out = _copy.deepcopy(struct_json)
+        summary = usdm_input.seed_spec(out, usdm_structure, cdisc_ct.load_standards(), _usdm_forms_catalog(crf_files))
+        print(f"[usdm] structure applied: {json.dumps({k: v for k, v in summary.items() if k != 'conditional_timelines'})[:900]}",
+              flush=True)
+        return out
+    except Exception as e:
+        print(f"[usdm] structure could not be applied (spec unchanged, build continues): {e}", flush=True)
+        return struct_json
+
+
+def _usdm_log_line(struct_json):
+    s = ((struct_json or {}).get("study_meta") or {}).get("usdm") or {}
+    if not s:
+        return ""
+    line = (f"USDM structure applied: {s.get('events')} events and {s.get('placements')} activity placements seeded; "
+            f"{s.get('forms_placed')} forms placed from the schedule of activities")
+    if s.get("unresolved_activities"):
+        line += (f"; {len(s['unresolved_activities'])} scheduled activities have no matching form (review): "
+                 + "; ".join(s["unresolved_activities"][:8]) + (" ..." if len(s["unresolved_activities"]) > 8 else ""))
+    if s.get("forms_without_activity"):
+        line += f"; {len(s['forms_without_activity'])} forms not named by an activity kept their own visits"
+    return line
+
+
 async def _acrf_step(item_id, struct_json, protocol_num, version, customer_subdomain="", client_name=""):
     """Build and upload the Annotated CRF (acrf.py): the built forms with their SDTM annotations, drawn from the
     same rows as the SDTM Mapping Specification. Works on a copy of the spec (chains read struct_json
@@ -5876,6 +5961,16 @@ async def run_pipeline(item_id):
         print(f"Protocol: {_proto_desc} | "
               f"CRF files ({len(_crf_files)}): {_crf_desc} | "
               f"OC files ({len(_oc_files)}): {_oc_desc}", flush=True)
+        # USDM JSON (input): a sponsor-provided USDM 4.0 study definition. Its visit structure (events, schedule
+        # of activities, windows, arms) is authoritative: passed to the analysis as context (the main prompt is
+        # unchanged) and enforced deterministically on the result (_apply_usdm).
+        _usdm_structure = await _load_usdm_input(item_id)
+        if _usdm_structure:
+            try:
+                import usdm_input as _usdm_mod
+                _protocol_extra_texts.append(_usdm_mod.context_text(_usdm_structure))
+            except Exception as _ue:
+                print(f"[usdm] context not added: {_ue}", flush=True)
         # Extract images from CRF Library files (screenshots ZIPs, PNGs, etc.)
         # and pass them to Claude during Study Spec generation so it can read
         # visit structure, SoA, and form layouts from source system screenshots.
@@ -6643,6 +6738,13 @@ async def run_pipeline(item_id):
                 await set_status(item_id, "color_mm2h9g3m", "Build Error")
                 return
 
+            # USDM input: the sponsor's visit structure is authoritative for events and placements
+            # (deterministic; no-op without a USDM file). Customer conventions below still win.
+            if _usdm_structure:
+                struct_json = _apply_usdm(struct_json, _usdm_structure, _crf_files)
+                _usdm_line = _usdm_log_line(struct_json)
+                if _usdm_line:
+                    await append_log(item_id, _usdm_line)
             # OC-9 backstop: ensure SE_COMMON exists and AE/CM/DV/AESAE
             # forms live only there. Deterministic fix-up if Claude missed it.
             struct_json = _enforce_common_visit(struct_json)

@@ -92,6 +92,22 @@ trial design and mapped UAT data.
 `cdisc-org/usdm` (pip `usdm`): USDM model classes + Excel importer. CORE has USDM v3/v4 rules;
 `cdisc-jsonata-rules` has USDM test data (clean and dirty). See CDISC_DDF_RA_REFERENCE.md.
 
+SHIPPED: `usdm_input.py` (+ `pipeline._load_usdm_input`, `_apply_usdm`). A sponsor's USDM 4.0.x JSON in the
+monday file column `USDM JSON (input)` (`monday_client.COL["usdm_input"]`) makes the visit structure
+deterministic: encounters -> study events, scheduled activity instances (with sub-timelines and child activities)
+-> form placements, timings -> `spec["scheduling"]` (offsets and windows in days; the AI scheduling pass is
+skipped), arms / epochs / cells -> arms and arm applicability, eligibility criteria -> criteria rows. The
+structure is passed to the protocol analysis as context (prompts.py unchanged) and enforced on the result before
+the customer-convention steps, which still win. Other versions are rejected with a clear log line and the run
+continues without the file. Schema check from DDF-RA `dataStructure.yml` (findings logged, not blocking).
+Activity -> form: general rule layer (Biomedical Concept code, customer FORMS convention, CDISC domain name,
+form name, QRS instrument, CDISC test name, domain-name prefix); unresolved activities are listed for review
+(`study_meta.usdm`, `review_flags.usdm_review`). Switch: `USDM_INPUT=0`.
+Benchmark (`tests/usdm/benchmark.py`, DDF-RA examples vendored under CC-BY-4.0): events 100%, placement recall
+100%, placement accuracy 100% on CDISC_Pilot (12 events / 118 placements), EliLilly_NCT03421379 (7 / 49) and
+Alexion_NCT04573309 (50 / 376). Activity -> form against a generic one-form-per-domain library: 44% / 35% / 22%
+(the rest are protocol-specific activity names, listed for review; a real build matches on its own form titles).
+
 ## 8. Downstream submission artifacts
 `data-definition-engine` (Define-XML from USDM), `DataExchange-DDS` (data definition spec, LinkML),
 cdisc-usdm-utils (trial design TA/TE/TV/TI/TS + XPT), `DataExchange-DatasetJson` (Dataset-JSON v1.1),
@@ -121,4 +137,6 @@ This is the open-source counterpart of the OC AI Pipeline; reuse its parts inste
    filters, study.has_field (cross-form), add_constraint; concept tagging (`cdisc_concepts.py`: row concept +
    qualifier from customer aliases, CDASH names, validated Claude call) so checks match non-CDASH forms.
 3. QRS instruments for ePRO forms (section 3). SHIPPED: `cdisc_qrs.py`.
-Then aCRF, CORE output validation, USDM input, submission artifacts.
+4. Annotated CRF (section 5). SHIPPED: `acrf.py`.
+5. USDM 4.0 input (section 7). SHIPPED: `usdm_input.py`.
+Then CORE output validation, submission artifacts.
