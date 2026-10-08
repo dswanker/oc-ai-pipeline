@@ -4275,6 +4275,47 @@ async def _tag_concepts(item_id, struct_json, customer_subdomain="", client_name
         print(f"[cdisc-concepts] tagging failed (build continues): {e}", flush=True)
 
 
+async def _sdtm_mapping_step(item_id, struct_json, protocol_num, version, customer_subdomain="", client_name=""):
+    """Build and upload the SDTM Mapping Specification (XLSX + PDF). Works on a copy of the spec: other
+    chains read struct_json concurrently. A spec never concept-tagged (saved before tagging existed) gets
+    the full tagging on the copy; otherwise deterministic tags are refreshed (aliases may have changed).
+    Never raises."""
+    try:
+        import copy as _copy
+        import cdisc_ct, cdisc_concepts, sdtm_mapping
+        spec = _copy.deepcopy(struct_json)
+        cs = ((spec.get("study_meta") or {}).get("cdisc_standards") or {})
+        if "concepts" not in cs:
+            # Spec was saved before concept tagging existed (e.g. a rerun from an older item): run the full
+            # tagging (customer aliases, CDASH names, validated Claude call) on this copy.
+            await _tag_concepts(item_id, spec, customer_subdomain, client_name)
+        else:
+            std = cdisc_ct.load_standards(cs.get("ct_version"))
+            if std is not None:
+                cdisc_concepts.tag_deterministic(spec, std,
+                                                 cdisc_concepts.load_aliases(customer_subdomain, client_name))
+        loop = asyncio.get_event_loop()
+        out = await loop.run_in_executor(None, lambda: sdtm_mapping.build_files(spec))
+        await asyncio.gather(
+            upload_file(item_id, COL["sdtm_mapping_xlsx"],
+                        f"{protocol_num}_SDTM_Mapping_Specification_{version}.xlsx", out["xlsx"]),
+            upload_file(item_id, COL["sdtm_mapping_pdf"],
+                        f"{protocol_num}_SDTM_Mapping_Specification_{version}.pdf", out["pdf"]),
+        )
+        ms, bc = out["summary"], out["summary"]["by_confidence_basis"]
+        await append_log(item_id,
+            f"SDTM Mapping Specification: {ms['mapped']} of {ms['fields']} fields mapped "
+            f"(high {sum(v for k, v in bc.items() if k.startswith('High'))}, "
+            f"medium/review {sum(v for k, v in bc.items() if k.startswith('Medium'))}, "
+            f"not mapped {bc.get('None / Not mapped', 0)})")
+    except Exception as e:
+        print(f"[sdtm-mapping] failed: {e}", flush=True)
+        try:
+            await append_log(item_id, f"SDTM Mapping Specification could not be generated: {e}")
+        except Exception:
+            pass
+
+
 async def _cdisc_ct_log_step(item_id, struct_json):
     """Post the CDISC layer summary for this build to the monday log."""
     try:
@@ -5717,7 +5758,8 @@ async def run_pipeline(item_id):
 
         # ── Determine if analysis/chains are needed ───────────────────────────
         needs_analysis = (
-            _want("protocol specification") or _want("protocol summary")
+            _want("protocol specification") or _want("sdtm mapping specification")
+            or _want("protocol summary")
             or _want("price quote") or _want("study build zip")
             or _want("dvs")
             or (create_study and oc_subdomain)
@@ -6637,52 +6679,39 @@ async def run_pipeline(item_id):
 
             # ── Chain A: Study Spec files ──────────────────────────────────────
             async def chain_a():
-                if not _want("protocol specification"):
+                _want_spec = _want("protocol specification")
+                _want_map = _want("sdtm mapping specification")
+                if not (_want_spec or _want_map):
                     return
-                print("Chain A: Generating Study Spec PDF + XLSX (local)...", flush=True)
-                try:
-                    loop = asyncio.get_event_loop()
-                    spec_files = await loop.run_in_executor(
-                        None, lambda: run_study_spec_files(struct_json, oc_subdomain, None, client_name)
-                    )
-                    await asyncio.gather(
-                        upload_file(item_id, COL["spec_pdf"],
-                            f"{protocol_num}_Study_Specification_{version}.pdf",
-                            spec_files["pdf"]),
-                        upload_file(item_id, COL["spec_xlsx"],
-                            f"{protocol_num}_Study_Specification_{version}.xlsx",
-                            spec_files["xlsx"]),
-                    )
-                    print(f"Chain A complete — pdf:{len(spec_files['pdf'])} bytes "
-                          f"xlsx:{len(spec_files['xlsx'])} bytes", flush=True)
-                    # SDTM Mapping Specification (standalone XLSX + PDF). Never fails Chain A.
+                if _want_spec:
+                    print("Chain A: Generating Study Spec PDF + XLSX (local)...", flush=True)
                     try:
-                        import sdtm_mapping
-                        _map = await loop.run_in_executor(None, lambda: sdtm_mapping.build_files(struct_json))
-                        await asyncio.gather(
-                            upload_file(item_id, COL["sdtm_mapping_xlsx"],
-                                f"{protocol_num}_SDTM_Mapping_Specification_{version}.xlsx", _map["xlsx"]),
-                            upload_file(item_id, COL["sdtm_mapping_pdf"],
-                                f"{protocol_num}_SDTM_Mapping_Specification_{version}.pdf", _map["pdf"]),
+                        loop = asyncio.get_event_loop()
+                        spec_files = await loop.run_in_executor(
+                            None, lambda: run_study_spec_files(struct_json, oc_subdomain, None, client_name)
                         )
-                        _ms = _map["summary"]
-                        _bc = _ms["by_confidence_basis"]
-                        await append_log(item_id,
-                            f"SDTM Mapping Specification: {_ms['mapped']} of {_ms['fields']} fields mapped "
-                            f"(high {sum(v for k, v in _bc.items() if k.startswith('High'))}, "
-                            f"medium/review {sum(v for k, v in _bc.items() if k.startswith('Medium'))}, "
-                            f"not mapped {_bc.get('None / Not mapped', 0)})")
-                    except Exception as _sm_e:
-                        print(f"[sdtm-mapping] failed (Chain A continues): {_sm_e}", flush=True)
-                        await append_log(item_id, f"SDTM Mapping Specification could not be generated: {_sm_e}")
-                except Exception as e:
-                    import traceback as _tb
-                    tb_str = _tb.format_exc()
-                    print(f"Chain A error: {e}", flush=True)
-                    print(tb_str, flush=True)
-                    # Include traceback tail in Monday log for diagnosis
-                    tb_tail = '\n'.join(tb_str.strip().splitlines()[-8:])
-                    await append_log(item_id, f"Study Spec file generation error: {e}\n{tb_tail}")
+                        await asyncio.gather(
+                            upload_file(item_id, COL["spec_pdf"],
+                                f"{protocol_num}_Study_Specification_{version}.pdf",
+                                spec_files["pdf"]),
+                            upload_file(item_id, COL["spec_xlsx"],
+                                f"{protocol_num}_Study_Specification_{version}.xlsx",
+                                spec_files["xlsx"]),
+                        )
+                        print(f"Chain A complete — pdf:{len(spec_files['pdf'])} bytes "
+                              f"xlsx:{len(spec_files['xlsx'])} bytes", flush=True)
+                    except Exception as e:
+                        import traceback as _tb
+                        tb_str = _tb.format_exc()
+                        print(f"Chain A error: {e}", flush=True)
+                        print(tb_str, flush=True)
+                        # Include traceback tail in Monday log for diagnosis
+                        tb_tail = '\n'.join(tb_str.strip().splitlines()[-8:])
+                        await append_log(item_id, f"Study Spec file generation error: {e}\n{tb_tail}")
+                # SDTM Mapping Specification: its own output ("SDTM Mapping Specification" in the
+                # outputs dropdown), after the spec files so it sees the finished spec. Never fails Chain A.
+                if _want_map:
+                    await _sdtm_mapping_step(item_id, struct_json, protocol_num, version, oc_subdomain, client_name)
 
             # ── Chain B: Protocol Summary JSON → PDF + Quote ───────────────────
             async def chain_b():

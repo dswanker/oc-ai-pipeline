@@ -51,6 +51,8 @@ Use: standard form templates (VS, LB, ...), domain recognition, annotated CRF ge
 `SDTM Mapping Spec (XLSX)` (file_mm7xk7mw) and `SDTM Mapping Spec (PDF)` (file_mm7xnxj6). One row per data field:
 customer field -> CDASH concept (+qualifier) -> SDTM domain.variable, value-level detail, CT, Confidence + Basis
 (High: customer alias / CDASH name; Medium: Claude validated; None: not mapped). Proposed mapping for review.
+Produced when "SDTM Mapping Specification" (dropdown label id 9) is selected in "What outputs would you like?"
+(dropdown_mm2nc7d4), or when no output is selected (run all). Mapping-only runs reuse the saved spec (Path R).
 
 ## 5. Annotated CRF (aCRF), new deliverable
 Same POC produces SDTM-annotated CRFs. Pipeline already knows each CDASH field's SDTM target (section 1).
