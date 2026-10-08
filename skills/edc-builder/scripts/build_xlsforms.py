@@ -1252,7 +1252,7 @@ def build_single_xlsform(form_data, output_path, build_log):
 # Anthropic model used for the validation self-correction loop. Pinned per
 # the operator spec so behavior is reproducible across runs. If/when this
 # rolls forward, update both here and the prompt template.
-_SELF_CORRECTION_MODEL = "claude-sonnet-4-20250514"
+_SELF_CORRECTION_MODEL = "claude-sonnet-4-6"
 _SELF_CORRECTION_MAX_ATTEMPTS = 3
 
 

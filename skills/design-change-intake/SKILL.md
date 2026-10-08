@@ -88,7 +88,7 @@ When called from email-change-intake, it is passed directly.
 
 ## Step 1 — Parse the Source Text
 
-Call Claude (claude-sonnet-4-20250514, max_tokens=2000, temperature=0)
+Call Claude (claude-sonnet-4-6, max_tokens=2000, temperature=0)
 with this system prompt:
 
 ```
