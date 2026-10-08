@@ -1144,6 +1144,67 @@ def build_convention_conflicts_sheet(wb, data):
     ws.freeze_panes = "A3"
 
 
+def _study_config_sections(data):
+    """Sections of the Study Configuration (study_config.py at the repo root); [] when absent or unavailable."""
+    cfg = data.get("study_configuration") if isinstance(data, dict) else None
+    if not cfg:
+        return []
+    try:
+        _root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+        if _root not in sys.path:
+            sys.path.append(_root)
+        import study_config
+        return study_config.sections(cfg)
+    except Exception as e:
+        print(f"[study-config] XLSX sheet skipped: {e}")
+        return []
+
+
+def build_study_config_sheet(wb, data):
+    """STUDY_CONFIG sheet: events (type, calendar), forms at events (flags, SDV), proposals; every value with its
+    source. Absent when the spec has no study_configuration (STUDY_CONFIG=0)."""
+    secs = _study_config_sections(data)
+    if not secs:
+        return
+    ws = wb.create_sheet(title="STUDY_CONFIG")
+    ws.sheet_properties.tabColor = "1B3A6B"
+    width = max(len(h) for _t, _n, h, _r, _w in secs)
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=width)
+    c = ws.cell(row=1, column=1, value="STUDY CONFIGURATION — events, calendar, forms at events, SDV. Source of every "
+                                       "value: protocol (with quote) / pipeline default / AI-proposed / DM. "
+                                       "Proposals are not applied or published.")
+    c.font = hdr_font(size=9, color=WHITE_HEX)
+    c.fill = fill(DARK_BLUE_HEX)
+    c.alignment = Alignment(horizontal="left", vertical="center")
+    ws.row_dimensions[1].height = 18
+    for i in range(1, width + 1):
+        set_col_width(ws, get_column_letter(i), 22)
+    r = 3
+    for title, note, headers, rows, _w in secs:
+        ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=width)
+        c = ws.cell(row=r, column=1, value=f"{title} — {note}")
+        c.font = hdr_font(size=9, color=WHITE_HEX)
+        c.fill = fill(MID_BLUE_HEX)
+        c.alignment = wrap_align()
+        r += 1
+        for col, h in enumerate(headers, start=1):
+            c = ws.cell(row=r, column=col, value=h)
+            c.font = hdr_font(color=WHITE_HEX, size=8)
+            c.fill = fill(DARK_BLUE_HEX)
+            c.border = thin_border()
+            c.alignment = wrap_align("center")
+        r += 1
+        for row in rows or [["(none)"] + [""] * (len(headers) - 1)]:
+            for col, v in enumerate(row, start=1):
+                c = ws.cell(row=r, column=col, value=safe(v))
+                c.font = body_font()
+                c.fill = fill(GREY_LIGHT_HEX if r % 2 == 0 else WHITE_HEX)
+                c.border = thin_border()
+                c.alignment = wrap_align()
+            r += 1
+        r += 1
+
+
 def build_review_flags_sheet(wb, flags):
     ws = wb.create_sheet(title="REVIEW_FLAGS")
     ws.sheet_properties.tabColor = "C0392B"
@@ -1452,6 +1513,7 @@ def build_edc_xlsx(data: dict, output_path: str):
     build_timepoint_sheet(wb, data.get("timepoint_csv", {}))
     build_labranges_sheet(wb, data.get("labranges_csv", {}))
     build_review_flags_sheet(wb, data.get("review_flags", {}))
+    build_study_config_sheet(wb, data)
 
     # One set of tabs per form
     for form in data.get("forms", []):

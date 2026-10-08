@@ -179,6 +179,27 @@ never add or remove forms on their own.
   had a form, 2 added: `PE` Physical examination (10.5.2, CDASHIG, 6 visits) and `PR` Concomitant Procedures (10.4,
   the customer's standard form, common event). ECOG stays an eligibility item. Only `DOV` is left unused.
 
+### Item 2: Study Configuration (`study_config.py`)
+
+`spec["study_configuration"]`, written by `pipeline._study_config_step` before the Study Specification files are
+generated, and rendered as the "STUDY CONFIGURATION" section of the PDF and the `STUDY_CONFIG` sheet of the XLSX
+(both through `study_config.sections`). Kill switch `STUDY_CONFIG=0` (no section, no sheet, spec unchanged).
+
+- `events[]`: `oid`, `name`, `type` (Visit-Based / Common), `repeating`, `calendar.scheduler` (`trigger`,
+  `relative_event`, `offset_days`), `calendar.auto_close_after_days`, `notifications` (proposals only).
+- `forms[]` (one per form at an event): `required`, `hidden`, `allow_add`, `participate`, `sdv` (`level`, `items`),
+  `permission_tag`, `labels`.
+- Every value is `{value, source, quote?, note?}`; source is `protocol` (with the verbatim quote), `pipeline default`,
+  `AI-proposed` or `DM`. A value with source `DM` is kept when the configuration is rebuilt.
+- Type / repeating / required mirror the design-board builder (`event_kind`, `card_required`); `allow_add` is true
+  for forms on a Common event. When the analysis marked a form optional at a visit the board rule is kept and the
+  difference is noted for review.
+- Calendar: the scheduling pass (`spec["scheduling"]`) when present (the calendaring rules are built from the same
+  values), else the visit label: "Day 14 +/- 3" -> offset 14 from the Day 0 event, auto-close 3 days after; a range
+  ("Week 2-3") opens on its first day and closes after its last (offset 14, auto-close 7). The first calendar event
+  is scheduled when the participant is created. Unscheduled, common and early-termination events have no calendar.
+  A timing found word for word in the protocol text is `protocol` with the quote; otherwise `AI-proposed`.
+
 ### Decisions taken during the build (for Dan to confirm)
 
 1. A matched form takes the standard's **form id** (needed to reproduce the customer's form and for cross-form

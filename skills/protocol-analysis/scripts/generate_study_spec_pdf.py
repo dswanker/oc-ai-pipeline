@@ -516,6 +516,32 @@ except Exception:
 _EXTERNAL_LISTS = {}
 
 
+def build_study_config_page(data, styles):
+    """Study Configuration section; [] when the spec has no study_configuration (STUDY_CONFIG=0)."""
+    cfg = data.get("study_configuration") if isinstance(data, dict) else None
+    if not cfg:
+        return []
+    try:
+        _root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+        if _root not in sys.path:
+            sys.path.append(_root)
+        import study_config
+        secs = study_config.sections(cfg)
+    except Exception as e:
+        print(f"[study-config] PDF section skipped: {e}")
+        return []
+    out = [header_band("STUDY CONFIGURATION — events, calendar, forms at events, SDV", styles), Spacer(1, 4),
+           Paragraph("Source of every value: protocol (with quote) / pipeline default / AI-proposed / DM. "
+                     "Proposals are not applied or published.", styles["cell"]), Spacer(1, 6)]
+    for title, note, headers, rows, weights in secs:
+        out.append(sub_band(f"{title} — {note}", styles))
+        total = float(sum(weights)) or 1.0
+        widths = [CONTENT_W * w / total for w in weights]
+        out.append(grid_table(headers, rows or [["(none)"] + [""] * (len(headers) - 1)], styles, widths))
+        out.append(Spacer(1, 8))
+    return out
+
+
 def build_edc_pdf(data: dict, output_path: str):
     global _EXTERNAL_LISTS
     _EXTERNAL_LISTS = _LL.external_lists(data) if _LL else {}
@@ -1203,6 +1229,12 @@ def build_edc_pdf(data: dict, output_path: str):
         ("RIGHTPADDING",  (0,0),(-1,-1), 10),
     ]))
     story.append(review_tbl)
+
+    # ── Study Configuration (study_config.py): events, calendar, forms at events, SDV, proposals ─
+    config_flowables = build_study_config_page(data, styles)
+    if config_flowables:
+        story.append(PageBreak())
+        story.extend(config_flowables)
 
     # ── APPENDIX — Build Conventions Applied (per references/conventions.md) ─
     appendix_flowables = build_conventions_page(meta, styles)

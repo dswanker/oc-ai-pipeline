@@ -4694,6 +4694,22 @@ async def _standards_report_step(item_id, struct_json):
         print(f"[standards-match] report skipped: {e}", flush=True)
 
 
+async def _study_config_step(item_id, struct_json, protocol_bytes=None):
+    """Study Configuration (study_config.py): events with calendar, forms at events with their flags and SDV, every
+    value with its source; documented in the Study Specification PDF / XLSX. Nothing is published.
+    STUDY_CONFIG=0 disables. Never fails a build."""
+    try:
+        import study_config as _sc
+        if not _sc.enabled() or not isinstance(struct_json, dict):
+            return
+        cfg = _sc.apply(struct_json, _protocol_text(protocol_bytes))
+        line = _sc.summary_line(cfg)
+        if line:
+            await append_log(item_id, line)
+    except Exception as e:
+        print(f"[study-config] skipped: {type(e).__name__}: {e}", flush=True)
+
+
 async def _propose_ai_edit_checks(item_id, struct_json):
     """AI-proposed edit checks (ai_edit_checks.py): one call, validated, stored in study_meta.ai_edit_checks as
     PROPOSALS. Nothing is applied: they appear in the DVS 'Edit Checks' sheet for a DM to Approve/Reject.
@@ -7223,6 +7239,7 @@ async def run_pipeline(item_id):
             if _want("dvs") or _want("study build zip"):
                 await _propose_standard_logic(item_id, struct_json, protocol_bytes)
             await _standards_report_step(item_id, struct_json)
+            await _study_config_step(item_id, struct_json, protocol_bytes)
 
             # AI-proposed edit checks (proposals only; reviewed in the DVS Edit Checks sheet)
             if _want("dvs") or _want("study build zip"):
