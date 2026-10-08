@@ -5,6 +5,8 @@ SDTM domain.variable, value-level detail, controlled terminology, with Confidenc
 
   High   / Customer alias        deterministic, from the customer's own alias list
   High   / CDASH variable name   deterministic, the field is already named with a CDASH variable
+  Medium / QRS instrument        deterministic: instrument named on the form, items matched to CDISC test
+                                 codes by item order; review
   Medium / AI (validated)        AI judgement, validated against CDASHIG and the field type; review
   None   / Not mapped            no CDASH equivalent identified
 
@@ -23,6 +25,7 @@ COLUMNS = ["Form", "Field", "Label", "Type", "Choices", "CDASH Concept", "Qualif
 
 BASIS = {"customer_alias": ("High", "Customer alias"),
          "cdash_name": ("High", "CDASH variable name"),
+         "qrs_instrument": ("Medium", "QRS instrument (item order)"),
          "claude": ("Medium", "AI (validated)"),
          None: ("None", "Not mapped")}
 
@@ -30,6 +33,7 @@ BASIS = {"customer_alias": ("High", "Customer alias"),
 _VLM = {"VSORRES": "VSTESTCD", "VSPERF": "VSTESTCD", "VSSTAT": "VSTESTCD", "SCORRES": "SCTESTCD",
         "LBORRES": "LBTESTCD", "EGORRES": "EGTESTCD", "IEORRES": "IECAT", "QSORRES": "QSTESTCD"}
 _DIRECT = "Maps directly to the SDTMIG variable"
+_QRS = ("QSORRES", "FTORRES", "RSORRES")
 
 
 def _choices_text(form, row):
@@ -97,7 +101,23 @@ def build_rows(spec):
                    "Value-Level Detail": "", "Controlled Terminology":
                        f"{ct['codelist']} ({ct['codelist_code']})" if ct.get("codelist") else "",
                    "Confidence": conf, "Basis": basis, "Notes": ""}
-            if concept:
+            if concept in _QRS and qual and (isinstance(r.get("qrs"), dict) or concept not in by_var):
+                # questionnaire / rating / scale item: --ORRES with --TESTCD = item code, --CAT = instrument
+                q, dom = (r.get("qrs") if isinstance(r.get("qrs"), dict) else {}), concept[:2]
+                row["SDTM Domain"], row["SDTM Variable"] = dom, concept
+                row["Value-Level Detail"] = f"{dom}TESTCD = {qual}" + (
+                    f"; {dom}CAT = {q['category']}" if q.get("category") else "")
+                if q.get("orres_codelist"):
+                    row["Controlled Terminology"] = f"{q['orres_codelist']} ({q.get('orres_codelist_code')})"
+                notes = [f"{dom}TEST = {q['test']}." if q.get("test") else ""]
+                if q.get("scores"):
+                    notes.append(f"{dom}STRESN = response score ("
+                                 + ", ".join(f"{k}={v}" for k, v in list(q["scores"].items())[:8]) + ").")
+                if source in ("claude", "qrs_instrument"):
+                    notes.insert(0, "Review: mapped by AI, validated against the instrument's CDISC test codes."
+                                 if source == "claude" else "Review: matched to the instrument by item order.")
+                row["Notes"] = " ".join(n for n in notes if n)
+            elif concept:
                 rec = cdisc_cdash._resolve(fields, by_var, fdom, concept) or {}
                 dom = rec.get("domain") or fdom
                 generic = bool(rec) and dom != fdom and not concept.startswith(dom)
@@ -156,6 +176,8 @@ _WIDTH = {"Form": 12, "Field": 16, "Label": 38, "Type": 14, "Choices": 34, "CDAS
           "Confidence": 11, "Basis": 20, "Notes": 60}
 LEGEND = [("High", "Customer alias", "Deterministic: from the customer's own alias list."),
           ("High", "CDASH variable name", "Deterministic: the field is already named with a CDASH variable."),
+          ("Medium", "QRS instrument (item order)", "Deterministic: instrument named on the form, items matched to "
+                                                    "CDISC test codes by item order. Review."),
           ("Medium", "AI (validated)", "AI judgement, validated against CDASHIG and the field type. Review."),
           ("None", "Not mapped", "No CDASH equivalent identified. Candidate for a supplemental qualifier or custom domain.")]
 DISCLAIMER = ("Proposed mapping for review. SDTM targets and notes come from CDASHIG v{cdashig} metadata (SDTMIG v{sdtmig}). "

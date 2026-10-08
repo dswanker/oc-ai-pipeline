@@ -40,6 +40,21 @@ sample CRFs and scoring guidance.
 Use: standard item codes, response codes and numeric scores for ePRO and clinician-scale forms.
 Caveat: CT gives codes, not copyrighted item wording for licensed instruments.
 
+SHIPPED: `cdisc_qrs.py` (+ `cdisc_concepts.py`, `sdtm_mapping.py`, `edit_check_meta.py`, `pipeline._apply_qrs`).
+- Instrument index built from the pinned CT: 362 instruments (QS 252, RS 83, FT 27) with their test codes and
+  names; 87 response codelists; numeric scores for the responses whose STRESC definition quotes the original
+  response (the pairing CT itself publishes; nothing is inferred when CT paraphrases).
+- Tagging: concept QSORRES / FTORRES / RSORRES + qualifier = test code. The validated AI call may use only
+  test codes of instruments the form names (title, id, notes); deterministic matching by instrument and item
+  order fills the rest (concept_source `qrs_instrument`) and never guesses when counts or responses disagree.
+- CDASH-default select_one items get the instrument's response codelist (codes, CT labels, skip logic
+  rewritten); the score per choice is in `row["qrs"]["scores"]` (spec metadata for --STRESN). Customer and OC
+  standard fields get metadata only. Question labels are never changed.
+- SDTM Mapping Specification: `QS.QSORRES`, `QSTESTCD = <code>; QSCAT = <instrument>`. DVS_OC4 Notes show the
+  instrument, item and response codelist. Switch: `CDISC_QRS=0`.
+- Not shipped: instruments whose responses CT does not publish get test codes only; "the Same as" response
+  codelists are bound to the named item only.
+
 ## 4. Biomedical Concepts and CRF specializations
 `cdisc-org/COSMoS` (MIT): BCs, SDTM dataset specializations (dated releases), CRF specializations
 (already vendored in cdisc_standards/cosmos). `lexjansen/cdisc360i-pocs` bc_dss2crf generates ODM 1.3.2 /
@@ -95,5 +110,5 @@ This is the open-source counterpart of the OC AI Pipeline; reuse its parts inste
 2. Standard edit-check library (section 2). Foundations SHIPPED: conventions engine bindings, template
    filters, study.has_field (cross-form), add_constraint; concept tagging (`cdisc_concepts.py`: row concept +
    qualifier from customer aliases, CDASH names, validated Claude call) so checks match non-CDASH forms.
-3. QRS instruments for ePRO forms (section 3).
+3. QRS instruments for ePRO forms (section 3). SHIPPED: `cdisc_qrs.py`.
 Then aCRF, CORE output validation, USDM input, submission artifacts.

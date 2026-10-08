@@ -4240,7 +4240,34 @@ def _apply_cdisc_ct(struct_json, crf_files=None, oc_files=None):
         return struct_json
 
 
-async def _tag_concepts(item_id, struct_json, customer_subdomain="", client_name=""):
+def _apply_qrs(struct_json, std, protected=None):
+    """QRS instruments layer (cdisc_qrs.py), deterministic: questionnaire items matched to the instrument's CDISC
+    test codes by item order, then row["qrs"] metadata and, for CDASH-default items, the instrument's response
+    codelist with the numeric score per choice. protected=None (tier unknown): metadata only.
+    CDISC_QRS=0 disables. On any error the spec is left exactly as it was and the build continues."""
+    if os.environ.get("CDISC_QRS", "1") == "0" or not isinstance(struct_json, dict):
+        return None
+    try:
+        import copy as _copy
+        import cdisc_qrs
+        work = _copy.deepcopy(struct_json)
+        ix = cdisc_qrs.build_index(std.ct)
+        order = cdisc_qrs.tag_by_order(work, ix)
+        summary = cdisc_qrs.summarize(cdisc_qrs.apply_to_spec(work, std, protected))
+        summary["tagged_by_item_order"] = order["tagged"]
+        if not summary["items"]:
+            return None  # no questionnaire items: the spec is not touched at all
+        work.setdefault("study_meta", {}).setdefault("cdisc_standards", {})["qrs"] = summary
+        struct_json["forms"] = work["forms"]
+        struct_json["study_meta"] = work["study_meta"]
+        print(f"[cdisc-qrs] {summary}", flush=True)
+        return summary
+    except Exception as e:
+        print(f"[cdisc-qrs] QRS layer failed (spec unchanged, build continues): {e}", flush=True)
+        return None
+
+
+async def _tag_concepts(item_id, struct_json, customer_subdomain="", client_name="", qrs_protected=None):
     """Tag every data field with the CDASH concept it represents (cdisc_concepts.py), whatever it is named,
     so edit-check conventions work on CDASH and non-CDASH forms. Runs on the complete study, right before
     the conventions engine. Customer aliases and CDASH names are deterministic; one validated Claude call
@@ -4258,19 +4285,30 @@ async def _tag_concepts(item_id, struct_json, customer_subdomain="", client_name
                                                cdisc_concepts.load_aliases(customer_subdomain, client_name))
         ai = {"skipped": "CDISC_CONCEPTS_AI=0"}
         if os.environ.get("CDISC_CONCEPTS_AI", "1") != "0":
-            req = cdisc_concepts.build_request(struct_json, std)
+            _qrs_on = os.environ.get("CDISC_QRS", "1") != "0"
+            req = cdisc_concepts.build_request(struct_json, std, qrs=_qrs_on)
             if req:
                 text = await call_claude(req[0], extra_text=req[1], max_tokens=16000, cache_prompt=False)
-                ai = cdisc_concepts.apply_ai_response(struct_json, std, text)
+                ai = cdisc_concepts.apply_ai_response(struct_json, std, text, qrs=_qrs_on)
             else:
                 ai = {"skipped": "nothing untagged"}
+        qrs = _apply_qrs(struct_json, std, qrs_protected)
+        sm = struct_json.setdefault("study_meta", {})
         cov = cdisc_concepts.summary(struct_json)
         sm.setdefault("cdisc_standards", {})["concepts"] = {"deterministic": det, "claude": ai, "coverage": cov}
         print(f"[cdisc-concepts] deterministic={det} claude={ai} coverage={cov}", flush=True)
         tagged = sum(v for k, v in cov.items() if k != "untagged")
         await append_log(item_id, f"CDASH concepts: {tagged} of {tagged + cov.get('untagged', 0)} fields tagged "
                                   f"({cov.get('customer_alias', 0)} customer alias, {cov.get('cdash_name', 0)} CDASH name, "
-                                  f"{cov.get('claude', 0)} AI-validated)")
+                                  f"{cov.get('claude', 0)} AI-validated"
+                                  + (f", {cov['qrs_instrument']} questionnaire item order" if cov.get("qrs_instrument") else "")
+                                  + ")")
+        if qrs:
+            await append_log(item_id, f"Questionnaires (CDISC QRS): {qrs['items']} items of "
+                                      f"{', '.join(qrs['instruments']) or 'no recognized instrument'}; "
+                                      f"{qrs['actions'].get('response_codelist_applied', 0)} got the instrument's response "
+                                      f"codelist ({qrs['scored_items']} with numeric scores), "
+                                      f"{qrs['actions'].get('kept', 0)} customer/OC standard kept")
     except Exception as e:
         print(f"[cdisc-concepts] tagging failed (build continues): {e}", flush=True)
 
@@ -5940,7 +5978,8 @@ async def run_pipeline(item_id):
                             )
                             _user_change_paths = {r["field_path"] for r in _user_changes}
 
-                            await _tag_concepts(item_id, struct_json, oc_subdomain, client_name)
+                            await _tag_concepts(item_id, struct_json, oc_subdomain, client_name,
+                                                qrs_protected=_cdisc_protected_vars(_crf_files, _oc_files))
                             apply_conventions(struct_json, study_id=_study_id,
                                               customer_subdomain=oc_subdomain,
                                               client_name=client_name)
@@ -6051,7 +6090,8 @@ async def run_pipeline(item_id):
                 from conventions_engine import apply_conventions
                 _study_id = (struct_json.get("study_meta") or {}).get("protocol_number") or protocol_num
                 _vendor_slug = _vendor_slug_from_display_name(mig_result.get("source_system"))
-                await _tag_concepts(item_id, struct_json, oc_subdomain, client_name)
+                await _tag_concepts(item_id, struct_json, oc_subdomain, client_name,
+                                    qrs_protected=_cdisc_protected_vars(_crf_files, _oc_files))
                 apply_conventions(struct_json, study_id=_study_id,
                                   customer_subdomain=oc_subdomain,
                                   migration_source=_vendor_slug,
@@ -6591,7 +6631,8 @@ async def run_pipeline(item_id):
                 # apply only on migration path (Path M). If non-migration builds need
                 # vendor conventions in future, extract the column at build entry and
                 # thread it through as migration_source here.
-                await _tag_concepts(item_id, struct_json, oc_subdomain, client_name)
+                await _tag_concepts(item_id, struct_json, oc_subdomain, client_name,
+                                    qrs_protected=_cdisc_protected_vars(_crf_files, _oc_files))
                 apply_conventions(struct_json, study_id=_study_id,
                                   customer_subdomain=oc_subdomain,
                                   client_name=client_name)
