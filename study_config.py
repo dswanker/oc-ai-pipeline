@@ -46,7 +46,8 @@ def val(value, source=SRC_DEFAULT, quote="", note=""):
 
 
 def _squash(text):
-    return re.sub(r"[^a-z0-9]+", "", str(text or "").lower())
+    """Lower case, spaces removed, dashes unified; punctuation kept, so "Week 1-2" is not found in "Week 12"."""
+    return re.sub(r"\s+", "", re.sub(r"[\u2010-\u2015\u2212]", "-", str(text or "").lower()))
 
 
 # ── Events ───────────────────────────────────────────────────────────────────────
@@ -107,8 +108,14 @@ def _manual(oid):
 
 def _source_for(phrase, squashed_protocol):
     """A timing found word for word in the protocol is protocol-sourced; otherwise it came from the analysis."""
-    if phrase and squashed_protocol and len(_squash(phrase)) >= 4 and _squash(phrase) in squashed_protocol:
-        return SRC_PROTOCOL, phrase
+    q = _squash(phrase)
+    if phrase and squashed_protocol and len(q) >= 4:
+        i = squashed_protocol.find(q)
+        while i >= 0:  # not the start of a longer number ("Day 1" inside "Day 14")
+            nxt = squashed_protocol[i + len(q):i + len(q) + 1]
+            if not nxt.isdigit():
+                return SRC_PROTOCOL, phrase
+            i = squashed_protocol.find(q, i + 1)
     return SRC_AI, ""
 
 

@@ -85,6 +85,17 @@ def test_a_timing_not_found_in_the_protocol_is_ai_proposed():
     assert d14["scheduler"]["offset_days"] == {"value": 14, "source": "AI-proposed"}
 
 
+def test_a_timing_is_not_verified_by_a_longer_number_in_the_protocol():
+    s = spec()
+    s["timepoint_csv"]["rows"] = [{"event": "SE_BASELINE", "timepoint": "Baseline (Day 0)"},
+                                  {"event": "SE_W1", "timepoint": "Week 1-2"}, {"event": "SE_D1", "timepoint": "Day 1"}]
+    cfg = sc.build(s, "Visits at Week 12-14 and on Day 14.")
+    assert _ev(cfg, "SE_W1")["calendar"]["scheduler"]["offset_days"]["source"] == "AI-proposed"
+    assert _ev(cfg, "SE_D1")["calendar"]["scheduler"]["offset_days"]["source"] == "AI-proposed"
+    cfg = sc.build(s, "Visits at Week 1–2 and on Day 1.")
+    assert _ev(cfg, "SE_W1")["calendar"]["scheduler"]["offset_days"]["source"] == "protocol"
+
+
 def test_the_scheduling_block_wins_over_the_label():
     s = spec()
     s["scheduling"] = [{"event_oid": "SE_SCREENING", "anchor_event_oid": None, "offset_target_days": 0},
