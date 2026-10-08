@@ -244,6 +244,20 @@ generated, and rendered as the "STUDY CONFIGURATION" section of the PDF and the 
   visit and an overdue notice at the end of the visit window. They are shown in the "NOTIFICATIONS (PROPOSALS)"
   section, pass the rule validation, and are never written to the rules ZIP or published.
 
+### Item 5: form flags and permission tags (`form_flags.py`, proposals only)
+
+- `allow_add`: a configuration value, true for forms on a Common event (repeating logs).
+- `participate` proposal: a patient-reported instrument (CDISC QRS questionnaire, or a form the analysis marked as
+  ePRO) for which a protocol sentence says the patient completes it (the sentence is quoted). A form marked ePRO
+  without such a sentence is proposed as `AI-proposed`, to confirm. A questionnaire without either is not proposed.
+- `hidden` proposal: forms the protocol says are loaded from a vendor: laboratory forms when the protocol names a
+  central laboratory, imaging / tumour forms when it names a central or independent read (sentence quoted).
+- Permission tags: "Unblinded" for randomization, kit and drug accountability forms when the protocol says the
+  study is blinded (sentence quoted); "PII" for contact-detail forms. `study_configuration.permission_tags` holds
+  the board label format `{name, color, isConfigPermission: true, type: "Form"}`.
+- Nothing is applied: form-at-event values are unchanged and tags are **not written to the design board**. The
+  link between a form and its tag is not in the card JSON and is not confirmed (reported as UNRESOLVED).
+
 ### Decisions taken during the build (for Dan to confirm)
 
 1. A matched form takes the standard's **form id** (needed to reproduce the customer's form and for cross-form

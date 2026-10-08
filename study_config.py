@@ -29,6 +29,9 @@ TYPE_COMMON = "Common"
 _UNITS = {"day": 1, "d": 1, "week": 7, "wk": 7, "w": 7, "month": 30, "mo": 30}
 
 
+_FLAG_KINDS = ("participate", "hidden", "permission tag", "permission tag link")
+
+
 def enabled():
     return os.environ.get("STUDY_CONFIG", "1") != "0"
 
@@ -306,6 +309,13 @@ def apply(spec, protocol_text="", endpoint_result=None):
     try:
         cfg = build(spec, protocol_text)
         try:
+            import form_flags
+            flags = form_flags.propose(spec, protocol_text)
+            cfg["proposals"] = [p for p in cfg.get("proposals") or [] if p.get("kind") not in _FLAG_KINDS] + flags["proposals"]
+            cfg["permission_tags"] = flags["permission_tags"]
+        except Exception as e:
+            print(f"[study-config] form flag proposals skipped: {type(e).__name__}: {e}", flush=True)
+        try:
             import sdv_proposals
             cfg["sdv_counts"] = sdv_proposals.propose(spec, cfg, endpoint_result)
         except Exception as e:
@@ -428,6 +438,9 @@ def sections(cfg):
                 + (" Endpoints linked to fields: " + "; ".join(f"{e['endpoint']} ({e['kind']})" for e in eps) + "." if eps else ""))
         out.append(("SDV ITEMS", note, sdv_proposals.SDV_HEADERS, sdv_proposals.sdv_rows(cfg), [8, 12, 24, 7, 30, 19]))
     if cfg.get("proposals"):
-        out.append(("PROPOSALS", "Nothing below is applied or published; a data manager decides.", PROPOSAL_HEADERS,
+        tags = ", ".join(t["name"] for t in cfg.get("permission_tags") or [])
+        out.append(("PROPOSALS", "Nothing below is applied or published; a data manager decides."
+                    + (f" Permission tags proposed: {tags} (not written to the design board)." if tags else ""),
+                    PROPOSAL_HEADERS,
                     proposal_rows(cfg), [12, 16, 18, 14, 18, 22]))
     return out
