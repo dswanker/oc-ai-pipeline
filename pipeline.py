@@ -4535,6 +4535,62 @@ def _load_standard_sources(oc_files, referenced=None):
         return None
 
 
+async def _protocol_forms_step(item_id, struct_json, sources, protocol_bytes=None, crf_files=None):
+    """Forms are protocol-driven (protocol_forms.py). After the analysis, every assessment the protocol requires
+    (Schedule of Activities, study procedures) must map to a form: one validated AI call lists the assessments, each
+    with a verbatim quote verified against the protocol text; the mapping is deterministic. A missing form is added
+    with content from the customer standard, else the CRF standards, else CDASHIG, and logged with the protocol
+    section. Runs once per protocol and set of standards. PROTOCOL_FORMS_CHECK=0 disables. Never fails a build."""
+    try:
+        import copy as _copy
+        import protocol_forms as _pf
+        if not isinstance(struct_json, dict) or not _pf.enabled():
+            return struct_json
+        ptext = _protocol_text(protocol_bytes)
+        if not _pf.needs_check(struct_json, ptext, sources):
+            return struct_json
+        is_pdf = bool(protocol_bytes) and not protocol_bytes.startswith(b"%%DOCX_TEXT%%")
+        req = _pf.build_request(struct_json, ptext, with_text=not is_pdf)
+        if req is None:
+            return struct_json
+        text = await call_claude(req[0], pdf_bytes=protocol_bytes if is_pdf else None, extra_text=req[1],
+                                 max_tokens=8000, cache_prompt=False)
+        v = _pf.validate_response(struct_json, text, ptext)
+        if not v["assessments"]:
+            print(f"[protocol-forms] no verified assessment (rejected: {v['rejected']}); spec unchanged", flush=True)
+            return struct_json
+        try:
+            crf_forms = _parse_crf_standards_questions(crf_files) if crf_files else {}
+        except Exception:
+            crf_forms = {}
+        out = _copy.deepcopy(struct_json)
+        st = _pf.apply(out, v["assessments"], sources, crf_forms, ptext, v["rejected"])
+        if st.get("added"):
+            # the new forms must be matched to their standard: re-match even when the sources did not change
+            _prev = (out.get("study_meta") or {}).get("standards_match")
+            if isinstance(_prev, dict) and _prev.get("fingerprint"):
+                _prev["fingerprint"] = "rematch: protocol-required form(s) added"
+        lines = _pf.summary_lines(out)
+        if lines:
+            try:
+                await append_log(item_id, "\n".join(lines)[:4000])
+            except Exception:
+                pass
+        return out
+    except Exception as e:
+        print(f"[protocol-forms] step failed, spec unchanged: {type(e).__name__}: {e}", flush=True)
+        return struct_json
+
+
+def _protocol_forms_refresh(struct_json):
+    """After standards matching: record the content source each protocol-required form actually got."""
+    try:
+        import protocol_forms as _pf
+        _pf.refresh_sources(struct_json)
+    except Exception as e:
+        print(f"[protocol-forms] refresh skipped: {e}", flush=True)
+
+
 async def _standards_match_step(item_id, struct_json, sources, protocol_bytes=None):
     """Customer standard form matching (standards_match.py): right after protocol analysis, and on reruns that
     reuse a saved spec not yet matched against the current sources. A matched form uses the customer standard form
@@ -6252,6 +6308,7 @@ async def run_pipeline(item_id):
                         )
                         print("Extracted JSON from edited Study Spec XLSX.", flush=True)
                         # OC-9 backstop: apply to edited-XLSX path as well
+                        struct_json = await _protocol_forms_step(item_id, struct_json, _std_sources, protocol_bytes, _crf_files)
                         struct_json = _enforce_common_visit(struct_json)
                         struct_json = _enforce_form_visits(struct_json, _crf_files, customer_conventions)
                         struct_json = _apply_cdisc_ct(struct_json, _crf_files, _oc_files)
@@ -6260,6 +6317,7 @@ async def run_pipeline(item_id):
                         struct_json = _sanitize_form_titles(struct_json)
                         struct_json = _ensure_required_forms(struct_json, protocol_num, customer_conventions)
                         struct_json = await _standards_match_step(item_id, struct_json, _std_sources, protocol_bytes)
+                        _protocol_forms_refresh(struct_json)
                         struct_json = _apply_omop_coding(struct_json, edc_design_standard)
                         # ── Conventions engine pass + three-way conflict detection (Phase C.4) ──
                         # Path X.1 is the edited-XLSX path. Three snapshots make TRUE
@@ -6403,6 +6461,7 @@ async def run_pipeline(item_id):
             # downstream stages see the same in-memory struct.
             spec_bytes = await download_column_file(item_id, COL["spec_json"])
             struct_json = json.loads(spec_bytes.decode("utf-8"))
+            struct_json = await _protocol_forms_step(item_id, struct_json, _std_sources, protocol_bytes, _crf_files)
             struct_json = _enforce_common_visit(struct_json)
             struct_json = _enforce_form_visits(struct_json, _crf_files, customer_conventions)
             struct_json = _apply_cdisc_ct(struct_json, _crf_files, _oc_files)
@@ -6411,6 +6470,7 @@ async def run_pipeline(item_id):
             struct_json = _sanitize_form_titles(struct_json)
             struct_json = _ensure_required_forms(struct_json, protocol_num, customer_conventions)
             struct_json = await _standards_match_step(item_id, struct_json, _std_sources, protocol_bytes)
+            _protocol_forms_refresh(struct_json)
             struct_json = _apply_omop_coding(struct_json, edc_design_standard)
             # ── Conventions engine pass (no-op until conventions/ store is populated) ─
             try:
@@ -6596,6 +6656,7 @@ async def run_pipeline(item_id):
                       flush=True)
                 if _existing_spec:
                     struct_json = json.loads(_existing_spec.decode("utf-8"))
+                    struct_json = await _protocol_forms_step(item_id, struct_json, _std_sources, protocol_bytes, _crf_files)
                     struct_json = _enforce_common_visit(struct_json)
                     struct_json = _enforce_form_visits(struct_json, _crf_files, customer_conventions)
                     struct_json = _apply_cdisc_ct(struct_json, _crf_files, _oc_files)
@@ -6604,6 +6665,7 @@ async def run_pipeline(item_id):
                     struct_json = _sanitize_form_titles(struct_json)
                     struct_json = _ensure_required_forms(struct_json, protocol_num, customer_conventions)
                     struct_json = await _standards_match_step(item_id, struct_json, _std_sources, protocol_bytes)
+                    _protocol_forms_refresh(struct_json)
                     struct_json = _apply_omop_coding(struct_json, edc_design_standard)
                     fast_rerun = True
                     print(f"[fast-rerun] Using existing Study Spec JSON "
@@ -6716,9 +6778,9 @@ async def run_pipeline(item_id):
 
             # ── Customer OC4 Standards (Priority 1 supplemental) ──────────────
             # Structured standards (XLSForm, ZIP of XLSForms, ODM XML) are applied deterministically after the
-            # analysis (standards_match.py), so the analysis only needs to know they exist: a compact catalog
-            # (form, domain, field names) replaces the full-text paste. Files that are not structured keep the
-            # text path. STANDARDS_MATCHING=0 restores the full-text paste for every file.
+            # analysis (standards_match.py)
+            # and are not shown to the analysis at all (the protocol alone decides which forms exist). Files that
+            # are not structured keep the text path. STANDARDS_MATCHING=0 restores the full-text paste for every file.
             _std_usable = {r["file"] for r in ((_std_sources or {}).get("files") or []) if r.get("usable")}
             if _oc_files:
                 oc_parts = []
@@ -6787,26 +6849,12 @@ async def run_pipeline(item_id):
             else:
                 print("OC4 Standards: none provided", flush=True)
             if _std_sources and _std_sources.get("forms"):
-                import standards_match as _sm_cat
-                _std_catalog = _sm_cat.catalog_text(_std_sources)
-                extra_parts.append(
-                    "CUSTOMER STANDARD FORMS — catalog (Priority 1).\n"
-                    "The customer already has the forms listed below. After your analysis a deterministic step "
-                    "replaces the content of each protocol form that has a catalog form of the same CDASH domain "
-                    "with that customer form, exactly as the customer built it (every field, choice list and all "
-                    "logic).\n"
-                    "HOW TO USE:\n"
-                    "  1. The PROTOCOL determines which forms exist and at which visits. Do not add a form only "
-                    "because it is in this catalog.\n"
-                    "  2. For a protocol form that corresponds to a catalog form: set its cdash_domain correctly, "
-                    "and use the catalog's field names for the same data points.\n"
-                    "  3. Still include every data point the protocol explicitly specifies for that form, even "
-                    "when the catalog form does not have it.\n"
-                    "  4. A form with no catalog match is built as usual (Customer CRF Standards, then CDASH).\n\n"
-                    + _std_catalog
-                )
-                print(f"Customer standard forms: catalog of {len(_std_sources['forms'])} form(s) injected "
-                      f"({len(_std_catalog):,} chars, about {int(len(_std_catalog) / 3.5):,} tokens)", flush=True)
+                # The PROTOCOL decides which forms exist: the structured customer standards are NOT shown to the
+                # analysis (their form list made the analysis mirror the standard instead of the protocol). They
+                # are used only after the forms are decided: protocol_forms.py (completeness) and
+                # standards_match.py (content).
+                print(f"Customer standard forms: {len(_std_sources['forms'])} structured form(s) kept out of the "
+                      f"analysis context; applied after the forms are decided", flush=True)
 
             # ── Customer CRF Standards (Priority 2 supplemental) ──────────────
             if _crf_files:
@@ -6957,6 +7005,7 @@ async def run_pipeline(item_id):
                 _usdm_line = _usdm_log_line(struct_json)
                 if _usdm_line:
                     await append_log(item_id, _usdm_line)
+            struct_json = await _protocol_forms_step(item_id, struct_json, _std_sources, protocol_bytes, _crf_files)
             # OC-9 backstop: ensure SE_COMMON exists and AE/CM/DV/AESAE
             # forms live only there. Deterministic fix-up if Claude missed it.
             struct_json = _enforce_common_visit(struct_json)
@@ -6967,6 +7016,7 @@ async def run_pipeline(item_id):
             struct_json = _sanitize_form_titles(struct_json)
             struct_json = _ensure_required_forms(struct_json, protocol_num, customer_conventions)
             struct_json = await _standards_match_step(item_id, struct_json, _std_sources, protocol_bytes)
+            _protocol_forms_refresh(struct_json)
             struct_json = _apply_omop_coding(struct_json, edc_design_standard)
             # Deterministic CRF Standards injection — ensure every field from
             # QUESTIONS.csv (and equivalent CRF/OC4 standard files) is present
@@ -7250,6 +7300,7 @@ async def run_pipeline(item_id):
                 # at 19:19:25 UTC (1.22M-token prompt rejected).
                 _META_BLOAT_KEYS = {
                     "standards_match",   # match record + proposals (provenance is added deterministically)
+                    "protocol_forms",    # assessment list with protocol quotes
                     "conventions_prompt_block",
                     "conventions_engine_applied",
                     "customer_vendor_conflicts",

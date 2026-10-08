@@ -1,0 +1,236 @@
+"""Forms are protocol-driven (protocol_forms.py): every assessment the protocol requires maps to a form; a missing one
+is added through customer standard -> CRF standards -> CDASHIG. Synthetic protocol, spec and standards only."""
+import copy
+import json
+import os
+import sys
+
+import pytest
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import protocol_forms as pf
+import standards_match as sm
+from tests.standards import fixtures as fx
+
+PROTOCOL = (
+    "Table 1 Schedule of Activities. Clinical assessments: history and physical before each dose.\n"
+    "10.2 Demographics will be obtained from the patient and recorded on the eCRF.\n"
+    "10.4 Previous and Concomitant Medications and Procedures. Any changes in concomitant medications or\n"
+    "procedures will be reassessed as needed and recorded.\n"
+    "10.5.1 Vital signs will be measured at every visit.\n"
+    "10.5.2 A physical examination (PE) will be performed at the timepoints specified in the SoA.\n"
+    "7.3 Radiation therapy will be given per standard of care and recorded.\n"
+    "8.1 Adverse events will be recorded from consent to the end of the study.\n"
+    "6.1 Inclusion: performance status must be ECOG 0-2.\n")
+
+PR_SURVEY = [
+    ["text", "PRTRT", "What procedure was performed?", "PR", "", "", "", "yes", "", "", "", "", "", ""],
+    ["date", "PRSTDAT", "Procedure date", "PR", "", "", "", "yes", ". <= today()", "Not in the future", "", "", "", ""],
+]
+PR_SETTINGS = {"form_title": "Concomitant Procedures", "form_id": "PR", "version": "3", "style": "theme-grid"}
+
+CDASH = {("PE", "PEDAT"): {"domain": "PE", "variable": "PEDAT", "label": "Physical Examination Date",
+                           "question": "What was the date of the examination?", "core": "HR", "type": "Char"},
+         ("PE", "PEPERF"): {"domain": "PE", "variable": "PEPERF", "label": "Physical Examination Performed",
+                            "question": "Was the physical examination performed?", "core": "HR", "type": "Char"},
+         ("PE", "PEDESC"): {"domain": "PE", "variable": "PEDESC", "label": "Abnormal Findings",
+                            "question": "Describe [abnormal] findings", "core": "R/C", "type": "Char"},
+         ("PE", "PEEVAL"): {"domain": "PE", "variable": "PEEVAL", "label": "Evaluator", "question": "", "core": "O",
+                            "type": "Char"},
+         ("PE", "STUDYID"): {"domain": "PE", "variable": "STUDYID", "label": "Study", "question": "", "core": "HR",
+                             "type": "Char"},
+         ("PR", "PRTRT"): {"domain": "PR", "variable": "PRTRT", "label": "Procedure Name", "question": "", "core": "HR",
+                           "type": "Char"},
+         ("VS", "VSDAT"): {"domain": "VS", "variable": "VSDAT", "label": "Date", "question": "", "core": "HR", "type": "Char"},
+         ("AE", "AETERM"): {"domain": "AE", "variable": "AETERM", "label": "Term", "question": "", "core": "HR", "type": "Char"},
+         ("DM", "BRTHDAT"): {"domain": "DM", "variable": "BRTHDAT", "label": "Birth", "question": "", "core": "HR", "type": "Char"}}
+
+
+@pytest.fixture(autouse=True)
+def synthetic_cdash(monkeypatch):
+    by_var = {}
+    for (_d, v), rec in CDASH.items():
+        by_var.setdefault(v, []).append(rec)
+    monkeypatch.setitem(sm._CDASH, "v", (None, CDASH, by_var, {d for d, _ in CDASH}))
+    monkeypatch.delenv("PROTOCOL_FORMS_CHECK", raising=False)
+
+
+def _spec():
+    s = fx.spec()
+    s["forms"].append(fx._f("DM", "Demographics", "DM", [("date", "BRTHDAT", "Date of birth", {})]))
+    s["forms"].append(fx._f("RT", "External Beam Radiation Therapy", "PR",
+                            [("date", "RTDAT", "Radiation date", {}), ("decimal", "RTDOSE", "Dose", {})]))
+    return s
+
+
+def _answer(items):
+    return json.dumps({"assessments": items})
+
+
+ITEMS = [
+    {"name": "Demographics", "cdash_domain": "DM", "section": "10.2", "log": False, "events": ["SE_SCREENING"],
+     "quote": "Demographics will be obtained from the patient and recorded on the eCRF."},
+    {"name": "Concomitant medications and procedures", "cdash_domain": "CM", "section": "10.4", "log": True,
+     "events": [], "quote": "Any changes in concomitant medications or procedures will be reassessed as needed"},
+    {"name": "Vital signs", "cdash_domain": "VS", "section": "10.5.1", "log": False, "events": ["SE_SCREENING"],
+     "quote": "Vital signs will be measured at every visit."},
+    {"name": "Physical examination", "cdash_domain": "PE", "section": "10.5.2", "log": False,
+     "events": ["SE_SCREENING", "SE_NOT_AN_EVENT"],
+     "quote": "A physical examination (PE) will be performed at the\ntimepoints specified in the SoA."},
+    {"name": "Radiation therapy", "cdash_domain": "PR", "section": "7.3", "log": False, "events": ["SE_SCREENING"],
+     "quote": "Radiation therapy will be given per standard of care"},
+    {"name": "Adverse events", "cdash_domain": "AE", "section": "8.1", "log": True, "events": [],
+     "quote": "Adverse events will be recorded from consent"},
+    {"name": "Tumour biopsy", "cdash_domain": "PR", "section": "9.9", "log": False, "events": [],
+     "quote": "A tumour biopsy will be taken at every visit."},
+]
+
+
+def _sources():
+    return sm.load_sources([("PR.xlsx", fx.xlsform_bytes(PR_SURVEY, [], PR_SETTINGS)),
+                            ("AEGEN.xlsx", fx.xlsform_bytes())])
+
+
+def _run(spec=None, sources=None, crf=None, items=ITEMS):
+    spec = spec or _spec()
+    v = pf.validate_response(spec, _answer(items), PROTOCOL)
+    st = pf.apply(spec, v["assessments"], sources, crf, PROTOCOL, v["rejected"])
+    return spec, st, v
+
+
+def test_only_assessments_with_a_verified_verbatim_quote_survive():
+    v = pf.validate_response(_spec(), _answer(ITEMS), PROTOCOL)
+    names = [a["name"] for a in v["assessments"]]
+    assert "Tumour biopsy" not in names and v["rejected"] == {"quote not found in the protocol": 1}
+    # the quote is found across a PDF line break; an event that does not exist is dropped
+    pe = next(a for a in v["assessments"] if a["name"] == "Physical examination")
+    assert pe["events"] == ["SE_SCREENING"] and pe["domain"] == "PE"
+    assert pf.validate_response(_spec(), "not json", PROTOCOL)["assessments"] == []
+
+
+def test_a_combined_row_gives_one_assessment_each_and_wording_decides_the_domain():
+    v = pf.validate_response(_spec(), _answer(ITEMS), PROTOCOL)
+    by = {a["name"]: a for a in v["assessments"]}
+    assert by["Concomitant medications"]["domain"] == "CM" and by["Concomitant procedures"]["domain"] == "PR"
+    assert by["Concomitant procedures"]["log"] is True
+    assert pf.assessment_domain("Something new", "ZZ", {"PE"}) == (None, "no CDASH domain")
+    assert pf.assessment_domain("Something new", "pe", {"PE"}) == ("PE", "AI-proposed domain")
+
+
+def test_missing_forms_are_added_and_logged_with_the_protocol_section():
+    spec, st, _ = _run(sources=_sources())
+    ids = [f["form_id"] for f in spec["forms"]]
+    assert st["added"] == ["CM", "PR", "PE"] and ids[-3:] == ["CM", "PR", "PE"]
+    by = {r["assessment"]: r for r in st["assessments"]}
+    assert by["Demographics"]["form"] == "DM" and by["Vital signs"]["form"] == "VS" and by["Adverse events"]["form"] == "AE"
+    # a specific treatment is collected on the form that names it, not on a new one
+    assert by["Radiation therapy"]["form"] == "RT" and by["Radiation therapy"]["added"] is False
+    flags = spec["review_flags"][pf.FLAG]
+    assert any("PE (Physical examination)" in m and "section 10.5.2" in m and "CDASHIG" in m for m in flags)
+    assert any(m.startswith("PR (Concomitant Procedures)") and "section 10.4" in m and "OC4 standard" in m for m in flags)
+
+
+def test_concomitant_procedures_is_not_covered_by_a_radiation_form_of_the_same_domain():
+    spec = _spec()
+    a = {"name": "Concomitant procedures", "domain": "PR", "quote": "x", "log": True}
+    assert pf.cover(a, spec["forms"]) == (None, "")
+    spec["forms"].append(fx._f("CP", "Concomitant Procedures", "PR", [("text", "PRTRT", "Procedure", {})]))
+    assert pf.cover(a, spec["forms"])[0]["form_id"] == "CP"
+
+
+def test_cdashig_form_has_the_recommended_variables_and_the_protocol_visits():
+    spec, _st, _ = _run()
+    pe = next(f for f in spec["forms"] if f["form_id"] == "PE")
+    assert [r["name"] for r in pe["survey"]] == ["PEDAT", "PEPERF", "PEDESC"]  # HR and R/C; no header, no optional
+    assert [r["type"] for r in pe["survey"]] == ["date", "select_one NY", "text"]
+    assert pe["survey"][2]["label"] == "Abnormal Findings"  # a question with placeholders falls back to the label
+    assert {c["list_name"] for c in pe["choices"]} == {"NY"}
+    assert pe["visits_assigned"] == ["SE_SCREENING"] and pe["cdash_domain"] == "PE"
+    assert pe["protocol_required"]["section"] == "10.5.2" and pe["protocol_required"]["content_source"] == pf.SRC_CDASH
+    assert {"target_visit_oid": "SE_SCREENING", "form_id": "PE", "required": True, "repeating": False,
+            "notes": "Required by protocol 10.5.2"} in spec["schedule_of_events"]["form_placements"]
+    # a log goes to the common event
+    cm = next(f for f in spec["forms"] if f["form_id"] == "CM")
+    assert cm["visits_assigned"] == ["SE_COMMON"] and cm["has_repeating_group"] is True
+
+
+def test_a_matching_standard_form_is_used_and_never_left_unused():
+    src = _sources()
+    spec, _st, _ = _run(sources=src)
+    pr = next(f for f in spec["forms"] if f["form_id"] == "PR")
+    assert pr["form_title"] == "Concomitant Procedures" and pr["visits_assigned"] == ["SE_COMMON"]
+    out = sm.apply(spec, src)
+    pf.refresh_sources(out)
+    pr = next(f for f in out["forms"] if f["form_id"] == "PR")
+    assert pr["customer_standard"]["form_oid"] == "PR"
+    assert [r["name"] for r in pr["survey"]] == ["PRTRT", "PRSTDAT"]  # the standard's content, exactly
+    assert "PR" not in [s["form"] for s in sm.state(out)["standard_forms_not_used"]]
+    rt = next(f for f in out["forms"] if f["form_id"] == "RT")
+    assert not rt.get("customer_standard")  # the radiation form keeps its own content
+    src_by = {f["form_id"]: f for f in pf.form_sources(out)}
+    assert src_by["PR"]["source"].startswith("OC4 standard (uploaded XLSForm)")
+    assert src_by["PR"]["required_by"][0]["section"] == "10.4" and src_by["PE"]["source"] == pf.SRC_CDASH
+
+
+def test_precedence_crf_standards_then_placeholder_when_there_is_no_domain():
+    spec = _spec()
+    a = {"name": "Physical examination", "domain": "PE", "section": "10.5.2", "quote": "q", "events": [], "log": False}
+    form, source, placement = pf.build_form(a, spec, None, {"PE": [{"variable_name": "PEDAT"}]})
+    assert (form["form_id"], source) == ("PE", pf.SRC_CRF) and "first event" in placement
+    b = {"name": "Randomisation call", "domain": None, "section": "5", "quote": "q", "events": ["SE_SCREENING"], "log": False}
+    form, source, _ = pf.build_form(b, spec, None, None)
+    assert source == pf.SRC_PLACEHOLDER and form["form_id"] == "RC"
+    assert [r["type"] for r in form["survey"]] == ["select_one NY", "date"] and form["survey"][0]["completion_status"] == "FLAGGED"
+
+
+def test_standards_never_add_or_remove_forms_on_their_own():
+    src = _sources()
+    spec = _spec()
+    before = [f["form_id"] for f in spec["forms"]]
+    items = [i for i in ITEMS if i["name"] in ("Demographics", "Vital signs", "Adverse events")]
+    spec, st, _ = _run(spec, src, items=items)
+    assert st["added"] == [] and [f["form_id"] for f in spec["forms"]] == before
+    out = sm.apply(spec, src)
+    # not required by the protocol: not added, and not forced onto the radiation form that shares its domain
+    assert "PR" in [s["form"] for s in sm.state(out)["standard_forms_not_used"]]
+    assert not next(f for f in out["forms"] if f["form_id"] == "RT").get("customer_standard")
+    assert len(out["forms"]) == len(before)
+
+
+def test_an_assessment_named_only_in_eligibility_text_is_covered_by_the_field_that_names_it():
+    spec = _spec()
+    spec["forms"].append(fx._f("IE", "Eligibility", "IE", [("select_one YN", "IEECOG", "ECOG performance status 0-2", {})]))
+    a = {"name": "ECOG performance status", "domain": "RS", "quote": "q", "log": False}
+    f, basis = pf.cover(a, spec["forms"])
+    assert f["form_id"] == "IE" and basis == "named on a field or choice"
+
+
+def test_runs_once_per_protocol_and_sources_and_kill_switch(monkeypatch):
+    spec, _st, _ = _run(sources=_sources())
+    assert pf.needs_check(spec, PROTOCOL, _sources()) is False
+    assert pf.needs_check(spec, PROTOCOL + " amended", _sources()) is True
+    assert pf.needs_check(spec, PROTOCOL, None) is True
+    assert pf.needs_check(_spec(), "", None) is False  # no protocol text: quotes cannot be verified
+    assert pf.build_request(_spec(), "") is None
+    prompt, extra = pf.build_request(_spec(), PROTOCOL)
+    assert "SE_SCREENING | Screening" in extra and "PROTOCOL TEXT" in extra and "AEGEN" not in prompt + extra
+    assert "PROTOCOL TEXT" not in pf.build_request(_spec(), PROTOCOL, with_text=False)[1]
+    monkeypatch.setenv("PROTOCOL_FORMS_CHECK", "0")
+    assert pf.needs_check(_spec(), PROTOCOL, None) is False
+    # a second run on the same spec adds nothing more
+    again = copy.deepcopy(spec)
+    v = pf.validate_response(again, _answer(ITEMS), PROTOCOL)
+    assert pf.apply(again, v["assessments"], _sources(), None, PROTOCOL)["added"] == []
+
+
+def test_the_analysis_context_no_longer_contains_the_standards_catalog():
+    src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "pipeline.py")).read()
+    assert "CUSTOMER STANDARD FORMS — catalog" not in src and "catalog_text(_std_sources)" not in src
+    assert src.count("await _protocol_forms_step(item_id, struct_json, _std_sources, protocol_bytes, _crf_files)") == 4
+
+
+def test_summary_lines_for_the_monday_log():
+    spec, _st, _ = _run(sources=_sources())
+    lines = pf.summary_lines(spec)
+    assert lines[0].startswith("Protocol-required forms: 7 assessment(s)") and "3 form(s) added" in lines[0]
+    assert any(l.startswith("  + PE:") and "protocol 10.5.2" in l for l in lines)

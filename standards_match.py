@@ -516,6 +516,18 @@ def _protocol_domains(form):
     return doms
 
 
+_RUNNING_LOG = re.compile(r"\b(concomitant|prior|previous)\b", re.I)
+
+
+def _log_mismatch(pform, sform, score):
+    """A standard running log ("Concomitant Procedures") is not the content of a protocol form for one specific
+    assessment of the same domain ("Radiation Therapy"), and the other way round: sharing a domain is not enough
+    when only one of the two is a prior / concomitant log and the names have nothing in common."""
+    if score >= 0.5:
+        return False
+    return bool(_RUNNING_LOG.search(str(pform.get("form_title") or ""))) != bool(_RUNNING_LOG.search(str(sform.get("title") or "")))
+
+
 def match_forms(pforms, sforms):
     """[(protocol form, standard form, basis, score, note)] one-to-one. Domain first (by source priority, then name
     similarity inside a domain), then identical form id / title for forms the domain pass left unmatched."""
@@ -537,6 +549,8 @@ def match_forms(pforms, sforms):
             for score, pi, si in pairs:
                 p, s = cand_p[pi], cand_s[si]
                 if id(p) in used_p or id(s) in used_s:
+                    continue
+                if _log_mismatch(p, s, score):
                     continue
                 rivals = [(sc, cand_s[j]["form_oid"]) for sc, i, j in pairs if i == pi and j != si
                           and id(cand_s[j]) not in used_s]

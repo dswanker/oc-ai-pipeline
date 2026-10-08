@@ -139,6 +139,46 @@ Input column: `file_mm2mafjc` (`COL["oc_standard"]`, "Customer OC4 XLSForm Stand
   resolve there. "CRS-135" is not an exact identifier on cust1 (49 studies contain it): it is reported as ambiguous
   and skipped; the exact identifier must be entered (for example the full "CRS-135 ..." identifier).
 
+## Train of 2026-10-08: forms are protocol-driven, Study Configuration
+
+### Item 1: forms are protocol-driven (`protocol_forms.py`)
+
+Bug (PrTK05, run of 2026-10-08): the compact standards catalog in the analysis context made the analysis mirror the
+customer standard's form list. Physical Exam was dropped (protocol 10.5.2 requires it) and Concomitant Procedures
+was omitted (protocol 10.4), while the standard's `PR` "Concomitant Procedures" form was left "not used".
+
+Rule (Dan): the PROTOCOL defines which forms exist. For each protocol-required form the content comes from the first
+match in: OC4 standard (uploaded file / Reference OC Studies) -> Customer CRF standards column -> CDASHIG. Standards
+never add or remove forms on their own.
+
+- **The catalog is no longer in the analysis context.** Structured standards are not shown to the analysis at all;
+  they are used only after the forms are decided. `prompts.py` is unchanged. (`standards_match.catalog_text` remains
+  as a helper; unstructured files keep their text path, which already says the protocol decides the forms.)
+- **Completeness check** (`pipeline._protocol_forms_step`, before `_enforce_common_visit` at the same four sites as
+  the matching step, once per protocol text and set of standards; state in `study_meta.protocol_forms`):
+  1. One validated AI call lists the assessments the site records (Schedule of Activities rows, study-procedures
+     sections), each with section, event OIDs, log yes/no and a **verbatim quote**. The protocol PDF is passed to
+     the call; the quote is verified against the `pypdf` text (letters and digits only, so line breaks and table
+     spacing do not matter). An entry without a verified quote is discarded. A combined row ("medications and
+     procedures", "history and physical") gives one assessment each.
+  2. Deterministic mapping: the CDASH domain comes from the assessment wording (the model's own domain only for
+     wording we do not know); a form covers the assessment by domain and title, as the domain's generic form, as a
+     log form for a log, by naming it on the form, by carrying at least two fields of the domain, or by a field or
+     choice that names it. A running log ("Concomitant Procedures") is never covered by a visit form for one
+     specific assessment of the same domain ("Radiation").
+  3. An assessment no form covers gets a form: created with the id and title of the unused customer standard form
+     that collects it (so `standards_match` splices the standard exactly), else from the CRF standards form, else
+     from CDASHIG (Highly Recommended and Recommended/Conditional variables), else a two-field placeholder when
+     there is no CDASH domain. Visits come from the verified assessment; a log goes to the common event. Every added
+     form is flagged for review (`review_flags.protocol_required_form_added`, fields `FLAGGED`) and logged in
+     monday with the protocol section.
+- **Matcher guard**: sharing a CDASH domain is not enough when only one of the two forms is a prior / concomitant
+  log and the names have nothing in common (a radiation form no longer takes a "Concomitant Procedures" standard).
+- Kill switch `PROTOCOL_FORMS_CHECK=0`. On any error the spec is unchanged and the build continues.
+- PrTK05 offline (protocol v2.0, spec of 2026-10-08, ODM standard): 22 assessments with verified quotes, 20 already
+  had a form, 2 added: `PE` Physical examination (10.5.2, CDASHIG, 6 visits) and `PR` Concomitant Procedures (10.4,
+  the customer's standard form, common event). ECOG stays an eligibility item. Only `DOV` is left unused.
+
 ### Decisions taken during the build (for Dan to confirm)
 
 1. A matched form takes the standard's **form id** (needed to reproduce the customer's form and for cross-form
