@@ -602,8 +602,63 @@ def _evaluate_gate(expr, ctx):
 
 # ── UAT test case inference ─────────────────────────────────────────────────
 
-def _infer_test_cases(check, row, choices_for_field, ctx=None, world=None):
-    """Generate a list of UAT test case dicts for this check."""
+def _split_and_clauses(expr):
+    """Split "(A) and (B) and (C)" into [A, B, C] when EVERY top-level operand is a balanced parenthesised
+    group (the shape the conventions engine's add_constraint writes). Anything else returns None, so
+    hand-written expressions keep their existing handling."""
+    e = (expr or "").strip()
+    if not e.startswith("("):
+        return None
+    clauses, depth, start, i, n = [], 0, 0, 0, len(e)
+    while i < n:
+        ch = e[i]
+        if ch == "(":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth < 0:
+                return None
+            if depth == 0:
+                clauses.append(e[start + 1:i].strip())
+                rest = e[i + 1:].lstrip()
+                if not rest:
+                    break
+                if not rest.lower().startswith("and ") and not rest.lower().startswith("and("):
+                    return None
+                i = n - len(rest) + 3
+                while i < n and e[i] == " ":
+                    i += 1
+                if i >= n or e[i] != "(":
+                    return None
+                continue
+        elif depth == 0 and not ch.isspace():
+            return None
+        i += 1
+    return clauses if len(clauses) > 1 and depth == 0 else None
+
+
+def _infer_test_cases(check, row, choices_for_field, ctx=None, world=None, gate_codes=None):
+    """Generate a list of UAT test case dicts for this check. Engine-combined constraints
+    "(A) and (B)" get the cases of every clause, so each rule is tested, not just the first."""
+    clauses = _split_and_clauses(check.get("expression")) if check.get("check_type") != "Conditional Display" else None
+    if clauses:
+        cases, seen = [], set()
+        for cl in clauses:
+            sub = dict(check, expression=cl)
+            for c in _infer_test_cases_single(sub, row, choices_for_field, ctx, world, gate_codes):
+                key = (c.get("input_data"), c.get("expected"))
+                if key in seen:
+                    continue
+                seen.add(key)
+                cases.append(c)
+        return cases
+    return _infer_test_cases_single(check, row, choices_for_field, ctx, world, gate_codes)
+
+
+def _infer_test_cases_single(check, row, choices_for_field, ctx=None, world=None, gate_codes=None):
+    """Generate a list of UAT test case dicts for one check expression."""
     if world is None:
         world = {}
     check_type  = check["check_type"]
@@ -651,6 +706,13 @@ def _infer_test_cases(check, row, choices_for_field, ctx=None, world=None):
         gate_field = gate.group(1) if gate else None
         target = field_label or row.get("name", "(this field)")
         sat_val, fail_val = _evaluate_gate(expr, ctx)
+        codes = (gate_codes or {}).get(gate_field) or []
+        if codes:
+            # Test data must be loadable: use the gate field's own options, never an invented code.
+            if sat_val not in codes and fail_val in codes:
+                sat_val = next((c for c in codes if c != fail_val), sat_val)
+            if fail_val not in codes:
+                fail_val = next((c for c in codes if c != sat_val), fail_val)
         if gate_field:
             return [
                 {"scenario":   f"Shown path: gate field {gate_field} satisfies the rule",
@@ -1146,6 +1208,10 @@ def extract_dvs_data(struct_json, forms_json):
                 if form_default_ig is None:
                     form_default_ig = ig
 
+        # field -> its choice codes, so gate (relevance) test values are always real options
+        form_gate_codes = {r.get("name"): _choices_for_field(r, choices)
+                           for r in survey if isinstance(r, dict) and r.get("name")}
+
         for row_idx, row in enumerate(survey, start=2):
             if not isinstance(row, dict):
                 continue
@@ -1182,7 +1248,8 @@ def extract_dvs_data(struct_json, forms_json):
                 # Infer UAT cases — variable count per check
                 inferred_cases = _infer_test_cases(check, row, choices_for_field,
                                                    ctx=sample_ctx,
-                                                   world=cross_form_world)
+                                                   world=cross_form_world,
+                                                   gate_codes=form_gate_codes)
                 uat_ids_for_this_check = []
                 for case in inferred_cases:
                     uat_counter += 1
