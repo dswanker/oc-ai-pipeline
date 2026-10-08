@@ -66,8 +66,11 @@ def run_qa_checks(form, build_log):
     form_id  = form.get('form_id', '')
 
     # settings_complete
-    missing_settings = [k for k in ['form_title','form_id','version','style','namespaces']
-                        if not settings.get(k)]
+    # A customer standard form (standards_match.py) keeps the customer's own settings; the builder stamps the
+    # version and, for an ODM-only standard, fills the OC defaults in the file, not in the Study Spec.
+    _required = ['form_title','form_id'] if form.get('customer_standard') \
+        else ['form_title','form_id','version','style','namespaces']
+    missing_settings = [k for k in _required if not settings.get(k)]
     results.append(("settings_complete",
                     "PASS" if not missing_settings else "FAIL",
                     f"Missing: {', '.join(missing_settings)}" if missing_settings else ""))

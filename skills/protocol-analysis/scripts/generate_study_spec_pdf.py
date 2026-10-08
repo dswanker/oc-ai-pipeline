@@ -685,7 +685,7 @@ def build_edc_pdf(data: dict, output_path: str):
     # Color the Library Match column
     for i, form in enumerate(forms, 1):
         lm_status = form.get("library_match",{}).get("status","")
-        bg = colors.HexColor("#D5F5E3") if "EXACT" in lm_status else \
+        bg = colors.HexColor("#D5F5E3") if ("EXACT" in lm_status or lm_status == "CUSTOMER_STANDARD") else \
              colors.HexColor("#FDEBD0") if "PARTIAL" in lm_status else \
              colors.HexColor("#FADBD8") if "NO_MATCH" in lm_status else \
              colors.HexColor("#EBF5FB")
@@ -742,6 +742,11 @@ def build_edc_pdf(data: dict, output_path: str):
             ("Visits",        ", ".join(visits[:6]) + (f" +{len(visits)-6} more" if len(visits)>6 else "")),
             ("Repeating",     "Yes" if has_repeat else "No"),
             ("Library Match", lm.get("status","PROTOCOL_ONLY").replace("_"," ")),
+        ] + ([
+            # customer standard form (standards_match.py): which form it is and where it came from
+            ("Customer Standard", f"{lm.get('customer_form_name') or form.get('customer_form_name') or ''} "
+                                  f"({lm.get('source') or ''}); used exactly as provided"),
+        ] if lm.get("status") == "CUSTOMER_STANDARD" else []) + [
             ("Data Items",    f"{len(survey)} total  ({n_complete} complete / {n_flagged} flagged / {n_placeholder} placeholder)"),
             ("Choice Lists",  f"{len(set(c.get('list_name','') for c in choices))} lists, {len(choices)} choices"),
             ("Dependencies",  ", ".join(form_all_deps) if form_all_deps else "None"),
@@ -758,6 +763,11 @@ def build_edc_pdf(data: dict, output_path: str):
         ]))
         block.append(two_col)
         block.append(Spacer(1, 4))
+        for _added in (lm.get("added_from_protocol") or []) if lm.get("status") == "CUSTOMER_STANDARD" else []:
+            _q = str(_added.get("quote") or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            block.append(Paragraph(f"<b>Added from protocol:</b> {_added.get('field')} — protocol text: "
+                                   f"\u201c{_q[:400]}\u201d", styles["cell"]))
+            block.append(Spacer(1, 2))
 
         # Survey rows table — includes Appearance and Dependencies columns
         if survey:

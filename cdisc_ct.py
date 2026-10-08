@@ -450,6 +450,7 @@ def apply_to_spec(spec, std, protected_vars=frozenset()):
                 lists.setdefault(str(c.get("list_name") or "").strip(), []).append(c)
         ours = {ln for ln, rows in lists.items() if rows and all(r.get("source") == "CDISC_CT" for r in rows)}
         made, repointed = {}, set()
+        whole_form = bool(f.get("customer_standard"))  # customer standard form: CT never touches it
         for row in f.get("survey") or []:
             kind, ln = _select(row)
             if not kind:
@@ -457,7 +458,7 @@ def apply_to_spec(spec, std, protected_vars=frozenset()):
             var = field_variable(row.get("name"), std)
             d = {"form_id": fid, "field": row.get("name"), "variable": var, "list_name": ln}
             rows = lists.get(ln, [])
-            if var in protected or str(row.get("name", "")).upper() in protected or \
+            if whole_form or var in protected or str(row.get("name", "")).upper() in protected or \
                     any(r.get("source") == "crf_standards_injection" for r in rows):
                 decisions.append({**d, "tier": "customer_or_oc_standard", "action": "kept"})
                 continue

@@ -394,6 +394,8 @@ def _finish_dvs_oc4(wb, ws, rows, tmpl_dv, tmpl_cf):
     shade = {"AI-Proposed": "FDEBD0", "DM-Added": "E8DAEF"}  # DM rows needing the build team are shaded too
     for i, r in enumerate(rows):
         color = shade.get(str(r.get("Check Source") or ""))
+        if not color and str(r.get("Status") or "") == "Proposed":
+            color = shade["AI-Proposed"]  # proposed on a customer standard form (rules engine or AI-suggested)
         if color:
             for col in range(1, len(DVS_OC4_COLS) + 1):
                 ws.cell(row=4 + i, column=col).fill = PatternFill("solid", fgColor=color)
@@ -405,10 +407,14 @@ def _finish_dvs_oc4(wb, ws, rows, tmpl_dv, tmpl_cf):
                 "Every check in the study is one DVS_OC4 row. Leave Action blank to keep a check as it is.",
                 "Action = Delete removes a check; Change: edit Plain-English Description and/or the message.",
                 "AI-proposed checks (orange, Status Proposed) are NOT in the build until Action = Approve (or Reject).",
+                "Customer standard forms are used exactly as the customer provided them. Checks the rules engine or the "
+                "AI would add there are listed as Status Proposed (orange) with their Check Source, and are only added "
+                "when Action = Approve.",
                 "Action = Add: add a row with Target Form OID, Target Item Name (optional) and a Plain-English "
                 "Description; the logic is filled in by the pipeline.",
-                "Check Source: CDISC CORE (rule id), CDISC Standard, Global Rule, Customer Rule, Study Build, "
-                "AI-Proposed, DM-Added. Source Form/Item/Event columns show what a cross-form check reads.",
+                "Check Source: CDISC CORE (rule id), CDISC Standard, Global Rule, Customer Rule, Customer Standard, "
+                "Study Build, AI-Proposed, AI-Suggested, DM-Added. Source Form/Item/Event columns show what a "
+                "cross-form check reads.",
                 "Upload the edited DVS and re-run; results appear in Status."]):
             rm.cell(row=start + j, column=1, value=line)
 

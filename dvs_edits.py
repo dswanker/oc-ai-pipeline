@@ -128,7 +128,16 @@ def _approve(spec, row):
     except Exception:
         prop = {}
     if not prop.get("id"):
-        return "unsupported", "Approve applies to AI-proposed rows only"
+        return "unsupported", "Approve applies to proposed rows only"
+    if prop.get("kind") == "standard_proposal":
+        # logic proposed on a customer standard form (rules engine / AI-suggested): standards_match applies it
+        import standards_match as sm
+        full = prop if prop.get("ops") else next((p for p in sm.proposals(spec) if p.get("id") == prop["id"]), None)
+        if full is None:
+            f = next((x for x in _forms(spec) if sm.norm_id(x.get("form_id")) == sm.norm_id(prop.get("target_form"))), None)
+            done = any(a.get("id") == prop["id"] for a in ((f or {}).get("customer_standard") or {}).get("approved") or [])
+            return ("already", "already in the build") if done else ("not_found", "proposal no longer listed")
+        return sm.apply_proposal(spec, full)
     f, r = _find(spec, prop.get("target_form"), prop.get("target_field"))
     if r is not None and prop["id"] in (r.get("edit_checks") or []):
         return "already", "already in the build"
@@ -141,6 +150,14 @@ def _approve(spec, row):
 
 def _reject(spec, row):
     pid = row.get("Rule / Proposal ID") or row.get("Check ID")
+    try:
+        machine = json.loads(row.get("Machine Data") or "{}")
+    except Exception:
+        machine = {}
+    if machine.get("kind") == "standard_proposal":
+        import standards_match as sm
+        return ("applied", "proposal rejected") if sm.reject_proposal(spec, machine.get("id")) \
+            else ("already", "proposal no longer listed")
     ae = spec.setdefault("study_meta", {}).setdefault("ai_edit_checks", {})
     props = ae.get("proposals") or []
     before = len(props)

@@ -1411,6 +1411,10 @@ def extract_dvs_data(struct_json, forms_json):
 
     _proposals = (((struct_json or {}).get("study_meta") or {}).get("ai_edit_checks") or {}).get("proposals") or []         if isinstance(struct_json, dict) else []
 
+    # Logic proposed on customer standard forms (rules engine + AI-suggested): never in the build until Approved.
+    _std_props = (((struct_json or {}).get("study_meta") or {}).get("standards_match") or {}).get("proposals") or [] \
+        if isinstance(struct_json, dict) else []
+
     _dm_open = [d for d in ((struct_json or {}).get("study_meta") or {}).get("edit_check_decisions") or []
                 if isinstance(struct_json, dict) and d.get("action") == "add" and d.get("status") == "needs_build_team"]
     _dm_seen = set()
@@ -1453,6 +1457,32 @@ def extract_dvs_data(struct_json, forms_json):
                 "Machine Data": json.dumps({k: p.get(k) for k in ("id", "target_form", "target_field", "operator",
                                             "source_form", "source_field", "when", "message", "rationale",
                                             "protocol_reference", "category")})})
+        for p in _std_props:
+            pf = str(p.get("target_form") or "")
+            if fid not in (pf, "F_" + pf) and pf != "F_" + fid:
+                continue
+            _ai = p.get("kind") == "ai"
+            _machine = json.dumps({**p, "proposed_by": p.get("kind"), "kind": "standard_proposal"})
+            if len(_machine) > 30000:  # Excel cell limit: the proposal is then read back from the Study Spec by id
+                _machine = json.dumps({"kind": "standard_proposal", "id": p.get("id"), "target_form": pf})
+            _item = p.get("target_field") or ""
+            out.append({
+                "Action": "", "Check Source": p.get("source") or "", "Check ID": p.get("id"),
+                "Rule / Proposal ID": p.get("check_id") or p.get("id"), "Status": "Proposed",
+                "Check Name": f"{fid}.{_item or '(form)'} — {p.get('check_type') or 'Check'} (proposed, customer standard form)",
+                "Plain-English Description": p.get("plain") or p.get("message") or p.get("title") or "",
+                "Business Purpose": p.get("rationale") or "", "Protocol Reference": p.get("protocol_reference") or "",
+                "Source Section": "Proposed on a customer standard form (not in build until Approved)",
+                "Check Type": p.get("check_type") or "Constraint", "Severity": "Soft",
+                "Trigger Point": "Real-time on form entry", "Target Form OID": fid, "Target Item Name": _item,
+                "Target Item OID": f"{fid}.{_item}" if _item else "",
+                "OC4 Logic Pattern": "Local constraint (XPath)" if p.get("check_type") == "Constraint" else "",
+                "Expression / Calculation": p.get("logic") or "",
+                "Constraint / Required / Relevant Message": p.get("message") or "",
+                "Notes": ("AI-suggested logic for a customer standard form. " if _ai else
+                          "The rules engine does not change a customer standard form. ")
+                         + "Set Action = Approve to add to the build.",
+                "Machine Data": _machine})
         return out
 
     forms = forms_json.get("forms", {}) if isinstance(forms_json, dict) else {}
@@ -1573,7 +1603,7 @@ def extract_dvs_data(struct_json, forms_json):
                     check, form_filename, row_idx))
 
     # AI-proposed checks: listed under their form (right after its last check), Status Proposed.
-    if _proposals or _dm_open:
+    if _proposals or _dm_open or _std_props:
         _merged, _done = [], set()
         for _i, _r in enumerate(dvs_oc4):
             _merged.append(_r)
@@ -1583,7 +1613,7 @@ def extract_dvs_data(struct_json, forms_json):
                 _merged.extend(_proposal_rows(_fid))
                 _done.add(_fid)
         # forms with no checks of their own yet: their proposals / DM requests go at the end
-        for _f in [str(p.get("target_form") or "") for p in _proposals] + [str(d.get("form") or "") for d in _dm_open]:
+        for _f in [str(p.get("target_form") or "") for p in _proposals + _std_props] + [str(d.get("form") or "") for d in _dm_open]:
             if _f and _f not in _done and "F_" + _f not in _done:
                 _merged.extend(_proposal_rows(_f))
                 _done.add(_f)

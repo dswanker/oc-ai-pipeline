@@ -176,6 +176,45 @@ def confidence_color(conf):
     return RED_FLAG
 
 
+def _apply_customer_standard_provenance(details, struct_json):
+    """Rows of the CRF table whose form is a customer standard form (Study Spec library_match.status =
+    CUSTOMER_STANDARD, set by standards_match.py) show that source and the customer's form name. Deterministic:
+    a row is matched to a form by CDASH code, else by the form title. Rows are copied, never edited in place."""
+    if not isinstance(struct_json, dict) or not isinstance(details, list):
+        return details
+    import re as _re
+    norm = lambda t: " ".join(_re.sub(r"[^a-z0-9 ]", " ", str(t or "").lower()).split())
+    by_title, by_code = {}, {}
+    for f in struct_json.get("forms") or []:
+        cs = f.get("customer_standard") if isinstance(f, dict) else None
+        if not cs:
+            continue
+        info = (cs.get("form_name") or f.get("form_title") or "", cs.get("source") or "")
+        for t in (f.get("form_title"), cs.get("replaced_form_id"), f.get("form_id")):
+            if norm(t):
+                by_title.setdefault(norm(t), info)
+        code = str(f.get("cdash_domain") or "").upper()
+        if code:
+            by_code.setdefault(code, []).append(info)
+    if not by_title and not by_code:
+        return details
+    out = []
+    for row in details:
+        if not isinstance(row, dict):
+            out.append(row)
+            continue
+        info = by_title.get(norm(row.get("domain_name"))) or by_title.get(norm(row.get("customer_form_name")))
+        if info is None:
+            codes = [c for c in _re.split(r"[^A-Z0-9]+", str(row.get("cdash_code") or "").upper()) if c]
+            hits = [i for c in codes for i in by_code.get(c, [])]
+            info = hits[0] if len(hits) == 1 else None  # several standard forms share the code: title must decide
+        if info:
+            row = {**row, "source": "CUSTOMER_STANDARD", "customer_form_name": info[0],
+                   "customer_standard_source": info[1]}
+        out.append(row)
+    return out
+
+
 def build_pricing_pdf(data: dict, output_path: str, struct_json: dict = None):
     """
     Build the Protocol Summary PDF.
@@ -499,6 +538,7 @@ def build_pricing_pdf(data: dict, output_path: str, struct_json: dict = None):
     # CRF detail — prefer crf.crf_detail if present; otherwise fall back to
     # forms_by_domain + high_frequency_forms + custom_forms summaries.
     details = crf.get("crf_detail", [])
+    details = _apply_customer_standard_provenance(details, struct_json)
 
     if details:
         crf_headers = ["#", "Domain", "CDASH", "Source", "Arms / Visits",
@@ -522,6 +562,9 @@ def build_pricing_pdf(data: dict, output_path: str, struct_json: dict = None):
             visits_text = ", ".join(row.get("visits_used", [])) if row.get("visits_used") else "—"
             source_raw  = row.get("source", "CDASH_ESTIMATE")
             source_disp = source_raw.replace("_", " ").replace("CDASH ESTIMATE", "CDASH Est.")
+            if source_raw == "CUSTOMER_STANDARD":
+                source_disp = (f"Customer standard: {row.get('customer_form_name') or ''}"
+                               + (f" ({row['customer_standard_source']})" if row.get("customer_standard_source") else ""))
             conf_raw    = row.get("confidence", "")
             crf_table_data.append([
                 Paragraph(str(i + 1), styles["cell"]),

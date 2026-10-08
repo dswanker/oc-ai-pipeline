@@ -217,7 +217,7 @@ def apply_conventions(
     """
     # Local imports keep this module's import graph clean from
     # circular reference between __init__ and the submodules below.
-    from . import loader, cascade, applies_when, effects, render, record
+    from . import loader, cascade, applies_when, effects, render, record, customer_standard
 
     if repo_root is None:
         repo_root = _default_data_root()
@@ -241,6 +241,8 @@ def apply_conventions(
     resolved_list: List[ResolvedConvention] = cascade.resolve(loaded)
 
     prompt_blocks: List[str] = []
+    # Customer standard forms are never changed: what would change is collected as proposals instead.
+    standard_proposals = customer_standard.begin_pass(spec)
 
     for resolved in resolved_list:
         conv = resolved.convention
@@ -256,13 +258,18 @@ def apply_conventions(
             if not apply_eval.matched:
                 continue
 
-            applied = effects.apply_effect(
-                conv.get("effect", {}),
-                entity_ctx,
-                spec,
-                conv["id"],
-                canonical_lists=canonical_lists,
-            )
+            applied = None
+            if customer_standard.protected_form(entity_ctx) is not None:
+                applied = customer_standard.dry_run(conv, entity_ctx, spec, canonical_lists,
+                                                    standard_proposals)
+            if applied is None:
+                applied = effects.apply_effect(
+                    conv.get("effect", {}),
+                    entity_ctx,
+                    spec,
+                    conv["id"],
+                    canonical_lists=canonical_lists,
+                )
 
             record.record_application(
                 spec,
@@ -283,6 +290,8 @@ def apply_conventions(
         # above. Cheap no-op for the overwhelming majority of
         # conventions, which never touch move_to_form at all.
         effects.sweep_pending_removals(spec)
+
+    customer_standard.end_pass(spec, standard_proposals)
 
     # Park prompt-injection text under study_meta so prompts.py can
     # pluck it out later. Phase C wires the actual injection.

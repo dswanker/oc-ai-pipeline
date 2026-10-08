@@ -576,6 +576,13 @@ def build_settings_sheet(wb, form):
         ("cdash_alignment",      form.get("cdash_alignment", "—")),
         ("library_match_status", (lm.get("status", "") or "N/A — No library provided")),
         ("library_source_type",  lm.get("source_type", "NONE")),
+    ] + ([
+        # customer standard form (standards_match.py): provenance of the form and of fields added from the protocol
+        ("customer_form_name",       lm.get("customer_form_name") or form.get("customer_form_name") or ""),
+        ("customer_standard_source", lm.get("source") or ""),
+        ("added_from_protocol",      "; ".join(f"{a.get('field')}: \"{str(a.get('quote') or '')[:300]}\""
+                                               for a in lm.get("added_from_protocol") or []) or "none"),
+    ] if lm.get("status") == "CUSTOMER_STANDARD" else []) + [
         ("visits_assigned",  ", ".join(form.get("visits_assigned", []))),
     ]
     for i, (key, val) in enumerate(metadata, start=meta_start + 1):

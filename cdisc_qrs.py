@@ -451,6 +451,7 @@ def apply_to_spec(spec, std, protected_vars=None):
                     meta["score_basis"] = resp["score_basis"]
             name_u = str(row.get("name") or "").upper()
             is_protected = (protected is None or name_u in protected or code in protected
+                            or bool(form.get("customer_standard"))  # customer standard form: never changed
                             or any(r.get("source") == "crf_standards_injection" for r in rows))
             if not resp or not ln or not isinstance(choices, list):
                 row["qrs"] = meta

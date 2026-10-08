@@ -223,6 +223,10 @@ def _apply_omop_coding(struct_json, edc_design_standard, vocab_dir=None):
         for form in struct_json.get("forms", []):
             if form.get("form_id") != target["form_id"]:
                 continue
+            if form.get("customer_standard"):
+                print(f"[omop-coding] {target['form_id']} is a customer standard form: used exactly as "
+                      f"provided, not recoded", flush=True)
+                continue
             for row in form.get("survey", []):
                 if row.get("name") == target["field_name"]:
                     row["type"] = f"select_one_from_file {target['vocab_csv_filename']}"

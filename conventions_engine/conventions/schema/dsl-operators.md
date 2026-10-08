@@ -388,3 +388,18 @@ Example (end date on or after its matching start date, any domain):
 - `_cf_xpath` FormOID follows the pipeline rule: `F_` added only when the form id does not already start with it.
 - `lookup_from` `only_if_resolves` (template): add the fetch only if this renders, e.g. `"${decod._code.DEATH}"`, so a
   check that cannot be built never leaves an orphan cross-form fetch behind.
+
+### Customer standard forms (2026-10-09)
+- A form with `form.customer_standard` (set by `standards_match.py` when a protocol form is matched to a customer
+  standard form) is used exactly as the customer provided it. The engine never changes its content: `survey`,
+  `choices`, `settings`, `extra_cols`, `cross_form_dependencies`.
+- A convention that matches a field / form / choice there is run against a copy (`conventions_engine/customer_standard.py`).
+  The difference is recorded as a proposal in `study_meta.standards_match.proposals` (id `STD-xxxxxxxx`, convention id,
+  check id, Check Source, target form/item, exact logic, message, and the operations to apply). Proposals are rebuilt
+  on every engine pass, so they are idempotent. Row bookkeeping (`edit_checks`, `edit_check_*`) is not written.
+- Scheduling and other form-level attributes (`visits_assigned`, ...) are not form content and are still applied.
+- Proposals appear in the DVS (DVS_OC4, Status "Proposed"); Action = Approve applies one through
+  `standards_match.apply_proposal` and records it in `form.customer_standard.approved`; from then on the engine
+  applies that (convention, field) pair as on any other form. Action = Reject keeps it from being proposed again.
+- `move_to_form` never moves a field into or out of a customer standard form, and `assemble_form` does not take
+  questions out of one: both raise a review flag (`customer_standard_not_applied` / `assemble_form_skipped`) instead.

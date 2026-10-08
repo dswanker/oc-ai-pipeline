@@ -189,6 +189,14 @@ def check_meta(struct_form, struct_row, clause, check_type, all_forms):
     elif check_type == "Required":
         out["source"] = source_of_convention(set_by.get("required"), gids)
         out["plain"] = f"{cx.lab(name)} is required" + (" when shown." if row.get("relevant") else ".")
+    if (struct_form or {}).get("customer_standard"):
+        # A customer standard form's own logic is the customer's; logic a DM approved keeps its proposal's source.
+        kind = {"Conditional Display": "relevant", "Required": "required"}.get(check_type)
+        approved = (row.get("edit_check_source") or {}).get(kind) if kind else None
+        if approved:
+            out["source"] = approved
+        elif out["source"] == "Study Build" and row.get("provenance") != "Added from protocol":
+            out["source"] = "Customer Standard"
     if out["source"].startswith("CDISC CORE (") and not out["rule_id"]:
         out["rule_id"] = out["source"][len("CDISC CORE ("):-1]
     return out

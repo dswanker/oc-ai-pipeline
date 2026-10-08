@@ -42,6 +42,67 @@ Input column: `file_mm2mafjc` (`COL["oc_standard"]`, "Customer OC4 XLSForm Stand
   first for a before/after comparison). Publishing / UAT on cust1 needs a cust1 browser login (the saved one is for
   the BioIVT tenant).
 
+## Implementation status (train of 2026-10-09)
+
+| Item | What | Status |
+|---|---|---|
+| 0 | One test command (`pytest`) runs all of `tests/` | Done |
+| 1 | Deterministic matching core for uploaded files (`standards_match.py`) | Done |
+| 2 | AI logic for logic-free standards and gap-filling | See below |
+| 3 | "Reference OC Studies (up to 5)" (referenced studies as a source) | See below |
+
+### Item 1: what was built
+
+- **Detection by content** (`standards_match.detect_kind`): workbook with a `survey` sheet = single XLSForm; ZIP with
+  `.xlsx` (or ODM `.xml`) members = XLSForm ZIP; ODM XML; everything else (`.docx`, a workbook that is not an XLSForm,
+  PDF, text) = unstructured and keeps the text path. Every file is used or named in the monday log
+  ("Customer OC4 standards: ...; <file>: NOT usable for form matching (...)").
+- **One normalised standard-form model** `{form_oid, title, domain, survey, choices, settings, extra_cols, has_logic,
+  source, source_file, format}` from XLSForm (single + ZIP) and ODM XML (FormDef, ItemGroupRef/Def, ItemRef/Def with
+  DataType, Question, Mandatory, CodeList, OpenClinica:MultiSelectList; item group names in `bind__oc_itemgroup`).
+  ODM carries structure only: `has_logic` False.
+- **Domain of a standard form**: form OID equal to a CDASH domain; else the CDASH variables its fields are named
+  after (CDASHIG, the same deterministic resolution as `cdisc_concepts`), needing a majority and at least 3 fields or
+  a quarter of the form; else the form title; else OID prefix backed by a field. Every basis is recorded.
+- **Matching**: by CDASH domain, one standard form per protocol form. Source priority: uploaded XLSForm > referenced
+  studies in listed order > uploaded ODM (the same form from a lower source is superseded). Several candidates in a
+  domain: best name similarity (same form id, else titles), logged with the alternatives and marked AMBIGUOUS when
+  close. Forms the domain pass leaves over are matched when the form id is identical (or the titles are, when the
+  two do not both have a domain); that basis is logged as such. `STANDARDS_MATCH_BY_NAME=0` turns this second pass off.
+- **Splice**: the protocol form keeps its visit placement and scheduling; survey, choices, settings and extra columns
+  are the standard's, exactly. The form takes the standard's form id (references in `schedule_of_events` and other
+  forms' cross-form dependencies follow). The protocol-analysed form is kept in `standards_originals` so a changed set
+  of sources can be re-matched. `study_meta.standards_match` holds the fingerprint of the sources, every decision,
+  forms without a standard, standard forms not used, proposals and rejected ids.
+- **Fields the protocol specifies (rule 3)**: candidates are fields of the analysed form that the standard does not
+  have, compared by CDASH concept, then by data point (same numbered item, one name part of the other, near-identical
+  label). One validated AI call: for each candidate the model must name the standard field that covers it, or return
+  a verbatim protocol quote. A field is added only when nothing covers it and the quote is found in the protocol text
+  (whitespace-normalised). Protocol text comes from `pypdf`; a scanned protocol yields no text and nothing is added.
+  `STANDARDS_ADD_FIELDS_AI=0` skips the call. Added fields carry `provenance: "Added from protocol"` and the quote.
+- **Nothing downstream changes a matched form**: CDISC CT / CDASH / QRS, missing-choices clean-up, title clean-up,
+  CRF-standards injection and OMOP coding skip it; the form builder writes an XLSForm-sourced standard verbatim
+  (layout rows, every column, settings; only the version stamp is ours) and never regenerates a standard form.
+  `standards_match.integrity()` re-checks the content hash before the build; any difference is in the monday log.
+- **Rules engine (rule 7)**: see `conventions_engine/customer_standard.py` and the DSL doc. Proposals are DVS_OC4
+  rows with Status "Proposed" and Check Source "CDISC CORE (id)" / "CDISC Standard" / "Global Rule" / "Customer Rule";
+  Approve applies them through `dvs_edits` (`standards_match.apply_proposal`). The standard's own logic shows Check
+  Source "Customer Standard".
+- **Analysis context**: structured standards are no longer pasted in full. A compact catalog (form, title, domain,
+  field names) is injected instead; unstructured files keep the text path.
+- **Kill switches**: `STANDARDS_MATCHING=0` (no matching; full-text paste as before), `STANDARDS_ADD_FIELDS_AI=0`,
+  `STANDARDS_MATCH_BY_NAME=0`. On any exception the spec is returned unchanged.
+
+### Decisions taken during the build (for Dan to confirm)
+
+1. A matched form takes the standard's **form id** (needed to reproduce the customer's form and for cross-form
+   references between standard forms). If that id is already used by another form, the protocol form id is kept.
+2. Forms with **no CDASH domain** are matched only on an identical form id or title, and that is logged.
+3. An **ODM-only** standard has no layout or logic, so the form builder lays the form out as usual; ODM items without
+   a Question text keep their data type and have an empty label.
+4. The **version** in settings is stamped per build (OpenClinica needs a new version); all other settings are the
+   customer's.
+
 ---
 
 # Original design (2026-07-28)

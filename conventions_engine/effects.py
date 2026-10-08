@@ -423,6 +423,13 @@ def _do_move_to_form(payload: Any, ctx: EntityContext, result: ApplyResult) -> N
         raise DSLEvaluationError(
             f"move_to_form: no form with form_id {target_form_id!r} in this study"
         )
+    if target_form.get("customer_standard") or source_form.get("customer_standard"):
+        # a customer standard form is used exactly as provided: nothing is moved into or out of it
+        result.flags_raised.append(Flag(
+            category="review_flags.customer_standard_not_applied",
+            message=f"{field_row.get('name')} was not moved from {source_form_id} to {target_form_id}: "
+                    f"a customer standard form is never changed"))
+        return
 
     moved_row = dict(field_row)
     moved_row.pop(_PENDING_REMOVAL_KEY, None)
@@ -561,6 +568,10 @@ def _do_assemble_form(payload: Any, ctx: EntityContext, result: ApplyResult) -> 
             problems.append(f"{spec_f.get('from')} and the questions merged into it have different answer types")
         if found:
             plan.append((spec_f, found))
+
+    standard = sorted({sf.get("form_id") for _, found in plan for sf, _r in found if sf.get("customer_standard")})
+    if standard:
+        problems.append(f"it would take questions out of customer standard form(s) {standard}, which are never changed")
 
     if problems:
         result.flags_raised.append(Flag(

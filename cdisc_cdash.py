@@ -109,7 +109,7 @@ def apply_to_spec(spec, std, protected_vars=frozenset()):
             meta.update({k: prev[k] for k in ("hint_from_cdashig", "label_from_cdashig") if prev.get(k)})
             row["cdash"] = meta
             n_meta += 1
-            if rec["variable"] in protected or str(row.get("name")).upper() in protected:
+            if f.get("customer_standard") or rec["variable"] in protected or str(row.get("name")).upper() in protected:
                 continue  # customer / OC standard field: descriptive metadata only
             if not str(row.get("hint") or "").strip() and _usable_hint(rec["variable"], rec["instruction"]):
                 row["hint"] = rec["instruction"]

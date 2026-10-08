@@ -931,10 +931,20 @@ def build_single_xlsform(form_data, output_path, build_log):
     survey   = form_data.get('survey', [])
     extra_c  = form_data.get('extra_cols', [])
 
+    # Customer standard form (standards_match.py): used exactly as the customer provided it. `standard` skips
+    # every step that rewrites content; `verbatim` (an original XLSForm, not an ODM) also keeps the layout rows,
+    # all columns and the settings as written. Only the version stamp is ours (OC needs a new version per build).
+    standard = bool(form_data.get('customer_standard'))
+    verbatim = standard and bool((form_data.get('customer_standard') or {}).get('verbatim'))
+    if standard:
+        settings = dict(settings)  # defaults and the version stamp go into the file, never into the Study Spec
+
     # CRS-136 fix: back-fill `yn` and detect any other missing list_names
     # BEFORE the choices/survey loops run, so the rest of the function
     # operates on consistent data.
-    choices, missing_lists = _ensure_referenced_choice_lists(survey, choices)
+    missing_lists = []
+    if not standard:
+        choices, missing_lists = _ensure_referenced_choice_lists(survey, choices)
     if missing_lists:
         form_id_for_err = form_data.get('settings', {}).get('form_id') or output_path
         raise ValueError(
@@ -962,8 +972,9 @@ def build_single_xlsform(form_data, output_path, build_log):
             'OpenClinica="http://openclinica.com/odm"',
     }
     for k, default in OC_SETTINGS_DEFAULTS.items():
-        if not settings.get(k):
+        if not settings.get(k) and not (verbatim and k not in ('form_title', 'form_id')):
             settings[k] = default
+    settings_cols = SETTINGS_COLS + ([k for k in settings if k not in SETTINGS_COLS] if verbatim else [])
 
     # Build-time version stamp: a unique 12-digit integer per build run, so OC
     # always creates a NEW form version instead of returning a cached rejection
@@ -1054,14 +1065,14 @@ def build_single_xlsform(form_data, output_path, build_log):
         ws_sv  = wb.create_sheet('survey')
 
     # ── Sheet: settings ────────────────────────────────────────────────────
-    if not use_template:
-        for col_i, col in enumerate(SETTINGS_COLS, start=1):
+    if not use_template or len(settings_cols) > len(SETTINGS_COLS):
+        for col_i, col in enumerate(settings_cols, start=1):
             _header_cell(ws_set.cell(row=1, column=col_i), col)
 
     # Write settings values; sanitize form_title for OC compatibility.
-    for col_i, col in enumerate(SETTINGS_COLS, start=1):
+    for col_i, col in enumerate(settings_cols, start=1):
         val = settings.get(col, '') or ''
-        if col == 'form_title':
+        if col == 'form_title' and not verbatim:
             val = _ascii_safe_title(val)
         ws_set.cell(row=2, column=col_i).value = val
         ws_set.column_dimensions[get_column_letter(col_i)].width = \
@@ -1133,11 +1144,12 @@ def build_single_xlsform(form_data, output_path, build_log):
     # Balance begin/end tag pairs BEFORE the name-blanking normalizer:
     # the balancer can drop or rewrite type, and the normalizer's name-
     # blanking pass only operates correctly on a balanced row sequence.
-    survey = _balance_begin_end_tags(survey, form_id, build_log)
     _repeat_group_name = (form_data.get('repeat_group_name') or '').strip()
-    if _repeat_group_name:
-        survey = _wrap_repeat_group(survey, _repeat_group_name, form_id, build_log)
-    survey = _normalize_survey_rows(survey)
+    if not verbatim:
+        survey = _balance_begin_end_tags(survey, form_id, build_log)
+        if _repeat_group_name:
+            survey = _wrap_repeat_group(survey, _repeat_group_name, form_id, build_log)
+        survey = _normalize_survey_rows(survey)
 
     # ── Auto-assign bind::oc:itemgroup for repeating forms ────────────────
     # OC's form-service requires EVERY data field in a repeating form to
@@ -1160,7 +1172,7 @@ def build_single_xlsform(form_data, output_path, build_log):
         or str(form_data.get('repeating', '') or '').strip().lower()
         not in ('no', 'false', '0', '')
     )
-    if _form_is_repeating:
+    if _form_is_repeating and not verbatim:
         # Find most-common non-empty itemgroup value already in survey
         from collections import Counter as _Counter
         _ig_counts = _Counter(
@@ -1201,8 +1213,9 @@ def build_single_xlsform(form_data, output_path, build_log):
                     'rows_filled': _n_filled,
                 })
     # OC rejects XLSForm `time`/`dateTime`; represent them as text+constraint.
-    survey = _coerce_unsupported_types(survey, form_id, build_log)
-    survey = _normalize_constraint_messages(survey, form_id)
+    if not standard:
+        survey = _coerce_unsupported_types(survey, form_id, build_log)
+        survey = _normalize_constraint_messages(survey, form_id)
 
     placeholders_in_form = []
     for row_i, row in enumerate(survey, start=2):
@@ -1424,6 +1437,16 @@ def build_all_xlsforms(spec_data, output_dir, build_log):
             })
 
             if is_valid:
+                continue
+
+            if form.get('customer_standard'):
+                # A customer standard form is never regenerated: it is kept exactly as provided and the
+                # validation message is reported for a person to look at.
+                build_log.setdefault('build_warnings', []).append(
+                    f"{form_id}: customer standard form kept as provided; local validation reported: "
+                    + (errors[0] if errors else '<no detail>')[:300])
+                print(f"[edc-builder] {tab_prefix}: customer standard form kept as provided "
+                      f"(validation: {(errors[0] if errors else '<no detail>')[:200]})", flush=True)
                 continue
 
             # ── Self-correction loop ──────────────────────────────

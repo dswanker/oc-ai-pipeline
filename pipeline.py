@@ -428,27 +428,18 @@ def _google_doc_export_url(link: str) -> str:
 
 def _detect_oc_standard_type(file_bytes):
     """
-    Detect whether the file in the oc_standard column is an ODM XML or a
-    ZIP of XLSForms. Returns 'ODM_XML', 'XLSFORM_ZIP', or 'UNKNOWN'.
+    Kind of a file in the oc_standard column, decided from its content (standards_match.detect_kind):
+    'XLSFORM' (a workbook with a survey sheet), 'XLSFORM_ZIP' (a ZIP with .xlsx members), 'ODM_XML', or
+    'UNKNOWN' (everything else, including .docx and workbooks that are not XLSForms: text path).
+    A single .xlsx and a .docx are ZIP containers too; they used to be taken for a ZIP of XLSForms.
     """
-    if not file_bytes:
-        return 'UNKNOWN'
-    # ZIP magic bytes: PK\x03\x04
-    if file_bytes[:4] == b'PK\x03\x04':
-        return 'XLSFORM_ZIP'
-    # XML: starts with BOM or <?xml or <ODM
-    head = file_bytes[:200].lstrip()
-    if (head.startswith(b'<?xml') or head.startswith(b'<ODM') or
-            head.startswith(b'\xef\xbb\xbf<?xml')):
-        return 'ODM_XML'
-    # Try decoding as text and check for ODM signature
     try:
-        text = file_bytes[:500].decode('utf-8', errors='ignore')
-        if '<ODM' in text or 'xmlns:odm' in text.lower():
-            return 'ODM_XML'
-    except Exception:
-        pass
-    return 'UNKNOWN'
+        import standards_match as _sm
+        kind = _sm.detect_kind(file_bytes)
+    except Exception as e:
+        print(f"[standards-match] file detection failed ({e}); treated as unstructured", flush=True)
+        kind = "UNSTRUCTURED"
+    return "UNKNOWN" if kind == "UNSTRUCTURED" else kind
 
 
 def _files_to_text(files: list, label: str = "") -> str:
@@ -4148,6 +4139,8 @@ def _fix_missing_choices(struct_json: dict) -> dict:
     for f in struct_json.get("forms", []):
         if not isinstance(f, dict):
             continue
+        if f.get("customer_standard"):
+            continue  # customer standard form: used exactly as provided, a field is never removed
         form_id  = f.get("form_id", "?")
         choices  = f.get("choices", []) or []
         survey   = f.get("survey",  []) or []
@@ -4183,22 +4176,17 @@ def _cdisc_protected_vars(crf_files, oc_files):
                 protected.add(str(var).upper())
     except Exception as e:
         print(f"[cdisc-ct] customer standards scan failed (treating none as protected): {e}", flush=True)
+    # Every structured standard (single XLSForm, ZIP, ODM XML), read by standards_match. Whole matched forms are
+    # also protected by their customer_standard flag (cdisc_ct / cdisc_cdash / cdisc_qrs skip them entirely).
     for fname, data in (oc_files or []):
         try:
-            kind = _detect_oc_standard_type(data)
-            if kind == "XLSFORM_ZIP":
-                for form in (_read_zip_xlsforms(data).get("forms") or {}).values():
-                    for row in form.get("survey") or []:
-                        t = str(row.get("type") or "").strip().lower()
-                        if t.startswith(("select_one ", "select_multiple ")) and row.get("name"):
-                            protected.add(str(row["name"]).strip().upper())
-            elif kind == "ODM_XML":
-                import xml.etree.ElementTree as _ET
-                for el in _ET.fromstring(data).iter():
-                    if el.tag.split("}")[-1] == "ItemDef" and any(
-                            c.tag.split("}")[-1] == "CodeListRef" for c in el):
-                        if el.get("Name"):
-                            protected.add(el.get("Name").strip().upper())
+            import standards_match as _sm
+            forms, _rec = _sm.parse_file(fname, data)
+            for form in forms:
+                for row in form.get("survey") or []:
+                    t = str(row.get("type") or "").strip().lower()
+                    if t.startswith(("select_one ", "select_multiple ")) and row.get("name"):
+                        protected.add(str(row["name"]).strip().upper())
         except Exception as e:
             print(f"[cdisc-ct] OC standards scan failed for {fname}: {e}", flush=True)
     return protected
@@ -4487,6 +4475,113 @@ async def _acrf_step(item_id, struct_json, protocol_num, version, customer_subdo
             pass
 
 
+def _protocol_text(protocol_bytes):
+    """Plain text of the protocol (PDF or the Word-text marker form), for verifying quotes. '' when unavailable."""
+    try:
+        if not protocol_bytes:
+            return ""
+        if protocol_bytes.startswith(b"%%DOCX_TEXT%%"):
+            return protocol_bytes[len(b"%%DOCX_TEXT%%"):].decode("utf-8", errors="replace")
+        import io as _io
+        import pypdf as _pypdf
+        text = "\n".join((pg.extract_text() or "") for pg in _pypdf.PdfReader(_io.BytesIO(protocol_bytes)).pages)
+        # a scanned PDF yields (almost) no text: quotes cannot be verified, so no field is added
+        return text if len(text.strip()) >= 500 else ""
+    except Exception as e:
+        print(f"[standards-match] protocol text unavailable: {e}", flush=True)
+        return ""
+
+
+def _load_standard_sources(oc_files, referenced=None):
+    """Structured customer standard forms from the oc_standard column (and referenced OC studies), read once per
+    run. Never raises: on error there are simply no standards."""
+    try:
+        import standards_match as _sm
+        if not _sm.enabled():
+            return None
+        return _sm.load_sources(oc_files or [], referenced or [])
+    except Exception as e:
+        print(f"[standards-match] could not read the standards (none used): {e}", flush=True)
+        return None
+
+
+async def _standards_match_step(item_id, struct_json, sources, protocol_bytes=None):
+    """Customer standard form matching (standards_match.py): right after protocol analysis, and on reruns that
+    reuse a saved spec not yet matched against the current sources. A matched form uses the customer standard form
+    exactly; a field is added only when the protocol specifies it (validated AI call, STANDARDS_ADD_FIELDS_AI=0
+    skips it). STANDARDS_MATCHING=0 disables. On any error the spec is returned unchanged."""
+    try:
+        import copy as _copy
+        import standards_match as _sm
+        if not isinstance(struct_json, dict) or not _sm.needs_match(struct_json, sources):
+            return struct_json
+        out = _sm.apply(struct_json, sources)
+        if out is struct_json:
+            return struct_json
+        if _sm.matched_forms(out):
+            st = _sm.state(out)
+            if os.environ.get("STANDARDS_ADD_FIELDS_AI", "1") == "0":
+                st["additions"] = {"status": "skipped", "note": "STANDARDS_ADD_FIELDS_AI=0"}
+            else:
+                try:
+                    ptext = _protocol_text(protocol_bytes)
+                    req = _sm.build_add_request(out, ptext)
+                    if req is None:
+                        st["additions"] = {"status": "nothing_to_check" if ptext else "no_protocol_text"}
+                    else:
+                        text = await call_claude(req[0], extra_text=req[1], max_tokens=8000, cache_prompt=False)
+                        trial = _copy.deepcopy(out)
+                        _sm.apply_additions(trial, text, ptext)
+                        out = trial
+                except Exception as _ae:
+                    print(f"[standards-match] protocol-specified field check failed (no field added): {_ae}", flush=True)
+                    _sm.state(out)["additions"] = {"status": "failed", "note": f"{type(_ae).__name__}"}
+        lines = _sm.summary_lines(out)
+        add = _sm.state(out).get("additions") or {}
+        if add.get("status") == "done":
+            lines.append(f"  Fields the protocol specifies beyond the standard: {len(add.get('added') or [])} added "
+                         f"(verified quote), {len(add.get('rejected') or [])} rejected by validation, of "
+                         f"{add.get('candidates', 0)} candidate(s).")
+        elif add.get("status") in ("failed", "no_protocol_text"):
+            lines.append(f"  Protocol-specified field check not done ({add.get('status')}): no field was added.")
+        if lines:
+            try:
+                await append_log(item_id, "\n".join(lines)[:6000])
+            except Exception:
+                pass
+        return out
+    except Exception as e:
+        print(f"[standards-match] step failed, spec unchanged: {type(e).__name__}: {e}", flush=True)
+        return struct_json
+
+
+async def _standards_report_step(item_id, struct_json):
+    """monday log line for customer standard forms: proposals waiting in the DVS, and any form whose standard
+    content no longer equals what the customer provided (never silent). Never fails a build."""
+    try:
+        import standards_match as _sm
+        if not _sm.matched_forms(struct_json):
+            return
+        props = _sm.proposals(struct_json)
+        by_src = {}
+        for p in props:
+            by_src[p.get("source") or "?"] = by_src.get(p.get("source") or "?", 0) + 1
+        drift = _sm.integrity(struct_json)
+        msg = (f"Customer standard forms: {len(props)} check(s) proposed, not applied "
+               f"(DVS_OC4, Status Proposed; Action = Approve adds one)"
+               + (": " + ", ".join(f"{n} {k}" for k, n in sorted(by_src.items())) if by_src else "") + ".")
+        approved = [d for d in drift if d["reason"] == "changed by approved proposals"]
+        other = [d for d in drift if d["reason"] != "changed by approved proposals"]
+        if approved:
+            msg += f" Changed by approved proposals: {', '.join(str(d['form_id']) for d in approved)}."
+        if other:
+            msg += (f" WARNING: content differs from the customer standard on "
+                    f"{', '.join(str(d['form_id']) for d in other)}.")
+        await append_log(item_id, msg)
+    except Exception as e:
+        print(f"[standards-match] report skipped: {e}", flush=True)
+
+
 async def _propose_ai_edit_checks(item_id, struct_json):
     """AI-proposed edit checks (ai_edit_checks.py): one call, validated, stored in study_meta.ai_edit_checks as
     PROPOSALS. Nothing is applied: they appear in the DVS 'Edit Checks' sheet for a DM to Approve/Reject.
@@ -4652,6 +4747,8 @@ def _sanitize_form_titles(spec):
         return cleaned.strip()
 
     for f in spec.get("forms") or []:
+        if isinstance(f, dict) and f.get("customer_standard"):
+            continue  # customer standard form: its title is the customer's
         if isinstance(f, dict) and "form_title" in f:
             orig = f.get("form_title")
             new = _clean(orig)
@@ -4977,6 +5074,8 @@ def _apply_crf_standards(struct_json: dict, crf_files: list, oc_files: list) -> 
         form_id = (form.get("form_id") or "").upper()
         if not form_id:
             continue
+        if form.get("customer_standard"):
+            continue  # customer standard form: used exactly as provided (standards_match.py)
 
         # Match form to CRF standards entry — exact first, then prefix match
         crf_form_key = None
@@ -5957,6 +6056,15 @@ async def run_pipeline(item_id):
             download_all_column_files(item_id, COL["oc_standard"]),
         )
         protocol_bytes = _proto_result
+        # Customer standard forms (standards_match.py): read once per run; every file is either used or named in
+        # the monday log as not usable.
+        _std_sources = _load_standard_sources(_oc_files)
+        if _std_sources and _std_sources.get("files"):
+            try:
+                import standards_match as _sm_log
+                await append_log(item_id, "Customer OC4 standards: " + "; ".join(_sm_log.files_log(_std_sources)))
+            except Exception as _sle:
+                print(f"[standards-match] file log failed: {_sle}", flush=True)
         # Keep legacy single-file vars for existing code that references them
         crf_pdf  = _crf_files[0][1] if _crf_files else None   # compat shim
         oc_zip   = _oc_files[0][1]  if _oc_files  else None   # compat shim
@@ -6090,6 +6198,7 @@ async def run_pipeline(item_id):
                         struct_json = _backfill_migration_fields(struct_json)
                         struct_json = _sanitize_form_titles(struct_json)
                         struct_json = _ensure_required_forms(struct_json, protocol_num, customer_conventions)
+                        struct_json = await _standards_match_step(item_id, struct_json, _std_sources, protocol_bytes)
                         struct_json = _apply_omop_coding(struct_json, edc_design_standard)
                         # ── Conventions engine pass + three-way conflict detection (Phase C.4) ──
                         # Path X.1 is the edited-XLSX path. Three snapshots make TRUE
@@ -6240,6 +6349,7 @@ async def run_pipeline(item_id):
             struct_json = _backfill_migration_fields(struct_json)
             struct_json = _sanitize_form_titles(struct_json)
             struct_json = _ensure_required_forms(struct_json, protocol_num, customer_conventions)
+            struct_json = await _standards_match_step(item_id, struct_json, _std_sources, protocol_bytes)
             struct_json = _apply_omop_coding(struct_json, edc_design_standard)
             # ── Conventions engine pass (no-op until conventions/ store is populated) ─
             try:
@@ -6432,6 +6542,7 @@ async def run_pipeline(item_id):
                     struct_json = _backfill_migration_fields(struct_json)
                     struct_json = _sanitize_form_titles(struct_json)
                     struct_json = _ensure_required_forms(struct_json, protocol_num, customer_conventions)
+                    struct_json = await _standards_match_step(item_id, struct_json, _std_sources, protocol_bytes)
                     struct_json = _apply_omop_coding(struct_json, edc_design_standard)
                     fast_rerun = True
                     print(f"[fast-rerun] Using existing Study Spec JSON "
@@ -6543,9 +6654,16 @@ async def run_pipeline(item_id):
             _CHAR_CAP = 150_000  # per-source context budget
 
             # ── Customer OC4 Standards (Priority 1 supplemental) ──────────────
+            # Structured standards (XLSForm, ZIP of XLSForms, ODM XML) are applied deterministically after the
+            # analysis (standards_match.py), so the analysis only needs to know they exist: a compact catalog
+            # (form, domain, field names) replaces the full-text paste. Files that are not structured keep the
+            # text path. STANDARDS_MATCHING=0 restores the full-text paste for every file.
+            _std_usable = {r["file"] for r in ((_std_sources or {}).get("files") or []) if r.get("usable")}
             if _oc_files:
                 oc_parts = []
                 for _oc_fname, _oc_data in _oc_files:
+                    if os.path.basename(str(_oc_fname)) in _std_usable:
+                        continue  # in the catalog below
                     _oc_ftype = _detect_oc_standard_type(_oc_data)
                     if _oc_ftype == 'ODM_XML':
                         try:
@@ -6560,18 +6678,20 @@ async def run_pipeline(item_id):
                                 _oc_text[:_CHAR_CAP] +
                                 ("\n...[TRUNCATED]..." if len(_oc_text) > _CHAR_CAP else "")
                             )
-                    elif _oc_ftype == 'XLSFORM_ZIP':
+                    elif _oc_ftype in ('XLSFORM_ZIP', 'XLSFORM'):
                         import json as _json_oc
                         try:
-                            _oc_forms = _read_zip_xlsforms(_oc_data)
-                            _oc_text = _json_oc.dumps(_oc_forms, indent=2, default=str)
+                            import standards_match as _sm_txt
+                            _oc_forms = {"forms": {f["source_file"]: {k: f[k] for k in ("survey", "choices", "settings")}
+                                                   for f in _sm_txt.parse_file(_oc_fname, _oc_data)[0]}}
+                            _oc_text = _json_oc.dumps(_oc_forms, indent=2, default=str) if _oc_forms["forms"] else ''
                         except Exception as _e:
-                            print(f"Warning: could not parse OC standard XLSForm ZIP "
+                            print(f"Warning: could not parse OC standard XLSForm file "
                                   f"'{_oc_fname}': {_e}", flush=True)
                             _oc_text = ''
                         if _oc_text:
                             oc_parts.append(
-                                "[XLSForm ZIP: " + _oc_fname + "]\n" +
+                                "[XLSForm: " + _oc_fname + "]\n" +
                                 _oc_text[:_CHAR_CAP] +
                                 ("\n...[TRUNCATED]..." if len(_oc_text) > _CHAR_CAP else "")
                             )
@@ -6599,12 +6719,33 @@ async def run_pipeline(item_id):
                         "Standards (Priority 2).\n\n"
                         + oc_combined
                     )
-                    print(f"OC4 Standards: {len(_oc_files)} file(s) injected "
-                          f"({sum(len(d) for _,d in _oc_files):,} bytes total)", flush=True)
-                else:
+                    print(f"OC4 Standards: {len(oc_parts)} file(s) injected as text "
+                          f"({len(oc_combined):,} chars)", flush=True)
+                elif not _std_usable:
                     print("OC4 Standards: files present but no extractable text", flush=True)
             else:
                 print("OC4 Standards: none provided", flush=True)
+            if _std_sources and _std_sources.get("forms"):
+                import standards_match as _sm_cat
+                _std_catalog = _sm_cat.catalog_text(_std_sources)
+                extra_parts.append(
+                    "CUSTOMER STANDARD FORMS — catalog (Priority 1).\n"
+                    "The customer already has the forms listed below. After your analysis a deterministic step "
+                    "replaces the content of each protocol form that has a catalog form of the same CDASH domain "
+                    "with that customer form, exactly as the customer built it (every field, choice list and all "
+                    "logic).\n"
+                    "HOW TO USE:\n"
+                    "  1. The PROTOCOL determines which forms exist and at which visits. Do not add a form only "
+                    "because it is in this catalog.\n"
+                    "  2. For a protocol form that corresponds to a catalog form: set its cdash_domain correctly, "
+                    "and use the catalog's field names for the same data points.\n"
+                    "  3. Still include every data point the protocol explicitly specifies for that form, even "
+                    "when the catalog form does not have it.\n"
+                    "  4. A form with no catalog match is built as usual (Customer CRF Standards, then CDASH).\n\n"
+                    + _std_catalog
+                )
+                print(f"Customer standard forms: catalog of {len(_std_sources['forms'])} form(s) injected "
+                      f"({len(_std_catalog):,} chars, about {int(len(_std_catalog) / 3.5):,} tokens)", flush=True)
 
             # ── Customer CRF Standards (Priority 2 supplemental) ──────────────
             if _crf_files:
@@ -6764,6 +6905,7 @@ async def run_pipeline(item_id):
             struct_json = _backfill_migration_fields(struct_json)
             struct_json = _sanitize_form_titles(struct_json)
             struct_json = _ensure_required_forms(struct_json, protocol_num, customer_conventions)
+            struct_json = await _standards_match_step(item_id, struct_json, _std_sources, protocol_bytes)
             struct_json = _apply_omop_coding(struct_json, edc_design_standard)
             # Deterministic CRF Standards injection — ensure every field from
             # QUESTIONS.csv (and equivalent CRF/OC4 standard files) is present
@@ -6965,6 +7107,10 @@ async def run_pipeline(item_id):
                 _conv_tb.print_exc()
             # ─────────────────────────────────────────────────────────────────
 
+            # Customer standard forms: report what the rules engine proposed there (nothing was applied) and
+            # confirm the standard content is still exactly what the customer provided.
+            await _standards_report_step(item_id, struct_json)
+
             # AI-proposed edit checks (proposals only; reviewed in the DVS Edit Checks sheet)
             if _want("dvs") or _want("study build zip"):
                 await _propose_ai_edit_checks(item_id, struct_json)
@@ -7036,6 +7182,7 @@ async def run_pipeline(item_id):
                 # protocol-metadata fields. See pipeline failure 2026-05-18
                 # at 19:19:25 UTC (1.22M-token prompt rejected).
                 _META_BLOAT_KEYS = {
+                    "standards_match",   # match record + proposals (provenance is added deterministically)
                     "conventions_prompt_block",
                     "conventions_engine_applied",
                     "customer_vendor_conflicts",
