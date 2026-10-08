@@ -74,6 +74,16 @@ analysis on its own. Mapping-only runs reuse the saved spec (Path R); otherwise 
 ## 5. Annotated CRF (aCRF), new deliverable
 Same POC produces SDTM-annotated CRFs. Pipeline already knows each CDASH field's SDTM target (section 1).
 
+SHIPPED: `acrf.py`, Chain A: `{protocol}_Annotated_CRF_{version}.pdf` to the monday file column
+`Annotated CRF (PDF)` (`monday_client.COL["acrf_pdf"]`). Landscape, Study Specification palette. One section per
+built form: question, response options with stored codes, and an annotation box per field taken from the SDTM
+Mapping Specification rows (`sdtm_mapping.build_rows` is the single source of truth): `DOMAIN.VARIABLE`,
+value-level lines ("when VSTESTCD = SYSBP"), `NOT SUBMITTED`, `SUPP<DOMAIN>.QVAL candidate`; AI-validated and
+questionnaire item-order mappings are marked for review. Original reportlab code (the 360i POC was only the idea).
+Produced when "Annotated CRF" is selected in "What outputs would you like?" or when no output is selected. Same
+gate as the mapping specification: needs a Study Specification JSON on the item or "Protocol specification"
+selected in the run; never triggers a protocol analysis alone. Built on a copy of the spec. Switch: `ACRF_OUTPUT=0`.
+
 ## 6. Validate pipeline outputs with CORE (offline)
 CORE engine runs from its local cache (`-lr` local rules, `--cache-path`). USDM rules, SDTMIG rules for
 trial design and mapped UAT data.

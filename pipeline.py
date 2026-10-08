@@ -4354,6 +4354,44 @@ async def _sdtm_mapping_step(item_id, struct_json, protocol_num, version, custom
             pass
 
 
+async def _acrf_step(item_id, struct_json, protocol_num, version, customer_subdomain="", client_name=""):
+    """Build and upload the Annotated CRF (acrf.py): the built forms with their SDTM annotations, drawn from the
+    same rows as the SDTM Mapping Specification. Works on a copy of the spec (chains read struct_json
+    concurrently); concept tags are prepared exactly as for the mapping specification. ACRF_OUTPUT=0 disables.
+    Never raises."""
+    if os.environ.get("ACRF_OUTPUT", "1") == "0":
+        print("[acrf] ACRF_OUTPUT=0: skipped", flush=True)
+        return
+    try:
+        import copy as _copy
+        import cdisc_ct, cdisc_concepts, acrf
+        if not COL.get("acrf_pdf"):
+            raise RuntimeError("monday column 'Annotated CRF (PDF)' is not registered (monday_client.COL['acrf_pdf'])")
+        spec = _copy.deepcopy(struct_json)
+        cs = ((spec.get("study_meta") or {}).get("cdisc_standards") or {})
+        if "concepts" not in cs:
+            await _tag_concepts(item_id, spec, customer_subdomain, client_name)
+        else:
+            std = cdisc_ct.load_standards(cs.get("ct_version"))
+            if std is not None:
+                cdisc_concepts.tag_deterministic(spec, std,
+                                                 cdisc_concepts.load_aliases(customer_subdomain, client_name))
+        loop = asyncio.get_event_loop()
+        out = await loop.run_in_executor(None, lambda: acrf.build_files(spec))
+        await upload_file(item_id, COL["acrf_pdf"], f"{protocol_num}_Annotated_CRF_{version}.pdf", out["pdf"])
+        s = out["summary"]
+        await append_log(item_id,
+            f"Annotated CRF: {s['forms']} forms, {s['annotated']} of {s['fields']} fields annotated "
+            f"({s['review']} marked for review), {s['not_submitted']} not submitted, "
+            f"{s['supp_candidates']} supplemental-qualifier candidates")
+    except Exception as e:
+        print(f"[acrf] failed: {e}", flush=True)
+        try:
+            await append_log(item_id, f"Annotated CRF could not be generated: {e}")
+        except Exception:
+            pass
+
+
 async def _propose_ai_edit_checks(item_id, struct_json):
     """AI-proposed edit checks (ai_edit_checks.py): one call, validated, stored in study_meta.ai_edit_checks as
     PROPOSALS. Nothing is applied: they appear in the DVS 'Edit Checks' sheet for a DM to Approve/Reject.
@@ -5543,6 +5581,17 @@ async def run_pipeline(item_id):
                 "Study Specification JSON yet, so also select \"Protocol specification\" (first run), "
                 "or run it again after a Study Specification exists.")
 
+        # Annotated CRF: same gate as the SDTM Mapping Specification (it is drawn from the same mapping rows).
+        _acrf_requested = _want("annotated crf")
+        _acrf_allowed = _acrf_requested and (_spec_json_on_item or _want("protocol specification"))
+        if _acrf_requested and not _acrf_allowed:
+            print("[acrf] requested but no Study Specification JSON on the item and "
+                  "Protocol specification not selected: skipped", flush=True)
+            await append_log(item_id,
+                "Annotated CRF skipped: it needs a Study Specification. This item has no "
+                "Study Specification JSON yet, so also select \"Protocol specification\" (first run), "
+                "or run it again after a Study Specification exists.")
+
         create_study_val = cols.get(COL["create_study"], {}).get("value")
         try:
             parsed = json.loads(create_study_val or "{}")
@@ -5839,16 +5888,18 @@ async def run_pipeline(item_id):
 
         # ── Determine if analysis/chains are needed ───────────────────────────
         needs_analysis = (
-            _want("protocol specification") or _map_allowed
+            _want("protocol specification") or _map_allowed or _acrf_allowed
             or _want("protocol summary")
             or _want("price quote") or _want("study build zip")
             or _want("dvs")
             or (create_study and oc_subdomain)
         )
 
-        if _map_requested and not _map_allowed and not needs_analysis:
+        if ((_map_requested and not _map_allowed) or (_acrf_requested and not _acrf_allowed)) and not needs_analysis:
+            _blocked = " and ".join(n for n, r, a in (("SDTM Mapping Specification", _map_requested, _map_allowed),
+                                                      ("Annotated CRF", _acrf_requested, _acrf_allowed)) if r and not a)
             await set_status(item_id, COL["pipeline_status"], STATUS["failed"])
-            await append_log(item_id, "FAILED: nothing ran. SDTM Mapping Specification was the only output "
+            await append_log(item_id, f"FAILED: nothing ran. {_blocked} was the only output "
                                       "selected and it needs a Study Specification first (see above).")
             return
 
@@ -6816,7 +6867,8 @@ async def run_pipeline(item_id):
             async def chain_a():
                 _want_spec = _want("protocol specification")
                 _want_map = _map_allowed  # selected AND (spec JSON on item OR spec selected this run)
-                if not (_want_spec or _want_map):
+                _want_acrf = _acrf_allowed  # same gate as the mapping specification
+                if not (_want_spec or _want_map or _want_acrf):
                     return
                 if _want_spec:
                     print("Chain A: Generating Study Spec PDF + XLSX (local)...", flush=True)
@@ -6847,6 +6899,9 @@ async def run_pipeline(item_id):
                 # outputs dropdown), after the spec files so it sees the finished spec. Never fails Chain A.
                 if _want_map:
                     await _sdtm_mapping_step(item_id, struct_json, protocol_num, version, oc_subdomain, client_name)
+                # Annotated CRF: its own output ("Annotated CRF" in the outputs dropdown). Never fails Chain A.
+                if _want_acrf:
+                    await _acrf_step(item_id, struct_json, protocol_num, version, oc_subdomain, client_name)
 
             # ── Chain B: Protocol Summary JSON → PDF + Quote ───────────────────
             async def chain_b():
