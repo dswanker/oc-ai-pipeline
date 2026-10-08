@@ -191,8 +191,8 @@ Rules:
    DV, PC, SU, QS, RS, TU, TR), else null.
 
 Return ONLY JSON:
-{"assessments": [{"name": "Physical examination", "cdash_domain": "PE", "section": "10.5.2",
-                  "quote": "...", "events": ["SE_SCREENING"], "log": false}]}
+{"assessments": [{"name": "<assessment name>", "cdash_domain": "<domain or null>", "section": "<section or table>",
+                  "quote": "<verbatim protocol text>", "events": ["<event OID>"], "log": false}]}
 """
 
 
