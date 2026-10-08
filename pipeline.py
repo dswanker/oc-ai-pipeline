@@ -1568,6 +1568,16 @@ def _build_board_json(struct_json):
                 "itemLevelSdv": True,               # boolean flag on all OC cards
             }
 
+            # Item-level SDV proposals from the Study Configuration (sdv_proposals.py), in the confirmed OC4
+            # card format. Only with STUDY_CONFIG_SDV=1; otherwise the card is unchanged.
+            try:
+                import sdv_proposals as _sdv_board
+                _sdv_card = _sdv_board.card_sdv(struct_json, form)
+                if _sdv_card:
+                    card.update(_sdv_card)
+            except Exception as _sdv_err:
+                print(f"[board-build] SDV items skipped for {form_id}: {_sdv_err}", flush=True)
+
             # First occurrence is the original; subsequent ones reference it
             if first_card:
                 original_card_id[form_id] = card_id
@@ -4702,7 +4712,27 @@ async def _study_config_step(item_id, struct_json, protocol_bytes=None):
         import study_config as _sc
         if not _sc.enabled() or not isinstance(struct_json, dict):
             return
-        cfg = _sc.apply(struct_json, _protocol_text(protocol_bytes))
+        ptext = _protocol_text(protocol_bytes)
+        # SDV: link the protocol's primary / key secondary endpoints to fields (one validated call per spec; each
+        # endpoint needs a verbatim quote found in the protocol). STUDY_CONFIG_SDV_AI=0 skips it.
+        ep_result = None
+        try:
+            import sdv_proposals as _sdv
+            prev = struct_json.get("study_configuration") or {}
+            if _sdv.ai_enabled() and ptext and not (prev.get("sdv_endpoint_check") or {}).get("status") == "done":
+                is_pdf = bool(protocol_bytes) and not protocol_bytes.startswith(b"%%DOCX_TEXT%%")
+                req = _sdv.build_request(struct_json, ptext, with_text=not is_pdf)
+                if req is not None:
+                    text = await call_claude(req[0], pdf_bytes=protocol_bytes if is_pdf else None, extra_text=req[1],
+                                             max_tokens=4000, cache_prompt=False)
+                    ep_result = _sdv.validate_response(struct_json, text, ptext)
+        except Exception as _se:
+            print(f"[study-config] endpoint link skipped: {type(_se).__name__}: {_se}", flush=True)
+            ep_result = None
+        cfg = _sc.apply(struct_json, ptext, ep_result)
+        if cfg is not None and ep_result is not None:
+            cfg["sdv_endpoint_check"] = {"status": "done", "endpoints": len(ep_result["endpoints"]),
+                                         "rejected": ep_result["rejected"]}
         line = _sc.summary_line(cfg)
         if line:
             await append_log(item_id, line)

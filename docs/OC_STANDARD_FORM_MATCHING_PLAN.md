@@ -200,6 +200,31 @@ generated, and rendered as the "STUDY CONFIGURATION" section of the PDF and the 
   is scheduled when the participant is created. Unscheduled, common and early-termination events have no calendar.
   A timing found word for word in the protocol text is `protocol` with the quote; otherwise `AI-proposed`.
 
+### Item 3: item-level SDV proposals (`sdv_proposals.py`)
+
+- Per form, every data field is proposed **Required**, **Optional** or **Not Applicable**:
+  Required for critical-to-quality data (informed consent date; eligibility: the valued fields of an IE form;
+  investigational product / prodrug exposure and dosing: the valued fields of EX / EC forms; adverse event
+  seriousness, outcome and dates; death; disposition; randomization / group assignment), identified by concept tag
+  or CDASH-style name and the form's CDASH domain. Not Applicable for calculated, hidden, derived items and notes.
+  Optional otherwise.
+- Primary / key secondary endpoint data: one validated AI call links each endpoint to fields. An endpoint needs a
+  verbatim quote found in the protocol text; unknown forms or fields are dropped. Linked fields become Required
+  with source `AI-proposed` and the quote. `STUDY_CONFIG_SDV_AI=0` skips the call; the build continues if it fails.
+- Stored in `study_configuration.sdv_items[form]` (`level`, Required and Optional `items` with rationale and source,
+  count of Not Applicable) and on each form at an event (`sdv.level`, Required items). Rendered as the "SDV ITEMS"
+  section. An item a data manager set (source `DM`) is kept on a rebuild.
+- **Design board JSON** (`pipeline._build_board_json`, confirmed OC4 card format of 2026-10-08): with
+  `STUDY_CONFIG_SDV=1` a card gets `sdv: "item_level"`, `itemLevelSdv: true` and `sdvItems` =
+  `{ocoid, name, formOID, versions, itemGroupName, itemGroupOid, itemType, itemLabel, repeating,
+  sdv: "required" | "optional"}` (Not Applicable items omitted; no boardId / listId / cardId / _id); a card with no
+  Required / Optional item gets `sdv: "not_applicable_item_level"`.
+  **Default OFF (STOP for Dan):** the format was read from an existing board (GET). That `importStudy` accepts
+  `sdvItems` can only be confirmed by importing into OpenClinica, which this train must not do; there is no offline
+  import validation. Until confirmed, the card stays as before (`required_item_level`, no items) and the proposals
+  live in the spec and the Study Specification only. Item OIDs are derived the same way as in the DVS
+  (`I_<first 5 alphanumerics of the form title>_<ITEM>`); `versions` carries the form's settings version.
+
 ### Decisions taken during the build (for Dan to confirm)
 
 1. A matched form takes the standard's **form id** (needed to reproduce the customer's form and for cross-form

@@ -227,6 +227,9 @@ def build(spec, protocol_text=""):
            "proposals": [], "sources": [SRC_PROTOCOL, SRC_DEFAULT, SRC_AI, SRC_DM]}
     old = spec.get("study_configuration") if isinstance(spec.get("study_configuration"), dict) else None
     if old:
+        for k in ("sdv_items", "sdv_endpoints", "sdv_endpoint_check"):
+            if k in old:
+                cfg[k] = copy.deepcopy(old[k])
         old_ev = {e.get("oid"): e for e in old.get("events") or [] if isinstance(e, dict)}
         cfg["events"] = [_keep_dm(e, old_ev[e["oid"]]) if e["oid"] in old_ev else e for e in cfg["events"]]
         old_f = {(f.get("event_oid"), f.get("form_id")): f for f in old.get("forms") or [] if isinstance(f, dict)}
@@ -235,12 +238,19 @@ def build(spec, protocol_text=""):
     return cfg
 
 
-def apply(spec, protocol_text=""):
-    """Write spec["study_configuration"]. Returns it, or None when disabled or on error (spec unchanged)."""
+def apply(spec, protocol_text="", endpoint_result=None):
+    """Write spec["study_configuration"] (with the item-level SDV proposals, sdv_proposals.py). endpoint_result: the
+    validated endpoint-to-field links of this run, or None to keep the ones verified earlier. Returns the
+    configuration, or None when disabled or on error (spec unchanged)."""
     if not enabled() or not isinstance(spec, dict):
         return None
     try:
         cfg = build(spec, protocol_text)
+        try:
+            import sdv_proposals
+            cfg["sdv_counts"] = sdv_proposals.propose(spec, cfg, endpoint_result)
+        except Exception as e:
+            print(f"[study-config] SDV proposals skipped: {type(e).__name__}: {e}", flush=True)
         spec["study_configuration"] = cfg
         return cfg
     except Exception as e:
@@ -329,9 +339,12 @@ def summary_line(cfg):
     ev = cfg.get("events") or []
     rel = sum(1 for e in ev if (((e.get("calendar") or {}).get("scheduler") or {}).get("relative_event") or {}).get("value"))
     close = sum(1 for e in ev if ((e.get("calendar") or {}).get("auto_close_after_days") or {}).get("value") is not None)
+    c = cfg.get("sdv_counts") or {}
+    sdv = (f" SDV proposals: {c.get('Required', 0)} item(s) Required, {c.get('Optional', 0)} Optional, "
+           f"{c.get('Not Applicable', 0)} Not Applicable." if c else "")
     return (f"Study Configuration: {len(ev)} event(s) ({rel} scheduled relative to another event, {close} with "
             f"auto-close), {len(cfg.get('forms') or [])} form(s) at events, {len(cfg.get('proposals') or [])} "
-            f"proposal(s). See the Study Configuration section of the Study Specification.")
+            f"proposal(s). See the Study Configuration section of the Study Specification." + sdv)
 
 
 def sections(cfg):
@@ -343,6 +356,13 @@ def sections(cfg):
             [11, 15, 7, 6, 11, 9, 5, 6, 14, 16]),
            ("FORMS AT EVENTS", "One row per form at an event (a card on the design board).", FORM_HEADERS,
             form_rows(cfg), [10, 7, 13, 5, 5, 5, 6, 9, 14, 7, 9, 10])]
+    if cfg.get("sdv_items"):
+        import sdv_proposals
+        eps = cfg.get("sdv_endpoints") or []
+        note = ("Item-level SDV proposals. Required = critical-to-quality data; calculated, hidden and derived items "
+                "and notes are Not Applicable; all other items are Optional."
+                + (" Endpoints linked to fields: " + "; ".join(f"{e['endpoint']} ({e['kind']})" for e in eps) + "." if eps else ""))
+        out.append(("SDV ITEMS", note, sdv_proposals.SDV_HEADERS, sdv_proposals.sdv_rows(cfg), [8, 12, 24, 7, 30, 19]))
     if cfg.get("proposals"):
         out.append(("PROPOSALS", "Nothing below is applied or published; a data manager decides.", PROPOSAL_HEADERS,
                     proposal_rows(cfg), [12, 16, 18, 14, 18, 22]))

@@ -13,6 +13,7 @@ Two modes:
 """
 
 import anthropic, base64, json, os, asyncio, re
+import httpx  # used in the retry except clauses below (was missing: any other error surfaced as NameError)
 
 MODEL       = "claude-opus-4-7"
 MAX_TOKENS  = 16000         # for call_claude (JSON extraction). Opus 4.7
