@@ -10,24 +10,40 @@
   "target": "field",
   "applies_when": {
     "any_of": [
-      { "field.name": { "matches": "^.*STDAT$" } },
-      { "field.name": { "matches": "^(VISITDAT|VSDAT|LBDAT|TRTDAT|SAMPDAT|ECGDAT|VITALDAT|AEDAT|CMDAT)$" } }
+      {
+        "field.name": {
+          "matches": "^.*STDAT$"
+        }
+      },
+      {
+        "field.name": {
+          "matches": "^(VISITDAT|VSDAT|LBDAT|TRTDAT|SAMPDAT|ECGDAT|VITALDAT|AEDAT|CMDAT)$"
+        }
+      }
     ]
   },
   "effect": {
-    "ensure": {
-      "field.constraint": ". <= today()",
-      "field.constraint_message": "Date cannot be in the future."
-    },
     "flag": {
       "category": "review_flags.future_date_constraint",
       "message": "Field ${field.name} pinned with `. <= today()` constraint and standard message. Verify this is NOT a scheduled/planned-date field (e.g. NEXT_VISIT_DAT, PLANNED_*) where future values are legitimate; if so, this convention should be overridden at study scope."
+    },
+    "add_constraint": {
+      "expr": ". <= today()",
+      "message": "Date cannot be in the future.",
+      "check_id": "NO_FUTURE_DATE",
+      "skip_if_references": "today()",
+      "if_author_unconstrained": true
     }
   },
   "created_at": "2026-05-14T22:00:00Z",
   "created_by": "system:phase_b1c_final_translation",
   "source": "consolidation:prompts.py:RULE_OC-7B",
-  "tags": ["clinical_patterns", "dates", "constraints", "future_date_block"],
+  "tags": [
+    "clinical_patterns",
+    "dates",
+    "constraints",
+    "future_date_block"
+  ],
   "history": [
     {
       "at": "2026-05-14T22:00:00Z",

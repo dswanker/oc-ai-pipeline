@@ -103,6 +103,14 @@ def _do_ensure(payload: Dict[str, Any], ctx: EntityContext, result: ApplyResult)
     for path, value in payload.items():
         current = _resolve_path(path, ctx)
         if current is _SENTINEL_MISSING or current is None or current == "" or current == [] or current == {}:
+            if isinstance(value, str) and "${" in value:
+                # Engine paths/bindings are rendered; XLSForm references (${AESTDAT}) are kept as written.
+                value = render(value, ctx, strict=True)
+                if "<unresolved:" in value:
+                    result.flags_raised.append(Flag(
+                        category="review_flags.edit_check_skipped",
+                        message=f"{(ctx.entity or {}).get('name')}: could not render {path} = {value!r}"))
+                    continue
             _set_path(path, value, ctx)
             result.mutations_made.append(Mutation(
                 directive="ensure", path=path, old_value=None, new_value=value,
@@ -796,7 +804,10 @@ def _do_add_constraint(payload: Any, ctx: EntityContext, result: ApplyResult) ->
     expr/message are templates: engine paths (${field.name}, ${start.name}, ${x.name|replace:A:B})
     are substituted; XLSForm references (${AESTDAT}, .) are kept as written.
     The check is ANDed with any existing constraint; the message is appended. Idempotent: a check whose
-    rendered expression is already part of the constraint is not added again. check_id is recorded in
+    rendered expression is already part of the constraint is not added again, and "skip_if_references"
+    (a template, e.g. "${${start.name}}") skips the check when the existing constraint already references it.
+    "if_author_unconstrained": true applies the check only when the field has no authored constraint (empty, or
+    built solely by add_constraint), preserving "ensure only when empty" semantics while stacking engine checks. check_id is recorded in
     field.edit_checks for traceability.
     """
     if ctx.kind != "field":
@@ -811,11 +822,26 @@ def _do_add_constraint(payload: Any, ctx: EntityContext, result: ApplyResult) ->
                                         message=f"{field.get('name')}: could not render check {expr!r}"))
         return
     check_id = payload.get("check_id")
-    if check_id and check_id not in (field.get("edit_checks") or []):
-        field.setdefault("edit_checks", []).append(check_id)
+
+    def _record():  # only when the check is actually present on the field
+        if check_id and check_id not in (field.get("edit_checks") or []):
+            field.setdefault("edit_checks", []).append(check_id)
+
     cur = str(field.get("constraint") or "").strip()
     if expr in cur:
+        _record()
         return
+    if payload.get("if_author_unconstrained") and cur and not field.get("constraint_engine_only"):
+        return  # an author (Claude, customer) wrote this constraint; keep the old "only when empty" behavior
+    skip_ref = payload.get("skip_if_references")
+    if skip_ref:
+        ref = render(skip_ref, ctx, strict=True)
+        if "<unresolved:" not in ref and ref in cur:
+            _record()
+            return  # an equivalent check (e.g. written by Claude) already compares against that field
+    _record()
+    if not cur:
+        field["constraint_engine_only"] = True  # nothing authored: later engine checks may stack here
     field["constraint"] = f"({cur}) and ({expr})" if cur else expr
     if msg:
         cm = str(field.get("constraint_message") or "").strip()

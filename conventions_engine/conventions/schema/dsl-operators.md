@@ -363,3 +363,13 @@ Example (end date on or after its matching start date, any domain):
                                "message": "End date must be on or after the start date.",
                                "check_id": "CDISC.DATE_ORDER"}}}
 ```
+
+### Edit-check options (2026-10-08)
+- Bound select_one fields expose `_yes_code` / `_no_code`: the codes that field's own choice list uses for Yes and No
+  (matched by code, label or CDISC submission value). Use them instead of hardcoding 'N':
+  `"ensure": {"field.relevant": "${${ongoing.name}} = '${ongoing._no_code}'"}`. Unresolvable -> skipped with a flag.
+- `ensure` renders templates in string values (engine paths only; XLSForm references kept); unresolved -> skipped + flag.
+- `add_constraint` options: `skip_if_references` (template; skip when the existing constraint already references it,
+  i.e. an author wrote an equivalent check) and `if_author_unconstrained` (apply only when the field has no authored
+  constraint: empty, or built solely by add_constraint, tracked in `constraint_engine_only`). `check_id` is recorded in
+  `edit_checks` only when the check is actually present on the field.

@@ -5,27 +5,67 @@
   "scope": "global",
   "status": "active",
   "natural_key": "endat_relevance_on_ongoing_status",
-  "description": "When a form has both an *ENDAT field and a matching *ONGO field (e.g. AEENDAT+AEONGO, CMENDAT+CMONGO, MHENDAT+MHONGO), the end-date field gets `relevant: ${<base>ONGO}='N'` — the end-date is shown only when the corresponding condition/event is reported as not-ongoing.",
+  "description": "When a form has both an *ENDAT field and a matching *ONGO field (e.g. AEENDAT+AEONGO, CMENDAT+CMONGO, MHENDAT+MHONGO), the end-date field gets `relevant: ${<base>ONGO}='N'` — the end-date is shown only when the corresponding condition/event is reported as not-ongoing. Deterministic since 2026-10-08: relevant is set to the ongoing field's own 'No' code when the end date has no relevant yet; skipped with a flag when that code cannot be determined.",
   "rationale": "While a condition is ongoing there is no end date to record. Coordinators forced to enter a placeholder value (today's date, 1900-01-01, etc.) generate dirty data that complicates downstream analysis. Conditional relevance on the ongoing flag makes the form behave intuitively and keeps the dataset clean.",
   "target": "field",
   "applies_when": {
-    "field.name": { "matches": "^.*ENDAT$" },
-    "field.has_sibling": {
-      "where": { "field.name": { "matches": "^.*ONGO$" } },
-      "scope": "same_itemgroup"
-    }
+    "all_of": [
+      {
+        "any_of": [
+          {
+            "field.concept": {
+              "matches": "^[A-Z]{2}ENDAT$"
+            }
+          },
+          {
+            "field.name": {
+              "matches": "^.*ENDAT$"
+            }
+          }
+        ]
+      },
+      {
+        "field.has_sibling": {
+          "where": {
+            "all_of": [
+              {
+                "any_of": [
+                  {
+                    "field.concept": "${field.concept|replace:ENDAT:ONGO}"
+                  },
+                  {
+                    "field.name": "${field.name|replace:ENDAT:ONGO}"
+                  }
+                ]
+              },
+              {
+                "field.type": {
+                  "matches": "^select_one "
+                }
+              }
+            ]
+          },
+          "scope": "same_itemgroup",
+          "as": "ongoing"
+        }
+      }
+    ]
   },
   "effect": {
-    "flag": {
-      "category": "review_flags.endat_relevance",
-      "message": "Field ${field.name} is an end-date paired with an ongoing-flag sibling. Verify relevant attribute is `${<sibling>ONGO}='N'`."
-    },
-    "soft": "Emit relevant: `${<base>ONGO}='N'` where <base> is the field-name prefix shared by the ONGO sibling (e.g. for AEENDAT, the sibling is AEONGO and relevant references ${AEONGO}). Like 7A, sibling-name interpolation is not yet expressible in the DSL — handled here in soft. The relevance gate pairs with the 7A constraint cleanly: end-date appears only when ongoing='N', and the value must be after the start date."
+    "soft": "Emit relevant: `${<base>ONGO}='N'` where <base> is the field-name prefix shared by the ONGO sibling (e.g. for AEENDAT, the sibling is AEONGO and relevant references ${AEONGO}). Like 7A, sibling-name interpolation is not yet expressible in the DSL — handled here in soft. The relevance gate pairs with the 7A constraint cleanly: end-date appears only when ongoing='N', and the value must be after the start date.",
+    "ensure": {
+      "field.relevant": "${${ongoing.name}} = '${ongoing._no_code}'"
+    }
   },
   "created_at": "2026-05-14T22:00:00Z",
   "created_by": "system:phase_b1c_final_translation",
   "source": "consolidation:prompts.py:RULE_OC-7C",
-  "tags": ["clinical_patterns", "relevance", "dates", "paired_fields"],
+  "tags": [
+    "clinical_patterns",
+    "relevance",
+    "dates",
+    "paired_fields"
+  ],
   "history": [
     {
       "at": "2026-05-14T22:00:00Z",

@@ -178,13 +178,37 @@ def _render_where(obj: Any, ctx: EntityContext) -> Any:
     return obj
 
 
+_YES = {"Y", "YES", "1", "TRUE"}
+_NO = {"N", "NO", "0", "FALSE"}
+
+
+def _yes_no_codes(candidate: Dict[str, Any], form: Dict[str, Any]) -> Dict[str, str]:
+    """For a select_one bound field, the codes its own list uses for Yes and No (by code or label)."""
+    t = str(candidate.get("type") or "").strip()
+    if not t.lower().startswith("select_one "):
+        return {}
+    ln = t.split(" ", 1)[1].strip()
+    out: Dict[str, str] = {}
+    for c in form.get("choices") or []:
+        if not isinstance(c, dict) or str(c.get("list_name") or "").strip() != ln:
+            continue
+        code = str(c.get("name") or "").strip()
+        keys = {code.upper(), str(c.get("label") or "").strip().upper(),
+                str(c.get("cdisc_submission_value") or "").strip().upper()}
+        if keys & _YES and "_yes_code" not in out:
+            out["_yes_code"] = code
+        if keys & _NO and "_no_code" not in out:
+            out["_no_code"] = code
+    return out
+
+
 def _bind(ctx: EntityContext, payload: Dict[str, Any], candidate: Dict[str, Any], form: Dict[str, Any]) -> None:
     name = payload.get("as")
     if not name:
         return
     if name in _ROOTS:
         raise DSLEvaluationError(f"'as' name {name!r} is reserved")
-    ctx.bindings[name] = {**candidate, "_form_id": form.get("form_id")}
+    ctx.bindings[name] = {**candidate, "_form_id": form.get("form_id"), **_yes_no_codes(candidate, form)}
 
 
 def _op_equals(actual: Any, expected: Any) -> bool:

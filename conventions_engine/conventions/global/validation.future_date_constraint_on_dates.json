@@ -12,19 +12,27 @@
     "field.type": "date"
   },
   "effect": {
-    "ensure": {
-      "field.constraint": ". <= today()",
-      "field.constraint_message": "Future dates are not allowed."
-    },
     "flag": {
       "category": "review_flags.future_date_constraint",
       "message": "Field ${field.name} (type=date) pinned with `. <= today()` constraint. Verify this is NOT a scheduled/planned-date field (projected discharge, planned visit) where future values are legitimate; if so, override at study scope and tag the row with flag_reason='Future date allowed — scheduled/projected'."
+    },
+    "add_constraint": {
+      "expr": ". <= today()",
+      "message": "Future dates are not allowed.",
+      "check_id": "NO_FUTURE_DATE",
+      "skip_if_references": "today()",
+      "if_author_unconstrained": true
     }
   },
   "created_at": "2026-05-15T00:00:00Z",
   "created_by": "system:phase_b1d_translation",
   "source": "consolidation:skills/protocol-analysis/references/conventions.md:§2",
-  "tags": ["validation", "dates", "constraints", "future_date_block"],
+  "tags": [
+    "validation",
+    "dates",
+    "constraints",
+    "future_date_block"
+  ],
   "history": [
     {
       "at": "2026-05-15T00:00:00Z",
