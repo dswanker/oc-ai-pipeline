@@ -5462,6 +5462,27 @@ async def run_pipeline(item_id):
             return run_all or _explicit
         print(f"Output requested: {output_raw!r} | run_all={run_all}", flush=True)
 
+        # SDTM Mapping Specification needs a Study Specification JSON: one already saved on this item,
+        # or one produced in this run because "Protocol specification" is selected too (first runs).
+        # It never triggers a protocol analysis on its own.
+        def _file_col_has_files(col_id):
+            try:
+                raw = (cols.get(col_id) or {}).get("value")
+                parsed = json.loads(raw) if isinstance(raw, str) else raw
+                return bool(isinstance(parsed, dict) and parsed.get("files"))
+            except Exception:
+                return False
+        _spec_json_on_item = _file_col_has_files(COL["spec_json"])
+        _map_requested = _want("sdtm mapping specification")
+        _map_allowed = _map_requested and (_spec_json_on_item or _want("protocol specification"))
+        if _map_requested and not _map_allowed:
+            print("[sdtm-mapping] requested but no Study Specification JSON on the item and "
+                  "Protocol specification not selected: skipped", flush=True)
+            await append_log(item_id,
+                "SDTM Mapping Specification skipped: it needs a Study Specification. This item has no "
+                "Study Specification JSON yet, so also select \"Protocol specification\" (first run), "
+                "or run it again after a Study Specification exists.")
+
         create_study_val = cols.get(COL["create_study"], {}).get("value")
         try:
             parsed = json.loads(create_study_val or "{}")
@@ -5758,12 +5779,18 @@ async def run_pipeline(item_id):
 
         # ── Determine if analysis/chains are needed ───────────────────────────
         needs_analysis = (
-            _want("protocol specification") or _want("sdtm mapping specification")
+            _want("protocol specification") or _map_allowed
             or _want("protocol summary")
             or _want("price quote") or _want("study build zip")
             or _want("dvs")
             or (create_study and oc_subdomain)
         )
+
+        if _map_requested and not _map_allowed and not needs_analysis:
+            await set_status(item_id, COL["pipeline_status"], STATUS["failed"])
+            await append_log(item_id, "FAILED: nothing ran. SDTM Mapping Specification was the only output "
+                                      "selected and it needs a Study Specification first (see above).")
+            return
 
         # ── Steps 1-2: Study Specification ────────────────────────────────────
         struct_json = None
@@ -6680,7 +6707,7 @@ async def run_pipeline(item_id):
             # ── Chain A: Study Spec files ──────────────────────────────────────
             async def chain_a():
                 _want_spec = _want("protocol specification")
-                _want_map = _want("sdtm mapping specification")
+                _want_map = _map_allowed  # selected AND (spec JSON on item OR spec selected this run)
                 if not (_want_spec or _want_map):
                     return
                 if _want_spec:

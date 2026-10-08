@@ -52,7 +52,9 @@ Use: standard form templates (VS, LB, ...), domain recognition, annotated CRF ge
 customer field -> CDASH concept (+qualifier) -> SDTM domain.variable, value-level detail, CT, Confidence + Basis
 (High: customer alias / CDASH name; Medium: Claude validated; None: not mapped). Proposed mapping for review.
 Produced when "SDTM Mapping Specification" (dropdown label id 9) is selected in "What outputs would you like?"
-(dropdown_mm2nc7d4), or when no output is selected (run all). Mapping-only runs reuse the saved spec (Path R).
+(dropdown_mm2nc7d4), or when no output is selected (run all). Gate: built only if a Study Specification JSON
+already exists on the item OR "Protocol specification" is also selected (first run); it never triggers a protocol
+analysis on its own. Mapping-only runs reuse the saved spec (Path R); otherwise the run fails fast with a log message.
 
 ## 5. Annotated CRF (aCRF), new deliverable
 Same POC produces SDTM-annotated CRFs. Pipeline already knows each CDASH field's SDTM target (section 1).
