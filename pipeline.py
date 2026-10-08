@@ -4492,7 +4492,7 @@ def _protocol_text(protocol_bytes):
         return ""
 
 
-async def _fetch_reference_studies(item_id, subdomain, text):
+async def _fetch_reference_studies(item_id, subdomain, text, own_ids=None):
     """Forms of the studies named in "Reference OC Studies (up to 5)" (reference_studies.py): read-only GETs on the
     item's own subdomain, fetched once per run, used as customer standard sources between an uploaded XLSForm and
     an uploaded ODM. Never fails a build; what was fetched and what was skipped goes to the monday log.
@@ -4502,7 +4502,7 @@ async def _fetch_reference_studies(item_id, subdomain, text):
         import standards_match as _sm
         if not str(text or "").strip() or not _sm.enabled() or not _rs.enabled():
             return []
-        res = await _rs.fetch(subdomain, text)
+        res = await _rs.fetch(subdomain, text, own_ids=own_ids)
         if res.get("log"):
             try:
                 await append_log(item_id, "\n".join(res["log"])[:4000])
@@ -6107,8 +6107,11 @@ async def run_pipeline(item_id):
         protocol_bytes = _proto_result
         # Customer standard forms (standards_match.py): read once per run; every file is either used or named in
         # the monday log as not usable.
+        # A study can never reference itself: the item's own study UUID / identifier / OID are excluded.
+        _own_ids = [(cols.get(c) or {}).get("text") or "" for c in ("text_mm3ggzga", "text_mm2hcfre", "text_mm3gxekw")]
         _ref_fetch = await _fetch_reference_studies(item_id, oc_subdomain,
-                                                    (cols.get(COL["reference_studies"]) or {}).get("text") or "")
+                                                    (cols.get(COL["reference_studies"]) or {}).get("text") or "",
+                                                    own_ids=_own_ids)
         _std_sources = _load_standard_sources(_oc_files, _ref_fetch)
         if _std_sources and _std_sources.get("files"):
             try:

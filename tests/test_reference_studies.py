@@ -186,3 +186,37 @@ def test_kill_switch(monkeypatch):
     monkeypatch.setenv("REFERENCE_STUDIES", "0")
     res, server = _fetch("ALPHA-01")
     assert res["referenced"] == [] and server.calls == []
+
+
+def _fetch_own(text, own_ids, server=None):
+    server = server or Server()
+
+    async def go():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(server)) as c:
+            return await rs.fetch("t", text, username="svc", password="pw", client=c, own_ids=own_ids)
+    return asyncio.run(go()), server
+
+
+def test_a_study_can_never_reference_itself():
+    alpha = next(s for s in STUDIES if s.get("uniqueIdentifier") == "ALPHA-01")
+    # typed as the item's own identifier (any case / dashes / spaces): skipped before any lookup
+    res, server = _fetch_own("alpha01", ["", "ALPHA-01", ""])
+    assert res["referenced"] == [] and server.calls == []
+    assert any("can never reference itself" in line for line in res["log"])
+    # typed differently but resolves to the item's own study (matched by its UUID): skipped after lookup
+    res, _ = _fetch_own("ALPHA-01", [alpha["uuid"], "", ""])
+    assert res["referenced"] == [] and any("resolves to this item's own study" in line for line in res["log"])
+    # the item's study OID identifies it too
+    res, _ = _fetch_own("ALPHA-01", ["", "", "S_ALPHA01(TEST)"])
+    assert res["referenced"] == []
+    # another study is still fetched when the own study is also listed
+    res, _ = _fetch_own("ALPHA-01, BETA-7", ["", "ALPHA-01", ""])
+    assert [r["label"] for r in res["referenced"]] and all("ALPHA" not in r["label"] for r in res["referenced"])
+
+
+def test_is_own_study_rules():
+    assert rs.is_own_study("PrTK05", None, ["", "PRTK05", ""])
+    assert rs.is_own_study("prtk-05", None, ["", "PrTK05", ""])
+    assert rs.is_own_study("X", {"uuid": "u-1", "uniqueIdentifier": "PrTK05"}, ["u-1", "", ""])
+    assert not rs.is_own_study("CRS135", {"uuid": "u-2", "uniqueIdentifier": "CRS135"}, ["u-1", "PrTK05", "S_PRTK05(TEST)"])
+    assert not rs.is_own_study("PrTK05", None, ["", "", ""])

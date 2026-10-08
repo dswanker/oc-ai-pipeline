@@ -201,12 +201,40 @@ async def _fetch_study(client, subdomain, headers, ref, study, sem):
     return out
 
 
-async def fetch(subdomain, text, username=None, password=None, client=None):
-    """Resolve and fetch the referenced studies. Never raises. Returns {"referenced", "log", "timing"}."""
+def _norm_id(x):
+    """Comparison key for study identifiers: case, spaces, dashes and underscores ignored."""
+    return re.sub(r"[\s_\-]+", "", str(x or "")).lower()
+
+
+def is_own_study(ref, study, own_ids):
+    """True when `ref` (as typed) or the resolved `study` is the item's own study. A study can never be a
+    reference study to itself. own_ids: the item's study UUID, study identifier (protocol number) and study OID."""
+    own = {_norm_id(i) for i in (own_ids or []) if str(i or "").strip()}
+    if not own:
+        return False
+    cand = {_norm_id(ref)}
+    if study:
+        cand |= {_norm_id(study.get(k)) for k in ("uuid", "uniqueIdentifier", "name", "oid") if study.get(k)}
+    # a study OID like S_PRTK05(TEST) also identifies the protocol
+    own |= {_norm_id(re.sub(r"^S_|\(.*\)$", "", str(i))) for i in (own_ids or []) if str(i).startswith("S_")}
+    return bool(cand & own)
+
+
+async def fetch(subdomain, text, username=None, password=None, client=None, own_ids=None):
+    """Resolve and fetch the referenced studies. Never raises. Returns {"referenced", "log", "timing"}.
+    own_ids: the item's own study UUID / identifier / OID; a reference to the item's own study is always skipped."""
     result = {"referenced": [], "log": [], "timing": {}}
     try:
         refs, log = parse_references(text)
         result["log"] += log
+        kept = []
+        for ref in refs:
+            if is_own_study(ref, None, own_ids):
+                result["log"].append(f"Reference OC Studies: '{ref}' is this item's own study; a study can never "
+                                     f"reference itself; skipped")
+            else:
+                kept.append(ref)
+        refs = kept
         if not refs or not enabled():
             return result
         sub = str(subdomain or "").strip()
@@ -237,6 +265,10 @@ async def fetch(subdomain, text, username=None, password=None, client=None):
                 study, why = resolve_study(ref, studies)
                 if study is None:
                     result["log"].append(f"Reference OC Studies: '{ref}' {why} on {sub}; skipped")
+                    continue
+                if is_own_study(ref, study, own_ids):
+                    result["log"].append(f"Reference OC Studies: '{ref}' resolves to this item's own study; a study "
+                                         f"can never reference itself; skipped")
                     continue
                 uid = study.get("uuid") or study.get("uniqueIdentifier")
                 if uid in seen:
