@@ -380,13 +380,18 @@ def _is_expr_key(k):
 def _rewrite_refs(form, field, renames, dropped):
     """Rewrite ${field} = 'old', 'old' = ${field}, selected(${field}, 'old') in this form's survey.
     Returns (number of expressions changed, dropped values still referenced)."""
-    ref = r"\$\{" + re.escape(str(field)) + r"\}"
+    ref_named = r"\$\{" + re.escape(str(field)) + r"\}"
     changed, still = 0, set()
     for row in form.get("survey") or []:
         if not isinstance(row, dict):
             continue
+        is_self = str(row.get("name")) == str(field)
+        # In the field's own expressions "." is the field itself (e.g. an IE criterion's ". = 'yes'").
+        ref = r"(?:" + ref_named + r"|(?<![\w.$}])\.(?![\w.]))" if is_self else ref_named
         for k, v in list(row.items()):
-            if not isinstance(v, str) or "${" + str(field) + "}" not in v or not _is_expr_key(k):
+            if not isinstance(v, str) or not _is_expr_key(k):
+                continue
+            if "${" + str(field) + "}" not in v and not (is_self and re.search(r"(?<![\w.$}])\.(?![\w.])", v)):
                 continue
             new = v
             for old, nw in renames.items():
@@ -409,12 +414,16 @@ def _rewrite_refs(form, field, renames, dropped):
 
 
 def _referenced(form, field, values):
-    """Values of `field` that this form's expressions compare against."""
-    ref = r"\$\{" + re.escape(str(field)) + r"\}"
+    """Values of `field` that this form's expressions compare against (incl. the field's own "." references)."""
+    ref_named = r"\$\{" + re.escape(str(field)) + r"\}"
     found = set()
     for row in form.get("survey") or []:
+        is_self = isinstance(row, dict) and str(row.get("name")) == str(field)
+        ref = r"(?:" + ref_named + r"|(?<![\w.$}])\.(?![\w.]))" if is_self else ref_named
         for k, v in (row.items() if isinstance(row, dict) else []):
-            if not isinstance(v, str) or "${" + str(field) + "}" not in v or not _is_expr_key(k):
+            if not isinstance(v, str) or not _is_expr_key(k):
+                continue
+            if "${" + str(field) + "}" not in v and not (is_self and re.search(r"(?<![\w.$}])\.(?![\w.])", v)):
                 continue
             for val in values:
                 o = re.escape(val)

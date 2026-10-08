@@ -144,3 +144,15 @@ def test_retired_codelist_uses_as_collected():
     cl, by, note = c.bind(std, "RACE", ["WHITE"])
     assert cl["short_name"] == "RACEC" and by == "cdashig" and note is None
     assert c.bind(std, "AEREL", ["NOT"])[2] == "sponsor_defined_per_cdashig"
+
+
+def test_self_references_follow_code_changes():
+    spec = {"forms": [{"form_id": "IE", "survey": [
+        {"type": "select_one yn", "name": "IEINC01", "constraint": ". = 'yes'"},
+        {"type": "select_one yn2", "name": "IEEXC01", "constraint": "selected(., 'no') or . != 'yes'"}],
+        "choices": [{"list_name": "yn", "name": "yes", "label": "Yes"}, {"list_name": "yn", "name": "no", "label": "No"},
+                    {"list_name": "yn2", "name": "yes", "label": "Yes"}, {"list_name": "yn2", "name": "no", "label": "No"}]}]}
+    c.apply_to_spec(spec, STD)
+    rows = {r["name"]: r for r in spec["forms"][0]["survey"]}
+    assert rows["IEINC01"]["constraint"] == ". = 'Y'"
+    assert rows["IEEXC01"]["constraint"] == "selected(., 'N') or . != 'Y'"
