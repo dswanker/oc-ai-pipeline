@@ -4270,7 +4270,7 @@ async def _tag_concepts(item_id, struct_json, customer_subdomain="", client_name
         tagged = sum(v for k, v in cov.items() if k != "untagged")
         await append_log(item_id, f"CDASH concepts: {tagged} of {tagged + cov.get('untagged', 0)} fields tagged "
                                   f"({cov.get('customer_alias', 0)} customer alias, {cov.get('cdash_name', 0)} CDASH name, "
-                                  f"{cov.get('claude', 0)} Claude-validated)")
+                                  f"{cov.get('claude', 0)} AI-validated)")
     except Exception as e:
         print(f"[cdisc-concepts] tagging failed (build continues): {e}", flush=True)
 

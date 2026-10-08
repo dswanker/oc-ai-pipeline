@@ -69,7 +69,7 @@ def test_rows_mapping_and_confidence():
 def test_summary_and_files():
     s = sm.summarize(sm.build_rows(SPEC))
     assert s == {"fields": 6, "mapped": 5, "by_confidence_basis": {
-        "High / CDASH variable name": 2, "Medium / Claude (validated)": 2, "High / Customer alias": 1,
+        "High / CDASH variable name": 2, "Medium / AI (validated)": 2, "High / Customer alias": 1,
         "None / Not mapped": 1}}
     out = sm.build_files(SPEC)
     assert out["pdf"][:5] == b"%PDF-"

@@ -5,7 +5,7 @@ SDTM domain.variable, value-level detail, controlled terminology, with Confidenc
 
   High   / Customer alias        deterministic, from the customer's own alias list
   High   / CDASH variable name   deterministic, the field is already named with a CDASH variable
-  Medium / Claude (validated)    Claude's judgement, validated against CDASHIG and the field type; review
+  Medium / AI (validated)        AI judgement, validated against CDASHIG and the field type; review
   None   / Not mapped            no CDASH equivalent identified
 
 SDTM targets and notes come from CDASHIG v2.3 metadata (SDTMIG Target + Mapping Instructions).
@@ -23,7 +23,7 @@ COLUMNS = ["Form", "Field", "Label", "Type", "Choices", "CDASH Concept", "Qualif
 
 BASIS = {"customer_alias": ("High", "Customer alias"),
          "cdash_name": ("High", "CDASH variable name"),
-         "claude": ("Medium", "Claude (validated)"),
+         "claude": ("Medium", "AI (validated)"),
          None: ("None", "Not mapped")}
 
 # concept -> (value-level variable template) for repeated uses told apart by a qualifier
@@ -118,7 +118,7 @@ def build_rows(spec):
                 if generic and rec.get("domain"):  # domain-neutral wording: CPDTC -> --DTC
                     row["Notes"] = re.sub(r"\b" + rec["domain"] + r"([A-Z]{3,})\b", r"--\1", row["Notes"])
                 if source == "claude":
-                    row["Notes"] = ("Review: mapped by Claude, validated against CDASHIG. " + row["Notes"]).strip()
+                    row["Notes"] = ("Review: mapped by AI, validated against CDASHIG. " + row["Notes"]).strip()
             else:
                 row["Notes"] = ("No CDASH equivalent identified. Candidate for "
                                 + (f"SUPP{fdom}.QVAL" if fdom else "a supplemental qualifier")
@@ -156,7 +156,7 @@ _WIDTH = {"Form": 12, "Field": 16, "Label": 38, "Type": 14, "Choices": 34, "CDAS
           "Confidence": 11, "Basis": 20, "Notes": 60}
 LEGEND = [("High", "Customer alias", "Deterministic: from the customer's own alias list."),
           ("High", "CDASH variable name", "Deterministic: the field is already named with a CDASH variable."),
-          ("Medium", "Claude (validated)", "Claude's judgement, validated against CDASHIG and the field type. Review."),
+          ("Medium", "AI (validated)", "AI judgement, validated against CDASHIG and the field type. Review."),
           ("None", "Not mapped", "No CDASH equivalent identified. Candidate for a supplemental qualifier or custom domain.")]
 DISCLAIMER = ("Proposed mapping for review. SDTM targets and notes come from CDASHIG v{cdashig} metadata (SDTMIG v{sdtmig}). "
               "Derivations such as combining date and time into --DTC or computing study days are described, not performed.")
