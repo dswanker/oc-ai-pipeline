@@ -431,6 +431,74 @@ def _parse_uat_cases(dvs_bytes: bytes) -> list:
     return rows
 
 
+def _setup_rows(rows: list) -> list:
+    """Prerequisite values of multi-step cases (Setup_Steps), as extra rows loaded into UAT-P001 (where the
+    browser step tests those cases). One row per distinct (form, event, item); loaded before any browser test."""
+    out, seen = [], set()
+    for r in rows:
+        try:
+            steps = json.loads(r.get("Setup_Steps") or "[]")
+        except Exception:
+            steps = []
+        for st in steps:
+            key = (st.get("form"), st.get("event"), st.get("item"))
+            if not all(key) or key in seen:
+                continue
+            seen.add(key)
+            out.append({"UAT Case ID": f"SETUP-{len(out) + 1:03d}", "Participant_ID": "UAT-P001",
+                        "Study_Event_OID": st["event"], "Event_Repeat_Key": "1", "Form_OID": st["form"],
+                        "Item_Group_OID": st.get("item_group", ""), "Item_OID": st.get("item_oid", ""),
+                        "Item_Name": st["item"], "Load_Value": str(st.get("value", "")), "Load_Order": "0",
+                        "Scenario": "Setup for multi-step cases", "Expected Result": "Setup value stored.",
+                        "_setup": True})
+    return out
+
+
+def _confirm_setup(setup_rows: list, stamp_map: dict, clinical_data: dict) -> dict:
+    """{(form, event, item): (ok, note)}: was each setup value stored for UAT-P001 (read back from OpenClinica)?"""
+    pkey = str(((stamp_map or {}).get("UAT-P001") or {}).get("participant_key") or "").strip()
+    out = {}
+    for r in setup_rows:
+        key = (pkey, str(r["Study_Event_OID"]).upper(), str(r["Form_OID"]).upper(),
+               str(r.get("Item_Group_OID", "")).upper(), str(r.get("Item_OID", "")).upper())
+        stored = clinical_data.get(key)
+        ok = stored is not None and str(stored).strip() == str(r["Load_Value"]).strip()
+        note = (f"{r['Form_OID']}.{r['Item_Name']}={r['Load_Value']} loaded and confirmed" if ok else
+                f"{r['Form_OID']}.{r['Item_Name']}={r['Load_Value']} not stored "
+                f"(OpenClinica holds {stored!r})")
+        out[(r["Form_OID"], r["Study_Event_OID"], r["Item_Name"])] = (ok, note)
+    return out
+
+
+def _mark_setup_results(dvs_bytes: bytes, confirmed: dict) -> bytes:
+    """Write the setup outcome on each multi-step case: failed setup -> Not Run with the reason (the browser step
+    skips it); confirmed setup -> recorded in Preconditions, which the Evidence line quotes."""
+    import openpyxl as _ox
+    wb = _ox.load_workbook(io.BytesIO(dvs_bytes))
+    ws, hrow, col = _case_sheet(wb)
+    if ws is None or hrow is None or "Setup_Steps" not in col or "Preconditions" not in col:
+        return dvs_bytes
+    for r in range(hrow + 1, ws.max_row + 1):
+        raw = ws.cell(row=r, column=col["Setup_Steps"]).value
+        if not raw:
+            continue
+        try:
+            steps = json.loads(raw)
+        except Exception:
+            continue
+        res = [confirmed.get((st.get("form"), st.get("event"), st.get("item")),
+                             (False, f"{st.get('form')}.{st.get('item')} setup was not loaded")) for st in steps]
+        if all(ok for ok, _ in res):
+            ws.cell(row=r, column=col["Preconditions"], value="Setup: " + "; ".join(n for _, n in res))
+        else:
+            ws.cell(row=r, column=col["Test Result"], value="Not Run")
+            ws.cell(row=r, column=col["Actual Result"],
+                    value="Setup failed: " + "; ".join(n for ok, n in res if not ok))
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
 def _group_by_participant(rows: list) -> dict:
     """Group UAT_Cases rows by Participant_ID, sorted by Load_Order."""
     groups = {}
@@ -1422,6 +1490,10 @@ def _finalize_test_methods(dvs_bytes: bytes, browser_status: str) -> tuple:
         result, actual, notes = get("Test Result"), get("Actual Result"), get("Notes")
         if notes.startswith("Playwright"):
             method, evidence = METHOD_BROWSER, actual or "Exercised in the form by the browser test."
+            pre = get("Preconditions")
+            if pre.startswith("Setup:"):
+                evidence = f"{pre}. Test: entered {get('Test_Value') or get('Load_Value')} on " \
+                           f"{get('Form_OID')}.{get('Item_Name')}; {evidence}"
         elif result in ("Pass", "Fail") and actual and actual != "Not Testable via ODM":
             method = METHOD_ODM
             evidence = (f"{get('Participant_ID') or 'participant'}: loaded {get('Load_Value') or '(nothing)'}; "
@@ -1461,6 +1533,7 @@ async def run_uat_loader(item_id: str, fo_titles: dict = None) -> dict:
     Loads OC session cookies from the saved Playwright storage_state file.
     Returns dict: success, site_oid, participants_created, odm_imports, errors.
     """
+    _setup = []  # multi-step setup rows (see _setup_rows)
     result = {
         "success": False,
         "site_oid": None,
@@ -1564,6 +1637,9 @@ async def run_uat_loader(item_id: str, fo_titles: dict = None) -> dict:
     await append_log(item_id, "UAT Loader: parsing UAT_Cases sheet...")
     try:
         uat_rows = _parse_uat_cases(dvs_bytes)
+        # Prerequisite values for multi-step cases are loaded too (into UAT-P001), before any browser test.
+        _setup = _setup_rows(uat_rows)
+        uat_rows = uat_rows + _setup
     except Exception as e:
         result["errors"].append(f"DVS parse failed: {e}")
         return result
@@ -1823,6 +1899,18 @@ async def run_uat_loader(item_id: str, fo_titles: dict = None) -> dict:
         except Exception as e:
             await append_log(item_id,
                 f"UAT Loader: evaluation failed (non-fatal): {e}")
+
+    # ── Step 9a': multi-step setup confirmed before any browser test ─────
+    if _setup:
+        try:
+            _conf = _confirm_setup(_setup, stamp_map, clinical_data or {})
+            stamped_bytes = _mark_setup_results(stamped_bytes, _conf)
+            _bad = [n for ok, n in _conf.values() if not ok]
+            await append_log(item_id, f"UAT Loader: multi-step setup values: {len(_conf) - len(_bad)} of "
+                                      f"{len(_conf)} stored and confirmed"
+                                      + (". Not stored: " + "; ".join(_bad[:5]) if _bad else ""))
+        except Exception as e:
+            await append_log(item_id, f"UAT Loader: setup confirmation failed (non-fatal): {e}")
 
     # ── Step 9b: Browser (Playwright) tests for the cases a data import cannot test ──
     import os as _os2

@@ -833,13 +833,16 @@ def _infer_test_cases_single(check, row, choices_for_field, ctx=None, world=None
         src = (form_fields or {}).get(ref) or {}
         ref_val = str(_sample_for_field(ref, str(src.get("type") or "text").lower(),
                                         _choices_for_field(src, form_choices), ctx or {}))
+        _st = _setup_step(ref, ref_val, world)
         return [
             {"scenario":   f"Happy path: value equals ${{{ref}}}",
              "input_data": f"{ref}={ref_val}, then this value={ref_val}",
-             "expected":   "No constraint error. Form saves."},
+             "expected":   "No constraint error. Form saves.",
+             "setup": [_st] if _st else [], "test_value": str(ref_val)},
             {"scenario":   f"Sad path: value differs from ${{{ref}}}",
              "input_data": f"{ref}={ref_val}, then this value={ref_val}_DIFFERENT",
-             "expected":   f"Constraint fires. Message: {msg_short}"},
+             "expected":   f"Constraint fires. Message: {msg_short}",
+             "setup": [_st] if _st else [], "test_value": f"{ref_val}_DIFFERENT"},
         ]
 
     # Unparseable — fallback to generic, but still try to give concrete values
@@ -968,13 +971,16 @@ def _infer_test_cases_single(check, row, choices_for_field, ctx=None, world=None
             src = (world.get("__cf_sources__") or {}).get(ref)
             ref_set = (f"{src[1]} on form {src[0]}={base_date} (fetched here as {ref})" if src
                        else f"{ref}={base_date}")
+            _st = _setup_step(ref, base_date, world)
             return [
                 {"scenario":   f"Happy path: this date is {direction_str} {ref} value",
                  "input_data": f"{ref_set}, then this date={happy_date}",
-                 "expected":   "No constraint error. Form saves."},
+                 "expected":   "No constraint error. Form saves.",
+                 "setup": [_st] if _st else [], "test_value": happy_date},
                 {"scenario":   f"Sad path: this date violates the {direction_str} {ref} rule",
                  "input_data": f"{ref_set}, then this date={sad_date}",
-                 "expected":   f"Constraint fires. Message: {msg_short}"},
+                 "expected":   f"Constraint fires. Message: {msg_short}",
+                 "setup": [_st] if _st else [], "test_value": sad_date},
             ]
 
         # Numeric reference-bound (non-date)
@@ -994,13 +1000,16 @@ def _infer_test_cases_single(check, row, choices_for_field, ctx=None, world=None
         except (ValueError, TypeError):
             happy_str = f"a value satisfying {expr[:40]}"
             sad_str   = f"a value violating {expr[:40]}"
+        _st = _setup_step(ref, ref_value, world)
         return [
             {"scenario":   f"Happy path: value satisfies ${{{ref}}} relationship",
              "input_data": f"{ref}={ref_value}, then this value={happy_str}",
-             "expected":   "No constraint error. Form saves."},
+             "expected":   "No constraint error. Form saves.",
+             "setup": [_st] if _st else [], "test_value": happy_str},
             {"scenario":   f"Sad path: value violates ${{{ref}}} relationship",
              "input_data": f"{ref}={ref_value}, then this value={sad_str}",
-             "expected":   f"Constraint fires. Message: {msg_short}"},
+             "expected":   f"Constraint fires. Message: {msg_short}",
+             "setup": [_st] if _st else [], "test_value": sad_str},
         ]
 
     # ── Date vs today() ───────────────────────────────────────────────────
@@ -1229,6 +1238,8 @@ def _uat_row(uat_id, check_id, form_id, field_name, field_label, case,
         "Preconditions":     f"Open {form_id} form with required upstream data populated",
         "Test Steps":        f"1. Navigate to {form_id}.{field_name}\n2. Apply the input data below\n3. Attempt to save",
         "Input Data":        case["input_data"],
+        "Setup_Steps":       json.dumps(case["setup"]) if case.get("setup") else "",
+        "Test_Value":        str(case.get("test_value") or ""),
         "Expected Result":   case["expected"],
         "Actual Result":     "",
         "Test Result":       "",
@@ -1260,6 +1271,32 @@ def _uat_row(uat_id, check_id, form_id, field_name, field_label, case,
 
 _UI_ONLY_EXPECTED = ("error shown", "Form does not save", "Constraint fires",
                      "Subject is ineligible")
+
+
+def _setup_step(ref, value, world):
+    """Where a multi-step case's prerequisite value must be stored before the test: {form, event, item_group,
+    item, item_oid, value}. Same-form references use this form; a cross-form fetch helper (X_CF) points at its
+    source form/item. None when the location cannot be determined (the case then keeps its text-only setup)."""
+    world = world or {}
+    here = world.get("__form__") or {}
+    src = (world.get("__cf_sources__") or {}).get(ref)
+    if src:
+        fid, item = src[0], src[1]
+        fo = fid if fid.upper().startswith("F_") else "F_" + fid
+        ev = (src[2] if len(src) > 2 else "") or (world.get("__form_events__") or {}).get(fo.upper(), "")
+        group_name = (src[3] if len(src) > 3 else "") or "MAIN"
+    else:
+        if ref not in (here.get("ig_map") or {}) and ref not in (here.get("fields") or ()):
+            return None
+        fid, item, ev = here.get("form_id", ""), ref, here.get("event", "")
+        fo = fid if fid.upper().startswith("F_") else "F_" + fid
+        group_name = (here.get("ig_map") or {}).get(ref) or here.get("default_ig") or "MAIN"
+    if not fid or not item:
+        return None
+    # the same prediction _uat_row uses, so reserved slots match the case rows (the loader maps real OIDs anyway)
+    short = (world.get("__form_prefix__") or {}).get(f"F_{fid}", "") or (fo[2:] if fo.upper().startswith("F_") else fo)
+    return {"form": fo, "event": ev, "item_group": f"IG_{short}_{group_name}",
+            "item": item, "item_oid": f"I_{short}_{item}", "value": str(value)}
 
 
 def _odm_slots(uat_case):
@@ -1450,8 +1487,15 @@ def extract_dvs_data(struct_json, forms_json):
             m = re.search(r"FormOID='([^']+)'.*?ItemName='([^']+)'", calc)
             if m and "instance('clinicaldata')" in calc:
                 ev = re.search(r"StudyEventOID='([^']+)'", calc)
-                _cf[r.get("name")] = (m.group(1), m.group(2), ev.group(1) if ev else "")
+                ig = re.search(r"ItemGroupName='([^']+)'", calc)
+                _cf[r.get("name")] = (m.group(1), m.group(2), ev.group(1) if ev else "", ig.group(1) if ig else "")
         cross_form_world["__cf_sources__"] = _cf
+        _fk = form_id.upper() if form_id.upper().startswith("F_") else f"F_{form_id.upper()}"
+        cross_form_world["__form__"] = {"form_id": form_id, "event": form_event_map.get(_fk, ""),
+                                        "ig_map": dict(field_ig_map), "default_ig": form_default_ig,
+                                        "fields": {r.get("name") for r in survey if isinstance(r, dict)}}
+        cross_form_world["__form_events__"] = form_event_map
+        cross_form_world["__form_prefix__"] = _form_prefix_map
 
         # field -> its choice codes, so gate (relevance) test values are always real options
         form_gate_codes = {r.get("name"): _choices_for_field(r, choices)
@@ -1662,6 +1706,13 @@ def extract_dvs_data(struct_json, forms_json):
     # This guarantees each participant's ODM load has at most one value per
     # field, so read-back can correctly validate each loaded value.
     _slot_by_participant = {}   # participant_id -> set of (fo, item, ev) slots
+    # Multi-step cases are tested in the browser on UAT-P001, so their setup values are loaded there: reserve
+    # those slots first, so no data-import case writes a different value into the same field on UAT-P001.
+    _setup_slots = set()
+    for _uc in uat_cases:
+        for _st in (json.loads(_uc["Setup_Steps"]) if _uc.get("Setup_Steps") else []):
+            _setup_slots.add((_st.get("form", ""), _st.get("item_oid", ""), _st.get("event", "")))
+    _slot_by_participant["UAT-P001"] = set(_setup_slots)
     _max_p = 1
     for _uc in uat_cases:
         _slots = _odm_slots(_uc)

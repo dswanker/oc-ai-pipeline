@@ -180,6 +180,9 @@ UAT_COLS = [
     # Col 27: XLSForm item name. Item_OID is a prediction (OpenClinica can add
     # a random suffix); the loader maps Form_OID + Item_Name to the real OID.
     "Item_Name",
+    # Multi-step cases: prerequisite values loaded (and confirmed) before the browser test, and the value the
+    # browser enters on the target item.
+    "Setup_Steps", "Test_Value",
 ]
 UAT_WIDTHS = {
     "UAT Case ID": 12, "Status": 12, "Related Check ID": 14, "Scenario": 32,

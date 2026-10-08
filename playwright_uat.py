@@ -13,6 +13,7 @@ Test types:
 """
 
 import asyncio
+import json
 import io
 import os
 import re
@@ -90,6 +91,10 @@ def _classify_pw_row(row_dict: dict) -> Optional[str]:
 
 
 _read_field_errors_diag_logged = set()
+
+# Multi-step cases: prerequisite values loaded via ODM before the browser step. After a test on a field that is
+# also another case's prerequisite, the field is restored to this value instead of cleared, so the order holds.
+_SETUP_VALUES: dict = {}
 
 async def _read_field_errors(page, field_name: str) -> list[str]:
     """
@@ -904,6 +909,11 @@ async def _test_one_form(
             for row, row_dict, test_type in form_rows:
                 uid  = str(row_dict.get("UAT Case ID") or "")
                 lv   = str(row_dict.get("Load_Value") or "").strip()
+                # Multi-step case: its setup was loaded and confirmed before this step, so the browser just enters
+                # the value under test (Test_Value) like any plain-value case.
+                _tv = str(row_dict.get("Test_Value") or "").strip()
+                if _tv and row_dict.get("Setup_Steps"):
+                    lv = _tv
                 exp  = str(row_dict.get("Expected Result") or "").strip()
                 item = str(row_dict.get("Item_OID") or "").strip()
                 # Field name: the Item_Name column when present (the loader
@@ -1092,7 +1102,8 @@ async def _test_one_form(
                         # (avoids full page reload; Enketo clears constraint on empty)
                         if _lv_is_plain and form_frame:
                             try:
-                                await _enter_field_value(frame, field_name, "", fo)
+                                _restore = _SETUP_VALUES.get((str(fo).upper(), field_name), "")
+                                await _enter_field_value(frame, field_name, _restore, fo)
                                 await page.wait_for_timeout(300)
                             except Exception:
                                 pass
@@ -1205,7 +1216,11 @@ async def run_playwright_uat(
         ar = str(row[col_idx["Actual Result"] - 1].value or "").strip()
         if tr in ("Pass", "Fail") and ar not in ("Not Testable via ODM", ""):
             continue
+        if ar.startswith("Setup failed"):
+            continue
         row_dict = {k: row[v - 1].value for k, v in col_idx.items()}
+        for _st in (json.loads(row_dict["Setup_Steps"]) if row_dict.get("Setup_Steps") else []):
+            _SETUP_VALUES[(str(_st.get("form", "")).upper(), _st.get("item", ""))] = str(_st.get("value", ""))
         test_type = _classify_pw_row(row_dict)
         if test_type:
             pw_rows.append((row, row_dict, test_type))
