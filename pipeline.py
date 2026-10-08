@@ -4381,6 +4381,16 @@ async def _load_usdm_input(item_id):
             f"the protocol analysis fills form content only."
             + (f" Schema findings ({len(problems)}, not blocking): " + "; ".join(problems[:3])
                + (" ..." if len(problems) > 3 else "") if problems else ""))
+        # CDISC CORE conformance rules on the USDM file (core_validation.py): only when a CORE engine is
+        # configured (CORE_ENGINE_CMD); offline from the engine's own cache; reported, never blocking.
+        try:
+            import core_validation
+            if core_validation.configured():
+                _core = await asyncio.get_event_loop().run_in_executor(None, lambda: core_validation.run_usdm(data))
+                if _core:
+                    await append_log(item_id, core_validation.log_line(_core))
+        except Exception as _ce:
+            print(f"[core] not run: {_ce}", flush=True)
         return structure
     except Exception as e:
         print(f"[usdm] input could not be read (run continues without it): {e}", flush=True)

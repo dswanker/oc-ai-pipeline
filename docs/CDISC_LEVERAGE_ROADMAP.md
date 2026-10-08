@@ -88,6 +88,14 @@ selected in the run; never triggers a protocol analysis alone. Built on a copy o
 CORE engine runs from its local cache (`-lr` local rules, `--cache-path`). USDM rules, SDTMIG rules for
 trial design and mapped UAT data.
 
+SHIPPED (USDM inputs): `core_validation.py` + `pipeline._load_usdm_input`. Verified offline (network blocked,
+no Library API key): cdisc-rules-engine 0.17.1 with its shipped `resources/cache` runs 207 USDM 4.0 rules in
+about 20 s per file (DDF-RA examples: 617 / 355 / 216 findings). The engine is an external command, not a
+pipeline dependency (it needs Python 3.12; the pipeline image is 3.11): active only when `CORE_ENGINE_CMD` is set
+(`CORE_ENGINE_DIR`, `CORE_CACHE_DIR` optional; `CORE_VALIDATE=0` disables). Findings go to the monday log and
+never block a build. Not shipped: installing the engine and its 462 MB cache in the Railway image; SDTMIG rules
+on trial design / mapped UAT data.
+
 ## 7. USDM input
 `cdisc-org/usdm` (pip `usdm`): USDM model classes + Excel importer. CORE has USDM v3/v4 rules;
 `cdisc-jsonata-rules` has USDM test data (clean and dirty). See CDISC_DDF_RA_REFERENCE.md.
@@ -139,4 +147,5 @@ This is the open-source counterpart of the OC AI Pipeline; reuse its parts inste
 3. QRS instruments for ePRO forms (section 3). SHIPPED: `cdisc_qrs.py`.
 4. Annotated CRF (section 5). SHIPPED: `acrf.py`.
 5. USDM 4.0 input (section 7). SHIPPED: `usdm_input.py`.
-Then CORE output validation, submission artifacts.
+6. CORE validation of USDM inputs (section 6). SHIPPED: `core_validation.py` (engine install is a deploy step).
+Then CORE validation of outputs (trial design, mapped UAT data), submission artifacts.
