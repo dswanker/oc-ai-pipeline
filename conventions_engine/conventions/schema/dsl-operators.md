@@ -373,3 +373,11 @@ Example (end date on or after its matching start date, any domain):
   i.e. an author wrote an equivalent check) and `if_author_unconstrained` (apply only when the field has no authored
   constraint: empty, or built solely by add_constraint, tracked in `constraint_engine_only`). `check_id` is recorded in
   `edit_checks` only when the check is actually present on the field.
+
+### List bindings and code lookup (2026-10-08)
+- `field.has_sibling` accepts `"as_all": "<name>"`: binds EVERY matching sibling (form order) as a list. A list must be
+  reduced by a list filter: `${criteria|any_yes}` -> `(${A} = '<A yes>' or ${B} = '<B yes>')` (each field's own Yes
+  code; unresolved if any field has none); `${criteria|names}` -> "Label A, Label B".
+- Bound fields carry `_code`: UPPER(code / label / CDISC submission value) -> code, e.g. `${outcome._code.FATAL}`.
+  The current field's own map: `${field._code.FATAL}`; own Yes/No: `${field._yes_code}`, `${field._no_code}`.
+- Filter `first:N` (e.g. `${field.concept|first:2}OCCUR` -> `EXOCCUR`).

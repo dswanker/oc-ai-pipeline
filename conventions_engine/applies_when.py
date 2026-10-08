@@ -39,6 +39,9 @@ def _resolve_path(path: str, ctx: EntityContext) -> Any:
     if head == "field" and len(rest) == 1 and rest[0] in ("_yes_code", "_no_code") and ctx.kind == "field":
         # The field's own Yes / No codes, read from its choice list (code, label or CDISC submission value).
         return _yes_no_codes(ctx.entity, ctx.parent or {}).get(rest[0], _SENTINEL_MISSING)
+    if head == "field" and len(rest) == 2 and rest[0] == "_code" and ctx.kind == "field":
+        # The field's own code for a meaning, e.g. ${field._code.FATAL}
+        return _code_map(ctx.entity, ctx.parent or {}).get(rest[1].upper(), _SENTINEL_MISSING)
     if head in bindings:
         current: Any = bindings[head]
     elif head == "study":
@@ -141,11 +144,29 @@ def _apply_filter(val: str, spec: str) -> str:
         return val[: -len(args[0])] if args[0] and val.endswith(args[0]) else val
     if name == "strip_prefix" and len(args) == 1:
         return val[len(args[0]):] if val.startswith(args[0]) else val
+    if name == "first" and len(args) == 1 and args[0].isdigit():
+        return val[: int(args[0])]
     if name == "upper":
         return val.upper()
     if name == "lower":
         return val.lower()
     raise DSLEvaluationError(f"Unknown template filter {spec!r}")
+
+
+def _any_yes(items):
+    """(${A} = '<A yes>' or ${B} = '<B yes>'); None if any item has no determinable Yes code."""
+    parts = []
+    for it in items:
+        if not it.get("_yes_code") or not it.get("name"):
+            return None
+        parts.append("${" + str(it["name"]) + "} = '" + str(it["_yes_code"]) + "'")
+    return "(" + " or ".join(parts) + ")" if parts else None
+
+
+_LIST_FILTERS = {
+    "any_yes": _any_yes,
+    "names": lambda items: ", ".join(str(i.get("label") or i.get("name")) for i in items) or None,
+}
 
 
 def render(template: str, ctx: EntityContext, strict: bool = False) -> str:
@@ -163,7 +184,16 @@ def render(template: str, ctx: EntityContext, strict: bool = False) -> str:
         val = _resolve_path(path, ctx)
         if val is _SENTINEL_MISSING:
             return f"<unresolved:{path}>" if strict else m.group(0)
-        out = str(val)
+        if isinstance(val, list):
+            # list bindings (as_all) must be reduced by a list filter first
+            if not filters or filters[0] not in _LIST_FILTERS:
+                return f"<unresolved:{path}>" if strict else m.group(0)
+            out = _LIST_FILTERS[filters[0]](val)
+            if out is None:
+                return f"<unresolved:{path}|{filters[0]}>" if strict else m.group(0)
+            filters = filters[1:]
+        else:
+            out = str(val)
         for f in filters:
             out = _apply_filter(out, f)
         return out
@@ -205,13 +235,34 @@ def _yes_no_codes(candidate: Dict[str, Any], form: Dict[str, Any]) -> Dict[str, 
     return out
 
 
+def _code_map(candidate: Dict[str, Any], form: Dict[str, Any]) -> Dict[str, str]:
+    """UPPER(code / label / CDISC submission value) -> code, for a bound select field's own list."""
+    t = str(candidate.get("type") or "").strip()
+    if not t.lower().startswith("select") or " " not in t:
+        return {}
+    ln = t.split(" ", 1)[1].strip()
+    out: Dict[str, str] = {}
+    for c in form.get("choices") or []:
+        if isinstance(c, dict) and str(c.get("list_name") or "").strip() == ln:
+            code = str(c.get("name") or "").strip()
+            for k in (code, c.get("label"), c.get("cdisc_submission_value")):
+                if k and str(k).strip().upper() not in out:
+                    out[str(k).strip().upper()] = code
+    return out
+
+
+def _bound(candidate: Dict[str, Any], form: Dict[str, Any]) -> Dict[str, Any]:
+    return {**candidate, "_form_id": form.get("form_id"), **_yes_no_codes(candidate, form),
+            "_code": _code_map(candidate, form)}
+
+
 def _bind(ctx: EntityContext, payload: Dict[str, Any], candidate: Dict[str, Any], form: Dict[str, Any]) -> None:
     name = payload.get("as")
     if not name:
         return
     if name in _ROOTS:
         raise DSLEvaluationError(f"'as' name {name!r} is reserved")
-    ctx.bindings[name] = {**candidate, "_form_id": form.get("form_id"), **_yes_no_codes(candidate, form)}
+    ctx.bindings[name] = _bound(candidate, form)
 
 
 def _op_equals(actual: Any, expected: Any) -> bool:
@@ -390,6 +441,10 @@ def _eval_has_sibling(payload: Dict[str, Any], ctx: EntityContext) -> bool:
     survey = form.get("survey", []) or []
     self_id = id(ctx.entity)
     self_ig = ctx.entity.get("bind__oc_itemgroup", "") if isinstance(ctx.entity, dict) else ""
+    collect = payload.get("as_all")
+    if collect and collect in _ROOTS:
+        raise DSLEvaluationError(f"'as_all' name {collect!r} is reserved")
+    found = []
     for i, candidate in enumerate(survey):
         if id(candidate) == self_id:
             continue  # exclude self
@@ -403,8 +458,14 @@ def _eval_has_sibling(payload: Dict[str, Any], ctx: EntityContext) -> bool:
             spec=ctx.spec, path=f"<has_sibling-probe[{i}]>",
         )
         if _eval_block(where, temp_ctx, []).matched:
+            if collect:
+                found.append(_bound(candidate, form))
+                continue
             _bind(ctx, payload, candidate, form)
             return True
+    if collect and found:
+        ctx.bindings[collect] = found  # every matching sibling, in form order
+        return True
     return False
 
 

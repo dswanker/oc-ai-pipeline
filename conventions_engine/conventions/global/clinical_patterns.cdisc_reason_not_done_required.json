@@ -1,0 +1,85 @@
+{
+  "id": "clinical_patterns.cdisc_reason_not_done_required",
+  "title": "Reason not done is required when the assessment was not performed (CORE-000440)",
+  "kind": "hybrid",
+  "scope": "global",
+  "status": "active",
+  "natural_key": "cdisc_reason_not_done_required",
+  "description": "A --REASND field paired with its --PERF field (same CDASH concept family and qualifier, or same name stem) is shown only when Performed = No (that field's own No code) and is required.",
+  "rationale": "CDISC CORE-000440: a NOT DONE status must carry a reason. Requiring the reason at entry avoids queries.",
+  "target": "field",
+  "created_at": "2026-10-08T00:00:00Z",
+  "created_by": "system:cdisc_core_checks",
+  "source": "cdisc:core:CORE-000440",
+  "tags": [
+    "cdisc",
+    "core",
+    "findings",
+    "edit_check"
+  ],
+  "applies_when": {
+    "all_of": [
+      {
+        "any_of": [
+          {
+            "field.concept": {
+              "matches": "^[A-Z]{2}REASND$"
+            }
+          },
+          {
+            "field.name": {
+              "matches": "^.*REASND$"
+            }
+          }
+        ]
+      },
+      {
+        "field.has_sibling": {
+          "where": {
+            "all_of": [
+              {
+                "field.type": {
+                  "matches": "^select_one "
+                }
+              },
+              {
+                "any_of": [
+                  {
+                    "all_of": [
+                      {
+                        "field.concept": "${field.concept|replace:REASND:PERF}"
+                      },
+                      {
+                        "any_of": [
+                          {
+                            "field.concept_qualifier": "${field.concept_qualifier}"
+                          },
+                          {
+                            "field.concept_qualifier": {
+                              "empty": true
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "field.name": "${field.name|replace:REASND:PERF}"
+                  }
+                ]
+              }
+            ]
+          },
+          "scope": "same_form",
+          "as": "perf"
+        }
+      }
+    ]
+  },
+  "effect": {
+    "ensure": {
+      "field.relevant": "${${perf.name}} = '${perf._no_code}'",
+      "field.required": "yes"
+    }
+  }
+}

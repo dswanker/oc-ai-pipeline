@@ -1,0 +1,80 @@
+{
+  "id": "clinical_patterns.cdisc_serious_ae_requires_criterion",
+  "title": "Serious AE must have at least one seriousness criterion = Yes (CORE-000022)",
+  "kind": "hybrid",
+  "scope": "global",
+  "status": "active",
+  "natural_key": "cdisc_serious_ae_requires_criterion",
+  "description": "On the AE 'Serious?' field, when the form has seriousness-criteria fields (death, life-threatening, hospitalisation, disability, congenital anomaly, other medically important), add a check that a Serious = Yes answer has at least one criterion = Yes. Criteria are found by CDASH concept or name; each uses its own Yes code.",
+  "rationale": "CDISC CORE-000022 (SDTMIG AE): AESER must be 'Y' when any seriousness criterion is 'Y', and a serious AE must carry its criteria. Catching the mismatch at entry avoids a submission-time conformance finding.",
+  "target": "field",
+  "created_at": "2026-10-08T00:00:00Z",
+  "created_by": "system:cdisc_core_checks",
+  "source": "cdisc:core:CORE-000022",
+  "tags": [
+    "cdisc",
+    "core",
+    "ae",
+    "edit_check"
+  ],
+  "applies_when": {
+    "all_of": [
+      {
+        "any_of": [
+          {
+            "field.concept": "AESER"
+          },
+          {
+            "field.name": "AESER"
+          }
+        ]
+      },
+      {
+        "field.type": {
+          "matches": "^select_one "
+        }
+      },
+      {
+        "field.has_sibling": {
+          "where": {
+            "any_of": [
+              {
+                "field.concept": {
+                  "in": [
+                    "AESDTH",
+                    "AESLIFE",
+                    "AESHOSP",
+                    "AESDISAB",
+                    "AESCONG",
+                    "AESMIE"
+                  ]
+                }
+              },
+              {
+                "field.name": {
+                  "in": [
+                    "AESDTH",
+                    "AESLIFE",
+                    "AESHOSP",
+                    "AESDISAB",
+                    "AESCONG",
+                    "AESMIE"
+                  ]
+                }
+              }
+            ]
+          },
+          "scope": "same_form",
+          "as_all": "criteria"
+        }
+      }
+    ]
+  },
+  "effect": {
+    "add_constraint": {
+      "expr": ". != '${field._yes_code}' or ${criteria|any_yes}",
+      "message": "Serious AE: at least one seriousness criterion must be Yes.",
+      "check_id": "CORE-000022"
+    }
+  }
+}
