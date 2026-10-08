@@ -9,17 +9,19 @@ Verifies that:
    common form cards under it.
 4. Visit-based forms are unaffected.
 """
+import os as _os_repo
+_REPO_ROOT = _os_repo.path.dirname(_os_repo.path.dirname(_os_repo.path.dirname(_os_repo.path.abspath(__file__))))
 import copy
 import pytest
 import sys
 
-sys.path.insert(0, '/Users/danswanker/oc-ai-pipeline')
+sys.path.insert(0, _REPO_ROOT)
 
 
 @pytest.fixture(scope='session')
 def pipeline_fns_board():
     import ast
-    src = open('/Users/danswanker/oc-ai-pipeline/pipeline.py').read()
+    src = open(_os_repo.path.join(_REPO_ROOT, 'pipeline.py')).read()
     tree = ast.parse(src)
     snippets = []
     for node in ast.walk(tree):

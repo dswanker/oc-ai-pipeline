@@ -4,12 +4,14 @@ Tests _parse_crf_standards_questions, _parse_crf_standards_choices,
 _apply_crf_standards, and field name sanitization.
 No API calls, no Monday, no filesystem — all inputs are in-memory.
 """
+import os as _os_repo
+_REPO_ROOT = _os_repo.path.dirname(_os_repo.path.dirname(_os_repo.path.dirname(_os_repo.path.abspath(__file__))))
 import re
 import sys
 import copy
 import pytest
 
-sys.path.insert(0, '/Users/danswanker/oc-ai-pipeline')
+sys.path.insert(0, _REPO_ROOT)
 
 
 QUESTIONS_CSV = b"""Form,Variable Name,Label,Variable Type,Sequence

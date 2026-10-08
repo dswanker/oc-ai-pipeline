@@ -73,7 +73,13 @@ def _install_stubs():
 
 
 def _import_checklist(scripts_dir):
-    """Import build_checklist from a specific scripts directory."""
+    """Import build_checklist from a specific scripts directory.
+
+    The stubs and this copy of build_checklist are removed from sys.modules again afterwards: left in place they
+    replaced the real openpyxl/reportlab (and the primary build_checklist) for every later test in the run, which
+    broke the EDC builder integration tests ("AE: choices_complete - Missing lists: yn") in full-suite runs.
+    """
+    before = dict(sys.modules)
     _install_stubs()
     sys.path.insert(0, scripts_dir)
     try:
@@ -83,6 +89,14 @@ def _import_checklist(scripts_dir):
         return build_checklist
     finally:
         sys.path.pop(0)
+        for name in list(sys.modules):
+            if name not in before or isinstance(sys.modules[name], _Stub):
+                if name in before and not isinstance(before[name], _Stub):
+                    sys.modules[name] = before[name]
+                else:
+                    del sys.modules[name]
+        if "build_checklist" in before:
+            sys.modules["build_checklist"] = before["build_checklist"]
 
 
 def _qa_dict(form, module):

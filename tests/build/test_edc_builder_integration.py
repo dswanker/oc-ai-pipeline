@@ -5,11 +5,13 @@ Uses a known fixture spec (no Claude call, no Monday, no network).
 Asserts the ZIP contains the correct forms with valid XLSForm structure.
 Run with: pytest tests/build/test_edc_builder_integration.py -v
 """
+import os as _os_repo
+_REPO_ROOT = _os_repo.path.dirname(_os_repo.path.dirname(_os_repo.path.dirname(_os_repo.path.abspath(__file__))))
 import sys, json, zipfile, io, re
 import pytest
 
-sys.path.insert(0, '/Users/danswanker/oc-ai-pipeline/skills/edc-builder/scripts')
-sys.path.insert(0, '/Users/danswanker/oc-ai-pipeline')
+sys.path.insert(0, _os_repo.path.join(_REPO_ROOT, 'skills', 'edc-builder', 'scripts'))
+sys.path.insert(0, _REPO_ROOT)
 
 # ── Minimal but realistic Study Spec fixture ──────────────────────────────────
 FIXTURE_SPEC = {

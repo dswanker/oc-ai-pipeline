@@ -2,11 +2,13 @@
 Unit tests for JSON extraction from Claude API responses.
 Tests extract_json in claude_client.py — fully offline.
 """
+import os as _os_repo
+_REPO_ROOT = _os_repo.path.dirname(_os_repo.path.dirname(_os_repo.path.dirname(_os_repo.path.abspath(__file__))))
 import sys
 import json
 import pytest
 
-sys.path.insert(0, '/Users/danswanker/oc-ai-pipeline')
+sys.path.insert(0, _REPO_ROOT)
 from claude_client import extract_json
 
 

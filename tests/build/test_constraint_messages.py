@@ -3,10 +3,12 @@ Unit tests for constraint message standardization.
 Tests _normalize_constraint_messages in build_xlsforms.py.
 No API calls, fully offline.
 """
+import os as _os_repo
+_REPO_ROOT = _os_repo.path.dirname(_os_repo.path.dirname(_os_repo.path.dirname(_os_repo.path.abspath(__file__))))
 import sys
 import pytest
 
-sys.path.insert(0, '/Users/danswanker/oc-ai-pipeline/skills/edc-builder/scripts')
+sys.path.insert(0, _os_repo.path.join(_REPO_ROOT, 'skills', 'edc-builder', 'scripts'))
 from build_xlsforms import _normalize_constraint_messages
 
 

@@ -4,11 +4,13 @@ Extracts functions from pipeline.py by compiling the relevant section
 into a shared namespace so inner calls (e.g. _apply_crf_standards calling
 _parse_crf_standards_questions) resolve correctly.
 """
+import os as _os_repo
+_REPO_ROOT = _os_repo.path.dirname(_os_repo.path.dirname(_os_repo.path.dirname(_os_repo.path.abspath(__file__))))
 import sys
 import re
 import pytest
 
-_PIPELINE_PATH = '/Users/danswanker/oc-ai-pipeline/pipeline.py'
+_PIPELINE_PATH = _os_repo.path.join(_REPO_ROOT, 'pipeline.py')
 
 # Functions to extract — order matters: callees before callers
 _FN_NAMES = [
