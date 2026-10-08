@@ -6,7 +6,14 @@ READ-ONLY. Only these calls are made, on the item's own subdomain, with the serv
   2. GET  https://{sub}.build.openclinica.io/study-service/api/studies?page=..&size=1000
   3. GET  https://{sub}.design.openclinica.io/api/boards/{boardId}
   4. GET  https://{sub}.build.openclinica.io/form-service/api/encrypted-versions/{key}/artifacts/{file}
+  5. GET  https://{sub}.build.openclinica.io/rule-service/api/studies/{study_uuid}/rules   (study configuration)
 Nothing is created, published or modified in OpenClinica.
+
+Study configuration (REFERENCE_STUDY_CONFIG=0 disables): the design board already read in step 3 also gives each
+event's type / repeating, each form-at-event card's required / hidden / allowAdd / participate / sdv /
+itemLevelSdv / sdvItems, and the names of the permission tags (board labels with isConfigPermission); step 5 gives
+the scheduler, auto-close and notification rules per event. Recipients of notifications are blanked before anything
+is kept, and an email address or phone number is never logged.
 
 The artifact URL carries an encrypted key that works without sign-in: it is treated like a password and is never
 logged or stored. Log lines name studies, forms and file names only. The whole fetch never fails a build: every
@@ -117,6 +124,94 @@ def board_forms(board):
     return forms, missing
 
 
+# ── Study configuration of a referenced study ────────────────────────────────────
+
+_EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+_PHONE = re.compile(r"(?<![\w.])\+?\d[\d\s().-]{7,}\d(?![\w.])")
+
+
+def config_enabled():
+    return os.environ.get("REFERENCE_STUDY_CONFIG", "1") != "0"
+
+
+def scrub(text):
+    """Text with email addresses and phone numbers removed (tokens such as $participant are kept)."""
+    return _PHONE.sub("[phone removed]", _EMAIL.sub("[email removed]", str(text or "")))
+
+
+def board_config(board):
+    """Configuration read from a design board: {"events": {oid: {...}}, "cards": [...], "permission_tags": [names]}.
+    Archived lists and cards are skipped. The link between a form and a permission tag is not in the board JSON."""
+    board = board or {}
+    events, by_list = {}, {}
+    for lst in board.get("lists") or []:
+        if not isinstance(lst, dict) or lst.get("archived") or not lst.get("eventOcoid"):
+            continue
+        oid = str(lst["eventOcoid"])
+        by_list[lst.get("_id")] = oid
+        events[oid] = {"name": str(lst.get("title") or oid), "type": lst.get("type"), "repeating": bool(lst.get("isRepeating"))}
+    cards = []
+    for card in board.get("cards") or []:
+        if not isinstance(card, dict) or card.get("archived") or not card.get("formOcoid"):
+            continue
+        items = []
+        for it in card.get("sdvItems") or []:
+            if isinstance(it, dict) and (it.get("ocoid") or it.get("name")) and str(it.get("sdv") or "").lower() in ("required", "optional"):
+                items.append({"ocoid": str(it.get("ocoid") or ""), "name": str(it.get("name") or ""),
+                              "sdv": str(it["sdv"]).lower()})
+        cards.append({"event_oid": by_list.get(card.get("listId")), "form_oid": str(card["formOcoid"]),
+                      "title": str(card.get("title") or ""), "required": card.get("required"), "hidden": card.get("hidden"),
+                      "allow_add": card.get("allowAdd"), "participate": card.get("participate"), "sdv": card.get("sdv"),
+                      "item_level_sdv": card.get("itemLevelSdv"), "sdv_items": items})
+    tags = sorted({str(l.get("name")) for l in board.get("labels") or []
+                   if isinstance(l, dict) and l.get("isConfigPermission") and l.get("name")})
+    return {"events": events, "cards": cards, "permission_tags": tags}
+
+
+def rules_config(rules):
+    """Per event OID, from the study's rule-service rules: {"scheduler", "auto_close", "notifications"}.
+    Notification recipients are blanked and addresses / numbers in the texts are removed."""
+    out = {}
+
+    def ev(oid):
+        return out.setdefault(str(oid), {"scheduler": None, "auto_close": None, "notifications": []})
+
+    for rule in rules if isinstance(rules, list) else []:
+        if not isinstance(rule, dict):
+            continue
+        crit = rule.get("criteria") if isinstance(rule.get("criteria"), dict) else {}
+        for act in rule.get("actions") or []:
+            if not isinstance(act, dict):
+                continue
+            kind = act.get("type")
+            if kind == "EVENT_ACTION" and act.get("closeEvent") and act.get("targetEventOid"):
+                if isinstance(crit.get("offset"), (int, float)):
+                    ev(act["targetEventOid"])["auto_close"] = {"after_days": crit["offset"], "when": crit.get("when") or "after",
+                                                               "rule": str(rule.get("name") or "")}
+            elif kind == "EVENT_ACTION" and act.get("targetEventOid") and (
+                    act.get("targetEventStatus") == "SCHEDULED" or act.get("startDateExpression") or act.get("relativeEventOid")):
+                rel, off = act.get("relativeEventOid"), act.get("startDateRelativeDays")
+                if not rel and rule.get("type") == "RUN_ON_SCHEDULE" and crit.get("eventOid") and crit["eventOid"] != act["targetEventOid"]:
+                    rel, off = crit["eventOid"], crit.get("offset")
+                trig = rule.get("triggerType")
+                ev(act["targetEventOid"])["scheduler"] = {
+                    "trigger": ", ".join(trig) if isinstance(trig, list) else str(trig or rule.get("type") or ""),
+                    "relative_event": rel or None, "offset_days": off if isinstance(off, (int, float)) else None,
+                    "rule": str(rule.get("name") or "")}
+            elif kind == "NOTIFICATION_ACTION" and crit.get("eventOid"):
+                clean = {"name": scrub(rule.get("name")), "condition": rule.get("condition") or "$TRUE",
+                         "type": rule.get("type"), "schedule": rule.get("schedule"), "time": rule.get("time"),
+                         "criteria": {k: crit.get(k) for k in ("type", "eventOid", "eventStatuses", "offset", "when", "range")},
+                         "actions": [{"type": "NOTIFICATION_ACTION", "ruleResultToTriggerOn": act.get("ruleResultToTriggerOn", True),
+                                      "toEmailAddress": "", "emailSubject": scrub(act.get("emailSubject")),
+                                      "emailMessage": scrub(act.get("emailMessage")), "textMessage": scrub(act.get("textMessage")),
+                                      "toPhoneNumber": ""}]}
+                ev(crit["eventOid"])["notifications"].append(
+                    {"rule": clean, "had_email_recipient": bool(str(act.get("toEmailAddress") or "").strip()),
+                     "had_phone_recipient": bool(str(act.get("toPhoneNumber") or "").strip())})
+    return out
+
+
 def _safe(e):
     """An error for the log without its URL (which may carry the artifact key)."""
     return type(e).__name__ + (f" {e.response.status_code}" if getattr(e, "response", None) is not None else "")
@@ -177,6 +272,33 @@ async def _fetch_study(client, subdomain, headers, ref, study, sem):
         return out
     forms, missing = board_forms(board)
     failed = []
+    if config_enabled():
+        # study configuration: from the board already read, plus the study's rules (read-only GET)
+        try:
+            cfg = board_config(board)
+            cfg["identifier"], cfg["rules"], cfg["rules_note"] = ident, {}, ""
+            uuid = study.get("uuid") or (board or {}).get("studyUuid")
+            if uuid and re.match(r"^[A-Za-z0-9-]+$", str(uuid)):
+                try:
+                    rules, _r = await _get(client, f"https://{subdomain}.build.openclinica.io/rule-service/api/"
+                                                   f"studies/{uuid}/rules", headers)
+                    cfg["rules"] = rules_config(rules)
+                except Exception as e:
+                    cfg["rules_note"] = f"rules could not be read ({_safe(e)})"
+            else:
+                cfg["rules_note"] = "no study uuid: rules not read"
+            out["config"] = cfg
+            n_sdv = sum(1 for c in cfg["cards"] if c["sdv_items"])
+            rc = cfg["rules"]
+            out["log"].append(
+                f"Reference OC Studies: {ident}: configuration read: {len(cfg['events'])} event(s), {len(cfg['cards'])} "
+                f"form(s) at events ({n_sdv} with SDV items), {len(cfg['permission_tags'])} permission tag(s), "
+                f"{sum(1 for v in rc.values() if v['scheduler'])} scheduler / "
+                f"{sum(1 for v in rc.values() if v['auto_close'])} auto-close / "
+                f"{sum(len(v['notifications']) for v in rc.values())} notification rule(s)"
+                + (f"; {cfg['rules_note']}" if cfg["rules_note"] else ""))
+        except Exception as e:
+            out["log"].append(f"Reference OC Studies: {ident}: configuration could not be read ({_safe(e)})")
 
     async def one(f):
         async with sem:

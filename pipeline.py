@@ -4704,7 +4704,7 @@ async def _standards_report_step(item_id, struct_json):
         print(f"[standards-match] report skipped: {e}", flush=True)
 
 
-async def _study_config_step(item_id, struct_json, protocol_bytes=None):
+async def _study_config_step(item_id, struct_json, protocol_bytes=None, referenced=None):
     """Study Configuration (study_config.py): events with calendar, forms at events with their flags and SDV, every
     value with its source; documented in the Study Specification PDF / XLSX. Nothing is published.
     STUDY_CONFIG=0 disables. Never fails a build."""
@@ -4729,7 +4729,16 @@ async def _study_config_step(item_id, struct_json, protocol_bytes=None):
         except Exception as _se:
             print(f"[study-config] endpoint link skipped: {type(_se).__name__}: {_se}", flush=True)
             ep_result = None
-        cfg = _sc.apply(struct_json, ptext, ep_result)
+        # Reference OC Studies also supply configuration (reference_config.py): SDV items for matched forms, the
+        # calendar where the protocol is silent, everything else as proposals. REFERENCE_STUDY_CONFIG=0 disables.
+        ref_cfg = None
+        try:
+            import reference_config as _rc
+            if _rc.enabled() and referenced:
+                ref_cfg = _rc.from_fetch(referenced) or None
+        except Exception as _re:
+            print(f"[study-config] reference study configuration skipped: {type(_re).__name__}", flush=True)
+        cfg = _sc.apply(struct_json, ptext, ep_result, ref_cfg)
         if cfg is not None and ep_result is not None:
             cfg["sdv_endpoint_check"] = {"status": "done", "endpoints": len(ep_result["endpoints"]),
                                          "rejected": ep_result["rejected"]}
@@ -7269,7 +7278,7 @@ async def run_pipeline(item_id):
             if _want("dvs") or _want("study build zip"):
                 await _propose_standard_logic(item_id, struct_json, protocol_bytes)
             await _standards_report_step(item_id, struct_json)
-            await _study_config_step(item_id, struct_json, protocol_bytes)
+            await _study_config_step(item_id, struct_json, protocol_bytes, _ref_fetch)
 
             # AI-proposed edit checks (proposals only; reviewed in the DVS Edit Checks sheet)
             if _want("dvs") or _want("study build zip"):

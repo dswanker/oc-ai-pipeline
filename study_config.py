@@ -289,7 +289,7 @@ def build(spec, protocol_text=""):
            "proposals": [], "sources": [SRC_PROTOCOL, SRC_DEFAULT, SRC_AI, SRC_DM]}
     old = spec.get("study_configuration") if isinstance(spec.get("study_configuration"), dict) else None
     if old:
-        for k in ("sdv_items", "sdv_endpoints", "sdv_endpoint_check"):
+        for k in ("sdv_items", "sdv_endpoints", "sdv_endpoint_check", "reference_config"):
             if k in old:
                 cfg[k] = copy.deepcopy(old[k])
         old_ev = {e.get("oid"): e for e in old.get("events") or [] if isinstance(e, dict)}
@@ -300,10 +300,11 @@ def build(spec, protocol_text=""):
     return cfg
 
 
-def apply(spec, protocol_text="", endpoint_result=None):
+def apply(spec, protocol_text="", endpoint_result=None, reference=None):
     """Write spec["study_configuration"] (with the item-level SDV proposals, sdv_proposals.py). endpoint_result: the
-    validated endpoint-to-field links of this run, or None to keep the ones verified earlier. Returns the
-    configuration, or None when disabled or on error (spec unchanged)."""
+    validated endpoint-to-field links of this run, or None to keep the ones verified earlier. reference: the
+    configuration harvested from the reference studies in this run (reference_config.from_fetch), or None to keep
+    what an earlier run harvested. Returns the configuration, or None when disabled or on error (spec unchanged)."""
     if not enabled() or not isinstance(spec, dict):
         return None
     try:
@@ -315,11 +316,25 @@ def apply(spec, protocol_text="", endpoint_result=None):
             cfg["permission_tags"] = flags["permission_tags"]
         except Exception as e:
             print(f"[study-config] form flag proposals skipped: {type(e).__name__}: {e}", flush=True)
+        refs = []
+        try:
+            import reference_config
+            if reference_config.enabled():
+                refs = reference if reference is not None else (cfg.get("reference_config") or [])
+            cfg["reference_config"] = refs
+        except Exception as e:
+            print(f"[study-config] reference study configuration skipped: {type(e).__name__}: {e}", flush=True)
         try:
             import sdv_proposals
-            cfg["sdv_counts"] = sdv_proposals.propose(spec, cfg, endpoint_result)
+            carry = reference_config.sdv_carry(spec, refs) if refs else None
+            cfg["sdv_counts"] = sdv_proposals.propose(spec, cfg, endpoint_result, carry)
         except Exception as e:
             print(f"[study-config] SDV proposals skipped: {type(e).__name__}: {e}", flush=True)
+        if refs:
+            try:
+                reference_config.merge(spec, cfg, refs, val, notification_proposals)
+            except Exception as e:
+                print(f"[study-config] reference study configuration not merged: {type(e).__name__}: {e}", flush=True)
         spec["study_configuration"] = cfg
         return cfg
     except Exception as e:
@@ -402,6 +417,10 @@ def proposal_rows(cfg):
     return rows
 
 
+def label_of(ref):
+    return f"reference study {ref.get('identifier')}"
+
+
 def summary_line(cfg):
     if not cfg:
         return ""
@@ -411,6 +430,9 @@ def summary_line(cfg):
     c = cfg.get("sdv_counts") or {}
     sdv = (f" SDV proposals: {c.get('Required', 0)} item(s) Required, {c.get('Optional', 0)} Optional, "
            f"{c.get('Not Applicable', 0)} Not Applicable." if c else "")
+    refs = cfg.get("reference_studies") or []
+    if refs:
+        sdv += " Configuration also read from " + ", ".join(label_of(r) for r in refs) + "."
     return (f"Study Configuration: {len(ev)} event(s) ({rel} scheduled relative to another event, {close} with "
             f"auto-close), {len(cfg.get('forms') or [])} form(s) at events, {len(cfg.get('proposals') or [])} "
             f"proposal(s). See the Study Configuration section of the Study Specification." + sdv)

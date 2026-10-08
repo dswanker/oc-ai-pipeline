@@ -226,9 +226,11 @@ def form_items(form, links=None):
     return out
 
 
-def propose(spec, cfg, endpoint_result=None):
+def propose(spec, cfg, endpoint_result=None, carry=None):
     """Fill cfg["sdv_items"] (per form) and each form-at-event's sdv (level + Required items). Values a data manager
-    set (source "DM") on an item are kept. Returns counts."""
+    set (source "DM") on an item are kept. carry: {form_id: {"label", "items": {ITEM NAME: "required"|"optional"}}}
+    from a reference study (reference_config.sdv_carry): an item found there takes that value and source; the
+    rules apply to every other item. Returns counts."""
     links = (endpoint_result or {}).get("links") or {}
     if endpoint_result is None:  # rebuild: keep the endpoint links verified earlier
         for ep in cfg.get("sdv_endpoints") or []:
@@ -236,17 +238,32 @@ def propose(spec, cfg, endpoint_result=None):
                 fid, _, name = str(ref).partition(".")
                 links.setdefault((fid, name), ep)
     prev = cfg.get("sdv_items") if isinstance(cfg.get("sdv_items"), dict) else {}
-    per_form, counts = {}, {REQUIRED: 0, OPTIONAL: 0, NA: 0}
+    per_form, counts, differences = {}, {REQUIRED: 0, OPTIONAL: 0, NA: 0}, []
     for form in spec.get("forms") or []:
         if not isinstance(form, dict) or not form.get("form_id"):
             continue
         items = form_items(form, links)
+        ref = (carry or {}).get(form["form_id"])
+        if ref:
+            changed = {}
+            for i in items:
+                theirs = ref["items"].get(str(i["item"]).upper())
+                if theirs and i["sdv"] != NA:
+                    level = REQUIRED if theirs == "required" else OPTIONAL
+                    if level != i["sdv"]:
+                        changed.setdefault((i["sdv"], level), []).append(i["item"])
+                    i.update(sdv=level, source=ref["label"],
+                             rationale=f"Carried over from {ref['label']} (rule: {i['rationale']})")
+            for (rule, theirs), names in changed.items():
+                differences.append({"form": form["form_id"], "items": names, "rule": rule, "reference": theirs,
+                                    "label": ref["label"]})
         dm = {i.get("item"): i for i in (prev.get(form["form_id"]) or {}).get("items") or [] if i.get("source") == "DM"}
         items = [dm.get(i["item"], i) for i in items]
         level = LEVEL_ITEMS if any(i["sdv"] in (REQUIRED, OPTIONAL) for i in items) else LEVEL_NONE
         per_form[form["form_id"]] = {"level": level, "items": [i for i in items if i["sdv"] != NA],
                                      "not_applicable": sum(1 for i in items if i["sdv"] == NA)}
     cfg["sdv_items"] = per_form
+    cfg["sdv_differences"] = differences
     cfg["sdv_endpoints"] = (endpoint_result or {}).get("endpoints") or cfg.get("sdv_endpoints") or []
     seen = set()
     for card in cfg.get("forms") or []:

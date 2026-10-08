@@ -258,6 +258,34 @@ generated, and rendered as the "STUDY CONFIGURATION" section of the PDF and the 
 - Nothing is applied: form-at-event values are unchanged and tags are **not written to the design board**. The
   link between a form and its tag is not in the card JSON and is not confirmed (reported as UNRESOLVED).
 
+### Item 6: reference studies supply study configuration (`reference_studies.py`, `reference_config.py`)
+
+- **Harvest (read-only).** From the design board already read for the forms: each event's type / repeating; each
+  form-at-event card's `required`, `hidden`, `allowAdd`, `participate`, `sdv`, `itemLevelSdv`, `sdvItems` (item OID,
+  name, required / optional); the names of board labels with `isConfigPermission`. One more GET:
+  `https://{sub}.build.openclinica.io/rule-service/api/studies/{study_uuid}/rules` (uuid from the study-service
+  record, else the board's `studyUuid`): scheduler, auto-close (`closeEvent` + criteria offset) and
+  `NOTIFICATION_ACTION` rules per event OID. Notification recipients are blanked and addresses / numbers inside the
+  texts are removed before anything is kept; the log gives counts only. A failed rules call is logged and the board
+  configuration is still used. Kill switch `REFERENCE_STUDY_CONFIG=0` (no rules call, nothing harvested or merged).
+- **Precedence** (the protocol decides what is needed):
+  - SDV: a form matched to a reference-study form takes that form's SDV items by item name / OID where the field
+    exists (source `reference study <identifier>`); the rules of Item 3 apply to every other item. Where the
+    reference value differs from the rule, a proposal shows both.
+  - Calendar: the protocol's scheduling and window are kept; a different reference value is a proposal with both
+    values. The reference study's rule for the same event, or its pattern (the auto-close days most of its rules
+    use, at least two), is used only where the protocol is silent, and the note says so.
+  - Event type / repeating and the form flags (required, hidden, allow add, participate): never applied; a
+    difference is a proposal with both values.
+  - Notifications: proposals with recipients blanked.
+  - Permission tags: names only. A tag applies to a form in every event and the form-to-tag link is stored outside
+    the board JSON, so it cannot be read: **unresolved**, nothing is written to the design board.
+- The harvest is kept (compact) in `study_configuration.reference_config`, so a later run without a fetch gives the
+  same configuration. The self-reference rule is unchanged.
+- cust1 check (2026-10-08, read-only): the PrTK05 board gives 47 events, 280 form-at-event cards (all
+  `not_applicable_item_level`, no SDV items, 80 required), 1 permission tag name; the rules call succeeds and
+  returns no rules for that study.
+
 ### Decisions taken during the build (for Dan to confirm)
 
 1. A matched form takes the standard's **form id** (needed to reproduce the customer's form and for cross-form
