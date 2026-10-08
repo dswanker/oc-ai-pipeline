@@ -6695,6 +6695,32 @@ async def run_pipeline(item_id):
 
         # ── Launch parallel chains if struct_json is available ────────────────
         if struct_json and needs_analysis:
+            # ── DM decisions from an edited DVS (DVS_OC4 Action column) ─────────
+            # Applied to the spec deterministically, then the normal EDC builder runs (the old path where Claude
+            # regenerated every form from the DVS is skipped). Older-format DVS files keep the old path.
+            if edited_dvs_xlsx:
+                try:
+                    import dvs_edits as _dvse
+                    _acts = _dvse.parse_actions(edited_dvs_xlsx)
+                except Exception as _pe:
+                    _acts = None
+                    print(f"[dvs-edits] could not read edited DVS: {_pe}", flush=True)
+                if _acts is not None:
+                    _res = _dvse.apply_actions(struct_json, _acts)
+                    edited_dvs_xlsx = None  # build with the deterministic EDC builder from the updated spec
+                    _bad = [r for r in _res["results"] if r["status"] in ("failed", "not_found", "unsupported")]
+                    await append_log(item_id,
+                        f"DVS edits: {len(_acts)} rows with an Action; applied {_res['applied']}, already in place "
+                        f"{_res['already']}, pending translation {_res['pending']}, not applied {len(_bad)}"
+                        + ("".join(f"\n  - {r['action'].title()} {r['form']}.{r['item']} ({r['check_id']}): {r['note']}"
+                                   for r in _bad[:15])))
+                    try:
+                        await upload_file(item_id, COL["spec_json"],
+                                          f"{protocol_num}_Study_Specification_{version}.json",
+                                          json.dumps(struct_json, indent=2).encode())
+                    except Exception as _ue2:
+                        print(f"[dvs-edits] spec JSON re-upload failed: {_ue2}", flush=True)
+
             # ── Apply conventions BEFORE chains launch ────────────────────────
             # conventions_engine mutates struct_json in place (e.g. enforcing
             # readonly=yes on calculated fields per §29). Chains A and C both

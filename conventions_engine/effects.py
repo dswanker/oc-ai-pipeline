@@ -103,6 +103,8 @@ def _do_ensure(payload: Dict[str, Any], ctx: EntityContext, result: ApplyResult)
     for path, value in payload.items():
         current = _resolve_path(path, ctx)
         if current is _SENTINEL_MISSING or current is None or current == "" or current == [] or current == {}:
+            if ctx.kind == "field" and path.split(".", 1)[-1] in (ctx.entity.get("edit_check_suppressed_paths") or []):
+                continue  # a DM deleted this (e.g. a show-when): never re-add it
             if isinstance(value, str) and "${" in value:
                 # Engine paths/bindings are rendered; XLSForm references (${AESTDAT}) are kept as written.
                 value = render(value, ctx, strict=True)
@@ -830,6 +832,8 @@ def _do_add_constraint(payload: Any, ctx: EntityContext, result: ApplyResult) ->
     if not isinstance(payload, dict) or not payload.get("expr"):
         raise DSLEvaluationError("add_constraint payload needs 'expr'")
     field = ctx.entity
+    if payload.get("check_id") and payload["check_id"] in (field.get("edit_checks_suppressed") or []):
+        return  # a DM deleted this check (DVS Action = Delete): never re-add it
     expr = render(payload["expr"], ctx, strict=True).strip()
     msg = render(payload.get("message", ""), ctx, strict=True).strip()
     if "<unresolved:" in expr:
@@ -861,6 +865,8 @@ def _do_add_constraint(payload: Any, ctx: EntityContext, result: ApplyResult) ->
         ref = render(skip_ref, ctx, strict=True)
         if "<unresolved:" not in ref and ref in cur:
             _record()
+            if check_id:  # remember what covers it, so deleting that author clause also retires this rule
+                field.setdefault("edit_check_covered_by", {})[check_id] = ref
             return  # an equivalent check (e.g. written by Claude) already compares against that field
     _record(expr)
     if not cur:
@@ -869,7 +875,10 @@ def _do_add_constraint(payload: Any, ctx: EntityContext, result: ApplyResult) ->
     if msg:
         cm = str(field.get("constraint_message") or "").strip()
         if msg not in cm:
-            field["constraint_message"] = f"{cm} {msg}" if cm else msg
+            sep = " " if cm.endswith((".", "!", "?")) else ". "
+            field["constraint_message"] = f"{cm}{sep}{msg}" if cm else msg
+        if check_id:
+            field.setdefault("edit_check_msgs", {})[check_id] = msg
     result.mutations_made.append(Mutation(directive="add_constraint", path="field.constraint",
                                           old_value=cur or None, new_value=field["constraint"]))
 

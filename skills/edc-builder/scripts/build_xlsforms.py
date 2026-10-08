@@ -514,8 +514,11 @@ def _normalize_constraint_messages(rows, form_id=''):
 
         changed = False
 
-        # Check constraint_message normalization
-        if constraint:
+        # Check constraint_message normalization. Not for several checks combined on one item ("(A) and (B)",
+        # written by the conventions engine) or a message a DM set in the DVS: each check's sentence must survive,
+        # otherwise e.g. a consent-date check would show "Date cannot be in the future."
+        _combined = constraint.startswith("(") and ") and (" in constraint
+        if constraint and not _combined and not r.get('constraint_message_locked'):
             for rule in _CANONICAL_CONSTRAINT_MESSAGES:
                 if rule.get('is_required_message'):
                     continue
@@ -564,8 +567,10 @@ def _normalize_constraint_messages(rows, form_id=''):
         constraint = str(r.get('constraint', '') or '').strip()
         c_msg = str(r.get('constraint_message', '') or '').strip()
         constraint_lower = constraint.lower()
+        # see the first pass: never collapse several checks' messages into one canonical sentence
+        _combined = constraint.startswith("(") and ") and (" in constraint
 
-        if constraint:
+        if constraint and not _combined and not r.get('constraint_message_locked'):
             for rule in _CANONICAL_CONSTRAINT_MESSAGES:
                 if rule.get('is_required_message'):
                     continue
