@@ -48,7 +48,7 @@ Input column: `file_mm2mafjc` (`COL["oc_standard"]`, "Customer OC4 XLSForm Stand
 |---|---|---|
 | 0 | One test command (`pytest`) runs all of `tests/` | Done |
 | 1 | Deterministic matching core for uploaded files (`standards_match.py`) | Done |
-| 2 | AI logic for logic-free standards and gap-filling | See below |
+| 2 | AI logic for logic-free standards and gap-filling (`ai_standard_logic.py`) | Done |
 | 3 | "Reference OC Studies (up to 5)" (referenced studies as a source) | See below |
 
 ### Item 1: what was built
@@ -92,6 +92,23 @@ Input column: `file_mm2mafjc` (`COL["oc_standard"]`, "Customer OC4 XLSForm Stand
   field names) is injected instead; unstructured files keep the text path.
 - **Kill switches**: `STANDARDS_MATCHING=0` (no matching; full-text paste as before), `STANDARDS_ADD_FIELDS_AI=0`,
   `STANDARDS_MATCH_BY_NAME=0`. On any exception the spec is returned unchanged.
+
+### Item 2: AI-suggested logic (rule 8)
+
+- `ai_standard_logic.py`, one call per run and per set of sources (`study_meta.standards_match.ai_logic` holds the
+  fingerprint), after the rules engine and only when the DVS or the build is requested. Kill switch
+  `AI_STANDARD_LOGIC=0`. The build continues if the call fails.
+- Targets: matched forms with no constraint or show-when at all (every ODM-only standard), and fields with gaps:
+  a date without a check, a number without a range, conditional wording ("if other, specify") without a show-when.
+- Structured output only; the module builds the expressions. Kinds: `future_date`, `date_order` (two dates on the
+  same form), `range` (accepted only with a verbatim protocol quote found in the protocol text), `relevant` (shown
+  for one real choice code of a select field on the same form).
+- Validation rejects: a form that is not a matched customer standard form, unknown fields, incompatible types, bad
+  operators, choice codes that do not exist, a range without a verified quote, logic the field already has, logic
+  the rules engine already proposes, anything a DM rejected before, duplicates, more than 80 suggestions.
+- Accepted suggestions are DVS_OC4 rows, Status "Proposed", Check Source "AI-Suggested". Approve applies them
+  through `dvs_edits` (`standards_match.apply_proposal`); Reject keeps them from being proposed again. The
+  standard's own logic is never changed.
 
 ### Decisions taken during the build (for Dan to confirm)
 

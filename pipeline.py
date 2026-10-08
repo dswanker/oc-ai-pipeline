@@ -4555,6 +4555,32 @@ async def _standards_match_step(item_id, struct_json, sources, protocol_bytes=No
         return struct_json
 
 
+async def _propose_standard_logic(item_id, struct_json, protocol_bytes=None):
+    """AI-suggested logic for customer standard forms that have none, and gap-filling (ai_standard_logic.py): one
+    validated call per run and per set of sources. Suggestions become DVS proposals (Check Source "AI-Suggested",
+    Status Proposed); nothing is applied without Approve. AI_STANDARD_LOGIC=0 disables. Never fails a build."""
+    try:
+        import ai_standard_logic as _asl
+        import standards_match as _sm
+        if not _asl.enabled() or not isinstance(struct_json, dict) or not _sm.matched_forms(struct_json):
+            return
+        if _asl.already_done(struct_json):
+            return
+        ptext = _protocol_text(protocol_bytes)
+        req = _asl.build_request(struct_json, ptext)
+        if req is None:
+            _asl.store(struct_json, {"proposed": 0, "proposals": [], "rejected": {}})
+            return
+        text = await call_claude(req[0], extra_text=req[1], max_tokens=16000, cache_prompt=False)
+        v = _asl.validate_response(struct_json, text, ptext)
+        _asl.store(struct_json, v)
+        await append_log(item_id, f"Customer standard forms: {len(v['proposals'])} AI-suggested check(s) proposed for "
+                                  f"review (DVS_OC4, Status Proposed; not in the build until approved)"
+                                  + (f", {sum(v['rejected'].values())} discarded by validation" if v["rejected"] else ""))
+    except Exception as e:
+        print(f"[ai-standard-logic] skipped: {e}", flush=True)
+
+
 async def _standards_report_step(item_id, struct_json):
     """monday log line for customer standard forms: proposals waiting in the DVS, and any form whose standard
     content no longer equals what the customer provided (never silent). Never fails a build."""
@@ -7109,6 +7135,8 @@ async def run_pipeline(item_id):
 
             # Customer standard forms: report what the rules engine proposed there (nothing was applied) and
             # confirm the standard content is still exactly what the customer provided.
+            if _want("dvs") or _want("study build zip"):
+                await _propose_standard_logic(item_id, struct_json, protocol_bytes)
             await _standards_report_step(item_id, struct_json)
 
             # AI-proposed edit checks (proposals only; reviewed in the DVS Edit Checks sheet)
