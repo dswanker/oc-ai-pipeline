@@ -5,27 +5,135 @@
   "scope": "global",
   "status": "active",
   "natural_key": "consent_date_floor",
-  "description": "An event cannot predate informed consent. For every clinical-event date on a non-ICF form (*STDAT, VSDAT, LBDAT, etc.): (1) emit an ICFDAT_CF fetch from the ICF form at the top of the survey per the 7L pattern; (2) extend each event-date field's existing constraint with `. >= ${ICFDAT_CF}` AND-joined with any other date rules. Constraint_message updated to reference the consent floor: 'Date must be on or after informed consent date and cannot be in the future.' Exception: dates ON the ICF form itself (ICFDAT, WITDRAW_DAT, etc.) where the floor would be self-referential.",
+  "description": "An event cannot predate informed consent. For every clinical-event date on a non-ICF form (*STDAT, VSDAT, LBDAT, etc.): (1) emit an ICFDAT_CF fetch from the ICF form at the top of the survey per the 7L pattern; (2) extend each event-date field's existing constraint with `. >= ${ICFDAT_CF}` AND-joined with any other date rules. Constraint_message updated to reference the consent floor: 'Date must be on or after informed consent date and cannot be in the future.' Exception: dates ON the ICF form itself (ICFDAT, WITDRAW_DAT, etc.) where the floor would be self-referential. Deterministic since 2026-10-08: on-study event dates (AE, visit, dosing, collection, disposition, deviation; by CDASH concept or name) on forms other than the consent form get an ICFDAT_CF cross-form fetch of the consent date (by item/item-group name) and the check `. >= ${ICFDAT_CF}`. History dates (medical history, medication start, birth, diagnosis) are deliberately excluded. Same-form consent dates: clinical_patterns.consent_date_floor_same_form. Skipped when the field's own form has a consent date (the same-form rule applies instead).",
   "rationale": "Regulatory requirement — any study activity performed before informed consent is a serious protocol deviation. Catching pre-consent dates at entry rather than in monitoring saves the deviation report and the corrective-action cycle. The floor is universal across all event dates; the exception for ICF-form dates is structural (the form that captures consent can't be gated on consent already being captured).",
   "target": "field",
   "applies_when": {
     "all_of": [
-      { "field.type": "date" },
-      { "field.name": { "not_in": ["ICFDAT", "WITDRAW_DAT", "CONSDAT", "ASSENT_DAT"] } },
-      { "form.form_id": { "not_in": ["ICF", "ASSENT"] } }
+      {
+        "all_of": [
+          {
+            "field.type": {
+              "in": [
+                "date",
+                "datetime"
+              ]
+            }
+          },
+          {
+            "any_of": [
+              {
+                "field.concept": {
+                  "matches": "^(AE(ST|EN)DAT|VISDAT|EX(ST|EN)DAT|EC(ST|EN)DAT|(LB|VS|EG|PE|QS|MB|PC|BE|BS)DAT|DSSTDAT|DV(ST|EN)?DAT)$"
+                }
+              },
+              {
+                "field.name": {
+                  "matches": "^(AE(ST|EN)DAT|VISDAT|EX(ST|EN)DAT|EC(ST|EN)DAT|(LB|VS|EG|PE|QS|MB|PC|BE|BS)DAT|DSSTDAT|DV(ST|EN)?DAT)$"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "none_of": [
+          {
+            "field.has_sibling": {
+              "where": {
+                "all_of": [
+                  {
+                    "any_of": [
+                      {
+                        "field.concept": "RFICDAT"
+                      },
+                      {
+                        "field.name": {
+                          "in": [
+                            "ICFDAT",
+                            "RFICDAT",
+                            "CONSDAT",
+                            "ICDAT"
+                          ]
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "field.type": {
+                      "in": [
+                        "date",
+                        "datetime"
+                      ]
+                    }
+                  }
+                ]
+              },
+              "scope": "same_form"
+            }
+          }
+        ]
+      },
+      {
+        "study.has_field": {
+          "where": {
+            "all_of": [
+              {
+                "any_of": [
+                  {
+                    "field.concept": "RFICDAT"
+                  },
+                  {
+                    "field.name": {
+                      "in": [
+                        "ICFDAT",
+                        "RFICDAT",
+                        "CONSDAT",
+                        "ICDAT"
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "field.type": {
+                  "in": [
+                    "date",
+                    "datetime"
+                  ]
+                }
+              }
+            ]
+          },
+          "as": "icf"
+        }
+      }
     ]
   },
   "effect": {
-    "flag": {
-      "category": "review_flags.consent_date_floor",
-      "message": "Field ${field.name} is a clinical-event date — verify: (1) the form has an ICFDAT_CF calculate row at the top (per 7L); (2) the field's constraint extends to include `. >= ${ICFDAT_CF}` AND-joined with existing rules; (3) constraint_message references both the future-date rule and the consent floor."
+    "soft": "Append ` and . >= ${ICFDAT_CF}` to the field's existing constraint expression. If no existing constraint, set the constraint to `. <= today() and . >= ${ICFDAT_CF}`. Update constraint_message to: 'Date must be on or after informed consent date and cannot be in the future.' Ensure the form has an ICFDAT_CF helper row at the top per the 7L pattern; if absent, emit it. Constraint-text extension is not yet a DSL primitive — handled here in soft. Per-form ICFDAT_CF helper creation is also soft. Skip on ICF-form fields and on the specific date fields listed in not_in: those would be self-referential.",
+    "lookup_from": {
+      "from": "${icf._form_id}.${icf.name}",
+      "name": "ICFDAT_CF",
+      "purpose": "Informed consent date, for the consent-date floor check"
     },
-    "soft": "Append ` and . >= ${ICFDAT_CF}` to the field's existing constraint expression. If no existing constraint, set the constraint to `. <= today() and . >= ${ICFDAT_CF}`. Update constraint_message to: 'Date must be on or after informed consent date and cannot be in the future.' Ensure the form has an ICFDAT_CF helper row at the top per the 7L pattern; if absent, emit it. Constraint-text extension is not yet a DSL primitive — handled here in soft. Per-form ICFDAT_CF helper creation is also soft. Skip on ICF-form fields and on the specific date fields listed in not_in: those would be self-referential."
+    "add_constraint": {
+      "expr": ". = '' or ${ICFDAT_CF} = '' or . >= ${ICFDAT_CF}",
+      "message": "Date cannot be before the informed consent date.",
+      "check_id": "CONSENT_FLOOR",
+      "skip_if_references": "ICFDAT_CF",
+      "requires_field": "ICFDAT_CF"
+    }
   },
   "created_at": "2026-05-14T22:00:00Z",
   "created_by": "system:phase_b1c_final_translation",
   "source": "consolidation:prompts.py:RULE_OC-7N",
-  "tags": ["clinical_patterns", "constraints", "consent", "regulatory"],
+  "tags": [
+    "clinical_patterns",
+    "constraints",
+    "consent",
+    "regulatory"
+  ],
   "history": [
     {
       "at": "2026-05-14T22:00:00Z",

@@ -381,3 +381,8 @@ Example (end date on or after its matching start date, any domain):
 - Bound fields carry `_code`: UPPER(code / label / CDISC submission value) -> code, e.g. `${outcome._code.FATAL}`.
   The current field's own map: `${field._code.FATAL}`; own Yes/No: `${field._yes_code}`, `${field._no_code}`.
 - Filter `first:N` (e.g. `${field.concept|first:2}OCCUR` -> `EXOCCUR`).
+
+### Cross-form checks (2026-10-08)
+- `lookup_from` renders templates in `from` / `name` (e.g. `"from": "${icf._form_id}.${icf.name}"`); unresolvable -> flag, no row.
+- `add_constraint` `requires_field`: skip unless the named field exists on the form (never reference a missing helper).
+- `_cf_xpath` FormOID follows the pipeline rule: `F_` added only when the form id does not already start with it.

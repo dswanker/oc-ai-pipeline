@@ -848,12 +848,15 @@ def _infer_test_cases_single(check, row, choices_for_field, ctx=None, world=None
             sad_offset   = -5 if ref_min else +5
             happy_date   = _date_offset(base_date, happy_offset)
             sad_date     = _date_offset(base_date, sad_offset)
+            src = (world.get("__cf_sources__") or {}).get(ref)
+            ref_set = (f"{src[1]} on form {src[0]}={base_date} (fetched here as {ref})" if src
+                       else f"{ref}={base_date}")
             return [
                 {"scenario":   f"Happy path: this date is {direction_str} {ref} value",
-                 "input_data": f"{ref}={base_date}, then this date={happy_date}",
+                 "input_data": f"{ref_set}, then this date={happy_date}",
                  "expected":   "No constraint error. Form saves."},
                 {"scenario":   f"Sad path: this date violates the {direction_str} {ref} rule",
-                 "input_data": f"{ref}={base_date}, then this date={sad_date}",
+                 "input_data": f"{ref_set}, then this date={sad_date}",
                  "expected":   f"Constraint fires. Message: {msg_short}"},
             ]
 
@@ -1207,6 +1210,15 @@ def extract_dvs_data(struct_json, forms_json):
                 field_ig_map[fn] = ig
                 if form_default_ig is None:
                     form_default_ig = ig
+
+        # cross-form fetch helpers on this form -> (source FormOID, source item), for tester-readable UAT steps
+        _cf = {}
+        for r in survey:
+            calc = str((r or {}).get("calculation") or "") if isinstance(r, dict) else ""
+            m = re.search(r"FormOID='([^']+)'.*?ItemName='([^']+)'", calc)
+            if m and "instance('clinicaldata')" in calc:
+                _cf[r.get("name")] = (m.group(1), m.group(2))
+        cross_form_world["__cf_sources__"] = _cf
 
         # field -> its choice codes, so gate (relevance) test values are always real options
         form_gate_codes = {r.get("name"): _choices_for_field(r, choices)

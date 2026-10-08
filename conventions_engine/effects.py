@@ -717,7 +717,8 @@ def _do_use_vocabulary(payload: Any, ctx: EntityContext, result: ApplyResult) ->
 def _cf_xpath(form_id: str, item_group: str, item: str, event: Any = None) -> str:
     ev = f"[@StudyEventOID='{event}']" if event else ""
     return ("instance('clinicaldata')/ODM/ClinicalData/SubjectData/StudyEventData" + ev +
-            f"/FormData[@FormOID='F_{form_id}']/ItemGroupData[@OpenClinica:ItemGroupName='{item_group}']"
+            f"/FormData[@FormOID='{form_id if str(form_id).upper().startswith('F_') else 'F_' + str(form_id)}']"
+            f"/ItemGroupData[@OpenClinica:ItemGroupName='{item_group}']"
             f"/ItemData[@OpenClinica:ItemName='{item}']/@Value")
 
 
@@ -744,8 +745,17 @@ def _do_lookup_from(payload: Any, ctx: EntityContext, result: ApplyResult) -> No
         raise DSLEvaluationError("lookup_from payload needs 'from' (FORM.field)")
     form, field = ctx.parent, ctx.entity
     me = field.get("name", "")
-    sub = lambda v: v.replace("{self}", me) if isinstance(v, str) else v
+
+    def sub(v):
+        if not isinstance(v, str):
+            return v
+        v = v.replace("{self}", me)
+        return render(v, ctx, strict=True) if "${" in v else v  # bindings, e.g. "${icf._form_id}.${icf.name}"
     src = sub(payload["from"])
+    if "<unresolved:" in src or "<unresolved:" in str(sub(payload.get("name") or "")):
+        result.flags_raised.append(Flag(category="review_flags.lookup_skipped",
+                                        message=f"{form.get('form_id')}.{me}: lookup source could not be resolved ({src})"))
+        return
     src_form_id, _, src_item = src.partition(".")
     src_form = _form_by_id(ctx.spec, src_form_id)
     item_group = payload.get("item_group")
@@ -827,6 +837,11 @@ def _do_add_constraint(payload: Any, ctx: EntityContext, result: ApplyResult) ->
         if check_id and check_id not in (field.get("edit_checks") or []):
             field.setdefault("edit_checks", []).append(check_id)
 
+    req = payload.get("requires_field")
+    if req:
+        req = render(req, ctx, strict=True)
+        if not any(isinstance(r, dict) and r.get("name") == req for r in (ctx.parent or {}).get("survey") or []):
+            return  # e.g. the cross-form helper could not be added: never reference a missing field
     cur = str(field.get("constraint") or "").strip()
     if expr in cur:
         _record()
