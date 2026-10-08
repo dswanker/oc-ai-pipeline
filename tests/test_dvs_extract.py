@@ -35,3 +35,16 @@ def test_gate_values_are_real_choice_codes():
     loads = {c["Scenario"].split(":")[0]: str(c["Load_Value"]) for c in _cases(survey, choices)
              if c["Item_OID"].endswith("AEENDAT")}
     assert "ONGO=no" in loads["Shown path"] and "ONGO=yes" in loads["Hidden path"]
+
+
+def test_pick_list_sad_paths_use_real_options():
+    choices = [{"list_name": "yn", "name": "yes", "label": "Yes"}, {"list_name": "yn", "name": "no", "label": "No"},
+               {"list_name": "one", "name": "Y", "label": "Yes"}]
+    survey = [{"type": "select_one yn", "name": "IEINC01", "label": "Criterion", "constraint": ". = 'yes'"},
+              {"type": "select_one one", "name": "ONLY", "label": "Single option", "constraint": ". = 'Y'"}]
+    cases = _cases(survey, choices)
+    inc = {c["Scenario"].split(":")[0]: str(c["Load_Value"]) for c in cases if c["Item_OID"].endswith("IEINC01")}
+    assert inc["Sad path"] == "no" and inc["Happy path"] == "yes"
+    only = [c["Scenario"] for c in cases if c["Item_OID"].endswith("ONLY")]
+    assert only and not any(s.startswith("Sad") for s in only)        # cannot be violated in OC4: no fake case
+    assert not any("ZZZ" in str(c["Load_Value"]) or "INVALID" in str(c["Load_Value"]) for c in cases)

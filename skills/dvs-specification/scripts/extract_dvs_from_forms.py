@@ -503,6 +503,13 @@ def _choices_for_field(row, choices_list):
             if c.get("list_name") == list_name and c.get("name")]
 
 
+def _other_choice(choices_for_field, exclude):
+    """A real option from the field's own list that is not in `exclude` (None if there is none).
+    Pick-list test data must be enterable in OC4: an invented code cannot be selected."""
+    ex = {str(e) for e in (exclude or [])}
+    return next((c for c in choices_for_field or [] if str(c) not in ex), None)
+
+
 def _out_of_set_sample(allowed):
     if not allowed:
         return "ZZZ_INVALID"
@@ -759,10 +766,12 @@ def _infer_test_cases_single(check, row, choices_for_field, ctx=None, world=None
             "scenario":   f"Happy path: value = '{v}' (in allowed set)",
             "input_data": v,
             "expected":   "No error. Form saves."} for v in allowed]
-        cases.append({
-            "scenario":   f"Sad path: value outside allowed set {allowed}",
-            "input_data": _out_of_set_sample(allowed),
-            "expected":   f"Constraint fires. Message: {msg_short}"})
+        outside = _other_choice(choices_for_field, allowed) if choices_for_field else _out_of_set_sample(allowed)
+        if outside is not None:
+            cases.append({
+                "scenario":   f"Sad path: value outside allowed set {allowed}",
+                "input_data": outside,
+                "expected":   f"Constraint fires. Message: {msg_short}"})
         return cases
 
     parts = parsed["parts"]
@@ -930,38 +939,43 @@ def _infer_test_cases_single(check, row, choices_for_field, ctx=None, world=None
     # ── Equality ──────────────────────────────────────────────────────────
     if "equals" in parts:
         required_val = parts["equals"]
-        return [
-            {"scenario":   f"Happy path: value = '{required_val}'",
-             "input_data": required_val,
-             "expected":   "No constraint error. Form saves."},
-            {"scenario":   f"Sad path: value != '{required_val}'",
-             "input_data": _out_of_set_sample([required_val]),
-             "expected":   f"Constraint fires. Message: {msg_short}"},
-        ]
+        cases = [{"scenario":   f"Happy path: value = '{required_val}'",
+                  "input_data": required_val,
+                  "expected":   "No constraint error. Form saves."}]
+        sad = (_other_choice(choices_for_field, [required_val]) if choices_for_field
+               else _out_of_set_sample([required_val]))
+        if sad is not None:  # pick list with no other option: the rule cannot be violated in OC4
+            cases.append({"scenario":   f"Sad path: value != '{required_val}'",
+                          "input_data": sad,
+                          "expected":   f"Constraint fires. Message: {msg_short}"})
+        return cases
 
     if "not_equals" in parts:
         forbidden = parts["not_equals"]
-        return [
+        ok_val = (_other_choice(choices_for_field, [forbidden]) if choices_for_field
+                  else _out_of_set_sample([forbidden]))
+        return [c for c in [
             {"scenario":   f"Happy path: value != '{forbidden}'",
-             "input_data": _out_of_set_sample([forbidden]),
-             "expected":   "No constraint error. Form saves."},
+             "input_data": ok_val,
+             "expected":   "No constraint error. Form saves."} if ok_val is not None else None,
             {"scenario":   f"Sad path: value = '{forbidden}'",
              "input_data": forbidden,
              "expected":   f"Constraint fires. Message: {msg_short}"},
-        ]
+        ] if c is not None]
 
     # Final safety fallback — produce concrete typed values
     safe_sample = _sample_value_for_type(row_type, choices_for_field,
                                          field_name=field_name, ctx=ctx)
-    safe_invalid = _out_of_set_sample([safe_sample])
-    return [
-        {"scenario":   f"Happy path: value that satisfies {expr[:60]}",
-         "input_data": str(safe_sample),
-         "expected":   "No constraint error. Form saves."},
-        {"scenario":   f"Sad path: value that violates {expr[:60]}",
-         "input_data": str(safe_invalid),
-         "expected":   f"Constraint fires. Message: {msg_short}"},
-    ]
+    safe_invalid = (_other_choice(choices_for_field, [safe_sample]) if choices_for_field
+                    else _out_of_set_sample([safe_sample]))
+    cases = [{"scenario":   f"Happy path: value that satisfies {expr[:60]}",
+              "input_data": str(safe_sample),
+              "expected":   "No constraint error. Form saves."}]
+    if safe_invalid is not None:
+        cases.append({"scenario":   f"Sad path: value that violates {expr[:60]}",
+                      "input_data": str(safe_invalid),
+                      "expected":   f"Constraint fires. Message: {msg_short}"})
+    return cases
 
 
 # ── Row builders (one per sheet) ──────────────────────────────────────────────
