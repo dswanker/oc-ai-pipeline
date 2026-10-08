@@ -751,6 +751,9 @@ def _do_lookup_from(payload: Any, ctx: EntityContext, result: ApplyResult) -> No
             return v
         v = v.replace("{self}", me)
         return render(v, ctx, strict=True) if "${" in v else v  # bindings, e.g. "${icf._form_id}.${icf.name}"
+    guard = payload.get("only_if_resolves")
+    if guard and "<unresolved:" in render(guard, ctx, strict=True):
+        return  # the check this fetch serves cannot be built (e.g. no DEATH option): add nothing
     src = sub(payload["from"])
     if "<unresolved:" in src or "<unresolved:" in str(sub(payload.get("name") or "")):
         result.flags_raised.append(Flag(category="review_flags.lookup_skipped",
