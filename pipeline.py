@@ -961,6 +961,11 @@ def run_dvs_xlsx(struct_json, forms_json):
         xlsx_path = os.path.join(tmp, f"{protocol}_DVS.xlsx")
         build_dvs(dvs_data, xlsx_path)
         _add_dvs_lookup_sheet(xlsx_path, struct_json)
+        try:
+            import edit_checks_sheet as _ecs  # every check by form + AI proposals; DM-editable
+            _ecs.add_sheet(xlsx_path, struct_json, forms_json)
+        except Exception as _ece:
+            print(f"Edit Checks sheet skipped: {_ece}", flush=True)
         return open(xlsx_path, "rb").read()
 
 def _extract_scheduling_block(struct_json):
@@ -4316,6 +4321,28 @@ async def _sdtm_mapping_step(item_id, struct_json, protocol_num, version, custom
             pass
 
 
+async def _propose_ai_edit_checks(item_id, struct_json):
+    """AI-proposed edit checks (ai_edit_checks.py): one call, validated, stored in study_meta.ai_edit_checks as
+    PROPOSALS. Nothing is applied: they appear in the DVS 'Edit Checks' sheet for a DM to Approve/Reject.
+    AI_EDIT_CHECKS=0 disables. Never fails a build."""
+    if os.environ.get("AI_EDIT_CHECKS", "1") == "0" or not isinstance(struct_json, dict):
+        return
+    sm = struct_json.setdefault("study_meta", {})
+    if sm.get("ai_edit_checks"):
+        return  # proposals already made for this spec
+    try:
+        import ai_edit_checks as _aec
+        prompt, extra = _aec.build_request(struct_json)
+        text = await call_claude(prompt, extra_text=extra, max_tokens=8000, cache_prompt=False)
+        v = _aec.validate_response(struct_json, text)
+        sm["ai_edit_checks"] = {"proposed": v["proposed"], "proposals": v["proposals"], "rejected": v["rejected"]}
+        await append_log(item_id, f"AI-proposed edit checks: {len(v['proposals'])} proposed for review "
+                                  f"(Edit Checks sheet in the DVS; not in the build until approved)"
+                                  + (f", {sum(v['rejected'].values())} discarded by validation" if v["rejected"] else ""))
+    except Exception as e:
+        print(f"[ai-edit-checks] skipped: {e}", flush=True)
+
+
 async def _cdisc_ct_log_step(item_id, struct_json):
     """Post the CDISC layer summary for this build to the monday log."""
     try:
@@ -6697,6 +6724,10 @@ async def run_pipeline(item_id):
                 import traceback as _conv_tb
                 _conv_tb.print_exc()
             # ─────────────────────────────────────────────────────────────────
+
+            # AI-proposed edit checks (proposals only; reviewed in the DVS Edit Checks sheet)
+            if _want("dvs") or _want("study build zip"):
+                await _propose_ai_edit_checks(item_id, struct_json)
 
             await set_status(item_id, COL["pipeline_status"], STATUS["build_pricing_running"])
             await append_log(item_id, "Chains A (spec files), B (summary+quote), C (build+DVS), D (OC study) starting in parallel.")

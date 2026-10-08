@@ -112,6 +112,8 @@ def _do_ensure(payload: Dict[str, Any], ctx: EntityContext, result: ApplyResult)
                         message=f"{(ctx.entity or {}).get('name')}: could not render {path} = {value!r}"))
                     continue
             _set_path(path, value, ctx)
+            if ctx.kind == "field" and path in ("field.relevant", "field.required", "field.constraint"):
+                ctx.entity.setdefault("edit_check_set_by", {})[path.split(".", 1)[1]] = getattr(ctx, "convention_id", None)
             result.mutations_made.append(Mutation(
                 directive="ensure", path=path, old_value=None, new_value=value,
             ))
@@ -836,9 +838,12 @@ def _do_add_constraint(payload: Any, ctx: EntityContext, result: ApplyResult) ->
         return
     check_id = payload.get("check_id")
 
-    def _record():  # only when the check is actually present on the field
+    def _record(clause=None):  # only when the check is actually present on the field
         if check_id and check_id not in (field.get("edit_checks") or []):
             field.setdefault("edit_checks", []).append(check_id)
+        if check_id:
+            # which clause of the (possibly combined) constraint is this check; None = an author's equivalent
+            field.setdefault("edit_check_exprs", {}).setdefault(check_id, clause)
 
     req = payload.get("requires_field")
     if req:
@@ -847,7 +852,7 @@ def _do_add_constraint(payload: Any, ctx: EntityContext, result: ApplyResult) ->
             return  # e.g. the cross-form helper could not be added: never reference a missing field
     cur = str(field.get("constraint") or "").strip()
     if expr in cur:
-        _record()
+        _record(expr)
         return
     if payload.get("if_author_unconstrained") and cur and not field.get("constraint_engine_only"):
         return  # an author (Claude, customer) wrote this constraint; keep the old "only when empty" behavior
@@ -857,7 +862,7 @@ def _do_add_constraint(payload: Any, ctx: EntityContext, result: ApplyResult) ->
         if "<unresolved:" not in ref and ref in cur:
             _record()
             return  # an equivalent check (e.g. written by Claude) already compares against that field
-    _record()
+    _record(expr)
     if not cur:
         field["constraint_engine_only"] = True  # nothing authored: later engine checks may stack here
     field["constraint"] = f"({cur}) and ({expr})" if cur else expr
@@ -921,6 +926,7 @@ def apply_effect(effect: Dict[str, Any], ctx: EntityContext,
     if not effect:
         return result
 
+    ctx.convention_id = convention_id  # provenance for ensure (edit_check_set_by)
     for key, payload in effect.items():
         if key == "soft":
             if isinstance(payload, str):
