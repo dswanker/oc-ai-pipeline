@@ -148,7 +148,9 @@ def build_pdf(spec):
     note = S("note", fontName="Helvetica-Oblique", fontSize=7.5, leading=9.5, textColor=grey)
     ann = S("ann", fontName="Helvetica-Bold", fontSize=8, leading=10)
     ann_sub = S("anns", fontSize=7, leading=8.8)
-    P = lambda t, s=body: Paragraph(escape(str(t if t is not None else "")), s)
+    import html as _h, re as _r  # customer-standard labels can carry HTML (e.g. <span style=...>): show the text only
+    _txt = lambda t: _r.sub(r"\s+", " ", _h.unescape(_r.sub(r"<[^>]*>?", " ", str(t if t is not None else "")))).strip()
+    P = lambda t, s=body: Paragraph(escape(_txt(t)), s)
 
     def box(a, width=box_w):
         fill, edge = (colors.HexColor("#" + c) for c in STYLE[a["kind"]])

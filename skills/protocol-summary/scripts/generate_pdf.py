@@ -19,6 +19,22 @@ from reportlab.platypus import (
     SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle,
     HRFlowable, PageBreak, KeepTogether
 )
+
+# Study content (labels, hints, protocol text, customer-standard forms) can contain HTML the PDF
+# library cannot parse (e.g. <span style="color:white">), a tag cut by truncation, or a bare "<".
+# That used to abort the whole document (PrTK05 2026-10-08: no Study Spec PDF or XLSX).
+# Render it as clean plain text instead; intentional markup still renders when valid.
+import html as _sp_html, re as _sp_re
+_RLParagraph = Paragraph
+
+
+def Paragraph(text, *args, **kwargs):  # noqa: F811
+    try:
+        return _RLParagraph(text, *args, **kwargs)
+    except Exception:
+        plain = _sp_html.unescape(_sp_re.sub(r"<[^>]*>?", " ", str(text)))
+        plain = _sp_re.sub(r"\s+", " ", plain).strip()
+        return _RLParagraph(_sp_html.escape(plain, quote=False), *args, **kwargs)
 from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT
 import datetime
 

@@ -252,7 +252,9 @@ def build_pdf(spec):
     body = ParagraphStyle("b", fontName="Helvetica", fontSize=8, leading=10)
     cell = ParagraphStyle("c", fontName="Helvetica", fontSize=6.6, leading=8)
     hcell = ParagraphStyle("hc", fontName="Helvetica-Bold", fontSize=6.8, leading=8, textColor=colors.white)
-    P = lambda t, s=cell: Paragraph(escape(str(t or "")), s)
+    import html as _h, re as _r  # customer-standard labels can carry HTML (e.g. <span style=...>): show the text only
+    _txt = lambda t: _r.sub(r"\s+", " ", _h.unescape(_r.sub(r"<[^>]*>?", " ", str(t if t is not None else "")))).strip()
+    P = lambda t, s=cell: Paragraph(escape(_txt(t)), s)
 
     def footer(c, doc):
         c.saveState(); c.setFont("Helvetica", 7); c.setFillColor(colors.HexColor("#555555"))

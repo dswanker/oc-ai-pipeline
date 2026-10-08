@@ -810,12 +810,19 @@ def run_study_spec_files(struct_json, customer_subdomain="", migration_source=No
     with tempfile.TemporaryDirectory() as tmp:
         pdf_path  = os.path.join(tmp, f"{protocol_safe}_Study_Specification.pdf")
         xlsx_path = os.path.join(tmp, f"{protocol_safe}_Study_Specification.xlsx")
-        build_edc_pdf(struct_json, pdf_path)
-        build_edc_xlsx(struct_json, xlsx_path)
-        return {
-            "pdf":  open(pdf_path, "rb").read(),
-            "xlsx": open(xlsx_path, "rb").read(),
-        }
+        # PDF and XLSX are independent: a failure in one never costs the other (PrTK05 2026-10-08:
+        # a customer-standard label crashed the PDF and the XLSX was never built). Errors are returned
+        # so the caller can report them; a missing file is None.
+        out = {"pdf": None, "xlsx": None, "errors": {}}
+        for kind, builder, path in (("pdf", build_edc_pdf, pdf_path), ("xlsx", build_edc_xlsx, xlsx_path)):
+            try:
+                builder(struct_json, path)
+                out[kind] = open(path, "rb").read()
+            except Exception as ex:
+                import traceback
+                traceback.print_exc()
+                out["errors"][kind] = f"{type(ex).__name__}: {str(ex).strip()[:300]}"
+        return out
 
 
 def run_protocol_summary_pdf(pricing_json, struct_json=None):
@@ -7191,16 +7198,20 @@ async def run_pipeline(item_id):
                         spec_files = await loop.run_in_executor(
                             None, lambda: run_study_spec_files(struct_json, oc_subdomain, None, client_name)
                         )
-                        await asyncio.gather(
-                            upload_file(item_id, COL["spec_pdf"],
-                                f"{protocol_num}_Study_Specification_{version}.pdf",
-                                spec_files["pdf"]),
-                            upload_file(item_id, COL["spec_xlsx"],
-                                f"{protocol_num}_Study_Specification_{version}.xlsx",
-                                spec_files["xlsx"]),
-                        )
-                        print(f"Chain A complete — pdf:{len(spec_files['pdf'])} bytes "
-                              f"xlsx:{len(spec_files['xlsx'])} bytes", flush=True)
+                        _ups = []
+                        if spec_files.get("pdf"):
+                            _ups.append(upload_file(item_id, COL["spec_pdf"],
+                                f"{protocol_num}_Study_Specification_{version}.pdf", spec_files["pdf"]))
+                        if spec_files.get("xlsx"):
+                            _ups.append(upload_file(item_id, COL["spec_xlsx"],
+                                f"{protocol_num}_Study_Specification_{version}.xlsx", spec_files["xlsx"]))
+                        if _ups:
+                            await asyncio.gather(*_ups)
+                        for _kind, _err in (spec_files.get("errors") or {}).items():
+                            await append_log(item_id, f"⚠️ Study Specification {_kind.upper()} was NOT produced: {_err}. "
+                                                      f"The other Study Specification files were still delivered.")
+                        print(f"Chain A complete — pdf:{len(spec_files.get('pdf') or b'')} bytes "
+                              f"xlsx:{len(spec_files.get('xlsx') or b'')} bytes errors:{spec_files.get('errors')}", flush=True)
                     except Exception as e:
                         import traceback as _tb
                         tb_str = _tb.format_exc()
