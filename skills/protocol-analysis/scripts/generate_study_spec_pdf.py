@@ -542,6 +542,25 @@ def build_study_config_page(data, styles):
     return out
 
 
+def build_form_conventions_block(data, styles):
+    """Customer form conventions (separate SAE form, Death Details form): answer, source and what each did."""
+    try:
+        _root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+        if _root not in sys.path:
+            sys.path.append(_root)
+        import form_conventions
+        sec = form_conventions.section(data)
+    except Exception as e:
+        print(f"[form-conventions] PDF section skipped: {e}")
+        return []
+    if not sec:
+        return []
+    title, note, headers, rows, weights = sec
+    total = float(sum(weights)) or 1.0
+    return [header_band(f"{title} — {note}", styles), Spacer(1, 4),
+            grid_table(headers, rows, styles, [CONTENT_W * w / total for w in weights]), Spacer(1, 8)]
+
+
 def build_edc_pdf(data: dict, output_path: str):
     global _EXTERNAL_LISTS
     _EXTERNAL_LISTS = _LL.external_lists(data) if _LL else {}
@@ -1235,6 +1254,11 @@ def build_edc_pdf(data: dict, output_path: str):
     if config_flowables:
         story.append(PageBreak())
         story.extend(config_flowables)
+
+    conv_flowables = build_form_conventions_block(data, styles)
+    if conv_flowables:
+        story.append(PageBreak())
+        story.extend(conv_flowables)
 
     # ── APPENDIX — Build Conventions Applied (per references/conventions.md) ─
     appendix_flowables = build_conventions_page(meta, styles)

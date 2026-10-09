@@ -313,6 +313,65 @@ silently never attached).
 
 ---
 
+## Train of 2026-10-08 (second): matching by meaning, coverage by meaning, two form conventions
+
+Why: with the standards catalog out of the analysis (kept out), a fresh analysis names forms its own way and often
+gives them no CDASH domain. Matching and the completeness check were domain-based, so a fresh run left standard forms
+unused and then added duplicates of forms the analysis already had under another name. The earlier train validated
+only on a spec whose names were catalog-steered.
+
+Order after the analysis: standards matching -> customer form conventions -> protocol completeness check -> forms
+added for a standard form take its content (`standards_match.splice_added`, no re-match of the rest).
+
+### Item 1: matching by meaning (`standards_match.py`)
+
+- After the domain pass and the id / title pass, every protocol form still unpaired is compared with every standard
+  form still unused: title similarity (shared words, general synonyms, abbreviations such as an acronym of the other
+  title), share of fields that ask the same (same name, or labels sharing most words and at least one specific word),
+  whether one form's questions name the subject in the other's title, and whether both are exposure forms (EX / EC).
+- A deterministic match needs strong evidence: title >= 0.6; or title >= 0.3 with >= 30% of the fields (2 or more)
+  asking the same; or >= 60% of the fields (3 or more); or both exposure forms and the questions name the subject.
+  Different CDASH domains on both sides need title >= 0.8. A prior / concomitant log is not paired with a specific
+  form, and a serious-adverse-event form is not paired with the adverse event form.
+- Best score first; each standard form is used once. A form that also fitted a standard form another form won keeps
+  its own build and is flagged (`review_flags.customer_standard_form_contested`).
+- What is still unpaired goes to one AI call (two compact lists: id, title, domain, field names and labels). Every
+  proposed pair is validated: both ids exist, each form once, and at least some title or field agreement; otherwise
+  rejected and logged. The basis of every pair is in the match record and the monday log.
+- Kill switches: `STANDARDS_MATCH_BY_MEANING=0` (whole pass), `STANDARDS_MATCH_MEANING_AI=0` (AI proposal only).
+
+### Item 2: the completeness check judges coverage by meaning (`protocol_forms.py`)
+
+- Runs after matching, on the final forms.
+- An assessment is covered by a form of its domain, or by a form whose title means it (>= 0.75), or whose title names
+  it; compliance with a treatment is covered by the administration form that has dosing or compliance fields.
+- No form is added when its content would be a standard form another form already uses; the record names that form.
+- Death: a Death Details form only when the protocol asks for details (cause of death, autopsy, circumstances) and
+  the customer's answer allows it; otherwise the death is recorded on Disposition / Adverse Events (CDASHIG: DD is
+  optional).
+- A combined heading the model listed only half of ("... Medications and Procedures") still gives both assessments:
+  the protocol's own sentence is the evidence.
+
+### Item 3: two customer convention questions (`form_conventions.py`)
+
+Asked like every convention question: a board column whose title starts with "CQ " and contains the question; the
+answer is the column text. Unanswered = default. The two columns do not exist on the board yet (the pipeline does not
+create board columns).
+
+| Id | Column title | Answers (default first) |
+|---|---|---|
+| SAE_FORM | CQ Collect Serious Adverse Events on a separate SAE form? | No - capture seriousness, criteria and outcome on the AE form / Yes - add a separate SAE form (date became serious, hospitalization dates, narrative, sponsor notification) |
+| DEATH_DETAILS_FORM | CQ Collect death details (cause of death, autopsy) on a separate Death Details form? | Only when the protocol asks for them / Always / Never - death is captured in Disposition and Adverse Events |
+
+- SAE_FORM = No: an analysis-created SAE-only form is removed when the AE form carries seriousness; missing
+  seriousness, criteria or outcome are added to the AE form from CDASHIG, never to a customer standard AE form (there
+  it is a proposal and the SAE form is kept and flagged).
+- SAE_FORM = Yes: the SAE form is kept, or added from the customer's standard SAE form, else CDASHIG.
+- Forms are changed only on a fresh protocol analysis. A reused or edited Study Specification keeps its forms; what
+  the answer would do is recorded and flagged.
+- Both answers, their source (customer answer / default) and what each did are in `study_meta.form_conventions`, the
+  CUSTOMER_CONVENTIONS sheet of the Study Spec XLSX and a section of the PDF. Kill switch `FORM_CONVENTIONS=0`.
+
 ## 1. Problem
 
 When a customer has an existing OpenClinica build (`file_mm2mafjc` /

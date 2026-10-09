@@ -1205,6 +1205,47 @@ def build_study_config_sheet(wb, data):
         r += 1
 
 
+def _form_conventions_section(data):
+    try:
+        _root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+        if _root not in sys.path:
+            sys.path.append(_root)
+        import form_conventions
+        return form_conventions.section(data)
+    except Exception as e:
+        print(f"[form-conventions] Study Spec section skipped: {e}")
+        return None
+
+
+def build_customer_conventions_sheet(wb, data):
+    """CUSTOMER_CONVENTIONS sheet: the customer's form convention answers (separate SAE form, Death Details form)
+    with their source (customer answer or default) and what each did. Absent when none is recorded."""
+    sec = _form_conventions_section(data)
+    if not sec:
+        return
+    title, note, headers, rows, weights = sec
+    ws = wb.create_sheet(title="CUSTOMER_CONVENTIONS")
+    ws.sheet_properties.tabColor = "27AE60"
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(headers))
+    c = ws.cell(row=1, column=1, value=f"{title} — {note}")
+    c.font = hdr_font(size=9, color=WHITE_HEX)
+    c.fill = fill(DARK_BLUE_HEX)
+    c.alignment = wrap_align()
+    for col, (h, w) in enumerate(zip(headers, weights), start=1):
+        set_col_width(ws, get_column_letter(col), 8 * w)
+        c = ws.cell(row=2, column=col, value=h)
+        c.font = hdr_font(color=WHITE_HEX, size=8)
+        c.fill = fill(DARK_BLUE_HEX)
+        c.border = thin_border()
+        c.alignment = wrap_align("center")
+    for r, row in enumerate(rows, start=3):
+        for col, v in enumerate(row, start=1):
+            c = ws.cell(row=r, column=col, value=safe(v))
+            c.font = body_font()
+            c.border = thin_border()
+            c.alignment = wrap_align()
+
+
 def build_review_flags_sheet(wb, flags):
     ws = wb.create_sheet(title="REVIEW_FLAGS")
     ws.sheet_properties.tabColor = "C0392B"
@@ -1514,6 +1555,7 @@ def build_edc_xlsx(data: dict, output_path: str):
     build_labranges_sheet(wb, data.get("labranges_csv", {}))
     build_review_flags_sheet(wb, data.get("review_flags", {}))
     build_study_config_sheet(wb, data)
+    build_customer_conventions_sheet(wb, data)
 
     # One set of tabs per form
     for form in data.get("forms", []):
