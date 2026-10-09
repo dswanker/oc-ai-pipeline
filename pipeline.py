@@ -175,7 +175,8 @@ def _extract_customer_conventions(cols: dict) -> dict:
         if not is_cq:
             continue
         answer = (col.get("text") or "").strip()
-        if not answer:
+        # The CQ status columns carry a "Not Yet Answered" label: that is no answer, not an answer.
+        if not answer or answer.lower().replace(" ", "") in ("notyetanswered", "notanswered"):
             continue
         out[_strip_cq_prefix(title)] = answer
     return out
