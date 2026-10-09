@@ -1,7 +1,13 @@
 """Forms are protocol-driven: the PROTOCOL defines which forms exist; standards only supply their content.
 
-After the protocol analysis, every assessment the protocol requires data for (Schedule of Activities rows and the
-study-procedures sections) must map to a form. The assessments come from one validated AI call: each carries a
+After the protocol analysis and standards matching, every assessment the protocol requires data for (Schedule of
+Activities rows and the study-procedures sections) must map to a form. A form covers an assessment when it collects
+it: same CDASH domain, or its title / fields say so (a form titled for one treatment covers that treatment; an
+administration form with dosing fields covers compliance with that treatment). Nothing is added twice: no form for an
+assessment another form collects, none whose content would be a standard form another form already uses. A Death
+Details form is added only when the protocol asks for death DETAILS (cause of death, autopsy, circumstances) beyond
+the death itself, which Disposition and Adverse Events capture (CDASHIG: DD is optional), and the customer's
+DEATH_DETAILS_FORM answer allows it. The assessments come from one validated AI call: each carries a
 verbatim protocol quote that is verified against the protocol text, or it is discarded. Mapping an assessment to a
 form is deterministic (CDASH domain, form title, field variables). An assessment no form covers gets a form through
 the precedence chain
@@ -65,6 +71,12 @@ _FILLER = {"assessment", "assessments", "test", "tests", "testing", "form", "rev
 _FAMILY = {"EX": {"EX", "EC"}, "EC": {"EX", "EC"}}
 _NOT_FIELDS = {"VISDAT", "STUDYID", "SITEID", "SUBJID", "USUBJID", "INVID", "INVNAM", "SPONSOR", "VISIT", "VISITNUM", "EPOCH"}
 _PLACEHOLDER = re.compile(r"\[|\]|DD-MON-YYYY|YYYY")
+_COMPLIANCE = re.compile(r"complian|adheren", re.I)
+_DOSING_TITLE = re.compile(r"administ|dosing|\bdose|exposure|complian|study drug|study treatment", re.I)
+_DOSING_FIELD = re.compile(r"dose|dosing|complian|administered|taken|missed", re.I)
+_DEATH_DETAILS = re.compile(r"cause of (the )?death|autops|circumstances? of (the )?death|place of death|"
+                            r"death certificate|death details", re.I)
+DEATH_PROTOCOL, DEATH_ALWAYS, DEATH_NEVER = "protocol", "always", "never"
 
 
 def enabled():
@@ -244,6 +256,31 @@ def _split_combined(name):
     return [n]
 
 
+# Assessments the protocol names in so many words. The model sometimes lists only one half of a combined heading
+# ("Previous and Concomitant Medications and Procedures"); the protocol's own sentence is then the evidence.
+_NAMED_IN_TEXT = [
+    ("Concomitant procedures", "PR", True,
+     re.compile(r"[^.\n]{0,160}concomitant\s+(?:medications?|therap(?:y|ies)|treatments?)\s*(?:and|or|/|&)\s*(?:non-drug\s+)?procedures?[^.\n]{0,160}", re.I),
+     re.compile(r"procedure", re.I)),
+]
+
+
+def supplement(assessments, protocol_text):
+    """Entries for assessments the protocol text names outright and the model's list lacks. Returns the new entries
+    (already in the validated form); each quote is the protocol's own sentence."""
+    out = []
+    text = str(protocol_text or "")
+    for name, dom, log, rx, have in _NAMED_IN_TEXT:
+        if any(have.search(a["name"]) and (a.get("domain") == dom or a.get("log")) for a in assessments):
+            continue
+        m = rx.search(text)
+        if m and len(_squash(m.group(0))) >= MIN_QUOTE:
+            out.append({"name": name, "domain": dom, "domain_basis": "assessment name", "section": "",
+                        "quote": " ".join(m.group(0).split())[:400], "events": [], "log": log,
+                        "found_by": "protocol text (not in the model's list)"})
+    return out
+
+
 def validate_response(spec, response_text, protocol_text):
     """{"assessments": [...], "rejected": {reason: n}}. Only entries with a verified verbatim quote survive."""
     rejected, out, seen = {}, [], set()
@@ -280,7 +317,10 @@ def validate_response(spec, response_text, protocol_text):
                         "section": str(it.get("section") or "").strip()[:60], "quote": quote[:400],
                         "events": [e for e in (it.get("events") or []) if e in known_events],
                         "log": bool(it.get("log")) or bool(_LOG_WORDS.search(name)) or dom in _LOG_DOMAINS})
-    return {"assessments": out, "rejected": rejected}
+    extra = supplement(out, protocol_text) if out else []
+    for a in extra:
+        _log(f"\"{a['name']}\" is named in the protocol text but was not in the model's list: added to the assessments")
+    return {"assessments": out + extra, "rejected": rejected}
 
 
 # ── Deterministic mapping: assessment -> form ────────────────────────────────────
@@ -337,6 +377,15 @@ def cover(assessment, forms):
     """(form, basis) for the form that collects this assessment, or (None, "")."""
     name, dom, quote = assessment["name"], assessment.get("domain"), assessment.get("quote") or ""
     a_tok = _tokens(name)
+    import standards_match as sm
+    # by meaning, whatever the domains say: a form titled for this assessment collects it
+    best_t = max(forms, key=lambda f: sm.title_meaning(name, f.get("form_title")), default=None)
+    if best_t is not None and sm.title_meaning(name, best_t.get("form_title")) >= 0.75:
+        return best_t, "form title (by meaning)"
+    if _COMPLIANCE.search(name):
+        f = _dosing_form(assessment, forms)
+        if f is not None:
+            return f, "dosing / compliance fields on the administration form"
     scored = sorted(((_similar(name, f.get("form_title")), i) for i, f in enumerate(forms)), key=lambda t: (-t[0], t[1]))
     if dom:
         fam = _FAMILY.get(dom, {dom})
@@ -347,7 +396,11 @@ def cover(assessment, forms):
             return best, f"CDASH domain {dom}, form title"
         if not a_generic:
             # a specific kind of the domain (one treatment, one test): the form that names it, before a generic one
-            named = sorted(((_overlap(a_tok, _tokens(f.get("form_title"))) + (1 if _labels_have(f, a_tok) else 0), -i, f)
+            # ... by its title, by a field that names it, or by questions that name its subject (the word of the
+            # assessment no candidate's title has)
+            subject = [t for t in a_tok if len(t) >= 5 and not any(_same(t, x) for f in cands for x in _tokens(f.get("form_title")))]
+            named = sorted(((_overlap(a_tok, _tokens(f.get("form_title"))) + (1 if _labels_have(f, a_tok) else 0)
+                             + (1 if subject and all(_labels_have(f, [t]) for t in subject) else 0), -i, f)
                             for i, f in enumerate(cands)), key=lambda t: (-t[0], -t[1]))
             if named and named[0][0] > 0 and (len(named) == 1 or named[0][0] > named[1][0]):
                 return named[0][2], f"CDASH domain {dom}, named on the form"
@@ -364,6 +417,11 @@ def cover(assessment, forms):
             for f in cands:
                 if _overlap(a_tok, _tokens(f.get("form_title"))) > 0 or _labels_have(f, a_tok):
                     return f, f"CDASH domain {dom}, named on the form"
+        if not a_generic and a_tok:
+            # a form of another (or no) domain whose title names this assessment
+            for f in forms:
+                if f not in cands and _overlap(a_tok, _tokens(f.get("form_title"))) >= 1.0:
+                    return f, "named in the form title"
         # a form of another domain that carries this domain's fields (a combined form)
         for f in forms:
             if f not in cands and _field_domain_count(f, dom) >= 2:
@@ -385,6 +443,34 @@ def cover(assessment, forms):
         if len(ft) >= 1 and _overlap(ft, nq) >= 1.0 and _overlap(a_tok, ft) > 0:
             return f, "form title in the protocol wording"
     return None, ""
+
+
+def _dosing_form(assessment, forms):
+    """The administration form that records compliance with a treatment: an exposure form (or one titled for
+    administration / dosing) with dosing or compliance fields; the one the protocol wording names when several."""
+    words = _tokens(assessment["name"]) + _tokens(assessment.get("quote"))
+    best = None
+    for i, f in enumerate(forms):
+        if not ({"EX", "EC"} & set(_form_domains(f)) or _DOSING_TITLE.search(str(f.get("form_title") or ""))):
+            continue
+        rows = [r for r in f.get("survey") or [] if isinstance(r, dict) and r.get("name")]
+        if not any(_DOSING_FIELD.search(f"{r.get('name')} {r.get('label') or ''}") for r in rows):
+            continue
+        title_tok = [t for t in _tokens(f.get("form_title")) if not _DOSING_TITLE.search(t)]
+        named = sum(1 for t in title_tok if any(_same(t, w) for w in words))
+        score = (named, 1 if any(_COMPLIANCE.search(f"{r.get('name')} {r.get('label') or ''}") for r in rows) else 0, -i)
+        if best is None or score > best[0]:
+            best = (score, f)
+    return best[1] if best else None
+
+
+def _death_form(forms):
+    """The form that records a death when there is no Death Details form: Disposition, else Adverse Events."""
+    for dom in ("DS", "AE"):
+        for f in forms:
+            if dom in _form_domains(f) or str(f.get("form_id") or "").upper() == dom:
+                return f
+    return None
 
 
 # ── Building a form for an assessment nothing covers ─────────────────────────────
@@ -526,49 +612,96 @@ def state(spec):
     return (sm or {}).get("protocol_forms") or {} if isinstance(sm, dict) else {}
 
 
-def fingerprint(protocol_text, sources=None):
+def fingerprint(protocol_text, sources=None, death=DEATH_PROTOCOL):
     h = hashlib.sha256(_squash(protocol_text).encode()).hexdigest()
-    return hashlib.sha256(json.dumps([VERSION, h, (sources or {}).get("fingerprint") or ""]).encode()).hexdigest()
+    parts = [VERSION, h, (sources or {}).get("fingerprint") or ""]
+    if death != DEATH_PROTOCOL:   # the default answer leaves earlier fingerprints valid
+        parts.append(death)
+    return hashlib.sha256(json.dumps(parts).encode()).hexdigest()
 
 
-def needs_check(spec, protocol_text, sources=None):
+def needs_check(spec, protocol_text, sources=None, death=DEATH_PROTOCOL):
     if not enabled() or not isinstance(spec, dict) or not str(protocol_text or "").strip():
         return False
-    return state(spec).get("fingerprint") != fingerprint(protocol_text, sources)
+    return state(spec).get("fingerprint") != fingerprint(protocol_text, sources, death)
 
 
-def apply(spec, assessments, sources=None, crf_forms=None, protocol_text="", rejected=None):
-    """Map every assessment to a form; add a form for each one nothing covers. Mutates spec; returns the state."""
+def _add(spec, forms, a, sources, crf_forms, note=""):
+    form, source, placement = build_form(a, spec, sources, crf_forms)
+    spec.setdefault("forms", []).append(form)
+    forms.append(form)
+    soe = spec.get("schedule_of_events")
+    if isinstance(soe, dict) and isinstance(soe.get("form_placements"), list):
+        for v in form["visits_assigned"]:
+            soe["form_placements"].append({"target_visit_oid": v, "form_id": form["form_id"],
+                                           "required": not a.get("log"), "repeating": bool(a.get("log")),
+                                           "notes": f"Required by protocol {a.get('section') or ''}".strip()})
+    why = note or (f"protocol {('section ' + a['section']) if a.get('section') else 'text'} requires \"{a['name']}\" "
+                   f"and no form collected it")
+    msg = (f"{form['form_id']} ({form['form_title']}): added because {why}; content from {source}; "
+           f"visits: {placement}")
+    bucket = spec.setdefault("review_flags", {}).setdefault(FLAG, [])
+    if msg not in bucket:
+        bucket.append(msg)
+    _log(msg)
+    return form, source, placement
+
+
+def apply(spec, assessments, sources=None, crf_forms=None, protocol_text="", rejected=None, death=DEATH_PROTOCOL):
+    """Map every assessment to a form; add a form for each one nothing covers. Mutates spec; returns the state.
+    death: the customer's DEATH_DETAILS_FORM answer (DEATH_PROTOCOL | DEATH_ALWAYS | DEATH_NEVER)."""
     forms = [f for f in spec.get("forms") or [] if isinstance(f, dict)]
-    records, added = [], []
+    records, added, skipped = [], [], []
+
+    def by_standard():
+        return {(f.get("customer_standard") or {}).get("form_oid") or (f.get("protocol_required") or {}).get("standard_form"): f
+                for f in forms if f.get("customer_standard") or (f.get("protocol_required") or {}).get("standard_form")}
+
     for a in assessments:
         f, basis = cover(a, forms)
         rec = {"assessment": a["name"], "domain": a.get("domain"), "section": a.get("section") or "",
                "quote": a.get("quote") or "", "log": bool(a.get("log"))}
-        if f is not None:
-            rec.update(form=f.get("form_id"), basis=basis, added=False)
+        skip = ""
+        if f is None and a.get("domain") == "DD":
+            asks = bool(_DEATH_DETAILS.search(f"{a['name']} {a.get('quote') or ''}"))
+            if death == DEATH_NEVER or (death != DEATH_ALWAYS and not asks):
+                f = _death_form(forms)
+                basis = ("death is recorded in Disposition and Adverse Events; no Death Details form: "
+                         + ("the customer does not use one (DEATH_DETAILS_FORM = Never)" if death == DEATH_NEVER else
+                            "the protocol does not ask for death details (cause of death, autopsy, circumstances)"))
+                skip = basis
+        if f is None:
+            # the standard form that would supply the content is already another form's content: that form collects it
+            std = _standard_for(a, sources, set())
+            holder = by_standard().get(std["form_oid"]) if std else None
+            if holder is not None:
+                f, basis = holder, f"its content would be the standard form {std['form_oid']}, which {holder.get('form_id')} already uses"
+                skip = basis
+        if f is not None or skip:
+            rec.update(form=f.get("form_id") if f is not None else None, basis=basis, added=False)
+            other_domain = bool(a.get("domain")) and f is not None and not (_FAMILY.get(a["domain"], {a["domain"]}) & set(_form_domains(f)))
+            if skip or "compliance" in basis or "named in the form title" in basis or ("by meaning" in basis and other_domain):
+                rec["skipped_addition"] = True
+                skipped.append(rec)
+                _log(f"no form added for \"{a['name']}\": covered by {rec['form'] or 'no form'} ({basis})")
         else:
-            form, source, placement = build_form(a, spec, sources, crf_forms)
-            spec.setdefault("forms", []).append(form)
-            forms.append(form)
-            soe = spec.get("schedule_of_events")
-            if isinstance(soe, dict) and isinstance(soe.get("form_placements"), list):
-                for v in form["visits_assigned"]:
-                    soe["form_placements"].append({"target_visit_oid": v, "form_id": form["form_id"],
-                                                   "required": not a.get("log"), "repeating": bool(a.get("log")),
-                                                   "notes": f"Required by protocol {a.get('section') or ''}".strip()})
-            msg = (f"{form['form_id']} ({form['form_title']}): added because protocol "
-                   f"{('section ' + a['section']) if a.get('section') else 'text'} requires \"{a['name']}\" and no "
-                   f"form collected it; content from {source}; visits: {placement}")
-            bucket = spec.setdefault("review_flags", {}).setdefault(FLAG, [])
-            if msg not in bucket:
-                bucket.append(msg)
+            form, source, placement = _add(spec, forms, a, sources, crf_forms)
             rec.update(form=form["form_id"], basis="added", added=True, content_source=source, placement=placement)
             added.append(rec)
-            _log(msg)
         records.append(rec)
-    st = {"version": VERSION, "fingerprint": fingerprint(protocol_text, sources), "status": "done",
-          "assessments": records, "added": [r["form"] for r in added], "rejected": dict(rejected or {})}
+    if death == DEATH_ALWAYS and not any("DD" in _form_domains(f) or str(f.get("form_id") or "").upper() == "DD" for f in forms):
+        a = {"name": "Death details", "domain": "DD", "section": "", "quote": "", "events": [], "log": True}
+        form, source, placement = _add(spec, forms, a, sources, crf_forms,
+                                       note="the customer always collects death details on a separate form "
+                                            "(DEATH_DETAILS_FORM = Always)")
+        rec = {"assessment": a["name"], "domain": "DD", "section": "", "quote": "", "log": True, "form": form["form_id"],
+               "basis": "added", "added": True, "content_source": source, "placement": placement,
+               "convention": "DEATH_DETAILS_FORM = Always"}
+        records.append(rec)
+        added.append(rec)
+    st = {"version": VERSION, "fingerprint": fingerprint(protocol_text, sources, death), "status": "done",
+          "assessments": records, "added": [r["form"] for r in added], "rejected": dict(rejected or {}),
+          "death_details_form": death}
     spec.setdefault("study_meta", {})["protocol_forms"] = st
     return st
 
@@ -635,4 +768,7 @@ def summary_lines(spec):
     for r in added:
         lines.append(f"  + {r['form']}: \"{r['assessment']}\" (protocol {r.get('section') or 'section not given'}); "
                      f"content from {r.get('content_source')}; visits: {r.get('placement')}")
+    for r in recs:
+        if r.get("skipped_addition"):
+            lines.append(f"  = \"{r['assessment']}\": no form added, covered by {r.get('form') or 'no form'} ({r.get('basis')})")
     return lines

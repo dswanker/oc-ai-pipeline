@@ -188,7 +188,10 @@ def test_standards_never_add_or_remove_forms_on_their_own():
     spec = _spec()
     before = [f["form_id"] for f in spec["forms"]]
     items = [i for i in ITEMS if i["name"] in ("Demographics", "Vital signs", "Adverse events")]
-    spec, st, _ = _run(spec, src, items=items)
+    # a protocol that does not ask for concomitant procedures
+    text = "\n".join(l for l in PROTOCOL.split("\n") if "rocedures" not in l)
+    v = pf.validate_response(spec, _answer(items), text)
+    st = pf.apply(spec, v["assessments"], src, None, text, v["rejected"])
     assert st["added"] == [] and [f["form_id"] for f in spec["forms"]] == before
     out = sm.apply(spec, src)
     # not required by the protocol: not added, and not forced onto the radiation form that shares its domain
@@ -226,7 +229,11 @@ def test_runs_once_per_protocol_and_sources_and_kill_switch(monkeypatch):
 def test_the_analysis_context_no_longer_contains_the_standards_catalog():
     src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "pipeline.py")).read()
     assert "CUSTOMER STANDARD FORMS — catalog" not in src and "catalog_text(_std_sources)" not in src
-    assert src.count("await _protocol_forms_step(item_id, struct_json, _std_sources, protocol_bytes, _crf_files)") == 4
+    # the completeness check runs after standards matching, on the final forms, at every place a spec is prepared
+    assert src.count("await _protocol_forms_step(") == 1
+    lines = src.split("\n")
+    posts = [i for i, l in enumerate(lines) if "struct_json = await _post_match_forms_step(" in l]
+    assert len(posts) == 4 and all("_standards_match_step(" in lines[i - 1] for i in posts)
 
 
 def test_summary_lines_for_the_monday_log():
@@ -234,3 +241,110 @@ def test_summary_lines_for_the_monday_log():
     lines = pf.summary_lines(spec)
     assert lines[0].startswith("Protocol-required forms: 7 assessment(s)") and "3 form(s) added" in lines[0]
     assert any(l.startswith("  + PE:") and "protocol 10.5.2" in l for l in lines)
+
+
+# ── Coverage by meaning; nothing is added twice ──────────────────────────────────
+
+def _a(name, domain, quote="x", log=False, section="9.1"):
+    return {"name": name, "domain": domain, "quote": quote, "log": log, "section": section, "events": []}
+
+
+def test_a_form_titled_for_the_assessment_covers_it_whatever_its_domain():
+    spec = _spec()
+    spec["forms"].append(fx._f("RADSTD", "Radiation (EBRT)", None, [("date", "PRSTDAT", "Start Date of Radiation", {})]))
+    spec["forms"] = [f for f in spec["forms"] if f["form_id"] != "RT"]
+    f, basis = pf.cover(_a("External beam radiation therapy", "PR"), spec["forms"])
+    assert f["form_id"] == "RADSTD" and basis == "form title (by meaning)"
+    # a form whose title names the assessment covers it although the model gave another domain
+    spec["forms"].append(fx._f("DC", "Disease Characteristics", "MI", [("date", "MIDAT", "Date of Biopsy", {})]))
+    f, basis = pf.cover(_a("Disease assessment", "RS"), spec["forms"])
+    assert f["form_id"] == "DC" and basis == "named in the form title"
+    # the concomitant log of another domain does not cover it
+    assert pf.cover(_a("Concomitant procedures", "PR", log=True), spec["forms"]) == (None, "")
+
+
+def test_compliance_is_covered_by_the_administration_form_with_dosing_fields():
+    spec = _spec()
+    spec["forms"] += [
+        fx._f("EXA", "Compound A Administration", "EX", [("date", "EXSTDAT", "Injection date", {}), ("decimal", "EXDOSE", "Dose", {})]),
+        fx._f("ECB", "Prodrug Administration", "EC", [("date", "ECDAT", "Dose date", {}),
+                                                      ("select_one NY", "ECSTAT", "Did the participant complete the regimen?", {})]),
+        fx._f("DIARY", "Diary Administration", None, [("date", "DIDAT", "Date handed out", {})])]
+    a = _a("Treatment compliance", "EC", quote="Injection information along with prodrug compliance will be documented in the eCRF.")
+    f, basis = pf.cover(a, spec["forms"])
+    assert f["form_id"] == "ECB" and basis == "dosing / compliance fields on the administration form"
+    st = pf.apply(spec, [a], None, None, PROTOCOL)
+    assert st["added"] == [] and st["assessments"][0]["skipped_addition"] is True
+    assert any(l.startswith('  = "Treatment compliance": no form added, covered by ECB') for l in pf.summary_lines(spec))
+    # without any administration form that has dosing fields, the form is added
+    bare = _spec()
+    assert pf.apply(bare, [a], None, None, PROTOCOL)["added"] != []
+
+
+def test_no_form_is_added_when_its_content_would_be_a_standard_form_already_in_use():
+    spec = _spec()
+    src = _sources()
+    # the radiation form took the customer's Concomitant Procedures standard (the 2026-10-08 fresh-run defect)
+    next(f for f in spec["forms"] if f["form_id"] == "RT")["customer_standard"] = {"form_oid": "PR", "source": "uploaded XLSForm"}
+    st = pf.apply(spec, [_a("Concomitant procedures", "PR", log=True)], src, None, PROTOCOL)
+    r = st["assessments"][0]
+    assert st["added"] == [] and r["form"] == "RT" and "which RT already uses" in r["basis"] and r["skipped_addition"]
+    assert [f["form_id"] for f in spec["forms"]].count("PR") == 0
+
+
+DEATH_PLAIN = _a("Death", "DD", quote="The applicable eCRF page(s) pertaining to death should be completed.", log=True)
+DEATH_DETAIL = _a("Death", "DD", quote="The cause of death and whether an autopsy was performed will be recorded.", log=True)
+
+
+def _ds_spec():
+    s = _spec()
+    s["forms"].append(fx._f("DS", "Disposition", "DS", [("date", "DSSTDAT", "Date", {})]))
+    return s
+
+
+def test_death_details_form_only_when_the_protocol_asks_for_details():
+    spec = _ds_spec()
+    st = pf.apply(spec, [DEATH_PLAIN], None, None, PROTOCOL)
+    r = st["assessments"][0]
+    assert st["added"] == [] and r["form"] == "DS" and "does not ask for death details" in r["basis"]
+    spec = _ds_spec()
+    st = pf.apply(spec, [DEATH_DETAIL], None, None, PROTOCOL)
+    assert len(st["added"]) == 1 and spec["forms"][-1]["cdash_domain"] == "DD"
+
+
+def test_death_details_answer_always_and_never():
+    spec = _ds_spec()
+    st = pf.apply(spec, [DEATH_DETAIL], None, None, PROTOCOL, death=pf.DEATH_NEVER)
+    assert st["added"] == [] and "DEATH_DETAILS_FORM = Never" in st["assessments"][0]["basis"]
+    # Always: a form is added even when the protocol lists no death assessment, once
+    spec = _ds_spec()
+    st = pf.apply(spec, [], None, None, PROTOCOL, death=pf.DEATH_ALWAYS)
+    assert len(st["added"]) == 1 and st["assessments"][-1]["convention"] == "DEATH_DETAILS_FORM = Always"
+    assert any("the customer always collects death details" in m for m in spec["review_flags"][pf.FLAG])
+    again = pf.apply(spec, [DEATH_PLAIN], None, None, PROTOCOL, death=pf.DEATH_ALWAYS)
+    assert again["added"] == []
+    # the answer is part of what the check ran for: a new answer runs it again, the default leaves old runs valid
+    assert pf.fingerprint(PROTOCOL, None) == pf.fingerprint(PROTOCOL, None, pf.DEATH_PROTOCOL) != pf.fingerprint(PROTOCOL, None, pf.DEATH_ALWAYS)
+    assert pf.needs_check(spec, PROTOCOL, None, pf.DEATH_ALWAYS) is False and pf.needs_check(spec, PROTOCOL, None) is True
+
+
+def test_a_combined_heading_the_model_listed_only_half_of_still_gives_both_assessments():
+    items = [i for i in ITEMS if not i["name"].startswith("Concomitant")]
+    items.append({"name": "Concomitant medications", "cdash_domain": "CM", "section": "Table 1", "log": True, "events": [],
+                  "quote": "Any changes in concomitant medications"})
+    v = pf.validate_response(_spec(), _answer(items), PROTOCOL)
+    extra = next(a for a in v["assessments"] if a["name"] == "Concomitant procedures")
+    assert extra["domain"] == "PR" and extra["log"] is True and extra["found_by"].startswith("protocol text")
+    assert pf.quote_in(extra["quote"], pf._squash(PROTOCOL)) and "Concomitant Medications and Procedures" in extra["quote"]
+    # nothing is supplemented when the model listed it, or when the protocol does not name it
+    assert sum(a["name"] == "Concomitant procedures" for a in pf.validate_response(_spec(), _answer(ITEMS), PROTOCOL)["assessments"]) == 1
+    assert pf.supplement([], "Concomitant medications will be recorded.") == []
+
+
+def test_one_of_two_administration_forms_is_chosen_by_the_subject_its_questions_name():
+    spec = _spec()
+    spec["forms"] += [
+        fx._f("EX", "Alphavir Administration", "EX", [("date", "EXSTDAT", "Injection date", {})]),
+        fx._f("EC", "Prodrug Administration", "EC", [("select_one NY", "ECYN", "Was the betacillin dose administered as per protocol?", {})])]
+    f, basis = pf.cover(_a("Betacillin administration", "EX"), spec["forms"])
+    assert f["form_id"] == "EC" and basis == "CDASH domain EX, named on the form"
