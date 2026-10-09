@@ -950,6 +950,9 @@ def summary_lines(spec):
         for c in cl:
             if c["status"] == "not assessed":
                 lines.append(f"  ? not assessed: {c['type']} {c['where']} \"{c['label']}\"")
+            elif c["status"] != "none" and not c["assessments"]:
+                lines.append(f"  ? {c['type']} {c['where']} \"{c['label']}\": {c['discarded']} assessment(s) given, none with "
+                             f"a quote found in the protocol")
     for r in recs:
         if r.get("skipped_addition"):
             lines.append(f"  = \"{r['assessment']}\": no form added, covered by {r.get('form') or 'no form'} ({r.get('basis')})")

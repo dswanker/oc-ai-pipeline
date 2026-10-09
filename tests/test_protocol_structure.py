@@ -185,6 +185,11 @@ def test_a_skipped_heading_triggers_one_follow_up_and_what_stays_unanswered_is_n
     st = pf.apply(spec, v["assessments"], None, None, PROTOCOL, v["rejected"], checklist=pf.coverage_records(cl, v))
     assert st["not_assessed"] == ["H4"]
     assert "  ? not assessed: heading 4.3 \"Sprocket Review\"" in pf.summary_lines(spec)
+    # an entry whose assessments all fail quote verification is reported, not dropped silently
+    bad = pf.validate_response(_spec(), json.dumps({"entries": [{"id": "H2", "assessments": [_a("Gadget count", "The gadget count is written down somewhere else entirely.")]}]}), PROTOCOL, cl)
+    spec3 = _spec()
+    pf.apply(spec3, [dict(_a("Widget reading", Q_WIDGET), entries=[])], None, None, PROTOCOL, checklist=pf.coverage_records(cl, bad))
+    assert "  ? heading 4.1 \"Widget Reading and Gadget Count\": 1 assessment(s) given, none with a quote found in the protocol" in pf.summary_lines(spec3)
     # a complete first answer needs no second call; a failed follow-up leaves the entries not assessed
     calls.clear()
 
