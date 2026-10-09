@@ -371,7 +371,7 @@ def _convert_to_pdf(file_bytes: bytes, filename: str) -> bytes:
             result = subprocess.run(
                 ['libreoffice', '--headless', '--convert-to', 'pdf',
                  '--outdir', tmpdir, src_path],
-                capture_output=True, timeout=90, text=True
+                capture_output=True, timeout=240, text=True
             )
             pdf_path = os.path.join(tmpdir, f'protocol.pdf')
             if os.path.exists(pdf_path):
@@ -396,8 +396,31 @@ def _extract_docx_as_text(file_bytes: bytes) -> str:
     try:
         import io
         from docx import Document
+        from docx.table import Table
+        from docx.text.paragraph import Paragraph
         doc = Document(io.BytesIO(file_bytes))
-        return '\n'.join(p.text for p in doc.paragraphs if p.text.strip())
+        # Paragraphs AND tables, in document order: the Schedule of Activities is a table, and the old
+        # paragraphs-only text silently dropped every table. A table row becomes "cell | cell | ...".
+        lines = []
+        for child in doc.element.body.iterchildren():
+            tag = child.tag.rsplit('}', 1)[-1]
+            if tag == 'p':
+                t = Paragraph(child, doc).text
+                if t.strip():
+                    lines.append(t)
+            elif tag == 'tbl':
+                for row in Table(child, doc).rows:
+                    cells, seen = [], set()
+                    for c in row.cells:            # merged cells repeat: keep each once
+                        t = ' '.join(c.text.split())
+                        if id(c._tc) in seen:
+                            continue
+                        seen.add(id(c._tc))
+                        cells.append(t)
+                    if any(cells):
+                        lines.append(' | '.join(cells))
+                lines.append('')
+        return '\n'.join(lines).strip()
     except Exception as e:
         print(f"_extract_docx_as_text error: {e}", flush=True)
         return ''

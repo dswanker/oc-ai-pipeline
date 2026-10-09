@@ -1,9 +1,14 @@
 FROM python:3.11-slim-bookworm
 
 # Install system dependencies and Playwright browsers
-RUN apt-get update && apt-get install -y \
+# libreoffice-writer converts Word protocols (.docx/.doc) to PDF so they take the same path as PDF protocols,
+# tables (Schedule of Activities) included; without it the text fallback was used and tables were lost.
+RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     curl \
+    libreoffice-writer-nogui \
+    fonts-liberation \
+    fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
