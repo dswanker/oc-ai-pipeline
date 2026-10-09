@@ -1,6 +1,7 @@
 """standards_match.py: customer standard form matching (docs/OC_STANDARD_FORM_MATCHING_PLAN.md, agreed rules 2026-10-09).
 
-Each protocol form is matched to a customer standard form by CDASH domain. On a match the standard form is used
+Each protocol form is matched to a customer standard form by CDASH domain, then by form id / title, then by
+meaning (what the form collects: titles, field labels, questions; STANDARDS_MATCH_BY_MEANING=0 disables). On a match the standard form is used
 EXACTLY (every field, choice list, constraint, required flag, relevance, calculation, hint, appearance, item group
 and setting); the protocol analysis keeps the visit placement and form-level scheduling. A field is added only when
 the protocol clearly and directly specifies that data point and the standard lacks it (verified verbatim quote).
@@ -22,6 +23,7 @@ VERSION = 1
 STATUS = "CUSTOMER_STANDARD"
 SRC_XLSFORM, SRC_ODM = "uploaded XLSForm", "uploaded ODM"
 ADDED = "Added from protocol"
+FLAG_CONTESTED = "customer_standard_form_contested"
 
 # XLSForm survey columns the form builder always writes (skills/edc-builder/scripts/build_xlsforms.py SURVEY_COLS).
 SURVEY_COLS = ["type", "name", "label", "bind::oc:itemgroup", "hint", "appearance", "bind::oc:briefdescription",
@@ -528,10 +530,309 @@ def _log_mismatch(pform, sform, score):
     return bool(_RUNNING_LOG.search(str(pform.get("form_title") or ""))) != bool(_RUNNING_LOG.search(str(sform.get("title") or "")))
 
 
-def match_forms(pforms, sforms):
+# ── Matching by meaning (forms the CDASH domain pass could not pair) ─────────────
+# A protocol analysis names forms its own way and often gives them no CDASH domain. Such a form is paired with a
+# standard form by what it collects: the two titles, the field labels, and whether one form's questions name the
+# subject of the other. Deterministic scoring first; one validated AI call may propose pairs for what is left.
+
+_M_FILLER = {"form", "log", "crf", "page", "the", "and", "of", "for", "or", "a", "an", "to", "in", "at", "with", "if",
+             "study", "per", "as", "by", "on", "is", "be", "was", "were", "did", "do", "any", "this", "that"}
+# general clinical vocabulary: different words for the same thing
+_M_SYN = {"radiotherapy": "radiation", "irradiation": "radiation", "ebrt": "radiation", "xrt": "radiation",
+          "biospecimen": "specimen", "biosample": "specimen", "sample": "specimen", "biobank": "specimen",
+          "examination": "exam", "labs": "laboratory", "lab": "laboratory", "ecg": "electrocardiogram",
+          "ekg": "electrocardiogram", "medication": "medication", "drug": "medication", "dosing": "administration",
+          "sae": "serious", "ae": "adverse", "icf": "consent", "pk": "pharmacokinetic", "randomisation": "randomization"}
+# words that do not make two field labels the same data point on their own
+_M_GENERIC = {"date", "start", "end", "stop", "time", "comment", "note", "specify", "other", "reason", "ongoing",
+              "yes", "no", "unit", "number", "type", "result", "total", "provide", "please", "not", "done", "performed",
+              "collected", "collection", "completed", "status", "detail", "description", "name", "id", "visit"}
+_EXPOSURE = {"EX", "EC"}
+_TAGS = re.compile(r"<[^>]+>|\*\*|\$\{[^}]*\}")
+
+
+def meaning_enabled():
+    return os.environ.get("STANDARDS_MATCH_BY_MEANING", "1") != "0"
+
+
+def _m_tokens(text):
+    out = []
+    for t in re.findall(r"[a-z0-9]+", _TAGS.sub(" ", str(text or "")).lower()):
+        if t in _M_FILLER:
+            continue
+        t = _M_SYN.get(t, t)
+        if len(t) > 4 and t.endswith("s") and not t.endswith(("ss", "us", "is")):
+            t = _M_SYN.get(t[:-1], t[:-1])
+        if t not in out:
+            out.append(t)
+    return out
+
+
+def _m_same(a, b):
+    if a == b:
+        return True
+    short, long_ = (a, b) if len(a) <= len(b) else (b, a)
+    return len(short) >= 5 and long_.startswith(short[:max(5, len(short) - 3)])
+
+
+def _raw_words(text):
+    return [w for w in re.findall(r"[a-z0-9]+", _TAGS.sub(" ", str(text or "")).lower()) if w not in _M_FILLER]
+
+
+def _acronym_of(token_text, other_text):
+    """Tokens of other_text that a short word of token_text abbreviates ("EBRT" = External Beam Radiation Therapy)."""
+    words = _raw_words(other_text)
+    for w in _raw_words(token_text):
+        if 3 <= len(w) <= 6:
+            for i in range(len(words) - len(w) + 1):
+                run = words[i:i + len(w)]
+                if all(len(x) > 1 for x in run) and "".join(x[0] for x in run) == w:
+                    return w, run
+    return None, []
+
+
+def title_meaning(a, b):
+    """0..1: how far two titles name the same thing (shared words, synonyms, abbreviations), both directions."""
+    ta, tb = _m_tokens(a), _m_tokens(b)
+    if not ta or not tb:
+        return 0.0
+    ma = {i for i, x in enumerate(ta) if any(_m_same(x, y) for y in tb)}
+    mb = {j for j, y in enumerate(tb) if any(_m_same(x, y) for x in ta)}
+    for src, dst, ms, md, toks_s, toks_d in ((a, b, ma, mb, ta, tb), (b, a, mb, ma, tb, ta)):
+        w, run = _acronym_of(src, dst)
+        if w:
+            ms |= {i for i, x in enumerate(toks_s) if x == _M_SYN.get(w, w)}
+            md |= {j for j, y in enumerate(toks_d) if any(y == _M_SYN.get(r, r) or _m_same(y, r) for r in run)}
+    if not any(ta[i] not in _M_GENERIC for i in ma):
+        return 0.0
+    return round((len(ma) + len(mb)) / (len(ta) + len(tb)), 3)
+
+
+def _label_same(la, lb):
+    """Two field labels ask for the same data point: most words shared, at least one of them specific."""
+    if not la or not lb:
+        return False
+    shared = [x for x in la if any(_m_same(x, y) for y in lb)]
+    back = [y for y in lb if any(_m_same(x, y) for x in la)]
+    if not any(x not in _M_GENERIC and (len(x) > 1 or x.isalpha()) for x in shared):
+        return False
+    return (len(shared) + len(back)) / (len(la) + len(lb)) >= 0.6
+
+
+def _m_rows(survey):
+    return [r for r in survey or [] if is_data_row(r) and str(r.get("type") or "").strip().lower() != "calculate"
+            and not str(r.get("name") or "").upper().endswith(("_CF", "_SF", "_CALC"))]
+
+
+def _m_profile(form_id, title, domains, survey, choices=None):
+    rows = _m_rows(survey)
+    labels = [_m_tokens(r.get("label")) for r in rows]
+    words = set()
+    for l in labels:
+        words.update(l)
+    for c in choices or []:
+        if isinstance(c, dict):
+            words.update(_m_tokens(c.get("label")))
+    return {"id": str(form_id or ""), "title": str(title or ""), "domains": [d for d in domains if d],
+            "names": [_name_key(r.get("name")) for r in rows], "labels": labels, "words": words,
+            "title_tokens": _m_tokens(title)}
+
+
+def _topic(a, b):
+    """A specific word of a's title that b's questions name (and b's title does not): the subject of the form."""
+    for t in a["title_tokens"]:
+        if len(t) >= 5 and t not in _M_GENERIC and not any(_m_same(t, x) for x in b["title_tokens"]) \
+                and any(_m_same(t, w) for w in b["words"]):
+            return t
+    return ""
+
+
+def meaning_score(p, s):
+    """Evidence that protocol form profile p and standard form profile s collect the same thing."""
+    title = title_meaning(p["title"], s["title"])
+    hit = 0
+    s_names = set(s["names"])
+    for name, lab in zip(p["names"], p["labels"]):
+        if name in s_names or any(_label_same(lab, sl) for sl in s["labels"]):
+            hit += 1
+    n = len(p["names"])
+    fields = round(hit / n, 3) if n else 0.0
+    topic = _topic(p, s) or _topic(s, p)
+    family = bool(set(p["domains"]) & _EXPOSURE) and bool(set(s["domains"]) & _EXPOSURE)
+    conflict = bool(p["domains"]) and bool(s["domains"]) and not set(p["domains"]) & set(s["domains"]) and not family
+    score = round(min(1.0, 0.6 * title + 0.4 * fields + (0.2 if topic else 0.0)), 3)
+    return {"score": score, "title": title, "fields": fields, "field_hits": hit, "topic": topic, "family": family,
+            "conflict": conflict}
+
+
+_QUALIFIER = re.compile(r"\bserious\b|\bsaes?\b", re.I)
+
+
+def _qualifier_mismatch(p_title, s_title):
+    """A form for serious adverse events only is not the adverse event form, and the other way round."""
+    return bool(_QUALIFIER.search(str(p_title or ""))) != bool(_QUALIFIER.search(str(s_title or "")))
+
+
+def _meaning_basis(ev):
+    """(basis text or "", strong enough for a deterministic match)."""
+    parts = []
+    if ev["title"] > 0:
+        parts.append(f"title similarity {ev['title']}")
+    if ev["field_hits"]:
+        parts.append(f"{ev['field_hits']} field(s) ask the same ({ev['fields']})")
+    if ev["topic"]:
+        parts.append(f"the questions name \"{ev['topic']}\"")
+    if ev["family"]:
+        parts.append("both exposure forms")
+    text = "; ".join(parts)
+    if ev["conflict"]:
+        return text, ev["title"] >= 0.8
+    strong = (ev["title"] >= 0.6
+              or (ev["title"] >= 0.3 and ev["fields"] >= 0.3 and ev["field_hits"] >= 2)
+              or (ev["fields"] >= 0.6 and ev["field_hits"] >= 3)
+              or (ev["family"] and bool(ev["topic"])))
+    return text, strong
+
+
+def _meaning_minimum(ev):
+    """The least evidence an AI-proposed pair needs: something in the titles, fields or questions agrees."""
+    if ev["conflict"]:
+        return ev["title"] >= 0.8
+    return ev["title"] >= 0.2 or (ev["fields"] >= 0.2 and ev["field_hits"] >= 1) or (ev["family"] and bool(ev["topic"]))
+
+
+def _profiles(pforms, sforms, pdoms):
+    pp = {id(p): _m_profile(p.get("form_id"), p.get("form_title"), pdoms[id(p)], p.get("survey"), p.get("choices"))
+          for p in pforms}
+    sp = {id(s): _m_profile(s["form_oid"], s["title"], [s.get("domain")], s["survey"], s.get("choices")) for s in sforms}
+    return pp, sp
+
+
+MEANING_PROMPT = """You pair eCRF forms that collect the same data.
+
+PROTOCOL FORMS are forms a protocol analysis designed. STANDARD FORMS are a customer's own standard forms. Each line
+gives the form id, title, CDASH domain and field names with labels. For each PROTOCOL FORM decide whether one
+STANDARD FORM collects the same assessment (the same procedure, treatment, test or event), whatever the two are
+called. Rules:
+1. Pair two forms only when they are about the same assessment. Sharing dates, comments or a yes/no question is not
+   enough. When in doubt, do not pair.
+2. A standard form may be paired with at most one protocol form, and a protocol form with at most one standard form.
+3. Use only the ids given. Leave a form out when nothing fits; most forms may have no pair.
+
+Answer ONLY with JSON, no prose, no code fences:
+{"pairs": [{"protocol_form": "<protocol form id>", "standard_form": "<standard form id>", "reason": "<one sentence>"}]}
+"""
+
+
+def _compact(fid, title, domain, survey, max_fields=40):
+    rows = _m_rows(survey)
+    fields = "; ".join(f"{r.get('name')}: {_TAGS.sub(' ', str(r.get('label') or '')).strip()[:60]}" for r in rows[:max_fields])
+    more = f" (+{len(rows) - max_fields} more)" if len(rows) > max_fields else ""
+    return f"{fid} | {title} | CDASH domain: {domain or 'none'}\n    fields: {fields}{more}"
+
+
+def meaning_leftovers(spec, sources):
+    """(protocol forms, standard forms) the deterministic passes leave unpaired, for the AI call. Works on a copy with
+    any earlier match undone; never changes the spec."""
+    if not meaning_enabled():
+        return [], []
+    sforms = (sources or {}).get("forms") or []
+    if not sforms or not isinstance(spec, dict):
+        return [], []
+    tmp = copy.deepcopy(spec)
+    if state(tmp).get("matched"):
+        _restore(tmp)
+    pforms = [f for f in tmp.get("forms") or [] if isinstance(f, dict)]
+    m = match_forms(pforms, sforms)
+    up = [p for p in pforms if not any(p is x[0] for x in m)]
+    us = [s for s in sforms if not any(s is x[1] for x in m)]
+    return up, us
+
+
+def build_meaning_request(spec, sources):
+    """(prompt, extra_text) for the forms still unpaired, or None when either list is empty. Titles, domains and
+    field names / labels only; never full form content."""
+    up, us = meaning_leftovers(spec, sources)
+    if not up or not us:
+        return None
+    extra = ("PROTOCOL FORMS:\n" + "\n".join(_compact(p.get("form_id"), p.get("form_title"), p.get("cdash_domain"),
+                                                      p.get("survey")) for p in up)
+             + "\n\nSTANDARD FORMS:\n" + "\n".join(_compact(s["form_oid"], s["title"], s.get("domain"), s["survey"])
+                                                   for s in us))
+    return MEANING_PROMPT, extra
+
+
+def parse_meaning_pairs(response_text):
+    """[(protocol form id, standard form id, reason)] as the model wrote them; validated later in match_forms."""
+    try:
+        items = _parse_json(response_text, "pairs")
+    except Exception:
+        return []
+    out = []
+    for it in items:
+        if isinstance(it, dict) and it.get("protocol_form") and it.get("standard_form"):
+            out.append((str(it["protocol_form"]).strip(), str(it["standard_form"]).strip(), str(it.get("reason") or "")[:200]))
+    return out
+
+
+def _match_by_meaning(pforms, sforms, pdoms, used_p, used_s, take, ai_pairs, info):
+    left_p = [p for p in pforms if id(p) not in used_p]
+    left_s = [s for s in sforms if id(s) not in used_s]
+    if not left_p or not left_s:
+        return
+    pp, sp = _profiles(left_p, left_s, pdoms)
+    scored = []
+    for pi, p in enumerate(left_p):
+        for si, s in enumerate(left_s):
+            ev = meaning_score(pp[id(p)], sp[id(s)])
+            text, strong = _meaning_basis(ev)
+            if strong and not _log_mismatch(p, s, ev["title"]) and not _qualifier_mismatch(p.get("form_title"), s["title"]):
+                scored.append((ev["score"], _tier(s["source"]), s.get("ref_order", 0), pi, si, text))
+    scored.sort(key=lambda t: (-t[0], t[1], t[2], t[3], t[4]))
+    for score, _t, _r, pi, si, text in scored:
+        p, s = left_p[pi], left_s[si]
+        if id(p) in used_p:
+            continue
+        if id(s) in used_s:
+            winner = next((x[0] for x in info["pairs"] if x[1] is s), None)
+            info["contested"].append({"form": p.get("form_id"), "standard_form": s["form_oid"], "score": score,
+                                      "won_by": winner.get("form_id") if winner else None})
+            continue
+        info["pairs"].append((p, s))
+        take(p, s, f"by meaning: {text}", score, "")
+    info["contested"] = [c for c in info["contested"]
+                         if not any(x[0].get("form_id") == c["form"] for x in info["pairs"])]
+    # pairs proposed by the AI call for what is still left: each one validated deterministically
+    seen_s = set()
+    for pid, sid, reason in ai_pairs or []:
+        p = next((x for x in left_p if norm_id(x.get("form_id")) == norm_id(pid)), None)
+        s = next((x for x in left_s if norm_id(x["form_oid"]) == norm_id(sid)), None)
+        rej = {"protocol_form": pid, "standard_form": sid}
+        if p is None or s is None:
+            info["ai_rejected"].append({**rej, "reason": "unknown form id"})
+        elif id(p) in used_p or id(s) in used_s or sid in seen_s:
+            info["ai_rejected"].append({**rej, "reason": "form already paired"})
+        else:
+            ev = meaning_score(pp[id(p)], sp[id(s)])
+            text, _strong = _meaning_basis(ev)
+            if not _meaning_minimum(ev) or _log_mismatch(p, s, ev["title"]) \
+                    or _qualifier_mismatch(p.get("form_title"), s["title"]):
+                info["ai_rejected"].append({**rej, "reason": "no title, field or question overlap"
+                                            + (" (different CDASH domains)" if ev["conflict"] else "")})
+            else:
+                seen_s.add(sid)
+                info["pairs"].append((p, s))
+                take(p, s, f"by meaning, AI-proposed and validated: {text}", ev["score"], reason)
+
+
+def match_forms(pforms, sforms, ai_pairs=None, info=None):
     """[(protocol form, standard form, basis, score, note)] one-to-one. Domain first (by source priority, then name
-    similarity inside a domain), then identical form id / title for forms the domain pass left unmatched."""
+    similarity inside a domain), then identical form id / title for forms the domain pass left unmatched, then by
+    meaning (titles, field labels, questions) for what is still unpaired; ai_pairs are validated here.
+    info, when given, receives {"contested": [...], "ai_rejected": [...]}."""
     out, used_p, used_s = [], set(), set()
+    info = info if isinstance(info, dict) else {}
+    info.update({"pairs": [], "contested": [], "ai_rejected": []})
     tiers = sorted({(_tier(s["source"]), s.get("ref_order", 0)) for s in sforms})
     pdoms = {id(p): _protocol_domains(p) for p in pforms}
 
@@ -580,6 +881,9 @@ def match_forms(pforms, sforms):
                     p = best[2]
                     take(p, s, f"{best[1]} (no shared CDASH domain: protocol {'/'.join(pdoms[id(p)]) or 'none'}, "
                                f"standard {s['domain'] or 'none'})", best[0], "")
+    if meaning_enabled():
+        _match_by_meaning(pforms, sforms, pdoms, used_p, used_s, take, ai_pairs, info)
+    info.pop("pairs", None)
     return out
 
 
@@ -717,6 +1021,7 @@ def _restore(spec):
     spec.pop("standards_originals", None)
     if isinstance(spec.get("review_flags"), dict):
         spec["review_flags"].pop("customer_standard_label_from_name", None)
+        spec["review_flags"].pop(FLAG_CONTESTED, None)
     sm = spec.get("study_meta") if isinstance(spec.get("study_meta"), dict) else {}
     prev = sm.get("standards_match") or {}
     prev["proposals"] = []
@@ -738,9 +1043,10 @@ def needs_match(spec, sources):
     return prev.get("fingerprint") != fp or prev.get("version") != VERSION
 
 
-def apply(spec, sources):
+def apply(spec, sources, ai_pairs=None):
     """Match and splice. Returns a NEW spec (the input is never mutated); on any error the input is returned
-    unchanged. A spec already matched against the same sources is returned as is."""
+    unchanged. A spec already matched against the same sources is returned as is. ai_pairs: pairs proposed by the
+    by-meaning AI call ([(protocol form id, standard form id, reason)]); each is validated in match_forms."""
     if not needs_match(spec, sources):
         return spec
     try:
@@ -750,7 +1056,9 @@ def apply(spec, sources):
             _restore(out)
         sforms = (sources or {}).get("forms") or []
         pforms = [f for f in out.get("forms") or [] if isinstance(f, dict)]
-        matched = [_splice(out, p, s, basis, score, note) for p, s, basis, score, note in match_forms(pforms, sforms)]
+        info = {}
+        matched = [_splice(out, p, s, basis, score, note)
+                   for p, s, basis, score, note in match_forms(pforms, sforms, ai_pairs, info)]
         used = {m["standard_form"] for m in matched}
         got = {m["form_id"] for m in matched}
         warnings = _dangling_refs(out, got)
@@ -762,7 +1070,14 @@ def apply(spec, sources):
             "standard_forms_not_used": [{"form": s["form_oid"], "title": s["title"], "domain": s["domain"],
                                          "source": s["source"]} for s in sforms if s["form_oid"] not in used],
             "warnings": warnings, "proposals": [], "rejected_ids": list(prev.get("rejected_ids") or []),
+            "contested": info.get("contested") or [], "ai_pairs_rejected": info.get("ai_rejected") or [],
             "additions": {"status": "not_run"}}
+        for c in info.get("contested") or []:
+            msg = (f"{c['form']}: also fits the customer standard form {c['standard_form']}, which {c['won_by']} uses "
+                   f"(better match); {c['form']} keeps its protocol / CDASH build")
+            bucket = out.setdefault("review_flags", {}).setdefault(FLAG_CONTESTED, [])
+            if msg not in bucket:
+                bucket.append(msg)
         for m in matched:
             _log(f"{m['protocol_form']} -> {m['standard_form']} ({m['source']}; {m['basis']}; similarity {m['score']})"
                  + (f"; {m['note']}" if m["note"] else ""))
@@ -770,6 +1085,39 @@ def apply(spec, sources):
     except Exception as e:
         _log(f"matching failed, spec unchanged: {type(e).__name__}: {e}")
         return spec
+
+
+def splice_added(spec, sources):
+    """Forms added after matching for a standard form (protocol completeness check, customer conventions: the form
+    was created with that standard form's id): take the standard form's content now. Other forms are not
+    re-matched. Mutates spec; returns the new match records. Never raises."""
+    try:
+        st = state(spec)
+        sforms = {s["form_oid"]: s for s in (sources or {}).get("forms") or []}
+        if not st or not sforms or not enabled():
+            return []
+        used = {(f.get("customer_standard") or {}).get("form_oid") for f in matched_forms(spec)}
+        new = []
+        for f in [x for x in spec.get("forms") or [] if isinstance(x, dict)]:
+            req = f.get("protocol_required") or f.get("convention_required") or {}
+            oid = req.get("standard_form")
+            if f.get("customer_standard") or not oid or oid in used or oid not in sforms:
+                continue
+            rec = _splice(spec, f, sforms[oid], "created for this standard form (" + (
+                "protocol-required assessment" if f.get("protocol_required") else "customer convention") + ")", 1.0, "")
+            used.add(oid)
+            new.append(rec)
+            _log(f"{rec['protocol_form']} -> {rec['standard_form']} ({rec['source']}; {rec['basis']})")
+        if new:
+            st.setdefault("matched", []).extend(new)
+            got = {m["form_id"] for m in st["matched"]}
+            st["protocol_forms_without_standard"] = [f.get("form_id") for f in spec.get("forms") or []
+                                                     if isinstance(f, dict) and f.get("form_id") not in got]
+            st["standard_forms_not_used"] = [x for x in st.get("standard_forms_not_used") or [] if x.get("form") not in used]
+        return new
+    except Exception as e:
+        _log(f"splicing added forms failed (forms keep their own content): {type(e).__name__}: {e}")
+        return []
 
 
 def _dangling_refs(spec, matched_ids):
@@ -1259,6 +1607,11 @@ def summary_lines(spec):
     if st.get("standard_forms_not_used"):
         out.append("  Standard forms the protocol does not need: "
                    + ", ".join(f"{s['form']} ({s['domain'] or 'no domain'})" for s in st["standard_forms_not_used"]))
+    for c in st.get("contested") or []:
+        out.append(f"  REVIEW: {c['form']} also fits {c['standard_form']}, used by {c['won_by']} (better match); "
+                   f"{c['form']} keeps its own build")
+    for r in st.get("ai_pairs_rejected") or []:
+        out.append(f"  AI-proposed pair not used: {r['protocol_form']} -> {r['standard_form']} ({r['reason']})")
     for w in st.get("warnings") or []:
         out.append(f"  WARNING: {w}")
     return out
