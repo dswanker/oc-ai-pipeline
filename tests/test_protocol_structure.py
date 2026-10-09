@@ -277,7 +277,9 @@ def test_kill_switch_for_the_checklist(monkeypatch):
     assert not pf.checklist_enabled()
     src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "pipeline.py")).read()
     step = src[src.index("async def _protocol_forms_step("):src.index("async def _protocol_basis_step(")]
-    assert "_pf.checklist_enabled()" in step and "_ps.checklist(" in step and "_pf.assess(" in step and "_ps.log_lines(" in step
+    helper = src[src.index("async def _protocol_checklist("):src.index("async def _merged_protocol_checks(")]
+    assert "_pf.checklist_enabled()" in helper and "_ps.checklist(" in helper and "_ps.log_lines(" in helper
+    assert "_protocol_checklist(" in step and "_pf.assess(" in step
 
 
 def test_the_same_assessment_under_a_longer_name_is_covered_by_the_form_titled_and_fielded_for_it():

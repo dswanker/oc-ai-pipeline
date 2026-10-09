@@ -13,6 +13,7 @@ Two modes:
 """
 
 import anthropic, base64, json, os, asyncio, re
+import contextvars, hashlib, time
 import httpx  # used in the retry except clauses below (was missing: any other error surfaced as NameError)
 
 MODEL       = "claude-opus-4-7"
@@ -33,6 +34,180 @@ SKILL_BETAS = [
     "skills-2025-10-02",
     "files-api-2025-04-14",
 ]
+
+
+# ── Cost switches (all default OFF: the request is exactly what it was) ──────
+
+def doc_first_enabled():
+    """PROTOCOL_DOC_FIRST=1: the protocol PDF is the FIRST content block and carries a 1-hour cache marker, so
+    every later call of the run that sends the same PDF reads it from the cache (a tenth of the input price)
+    instead of paying for it again. Only the order of the blocks and the cache markers change."""
+    return os.environ.get("PROTOCOL_DOC_FIRST", "0") == "1"
+
+
+def doc_cache_ttl():
+    """TTL of the protocol cache entry. 1h by default: the main analysis streams for longer than 5 minutes, so the
+    calls after it would miss a 5-minute entry. PROTOCOL_DOC_CACHE_TTL=5m overrides."""
+    return "5m" if os.environ.get("PROTOCOL_DOC_CACHE_TTL", "1h").strip().lower() == "5m" else "1h"
+
+
+def build_content(prompt, pdf_bytes=None, extra_text=None, cache_prompt=True, images=None):
+    """The content blocks of one call. Default order: prompt (cacheable) FIRST, then PDF + images + extra_text.
+    With PROTOCOL_DOC_FIRST=1 and a PDF: the PDF first with its own cache marker, then the prompt (keeping its
+    marker), images and extra_text."""
+    prompt_block = {"type": "text", "text": prompt}
+    if cache_prompt:
+        prompt_block["cache_control"] = {"type": "ephemeral"}
+    doc_block = None
+    if pdf_bytes:
+        doc_block = {
+            "type": "document",
+            "source": {
+                "type":       "base64",
+                "media_type": "application/pdf",
+                "data":       base64.standard_b64encode(pdf_bytes).decode(),
+            },
+        }
+    content = []
+    if doc_block is not None and doc_first_enabled():
+        cc = {"type": "ephemeral"}
+        if doc_cache_ttl() == "1h":
+            cc["ttl"] = "1h"
+        doc_block["cache_control"] = cc
+        content.append(doc_block)
+        content.append(prompt_block)
+    else:
+        content.append(prompt_block)
+        if doc_block is not None:
+            content.append(doc_block)
+    # Inject source EDC screenshots — placed after the PDF so Claude reads
+    # protocol first, then sees the reference images.
+    if images:
+        for media_type, img_data in images:
+            content.append({
+                "type": "image",
+                "source": {
+                    "type":       "base64",
+                    "media_type": media_type,
+                    "data":       img_data,
+                },
+            })
+    if extra_text:
+        content.append({"type": "text", "text": extra_text})
+    return content
+
+
+# ── Usage record (every call; read by cost reports and tests) ────────────────
+
+USAGE = []          # one dict per finished call, in order
+PRICES = {"input": 5.0, "output": 25.0, "cache_write_5m": 6.25, "cache_write_1h": 10.0, "cache_read": 0.50}   # $ / MTok
+
+
+def call_cost(rec):
+    """Dollars of one usage record (Opus 4.7 list prices; a batched call costs half)."""
+    usd = (rec.get("input", 0) * PRICES["input"] + rec.get("output", 0) * PRICES["output"]
+           + rec.get("cache_write_5m", 0) * PRICES["cache_write_5m"]
+           + rec.get("cache_write_1h", 0) * PRICES["cache_write_1h"]
+           + rec.get("cache_read", 0) * PRICES["cache_read"]) / 1_000_000
+    return round(usd * (0.5 if rec.get("batch_id") else 1.0), 4)
+
+
+def _record_usage(response, prompt, pdf_bytes, max_tokens, started, batch_id=None, batch_wait=None):
+    u = getattr(response, "usage", None)
+    cc = getattr(u, "cache_creation", None)
+    crt = (getattr(u, "cache_creation_input_tokens", 0) or 0) if u else 0
+    w1h = (getattr(cc, "ephemeral_1h_input_tokens", 0) or 0) if cc is not None else 0
+    w5m = (getattr(cc, "ephemeral_5m_input_tokens", 0) or 0) if cc is not None else crt
+    if cc is not None and not (w1h or w5m):
+        w5m = crt
+    rec = {"prompt": str(prompt or "")[:80], "prompt_sha": hashlib.sha256(str(prompt or "").encode()).hexdigest()[:12],
+           "pdf_sha": hashlib.sha256(pdf_bytes).hexdigest()[:12] if pdf_bytes else None,
+           "max_tokens": max_tokens,
+           "input": (getattr(u, "input_tokens", 0) or 0) if u else 0,
+           "output": (getattr(u, "output_tokens", 0) or 0) if u else 0,
+           "cache_read": (getattr(u, "cache_read_input_tokens", 0) or 0) if u else 0,
+           "cache_write_5m": w5m, "cache_write_1h": w1h,
+           "started": round(started, 1), "seconds": round(time.time() - started, 1),
+           "batch_id": batch_id, "batch_wait": batch_wait}
+    rec["usd"] = call_cost(rec)
+    USAGE.append(rec)
+    return rec
+
+
+# ── Economy runs: the Message Batches API at half price ──────────────────────
+
+_ECONOMY = contextvars.ContextVar("economy_run", default=None)
+
+
+def economy_allowed():
+    """ECONOMY_RUNS=0 switches economy mode off for every run."""
+    return os.environ.get("ECONOMY_RUNS", "1") != "0"
+
+
+def set_economy(on, log=None):
+    """Mark the current run (this task and the tasks it starts) as an economy run. log: async callable(message)
+    for the progress line while a batch is pending (at most one every 10 minutes)."""
+    _ECONOMY.set({"log": log, "last_progress": time.time()} if on and economy_allowed() else None)
+
+
+def economy_active():
+    return _ECONOMY.get() is not None and economy_allowed()
+
+
+_BATCH_UNSUPPORTED = ("stream", "speed")      # Message Batches API: parameters a batched request may not carry
+
+
+def batch_unsupported(kwargs):
+    """Why this request cannot be batched, or "". Per the Message Batches documentation everything call_claude
+    sends is supported (PDF document blocks, images, cache_control incl. the 1-hour TTL, beta headers, max_tokens up
+    to the model limit); only `stream`, `speed` and max_tokens 0 are not."""
+    bad = [k for k in _BATCH_UNSUPPORTED if k in kwargs]
+    if int(kwargs.get("max_tokens") or 0) < 1:
+        bad.append("max_tokens 0")
+    return ", ".join(bad)
+
+
+async def _batch_message(client, kwargs, betas):
+    """One call as a batch of one. Returns (message, batch id, seconds waited). Raises when the batch errors,
+    expires, is canceled or outlives ECONOMY_MAX_WAIT_S (the caller then runs the call normally, once)."""
+    api = client.beta.messages.batches if betas else client.messages.batches
+    extra = {"betas": betas} if betas else {}
+    batch = await api.create(requests=[{"custom_id": "call-1", "params": kwargs}], **extra)
+    t0, delay, state = time.time(), 5.0, _ECONOMY.get() or {}
+    max_wait = float(os.environ.get("ECONOMY_MAX_WAIT_S", str(24 * 3600)))
+    print(f"call_claude economy — batch {batch.id} created", flush=True)
+    try:
+        while True:
+            cur = await api.retrieve(batch.id, **extra)
+            if getattr(cur, "processing_status", "") == "ended":
+                break
+            waited = time.time() - t0
+            if waited > max_wait:
+                raise TimeoutError(f"batch {batch.id} not finished after {int(waited)}s")
+            if state.get("log") and time.time() - state.get("last_progress", 0) >= 600:
+                state["last_progress"] = time.time()
+                try:
+                    await state["log"](f"Economy run: waiting for a batched AI call ({int(waited // 60)} min so far).")
+                except Exception:
+                    pass
+            await asyncio.sleep(delay)
+            delay = min(delay * 1.5, 60.0)
+    except BaseException:
+        try:   # a call that is given up (timeout, cancellation) must not keep running and be billed
+            await api.cancel(batch.id, **extra)
+        except Exception:
+            pass
+        raise
+    waited = round(time.time() - t0, 1)
+    result = None
+    async for item in await api.results(batch.id, **extra):
+        result = item.result
+        break
+    kind = getattr(result, "type", None)
+    if kind != "succeeded":
+        raise RuntimeError(f"batch {batch.id} result: {kind or 'missing'}")
+    print(f"call_claude economy — batch {batch.id} done after {waited}s", flush=True)
+    return result.message, batch.id, waited
 
 
 # ── Plain Claude call — returns text ─────────────────────────────────────────
@@ -72,38 +247,12 @@ async def call_claude(prompt, pdf_bytes=None, extra_text=None, max_tokens=MAX_TO
     # Order: prompt (cacheable) FIRST, then PDF + images + extra_text (per-run).
     # The cache key is the literal block content up to & including the
     # cache_control marker — so anything BEFORE the marker gets cached.
-    content = []
-
-    prompt_block = {"type": "text", "text": prompt}
-    if cache_prompt:
-        prompt_block["cache_control"] = {"type": "ephemeral"}
-    content.append(prompt_block)
-
-    if pdf_bytes:
-        content.append({
-            "type": "document",
-            "source": {
-                "type":       "base64",
-                "media_type": "application/pdf",
-                "data":       base64.standard_b64encode(pdf_bytes).decode(),
-            },
-        })
-
-    # Inject source EDC screenshots — placed after the PDF so Claude reads
-    # protocol first, then sees the reference images.
-    if images:
-        for media_type, img_data in images:
-            content.append({
-                "type": "image",
-                "source": {
-                    "type":       "base64",
-                    "media_type": media_type,
-                    "data":       img_data,
-                },
-            })
-
-    if extra_text:
-        content.append({"type": "text", "text": extra_text})
+    # (PROTOCOL_DOC_FIRST=1 puts the PDF first with its own marker: build_content.)
+    content = build_content(prompt, pdf_bytes, extra_text, cache_prompt, images)
+    if pdf_bytes and doc_first_enabled():
+        print(f"call_claude — protocol first, cache ttl {doc_cache_ttl()}, pdf sha256 "
+              f"{hashlib.sha256(pdf_bytes).hexdigest()[:12]} ({len(pdf_bytes)} bytes)", flush=True)
+    _economy_tried = False
 
     for attempt in range(MAX_RETRIES):
         try:
@@ -114,7 +263,29 @@ async def call_claude(prompt, pdf_bytes=None, extra_text=None, max_tokens=MAX_TO
                 max_tokens=max_tokens,
                 messages=[{"role": "user", "content": content}],
             )
-            if extended_output:
+            _started = time.time()
+            response = _batch_id = _batch_wait = None
+            if economy_active() and not _economy_tried:
+                # Economy run: the same request as a batch of one (half price). A batch that errors or expires
+                # is retried once as a normal call; a request the batch API cannot take runs normally.
+                _economy_tried = True
+                _why = batch_unsupported(_stream_kwargs)
+                if _why:
+                    print(f"call_claude economy — not batchable ({_why}); running normally", flush=True)
+                else:
+                    try:
+                        response, _batch_id, _batch_wait = await _batch_message(
+                            client, _stream_kwargs, ["output-128k-2025-02-19"] if extended_output else None)
+                    except Exception as _be:
+                        if "credit balance" in str(_be).lower():
+                            raise
+                        print(f"call_claude economy — batch failed ({type(_be).__name__}: {str(_be)[:200]}); "
+                              f"retrying this call normally, once", flush=True)
+                        response = None
+                        _started = time.time()
+            if response is not None:
+                pass
+            elif extended_output:
                 # output-128k-2025-02-19 beta raises the per-request output
                 # cap from 32K to 128K for Opus 4.7. Required when the study
                 # spec JSON exceeds ~64K tokens (large studies with many forms
@@ -123,9 +294,14 @@ async def call_claude(prompt, pdf_bytes=None, extra_text=None, max_tokens=MAX_TO
                 _cm = client.beta.messages.stream(**_stream_kwargs)
             else:
                 _cm = client.messages.stream(**_stream_kwargs)
-            async with _cm as stream:
-                response = await stream.get_final_message()
+            if response is None:
+                async with _cm as stream:
+                    response = await stream.get_final_message()
             text = response.content[0].text
+            try:
+                _record_usage(response, prompt, pdf_bytes, max_tokens, _started, _batch_id, _batch_wait)
+            except Exception:
+                pass
             # Usage info — shows cache hit/miss
             u = getattr(response, "usage", None)
             if u:

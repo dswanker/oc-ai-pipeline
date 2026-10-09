@@ -4296,6 +4296,29 @@ def _apply_qrs(struct_json, std, protected=None):
         return None
 
 
+def _trim_log(step, build, req, *args, **kwargs):
+    """SPEC_INPUT_TRIM=1: log the input size of a spec-data request before and after the trim (spec_trim.py)."""
+    try:
+        import spec_trim as _st
+        _st.compare(step, build, req, *args, **kwargs)
+    except Exception:
+        pass
+
+
+def _pricing_review_flags(struct_json):
+    """The review flags for the pricing summary request. SPEC_INPUT_TRIM=1: a kind with many flags is sent as its
+    count and its first entries (spec_trim.flags); the size before and after is logged."""
+    flags = (struct_json or {}).get("review_flags", {})
+    try:
+        import spec_trim as _st
+        out = _st.flags(flags)
+        if out is not flags:
+            _st.log_size("pricing summary (review flags)", len(json.dumps(flags)), len(json.dumps(out)))
+        return out
+    except Exception:
+        return flags
+
+
 async def _tag_concepts(item_id, struct_json, customer_subdomain="", client_name="", qrs_protected=None):
     """Tag every data field with the CDASH concept it represents (cdisc_concepts.py), whatever it is named,
     so edit-check conventions work on CDASH and non-CDASH forms. Runs on the complete study, right before
@@ -4316,6 +4339,7 @@ async def _tag_concepts(item_id, struct_json, customer_subdomain="", client_name
         if os.environ.get("CDISC_CONCEPTS_AI", "1") != "0":
             _qrs_on = os.environ.get("CDISC_QRS", "1") != "0"
             req = cdisc_concepts.build_request(struct_json, std, qrs=_qrs_on)
+            _trim_log("concept tagging", cdisc_concepts.build_request, req, struct_json, std, qrs=_qrs_on)
             if req:
                 text = await call_claude(req[0], extra_text=req[1], max_tokens=16000, cache_prompt=False)
                 ai = cdisc_concepts.apply_ai_response(struct_json, std, text, qrs=_qrs_on)
@@ -4585,8 +4609,18 @@ async def _post_match_forms_step(item_id, struct_json, sources, protocol_bytes, 
             print(f"[form-conventions] answers not read (defaults apply): {_e}", flush=True)
         struct_json = await _form_conventions_step(item_id, struct_json, sources, answers, fresh)
         death = ((answers or {}).get("DEATH_DETAILS_FORM") or {}).get("value") or "protocol"
-        struct_json = await _protocol_forms_step(item_id, struct_json, sources, protocol_bytes, crf_files, death)
-        struct_json = await _protocol_basis_step(item_id, struct_json, protocol_bytes, cols, answers, fresh)
+        pre = None
+        try:
+            import standards_match as _sm_d
+            if _merged_checks_on() or (_sm_d.state(struct_json).get("additions") or {}).get("status") == "deferred":
+                struct_json, pre = await _merged_protocol_checks(item_id, struct_json, sources, protocol_bytes, cols,
+                                                                 answers, death)
+        except Exception as _me:
+            print(f"[protocol-checks] skipped: {type(_me).__name__}: {_me}", flush=True)
+        struct_json = await _protocol_forms_step(item_id, struct_json, sources, protocol_bytes, crf_files, death,
+                                                 prefetched=pre)
+        struct_json = await _protocol_basis_step(item_id, struct_json, protocol_bytes, cols, answers, fresh,
+                                                 prefetched=pre)
         struct_json = await _duplicate_subject_step(item_id, struct_json, protocol_bytes, fresh)
         if ids(struct_json) != before:
             struct_json = _enforce_common_visit(struct_json)
@@ -4628,7 +4662,8 @@ async def _form_conventions_step(item_id, struct_json, sources, answers, fresh=F
         return struct_json
 
 
-async def _protocol_forms_step(item_id, struct_json, sources, protocol_bytes=None, crf_files=None, death="protocol"):
+async def _protocol_forms_step(item_id, struct_json, sources, protocol_bytes=None, crf_files=None, death="protocol",
+                               prefetched=None):
     """Forms are protocol-driven (protocol_forms.py). After the analysis and standards matching, every assessment
     the protocol requires (Schedule of Activities, study procedures) must map to a form: one validated AI call lists
     the assessments, each with a verbatim quote verified against the protocol text; the mapping is deterministic
@@ -4646,21 +4681,16 @@ async def _protocol_forms_step(item_id, struct_json, sources, protocol_bytes=Non
         is_pdf = bool(protocol_bytes) and not protocol_bytes.startswith(b"%%DOCX_TEXT%%")
         # the protocol's own structure is the checklist the answer must account for, entry by entry: every
         # Schedule of Activities row and every heading of the procedures chapter(s) (protocol_structure.py)
-        cl = None
-        if _pf.checklist_enabled():
-            try:
-                import protocol_structure as _ps
-                cl = _ps.checklist(ptext, protocol_bytes if is_pdf else None)
-                _cl_lines = _ps.log_lines(cl)
-                print("\n".join(_cl_lines), flush=True)
-                try:
-                    await append_log(item_id, "\n".join(_cl_lines)[:4000])
-                except Exception:
-                    pass
-            except Exception as _se:
-                print(f"[protocol-forms] protocol structure not read (no checklist): {type(_se).__name__}", flush=True)
-                cl = None
+        if prefetched and "checklist" in prefetched:
+            cl = prefetched["checklist"]          # read (and logged) for the merged call
+        else:
+            cl = await _protocol_checklist(item_id, ptext, protocol_bytes, is_pdf)
+        _first = [(prefetched or {}).get("completeness")]
+
         async def _call(prompt, extra):
+            if _first[0]:                         # this check's section of the merged answer (protocol_checks.py)
+                text, _first[0] = _first[0], None
+                return text
             return await call_claude(prompt, pdf_bytes=protocol_bytes if is_pdf else None, extra_text=extra,
                                      max_tokens=16000, cache_prompt=False)
 
@@ -4694,7 +4724,8 @@ async def _protocol_forms_step(item_id, struct_json, sources, protocol_bytes=Non
         return struct_json
 
 
-async def _protocol_basis_step(item_id, struct_json, protocol_bytes=None, cols=None, answers=None, fresh=False):
+async def _protocol_basis_step(item_id, struct_json, protocol_bytes=None, cols=None, answers=None, fresh=False,
+                               prefetched=None):
     """The protocol defines the forms (protocol_basis.py). After matching and the completeness check, every form
     needs a protocol basis: a verbatim protocol text that asks for its data (one validated AI call, quotes verified
     against the protocol text) or an assessment of the completeness check. A form of the analysis or CDASHIG without
@@ -4709,22 +4740,36 @@ async def _protocol_basis_step(item_id, struct_json, protocol_bytes=None, cols=N
         ptext = _protocol_text(protocol_bytes)
         if not _pb.needs_check(struct_json, ptext):
             return struct_json
-        try:
-            # whatever _ensure_required_forms injects under the customer's answers is a pipeline-required form
-            _conv = _extract_customer_conventions(cols or {})
-            import contextlib as _ctx, io as _io2
-            with _ctx.redirect_stdout(_io2.StringIO()):
-                required = [f.get("form_id") for f in _ensure_required_forms({"forms": []}, "X", _conv).get("forms") or []]
-        except Exception:
-            required = ["DOV"]
+        required = _basis_required_ids(cols)
         is_pdf = bool(protocol_bytes) and not protocol_bytes.startswith(b"%%DOCX_TEXT%%")
         req = _pb.build_request(struct_json, ptext, required, answers, with_text=not is_pdf)
         if req is None:
             return struct_json
         out = _copy.deepcopy(struct_json)
         try:
-            text = await call_claude(req[0], pdf_bytes=protocol_bytes if is_pdf else None, extra_text=req[1],
-                                     max_tokens=8000, cache_prompt=False)
+            text = (prefetched or {}).get("basis")
+            if text:
+                # this check's section of the merged answer (protocol_checks.py). It was given before the
+                # completeness check ran: a form that check added from outside the customer standard is judged
+                # by one small call for just that form
+                import protocol_checks as _pc
+                have = _pc.answered_forms(text)
+                left = [f for f in _pb.candidates(struct_json, ptext, required, answers) if str(f["form_id"]) not in have]
+                if left:
+                    print(f"[protocol-basis] {len(left)} form(s) not in the merged answer, judged by a follow-up "
+                          f"call: {', '.join(str(f['form_id']) for f in left)}", flush=True)
+                    try:
+                        req2 = _pb.build_request(dict(struct_json, forms=left), ptext, required, answers,
+                                                 with_text=not is_pdf)
+                        text2 = await call_claude(req2[0], pdf_bytes=protocol_bytes if is_pdf else None,
+                                                  extra_text=req2[1], max_tokens=8000, cache_prompt=False)
+                        text = _pc.merge_basis(text, text2)
+                    except Exception as _fe:
+                        print(f"[protocol-basis] follow-up call failed ({type(_fe).__name__}); those forms are kept, "
+                              f"not judged", flush=True)
+            else:
+                text = await call_claude(req[0], pdf_bytes=protocol_bytes if is_pdf else None, extra_text=req[1],
+                                         max_tokens=8000, cache_prompt=False)
         except Exception as _ce:
             print(f"[protocol-basis] the check did not run ({type(_ce).__name__}); no form removed", flush=True)
             try:
@@ -4823,28 +4868,14 @@ async def _standards_match_step(item_id, struct_json, sources, protocol_bytes=No
             st = _sm.state(out)
             if os.environ.get("STANDARDS_ADD_FIELDS_AI", "1") == "0":
                 st["additions"] = {"status": "skipped", "note": "STANDARDS_ADD_FIELDS_AI=0"}
+            elif _merged_checks_on():
+                # PROTOCOL_CHECKS_MERGED=1: this check shares one call with the completeness and basis checks,
+                # made after the form conventions (_merged_protocol_checks)
+                st["additions"] = {"status": "deferred"}
             else:
-                try:
-                    ptext = _protocol_text(protocol_bytes)
-                    req = _sm.build_add_request(out, ptext)
-                    if req is None:
-                        st["additions"] = {"status": "nothing_to_check" if ptext else "no_protocol_text"}
-                    else:
-                        text = await call_claude(req[0], extra_text=req[1], max_tokens=8000, cache_prompt=False)
-                        trial = _copy.deepcopy(out)
-                        _sm.apply_additions(trial, text, ptext)
-                        out = trial
-                except Exception as _ae:
-                    print(f"[standards-match] protocol-specified field check failed (no field added): {_ae}", flush=True)
-                    _sm.state(out)["additions"] = {"status": "failed", "note": f"{type(_ae).__name__}"}
+                out = await _protocol_fields_call(out, protocol_bytes)
         lines = _sm.summary_lines(out)
-        add = _sm.state(out).get("additions") or {}
-        if add.get("status") == "done":
-            lines.append(f"  Fields the protocol specifies beyond the standard: {len(add.get('added') or [])} added "
-                         f"(verified quote), {len(add.get('rejected') or [])} rejected by validation, of "
-                         f"{add.get('candidates', 0)} candidate(s).")
-        elif add.get("status") in ("failed", "no_protocol_text"):
-            lines.append(f"  Protocol-specified field check not done ({add.get('status')}): no field was added.")
+        lines += _protocol_fields_lines(out)
         if lines:
             try:
                 await append_log(item_id, "\n".join(lines)[:6000])
@@ -4854,6 +4885,160 @@ async def _standards_match_step(item_id, struct_json, sources, protocol_bytes=No
     except Exception as e:
         print(f"[standards-match] step failed, spec unchanged: {type(e).__name__}: {e}", flush=True)
         return struct_json
+
+
+def _merged_checks_on():
+    try:
+        import protocol_checks as _pc
+        return _pc.enabled()
+    except Exception:
+        return False
+
+
+def _protocol_fields_lines(spec):
+    import standards_match as _sm
+    add = _sm.state(spec).get("additions") or {}
+    if add.get("status") == "done":
+        return [f"  Fields the protocol specifies beyond the standard: {len(add.get('added') or [])} added "
+                f"(verified quote), {len(add.get('rejected') or [])} rejected by validation, of "
+                f"{add.get('candidates', 0)} candidate(s)."]
+    if add.get("status") in ("failed", "no_protocol_text"):
+        return [f"  Protocol-specified field check not done ({add.get('status')}): no field was added."]
+    return []
+
+
+async def _protocol_fields_call(out, protocol_bytes):
+    """The protocol-specified fields check as its own validated AI call. Returns the spec (a copy when fields were
+    judged); on failure nothing is added."""
+    import copy as _copy
+    import standards_match as _sm
+    try:
+        ptext = _protocol_text(protocol_bytes)
+        req = _sm.build_add_request(out, ptext)
+        _trim_log("protocol-specified fields", _sm.build_add_request, req, out, ptext)
+        if req is None:
+            _sm.state(out)["additions"] = {"status": "nothing_to_check" if ptext else "no_protocol_text"}
+        else:
+            text = await call_claude(req[0], extra_text=req[1], max_tokens=8000, cache_prompt=False)
+            trial = _copy.deepcopy(out)
+            _sm.apply_additions(trial, text, ptext)
+            out = trial
+    except Exception as _ae:
+        print(f"[standards-match] protocol-specified field check failed (no field added): {_ae}", flush=True)
+        _sm.state(out)["additions"] = {"status": "failed", "note": f"{type(_ae).__name__}"}
+    return out
+
+
+def _basis_required_ids(cols):
+    """Whatever _ensure_required_forms injects under the customer's answers is a pipeline-required form."""
+    try:
+        _conv = _extract_customer_conventions(cols or {})
+        import contextlib as _ctx, io as _io2
+        with _ctx.redirect_stdout(_io2.StringIO()):
+            return [f.get("form_id") for f in _ensure_required_forms({"forms": []}, "X", _conv).get("forms") or []]
+    except Exception:
+        return ["DOV"]
+
+
+async def _protocol_checklist(item_id, ptext, protocol_bytes, is_pdf):
+    """The protocol's own structure as the checklist of the completeness check (protocol_structure.py), logged."""
+    import protocol_forms as _pf
+    if not _pf.checklist_enabled():
+        return None
+    try:
+        import protocol_structure as _ps
+        cl = _ps.checklist(ptext, protocol_bytes if is_pdf else None)
+        _cl_lines = _ps.log_lines(cl)
+        print("\n".join(_cl_lines), flush=True)
+        try:
+            await append_log(item_id, "\n".join(_cl_lines)[:4000])
+        except Exception:
+            pass
+        return cl
+    except Exception as _se:
+        print(f"[protocol-forms] protocol structure not read (no checklist): {type(_se).__name__}", flush=True)
+        return None
+
+
+async def _merged_protocol_checks(item_id, struct_json, sources, protocol_bytes, cols, answers, death):
+    """PROTOCOL_CHECKS_MERGED=1 (protocol_checks.py): the protocol-specified fields, the completeness checklist and
+    the protocol basis in ONE call. Returns (spec, prefetched): prefetched carries each later step's answer (or
+    None, and that step makes its own call). The fields section is applied here. Never fails a build."""
+    import copy as _copy
+    import standards_match as _sm
+    deferred = (_sm.state(struct_json).get("additions") or {}).get("status") == "deferred"
+    try:
+        import protocol_checks as _pc
+        import protocol_forms as _pf
+        import protocol_basis as _pb
+        if not _pc.enabled() or not isinstance(struct_json, dict):
+            raise LookupError("off")
+        ptext = _protocol_text(protocol_bytes)
+        is_pdf = bool(protocol_bytes) and not protocol_bytes.startswith(b"%%DOCX_TEXT%%")
+        tasks, pre = {}, {}
+        if deferred:
+            req = _sm.build_add_request(struct_json, ptext, with_text=False)
+            if req is None:
+                _sm.state(struct_json)["additions"] = {"status": "nothing_to_check" if ptext else "no_protocol_text"}
+                deferred = False
+            else:
+                tasks["protocol_fields"] = req
+        if _pf.enabled() and _pf.needs_check(struct_json, ptext, sources, death):
+            pre["checklist"] = await _protocol_checklist(item_id, ptext, protocol_bytes, is_pdf)
+            req = _pf.build_request(struct_json, ptext, with_text=False, checklist=pre["checklist"])
+            if req is not None:
+                tasks["completeness"] = req
+        if _pb.enabled() and _pb.needs_check(struct_json, ptext):
+            required = _basis_required_ids(cols)
+            tmp, _possible = _pc.with_possible_forms(struct_json, sources)
+            req = _pb.build_request(tmp, ptext, required, answers, with_text=False)
+            if req is not None:
+                tasks["basis"] = req
+        if len(tasks) < 2:
+            raise LookupError("fewer than two tasks to merge")
+        prompt, extra = _pc.build_request(tasks, None if is_pdf else ptext)
+        print(f"[protocol-checks] one call for {len(tasks)} task(s): {', '.join(tasks)} "
+              f"({len(prompt) + len(extra):,} characters besides the protocol)", flush=True)
+        text = await call_claude(prompt, pdf_bytes=protocol_bytes if is_pdf else None, extra_text=extra,
+                                 max_tokens=_pc.MAX_TOKENS, cache_prompt=False)
+        sections = _pc.split_response(text, list(tasks))
+        missing = [k for k, v in sections.items() if v is None]
+        if missing:
+            print(f"[protocol-checks] no usable section for {', '.join(missing)}: own call(s) instead", flush=True)
+        try:
+            await append_log(item_id, f"Protocol checks: one AI call for {len(tasks)} checks ({', '.join(tasks)})"
+                                      + (f"; no usable answer for {', '.join(missing)}, checked separately" if missing else "") + ".")
+        except Exception:
+            pass
+        if "protocol_fields" in tasks and sections.get("protocol_fields"):
+            trial = _copy.deepcopy(struct_json)
+            _sm.apply_additions(trial, sections["protocol_fields"], ptext)
+            struct_json, deferred = trial, False
+            lines = _protocol_fields_lines(struct_json)
+            if lines:
+                try:
+                    await append_log(item_id, "\n".join(lines))
+                except Exception:
+                    pass
+        pre.update(completeness=sections.get("completeness"), basis=sections.get("basis"))
+    except LookupError as _skip:
+        pre = {k: v for k, v in (locals().get("pre") or {}).items() if k == "checklist"}
+        if str(_skip) != "off":
+            print(f"[protocol-checks] not merged ({_skip}); the checks run as their own calls", flush=True)
+    except Exception as e:
+        pre = {k: v for k, v in (locals().get("pre") or {}).items() if k == "checklist"}
+        print(f"[protocol-checks] merged call failed ({type(e).__name__}: {str(e)[:160]}); the checks run as their "
+              f"own calls", flush=True)
+    if deferred and (_sm.state(struct_json).get("additions") or {}).get("status") == "deferred":
+        # the fields check was left for the merged call and did not get an answer there: its own call now
+        struct_json = await _protocol_fields_call(_copy.deepcopy(struct_json), protocol_bytes)
+        lines = _protocol_fields_lines(struct_json)
+        if lines:
+            try:
+                await append_log(item_id, "\n".join(lines))
+            except Exception:
+                pass
+    return struct_json, (pre or None)
 
 
 async def _propose_standard_logic(item_id, struct_json, protocol_bytes=None):
@@ -4869,6 +5054,7 @@ async def _propose_standard_logic(item_id, struct_json, protocol_bytes=None):
             return
         ptext = _protocol_text(protocol_bytes)
         req = _asl.build_request(struct_json, ptext)
+        _trim_log("standard form logic", _asl.build_request, req, struct_json, ptext)
         if req is None:
             _asl.store(struct_json, {"proposed": 0, "proposals": [], "rejected": {}})
             return
@@ -4927,6 +5113,7 @@ async def _study_config_step(item_id, struct_json, protocol_bytes=None, referenc
             if _sdv.ai_enabled() and ptext and not (prev.get("sdv_endpoint_check") or {}).get("status") == "done":
                 is_pdf = bool(protocol_bytes) and not protocol_bytes.startswith(b"%%DOCX_TEXT%%")
                 req = _sdv.build_request(struct_json, ptext, with_text=not is_pdf)
+                _trim_log("SDV endpoint link", _sdv.build_request, req, struct_json, ptext, with_text=not is_pdf)
                 if req is not None:
                     text = await call_claude(req[0], pdf_bytes=protocol_bytes if is_pdf else None, extra_text=req[1],
                                              max_tokens=4000, cache_prompt=False)
@@ -4966,6 +5153,7 @@ async def _propose_ai_edit_checks(item_id, struct_json):
     try:
         import ai_edit_checks as _aec
         prompt, extra = _aec.build_request(struct_json)
+        _trim_log("AI-proposed edit checks", _aec.build_request, (prompt, extra), struct_json)
         text = await call_claude(prompt, extra_text=extra, max_tokens=8000, cache_prompt=False)
         v = _aec.validate_response(struct_json, text)
         sm["ai_edit_checks"] = {"proposed": v["proposed"], "proposals": v["proposals"], "rejected": v["rejected"]}
@@ -5882,11 +6070,46 @@ async def _session_keepalive(session_path: str, subdomain: str, interval_s: int 
             print(f"[session-keepalive] ping error (non-fatal): {e}", flush=True)
 
 
+ECONOMY_RUN_COLUMN = "color_mm7z4qsc"   # "Economy Run (Batch, half price)": Yes / No / blank
+
+
+def _economy_requested(cols):
+    """True when the item's Economy Run column says Yes."""
+    try:
+        return str(((cols or {}).get(ECONOMY_RUN_COLUMN) or {}).get("text") or "").strip().lower() == "yes"
+    except Exception:
+        return False
+
+
+async def _economy_run_step(item_id, cols):
+    """Economy run (claude_client.set_economy): with the Economy Run column on Yes every AI call of this run goes
+    through the Message Batches API at half price, same model, parameters and content; results are parsed as
+    always. ECONOMY_RUNS=0 disables it for every run. Never fails a build."""
+    try:
+        import claude_client as _cc
+        want = _economy_requested(cols)
+
+        async def _log(msg):
+            await append_log(item_id, msg)
+
+        _cc.set_economy(want, _log)
+        if want and _cc.economy_active():
+            print("[economy] economy run: AI calls go through the Message Batches API", flush=True)
+            await append_log(item_id, "Economy run: AI calls are batched at half price; this run may take longer")
+        elif want:
+            print("[economy] Economy Run is Yes but ECONOMY_RUNS=0: normal calls", flush=True)
+            await append_log(item_id, "Economy run requested, but economy mode is switched off (ECONOMY_RUNS=0): "
+                                      "normal AI calls.")
+    except Exception as e:
+        print(f"[economy] not set up (normal calls): {type(e).__name__}: {e}", flush=True)
+
+
 async def run_pipeline(item_id):
     try:
         # ── 0. Fetch item from monday.com ─────────────────────────────────────
         item         = await get_item(item_id)
         cols         = {c["id"]: c for c in item["column_values"]}
+        await _economy_run_step(item_id, cols)
         protocol_num = cols.get(COL["protocol_number"], {}).get("text", "STUDY")
         oc_subdomain = cols.get(COL["oc_subdomain"],    {}).get("text", "").strip()
         client_name = (cols.get(COL["client"], {}).get("text") or "").strip()   # conventions follow the customer, not only the tenant
@@ -7570,7 +7793,7 @@ async def run_pipeline(item_id):
                     "study_meta":    {k: v for k, v in _study_meta_full.items()
                                       if k not in _META_BLOAT_KEYS},
                     "timepoint_csv": struct_json.get("timepoint_csv", {}),
-                    "review_flags":  struct_json.get("review_flags", {}),
+                    "review_flags":  _pricing_review_flags(struct_json),
                     "forms": [
                         {"form_id":         f.get("form_id", ""),
                          "form_title":      f.get("form_title", ""),

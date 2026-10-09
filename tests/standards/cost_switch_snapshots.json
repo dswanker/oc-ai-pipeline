@@ -1,0 +1,185 @@
+{
+ "builders": {
+  "ai_edit_checks": [
+   "You are a clinical data manager designing edit checks for an OpenClinica EDC study.\n\nThe STUDY below is fully defined (forms, visits, fields, CDISC concepts, existing checks). Propose ADDITIONAL data\ncleaning checks that a careful data manager would add and that are NOT already present, especially:\n  - sequential_dates: dates that must be in order (e.g. event -> awareness -> report; screening -> randomization ->\n    first dose), within a form or across forms;\n  - cross_form: values on one form that must be consistent with another form (dates, numbers);\n  - protocol_timing: protocol-driven ordering between visits/forms.\nOnly propose checks you are confident are true for EVERY participant. Do not propose checks that duplicate the\nexisting constraints shown. Do not propose AE/medication dates vs first dose (those may legitimately precede dosing).\n\nAnswer ONLY with JSON, no prose, no code fences:\n{\"checks\": [{\"target_form\": \"...\", \"target_field\": \"...\", \"operator\": \">=|>|<=|<|=|!=\",\n             \"source_form\": \"...\", \"source_field\": \"...\",\n             \"when\": {\"field\": \"<field on the target form>\", \"equals\": \"<choice code>\"} (optional),\n             \"message\": \"<query text shown to the site, under 120 characters>\",\n             \"rationale\": \"<one sentence>\", \"protocol_reference\": \"<section or empty>\",\n             \"category\": \"sequential_dates|cross_form|protocol_timing\"}]}\nThe check reads: target_field OPERATOR source_field (only when the optional condition holds). Use only form ids,\nfield names and choice codes that appear in the STUDY. Compare dates only with dates and numbers only with numbers.\n",
+   "STUDY: {\"protocol_number\": \"SYN-001\", \"study_title\": \"Synthetic study\", \"phase\": \"2\"}\n\nFORM AEGEN | AE General | visits: SE_COMMON\n  AETERM | text | Adverse event term\n  AESTDAT | date | <span>Start date</span>\n  AEENDAT | date | End date\n  AESEV | select_one | Severity | choices: 1=<b>Mild</b>; 2=Moderate\n\nFORM VS | Vital Signs | visits: SE_SCREENING\n  VSDAT | date | Date of measurement\n  SYSBP | integer | Systolic blood pressure (mmHg)\n\nFORM WID | Widget Count | visits: SE_SCREENING\n  WIDN | integer | Number of <u>widgets</u>\n  WIDCOM | text | Comments"
+  ],
+  "ai_standard_logic": [
+   "You are a clinical data manager reviewing eCRF forms of an OpenClinica study.\n\nThe FORMS below are a customer's standard forms, used exactly as the customer provided them. Some carry no edit\nchecks or show-when logic at all (marked NO LOGIC); others have gaps (fields marked GAP). Suggest ONLY the missing\nlogic a careful data manager would add, as structured suggestions. Never restate logic a field already has.\n\nKinds you may suggest:\n  future_date  a date that cannot be in the future (visit, assessment, start, collection, birth dates).\n               {\"kind\": \"future_date\", \"form\": \"...\", \"field\": \"...\"}\n  date_order   two dates on the SAME form that must be in order (end on or after start, and the like).\n               {\"kind\": \"date_order\", \"form\": \"...\", \"field\": \"<later date>\", \"operator\": \">=|>|<=|<\",\n                \"other_field\": \"<the date it is compared with>\"}\n  range        a numeric field with limits the PROTOCOL TEXT states (an eligibility limit, a dose, an age).\n               {\"kind\": \"range\", \"form\": \"...\", \"field\": \"...\", \"min\": <number or null>, \"max\": <number or null>,\n                \"protocol_quote\": \"<VERBATIM text from the PROTOCOL TEXT that states the limit>\"}\n               Suggest a range ONLY with a verbatim quote; it is checked against the protocol character by character.\n  relevant     a field that is only meaningful for one answer of another field on the SAME form (\"If other,\n               specify\", an end date shown only when not ongoing, a reason shown only when not done).\n               {\"kind\": \"relevant\", \"form\": \"...\", \"field\": \"<field to show>\", \"when_field\": \"<select field>\",\n                \"equals\": \"<one choice CODE of when_field>\"}\n\nEach suggestion also carries \"message\" (query text shown to the site, under 120 characters; not for relevant) and\n\"rationale\" (one sentence). Use only form ids, field names and choice codes that appear in FORMS. Suggest only\nwhat is true for EVERY participant. Answer ONLY with JSON, no prose, no code fences:\n{\"suggestions\": [ ... ]}\n",
+   "FORMS:\nFORM AEGEN | AE General | CDASH domain AE | NO LOGIC\n  AETERM | text | Adverse event term\n  AESTDAT | date | <span>Start date</span> | GAP: date without a future-date check or date-order check\n  AEENDAT | date | End date | GAP: date without a future-date check or date-order check\n  AESEV | select_one | Severity | choices: 1=<b>Mild</b>; 2=Moderate\n\nPROTOCOL TEXT (for ranges only):\n5.1 Inclusion criteria: participants must be 18 years of age or older.\n8.3 Adverse events. All adverse events will be recorded in the eCRF from consent.\nFor each adverse event the investigator must record whether the event led to hospitalisation.\n9.1 Vital signs. Systolic blood pressure will be recorded in the eCRF at every visit.\n9.2 Widget count. The number of widgets will be recorded in the eCRF at screening.\n"
+  ],
+  "basis": [
+   "You find, for each case report FORM listed below, the text of a clinical trial PROTOCOL that is about the\ndata the form holds, and you say what kind of statement that text is.\n\nThe protocol defines the forms: a form is built only when the protocol requires the site to record, collect,\nreport, perform or document the data the form holds. You do not decide that; you supply the evidence.\n\nFor every form give up to three passages of the protocol that are closest to requiring the data of the form's\nFIELDS (judge by the fields, not by the title), and classify each passage by what the passage itself states:\n  \"record\"       an instruction that this data is recorded, collected, reported or documented, or that the\n                 assessment which produces it is performed, for a participant\n  \"schedule\"     a row of the Schedule of Activities / Schedule of Assessments (or its footnote) that schedules\n                 this assessment. A column, a visit name or a study period is not such a row\n  \"heading\"      a section heading or title on its own, without a sentence that instructs anything\n  \"eligibility\"  a condition a person must meet to take part\n  \"course\"       what happens to participants, what they receive, may do or must do, who is treated or assigned\n  \"process\"      how the site or the sponsor handles a situation; a rule about taking part again, leaving,\n                 replacing or counting participants\n  \"definition\"   a definition of a term\n  \"time\"         the term used as a point in time, a milestone or a study period\n  \"other\"        anything else\nRules:\n1. Classify the passage as written. A passage is \"record\" only when its own words instruct recording, collecting,\n   reporting, documenting or performing. Do not upgrade a passage because recording would be usual practice, or\n   because the thing it describes takes place in the study.\n2. \"fields\": the names of the form's fields whose data the \"record\" / \"schedule\" passages ask for; empty when\n   there is no such passage.\n3. Copy each passage VERBATIM (one sentence or one table-row fragment, at most 300 characters). Do not join\n   separate passages, do not paraphrase. A passage that is not found in the protocol text is discarded.\n4. When the protocol has nothing about a form's data, return it with an empty \"quotes\" list.\n5. Answer for EVERY form in the list, once, using the form ID exactly as given.\n\nReturn ONLY JSON:\n{\"forms\": [{\"form_id\": \"<form ID>\",\n            \"quotes\": [{\"text\": \"<verbatim protocol text>\", \"section\": \"<section or table>\", \"kind\": \"record\"}],\n            \"fields\": [\"<field name>\"], \"why\": \"<one short sentence>\"}]}\n",
+   "FORMS (form ID | title, then its fields as name: question):\nFORM AEGEN | AE General\n  fields: AETERM: Adverse event term; AESTDAT: <span>Start date</span>; AEENDAT: End date; AESEV: Severity\nFORM VS | Vital Signs\n  fields: VSDAT: Date of measurement; SYSBP: Systolic blood pressure (mmHg)\nFORM WID | Widget Count\n  fields: WIDN: Number of <u>widgets</u>; WIDCOM: Comments"
+  ],
+  "completeness": [
+   "You account, entry by entry, for what a clinical trial PROTOCOL requires the site to record for a participant.\n\nYou get a CHECKLIST read from the protocol itself: the rows of its Schedule of Activities / Schedule of Assessments\ntables (type \"row\") and the headings of the sections that describe procedures and assessments (type \"heading\").\nFor EVERY checklist entry return either the assessments it contains, or an explicit \"none\" with a one-line reason.\n\nAn assessment is one distinct data collection the SITE records for a participant, for example: informed consent,\ndemographics, medical history, disease assessment / staging, each study treatment administration (investigational\nproduct, prodrug, radiation and so on, separately), adverse events / serious adverse events, safety laboratory\ntests, each specially named laboratory test or biomarker, physical examination, vital signs, ECG, concomitant\nmedications, concomitant procedures, biospecimen collection, questionnaires, pregnancy reporting, disposition / end\nof study, death.\nRules:\n1. A \"row\" entry: the assessments that row schedules. A \"heading\" entry: the assessments the text of that section\n   requires the site to record (a sub-section with its own entry is answered under its own entry).\n2. An entry that names or contains several assessments gives ONE ASSESSMENT PER DATA COLLECTION, each with a quote\n   (the same quote when one sentence or row covers them). Read the entry word by word: every assessment it names\n   must appear in your answer.\n3. Give an assessment under EVERY entry that contains it, ALWAYS UNDER THE SAME NAME; repeats are merged by name\n   afterwards. Do not answer \"none\" because another entry already has it.\n4. \"none\" when the entry requires nothing to be recorded for a participant: background, a definition, a rule, a\n   laboratory method or an analysis run later on collected samples, a statistical or sponsor activity, or a label\n   that is not an assessment. Give the reason in one line.\n5. Do not list a single measurement that is part of a listed assessment (height and weight belong to vital signs;\n   one analyte belongs to its laboratory panel unless the schedule gives it its own row).\n6. Do not invent assessments. Every assessment needs a \"quote\" copied VERBATIM from the protocol (one sentence or\n   one table-row fragment, at most 300 characters). An assessment whose quote is not found in the protocol text is\n   discarded.\n7. \"kind\": what the quoted passage itself states, one of\n  \"record\"       an instruction that this data is recorded, collected, reported or documented, or that the\n                 assessment which produces it is performed, for a participant\n  \"schedule\"     a row of the Schedule of Activities / Schedule of Assessments (or its footnote) that schedules\n                 this assessment. A column, a visit name or a study period is not such a row\n  \"heading\"      a section heading or title on its own, without a sentence that instructs anything\n  \"eligibility\"  a condition a person must meet to take part\n  \"course\"       what happens to participants, what they receive, may do or must do, who is treated or assigned\n  \"process\"      how the site or the sponsor handles a situation; a rule about taking part again, leaving,\n                 replacing or counting participants\n  \"definition\"   a definition of a term\n  \"time\"         the term used as a point in time, a milestone or a study period\n  \"other\"        anything else\n   Classify the passage as written. It is \"record\" only when its own words instruct recording, collecting,\n   reporting, documenting or performing. Prefer the sentence of the section that carries such an instruction; quote\n   a heading on its own only when the section has none. Something that appears only as an inclusion / exclusion\n   criterion is \"eligibility\".\n8. \"section\": the protocol section number or table name the quote is from.\n9. \"events\": the event OIDs from the EVENTS list at which the protocol schedules it. Use only OIDs from the list.\n   Empty when it is collected continuously (a log) or the timing is not stated.\n10. \"log\": true when it is recorded continuously over the study, false when it is done at visits.\n11. \"cdash_domain\": the CDASH domain code when you are sure (PE, VS, LB, AE, CM, PR, MH, DM, EX, EC, DS, DD, EG, IE,\n    DV, PC, SU, QS, RS, TU, TR), else null.\n12. \"extra\": assessments of a schedule row or a procedures section that is NOT on the checklist (the checklist may\n    be incomplete or empty). Same fields. Empty list when there are none.\n\nReturn ONLY JSON:\n{\"entries\": [{\"id\": \"<checklist id>\",\n              \"assessments\": [{\"name\": \"<assessment name>\", \"cdash_domain\": \"<domain or null>\",\n                               \"section\": \"<section or table>\", \"quote\": \"<verbatim protocol text>\",\n                               \"kind\": \"record\", \"events\": [\"<event OID>\"], \"log\": false}]},\n             {\"id\": \"<checklist id>\", \"none\": \"<one-line reason>\"}],\n \"extra\": []}\n",
+   "EVENTS (event OID | name):\nSE_SCREENING | Screening\n\nCHECKLIST (id | type | table or section number | row label or heading; a row label may carry a footnote number):\n(empty: give every assessment under \"extra\")"
+  ],
+  "concept_tagging": [
+   "You map clinical trial eCRF fields to CDISC CDASHIG v2.3 variables.\n\nFor each FIELD below, decide whether it collects the same concept as one CDASHIG VARIABLE in the\nCATALOGUE. Answer ONLY with JSON, no prose, no code fences:\n{\"tags\": [{\"form_id\": \"...\", \"field\": \"...\", \"concept\": \"<CDASHIG variable>\", \"qualifier\": \"<optional>\",\n           \"confidence\": \"high\"|\"medium\"}]}\n\nRules:\n- Use only variables that appear in the CATALOGUE. Never invent a variable.\n- Tag a field only when it clearly collects that concept (same meaning, compatible data type).\n  Leave fields out when unsure. Omitting is always acceptable.\n- Dates map to date variables (names ending in DAT), times to TIM variables.\n- A yes/no screening question (e.g. \"Any medical history?\") maps to the domain's --YN variable when one exists.\n- When several fields are repeated uses of ONE variable, add a \"qualifier\" that tells them apart:\n    horizontal vital signs -> concept VSORRES, qualifier = VS test code from VITAL SIGN TESTS (e.g. SYSBP)\n    inclusion / exclusion criterion responses -> concept IEORRES, qualifier exactly INCLUSION or EXCLUSION\n      (the category, not the criterion number)\n    substance-use status per substance -> concept SUNCF, qualifier TOBACCO / ALCOHOL / ...\n    pre-specified history or event questions (\"Surgery?\") -> concept MHOCCUR (or AEOCCUR/CMOCCUR),\n      qualifier = short upper-case term (e.g. SURGERY)\n  Qualifiers are short upper-case codes. Omit \"qualifier\" when the field is the only use of the variable.\n- Each concept + qualifier pair at most once per form.\n",
+   "CATALOGUE (domain variable | label | type):\n\n\nFIELDS (form | field | type | label):\nAEGEN (AE General; domain AE) | AETERM | text | Adverse event term\nAEGEN (AE General; domain AE) | AESTDAT | date | <span>Start date</span>\nAEGEN (AE General; domain AE) | AEENDAT | date | End date\nAEGEN (AE General; domain AE) | AESEV | select_one SEV | Severity | choices: <b>Mild</b>; Moderate\nVS (Vital Signs; domain VS) | VSDAT | date | Date of measurement\nVS (Vital Signs; domain VS) | SYSBP | integer | Systolic blood pressure (mmHg)\nWID (Widget Count; domain -) | WIDN | integer | Number of <u>widgets</u>\nWID (Widget Count; domain -) | WIDCOM | text | Comments"
+  ],
+  "protocol_fields": [
+   "You compare data points of a clinical trial eCRF form with a customer's standard form and with the PROTOCOL.\n\nA customer standard eCRF form is being used exactly as the customer provided it. CANDIDATES lists data points that\nan earlier analysis attached to that form under its own field names. For EVERY candidate return one entry:\n\n1. covered_by: look through STANDARD FORM FIELDS (name | type | label | choices) for the field that collects the\n   same data point: the same measurement, date, criterion or answer, whatever it is named. Names differ between\n   the two (a result may be SYSBP in one and SYSBP_VSORRES in the other, a criterion IE01 and IE001, one\n   relationship question may be split into several). If the standard form collects it, set covered_by to that\n   standard field's name and set quote to null. When in doubt, it is covered.\n2. Only when NO standard field collects it: does the PROTOCOL TEXT clearly and directly say that THIS data point\n   must be collected or recorded? A general statement (e.g. \"adverse events will be recorded\") does NOT specify\n   an individual field, and a sentence that merely mentions the topic (how many doses are given, that a visit\n   takes place) does not either: the quote must itself name this data point as something to collect, record,\n   measure, document or report. If it does, set covered_by to null and copy the VERBATIM sentence or phrase from\n   the PROTOCOL TEXT into quote. If it does not, set both to null.\n\nAnswer ONLY with JSON, no prose, no code fences:\n{\"additions\": [{\"form_id\": \"...\", \"field\": \"...\", \"covered_by\": \"<standard field name>\" | null,\n                \"quote\": \"<verbatim protocol text>\" | null}]}\nThe quote is checked against the protocol character by character: do not paraphrase, shorten with \"...\", or\ncorrect it. A field is added only when covered_by is null and the quote is found in the protocol; \"nothing to add\"\nis the expected outcome for most candidates.\n",
+   "CANDIDATES BY FORM:\nFORM AEGEN | AE General | CDASH domain AE\n  STANDARD FORM FIELDS:\n    AETERM | text | Adverse event term\n    AESTDAT | date | <span>Start date</span>\n    AEENDAT | date | End date\n    AESEV | select_one | Severity | <b>Mild</b>; Moderate\n  CANDIDATES:\n    AEHOSP | select_one | Did the event lead to hospitalisation?\n    AEOTH | text | If other, specify\n\nPROTOCOL TEXT:\n5.1 Inclusion criteria: participants must be 18 years of age or older.\n8.3 Adverse events. All adverse events will be recorded in the eCRF from consent.\nFor each adverse event the investigator must record whether the event led to hospitalisation.\n9.1 Vital signs. Systolic blood pressure will be recorded in the eCRF at every visit.\n9.2 Widget count. The number of widgets will be recorded in the eCRF at screening.\n"
+  ],
+  "sdv_endpoints_pdf": [
+   "You link the PRIMARY and KEY SECONDARY endpoints of a clinical trial protocol to eCRF fields.\n\nFor each primary endpoint and each key secondary endpoint stated in the protocol (objectives / endpoints section):\n- \"endpoint\": a short name\n- \"kind\": \"primary\" or \"key secondary\"\n- \"quote\": the endpoint copied VERBATIM from the protocol (one sentence or fragment, at most 300 characters). An\n  entry whose quote is not found in the protocol text is discarded.\n- \"fields\": the eCRF fields that hold the data the endpoint is computed from, each as \"FORM_ID.FIELD_NAME\", using\n  ONLY forms and fields from the FIELDS list below. Do not list a field merely related to the topic; list the\n  values the endpoint is actually derived from. Empty when no field holds that data.\nAt most 12 endpoints. Return ONLY JSON:\n{\"endpoints\": [{\"endpoint\": \"...\", \"kind\": \"primary\", \"quote\": \"...\", \"fields\": [\"LB.PSAORRES\"]}]}\n",
+   "FIELDS (FORM_ID.FIELD_NAME | label):\nAEGEN.AETERM | Adverse event term\nAEGEN.AESTDAT | <span>Start date</span>\nAEGEN.AEENDAT | End date\nAEGEN.AESEV | Severity\nVS.VSDAT | Date of measurement\nVS.SYSBP | Systolic blood pressure (mmHg)\nWID.WIDN | Number of <u>widgets</u>\nWID.WIDCOM | Comments"
+  ],
+  "sdv_endpoints_text": [
+   "You link the PRIMARY and KEY SECONDARY endpoints of a clinical trial protocol to eCRF fields.\n\nFor each primary endpoint and each key secondary endpoint stated in the protocol (objectives / endpoints section):\n- \"endpoint\": a short name\n- \"kind\": \"primary\" or \"key secondary\"\n- \"quote\": the endpoint copied VERBATIM from the protocol (one sentence or fragment, at most 300 characters). An\n  entry whose quote is not found in the protocol text is discarded.\n- \"fields\": the eCRF fields that hold the data the endpoint is computed from, each as \"FORM_ID.FIELD_NAME\", using\n  ONLY forms and fields from the FIELDS list below. Do not list a field merely related to the topic; list the\n  values the endpoint is actually derived from. Empty when no field holds that data.\nAt most 12 endpoints. Return ONLY JSON:\n{\"endpoints\": [{\"endpoint\": \"...\", \"kind\": \"primary\", \"quote\": \"...\", \"fields\": [\"LB.PSAORRES\"]}]}\n",
+   "FIELDS (FORM_ID.FIELD_NAME | label):\nAEGEN.AETERM | Adverse event term\nAEGEN.AESTDAT | <span>Start date</span>\nAEGEN.AEENDAT | End date\nAEGEN.AESEV | Severity\nVS.VSDAT | Date of measurement\nVS.SYSBP | Systolic blood pressure (mmHg)\nWID.WIDN | Number of <u>widgets</u>\nWID.WIDCOM | Comments\n\nPROTOCOL TEXT:\n5.1 Inclusion criteria: participants must be 18 years of age or older.\n8.3 Adverse events. All adverse events will be recorded in the eCRF from consent.\nFor each adverse event the investigator must record whether the event led to hospitalisation.\n9.1 Vital signs. Systolic blood pressure will be recorded in the eCRF at every visit.\n9.2 Widget count. The number of widgets will be recorded in the eCRF at screening.\n"
+  ]
+ },
+ "client": [
+  [
+   "messages",
+   {
+    "max_tokens": 2000,
+    "messages": [
+     {
+      "content": [
+       {
+        "text": "QUICK PROMPT",
+        "type": "text"
+       },
+       {
+        "source": {
+         "data": "JVBERi0xLjQgc3ludGhldGljIHByb3RvY29sIGJ5dGVz",
+         "media_type": "application/pdf",
+         "type": "base64"
+        },
+        "type": "document"
+       }
+      ],
+      "role": "user"
+     }
+    ],
+    "model": "claude-opus-4-7"
+   }
+  ],
+  [
+   "beta",
+   {
+    "betas": [
+     "output-128k-2025-02-19"
+    ],
+    "max_tokens": 96000,
+    "messages": [
+     {
+      "content": [
+       {
+        "cache_control": {
+         "type": "ephemeral"
+        },
+        "text": "ANALYSIS PROMPT",
+        "type": "text"
+       },
+       {
+        "source": {
+         "data": "JVBERi0xLjQgc3ludGhldGljIHByb3RvY29sIGJ5dGVz",
+         "media_type": "application/pdf",
+         "type": "base64"
+        },
+        "type": "document"
+       },
+       {
+        "source": {
+         "data": "aW1n",
+         "media_type": "image/png",
+         "type": "base64"
+        },
+        "type": "image"
+       },
+       {
+        "text": "conventions",
+        "type": "text"
+       }
+      ],
+      "role": "user"
+     }
+    ],
+    "model": "claude-opus-4-7"
+   }
+  ],
+  [
+   "messages",
+   {
+    "max_tokens": 16000,
+    "messages": [
+     {
+      "content": [
+       {
+        "text": "CHECK PROMPT",
+        "type": "text"
+       },
+       {
+        "source": {
+         "data": "JVBERi0xLjQgc3ludGhldGljIHByb3RvY29sIGJ5dGVz",
+         "media_type": "application/pdf",
+         "type": "base64"
+        },
+        "type": "document"
+       },
+       {
+        "text": "FORMS",
+        "type": "text"
+       }
+      ],
+      "role": "user"
+     }
+    ],
+    "model": "claude-opus-4-7"
+   }
+  ],
+  [
+   "messages",
+   {
+    "max_tokens": 8000,
+    "messages": [
+     {
+      "content": [
+       {
+        "text": "SPEC PROMPT",
+        "type": "text"
+       },
+       {
+        "text": "FIELDS",
+        "type": "text"
+       }
+      ],
+      "role": "user"
+     }
+    ],
+    "model": "claude-opus-4-7"
+   }
+  ],
+  [
+   "messages",
+   {
+    "max_tokens": 64000,
+    "messages": [
+     {
+      "content": [
+       {
+        "cache_control": {
+         "type": "ephemeral"
+        },
+        "text": "PRICING PROMPT",
+        "type": "text"
+       },
+       {
+        "text": "Study Specification JSON:\n{}",
+        "type": "text"
+       }
+      ],
+      "role": "user"
+     }
+    ],
+    "model": "claude-opus-4-7"
+   }
+  ]
+ ]
+}

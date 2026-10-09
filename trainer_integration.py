@@ -113,6 +113,18 @@ The first character of your response must be `{` and the last `}`.
 """
 
 
+def _analysis_timeout() -> float:
+    """60 s for a normal call. In an economy run the call is a batch that may sit in the queue: it gets the time
+    ECONOMY_QUICK_ANALYSIS_WAIT_S allows (default 30 minutes), then the run goes on without examples."""
+    try:
+        import claude_client
+        if claude_client.economy_active():
+            return float(os.environ.get("ECONOMY_QUICK_ANALYSIS_WAIT_S", "1800"))
+    except Exception:  # noqa: BLE001
+        pass
+    return _ANALYSIS_TIMEOUT_S
+
+
 async def run_protocol_analysis_quick(
     protocol_pdf: bytes,
     *,
@@ -154,7 +166,7 @@ async def run_protocol_analysis_quick(
                 cache_prompt=False,
                 max_tokens=2000,  # plenty for the small JSON shape
             ),
-            timeout=_ANALYSIS_TIMEOUT_S,
+            timeout=_analysis_timeout(),
         )
     except asyncio.TimeoutError:
         print("[trainer] quick analysis timed out — proceeding without examples", flush=True)

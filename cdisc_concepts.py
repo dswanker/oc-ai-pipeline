@@ -22,6 +22,7 @@ Runs after the whole study is defined and before the conventions engine, so edit
 match field.concept on CDASH and non-CDASH forms alike. Never fails a build.
 """
 import json, re
+import spec_trim
 from pathlib import Path
 
 import cdisc_ct
@@ -192,7 +193,7 @@ def build_request(spec, std=None, qrs=True):
                                       if isinstance(f, dict)}
     cat = [f"{d} {v} | {r['label']} | {r['type']}" for (d, v), r in sorted(fields.items()) if d in domains
            and v not in cdisc_cdash._NOT_CRF_QUESTIONS]
-    lines = []
+    lines, last_head = [], None
     for form, row in todo:
         lists = {}
         for c in form.get("choices") or []:
@@ -200,9 +201,15 @@ def build_request(spec, std=None, qrs=True):
                 lists.setdefault(c.get("list_name"), []).append(str(c.get("label") or c.get("name")))
         t = str(row.get("type") or "")
         ln = t.split(" ", 1)[1].strip() if " " in t else ""
-        ch = f" | choices: {'; '.join(lists.get(ln, [])[:8])}" if ln in lists else ""
-        lines.append(f"{form.get('form_id')} ({form.get('form_title', '')}; domain {form.get('cdash_domain') or '-'})"
-                     f" | {row['name']} | {t} | {str(row.get('label') or '')[:120]}{ch}")
+        ch = f" | choices: {'; '.join(spec_trim.text(x) for x in lists.get(ln, [])[:8])}" if ln in lists else ""
+        head = f"{form.get('form_id')} ({form.get('form_title', '')}; domain {form.get('cdash_domain') or '-'})"
+        if spec_trim.enabled():   # the form heading once per form instead of on every field line
+            if head != last_head:
+                lines.append(f"FORM {head}")
+                last_head = head
+            lines.append(f"  {row['name']} | {t} | {spec_trim.label(row.get('label'), 120)}{ch}")
+        else:
+            lines.append(f"{head} | {row['name']} | {t} | {spec_trim.label(row.get('label'), 120)}{ch}")
     vs = _vs_tests(std)
     if vs:
         cat.append("\nVITAL SIGN TESTS (VS test code | test):")
@@ -220,8 +227,10 @@ def build_request(spec, std=None, qrs=True):
             cat += q_lines
             cat.append("Instruments offered per form: " + "; ".join(f"{f}: {', '.join(i)}"
                                                                      for f, i in sorted(per_form.items()) if i))
+    fields_head = ("FIELDS (a FORM line: form id (title; domain); then its fields: field | type | label):"
+                   if spec_trim.enabled() else "FIELDS (form | field | type | label):")
     extra = "CATALOGUE (domain variable | label | type):\n" + "\n".join(cat) + \
-            "\n\nFIELDS (form | field | type | label):\n" + "\n".join(lines)
+            "\n\n" + fields_head + "\n" + "\n".join(lines)
     return prompt, extra
 
 

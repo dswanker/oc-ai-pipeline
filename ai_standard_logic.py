@@ -10,6 +10,7 @@ Status "Proposed" and applied only when a data manager sets Action = Approve (st
 The standard's own logic is never changed. One call per run and per set of sources. Kill switch AI_STANDARD_LOGIC=0.
 """
 import json, os, re
+import spec_trim
 
 import standards_match as sm
 
@@ -117,9 +118,9 @@ def build_request(spec, protocol_text="", max_protocol_chars=400_000, max_fields
         rows = _rows(f)
         for r in rows[:max_fields]:
             ch = _codes(f, r)
-            bits = [str(r["name"]), str(r.get("type") or "").split(" ")[0], str(r.get("label") or "")[:90]]
+            bits = [str(r["name"]), str(r.get("type") or "").split(" ")[0], spec_trim.label(r.get("label"), 90)]
             if ch:
-                bits.append("choices: " + "; ".join(f"{c.get('name')}={c.get('label')}" for c in ch[:8]))
+                bits.append("choices: " + "; ".join(f"{c.get('name')}={spec_trim.text(c.get('label'))}" for c in ch[:8]))
             if r.get("constraint"):
                 bits.append(f"has check: {str(r['constraint'])[:80]}")
             if r.get("relevant"):

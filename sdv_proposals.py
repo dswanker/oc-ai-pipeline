@@ -16,6 +16,7 @@ board JSON (card.sdv = "item_level", card.sdvItems) only when STUDY_CONFIG_SDV=1
 """
 from __future__ import annotations
 import json
+import spec_trim
 import os
 import re
 
@@ -146,7 +147,7 @@ def build_request(spec, protocol_text, max_fields=4000, max_chars=600_000, with_
             continue
         for r in f.get("survey") or []:
             if is_data_field(r) and not _not_applicable(r)[0] and n < max_fields:
-                lines.append(f"{f.get('form_id')}.{r.get('name')} | {str(r.get('label') or '')[:80]}")
+                lines.append(f"{f.get('form_id')}.{r.get('name')} | {spec_trim.label(r.get('label'), 80)}")
                 n += 1
     if not lines:
         return None

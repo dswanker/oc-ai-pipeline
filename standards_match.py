@@ -18,6 +18,7 @@ uploaded ODM XML. Every file is either used or named as not usable.
 Kill switch: STANDARDS_MATCHING=0. Study-agnostic: no customer-, protocol- or form-specific code.
 """
 import copy, difflib, hashlib, io, json, os, re, zipfile
+import spec_trim
 
 VERSION = 1
 STATUS = "CUSTOMER_STANDARD"
@@ -1306,8 +1307,9 @@ is the expected outcome for most candidates.
 """
 
 
-def build_add_request(spec, protocol_text, max_chars=600_000):
-    """(prompt, extra_text) for the candidates, or None when there is nothing to check."""
+def build_add_request(spec, protocol_text, max_chars=600_000, with_text=True):
+    """(prompt, extra_text) for the candidates, or None when there is nothing to check. with_text=False when the
+    protocol is sent alongside (merged protocol checks): the input then points to it instead of repeating it."""
     cands = add_candidates(spec)
     if not cands or not str(protocol_text or "").strip():
         return None
@@ -1320,7 +1322,7 @@ def build_add_request(spec, protocol_text, max_chars=600_000):
         lists = {}
         for c in f.get("choices") or []:
             if isinstance(c, dict):
-                lists.setdefault(c.get("list_name"), []).append(str(c.get("label") or c.get("name")))
+                lists.setdefault(c.get("list_name"), []).append(spec_trim.text(c.get("label") or c.get("name")))
         lines.append("  STANDARD FORM FIELDS:")
         std_lines = []
         for r in f.get("survey") or []:
@@ -1328,14 +1330,16 @@ def build_add_request(spec, protocol_text, max_chars=600_000):
                 continue
             t = str(r.get("type") or "")
             ln = t.split(" ", 1)[1].strip() if t.startswith("select") and " " in t else ""
-            std_lines.append(f"    {r.get('name')} | {t.split(' ')[0]} | {str(r.get('label') or '')[:90]}"
+            std_lines.append(f"    {r.get('name')} | {t.split(' ')[0]} | {spec_trim.label(r.get('label'), 90)}"
                              + (f" | {'; '.join(lists.get(ln, [])[:6])}" if ln in lists else ""))
         lines.append("\n".join(std_lines)[:60000])
         lines.append("  CANDIDATES:")
         for c in mine:
-            lines.append(f"    {c['field']} | {c['type'].split(' ')[0]} | {c['label'][:140]}"
+            lines.append(f"    {c['field']} | {c['type'].split(' ')[0]} | {spec_trim.label(c['label'], 140)}"
                          + (f" | CDASH {c['concept']}" if c["concept"] else ""))
-    extra = "CANDIDATES BY FORM:" + "\n".join(lines) + "\n\nPROTOCOL TEXT:\n" + str(protocol_text)[:max_chars]
+    extra = "CANDIDATES BY FORM:" + "\n".join(lines)
+    extra += ("\n\nPROTOCOL TEXT:\n" + str(protocol_text)[:max_chars] if with_text else
+              "\n\nPROTOCOL TEXT: the protocol sent with this request.")
     return ADD_PROMPT, extra
 
 

@@ -7,6 +7,7 @@ reference (shown in the DVS). Summary in study_meta.ai_edit_checks. Runs after t
 spec (a spec that already has study_meta.ai_edit_checks is not re-proposed).
 """
 import json, re
+import spec_trim
 
 OPS = {">=", ">", "<=", "<", "=", "!="}
 DATE_TYPES = ("date", "datetime")
@@ -68,10 +69,10 @@ def build_request(spec):
             if not _is_data(r):
                 continue
             ch = _codes(f, r)
-            chs = f" | choices: {'; '.join(str(c.get('name')) + '=' + str(c.get('label')) for c in ch[:6])}" if ch else ""
+            chs = f" | choices: {'; '.join(str(c.get('name')) + '=' + spec_trim.text(c.get('label')) for c in ch[:6])}" if ch else ""
             con = f" | existing check: {str(r.get('constraint'))[:90]}" if r.get("constraint") else ""
             concept = f" | concept {r['concept']}" if r.get("concept") else ""
-            lines.append(f"  {r['name']} | {str(r.get('type')).split(' ')[0]} | {str(r.get('label') or '')[:80]}{concept}{chs}{con}")
+            lines.append(f"  {r['name']} | {str(r.get('type')).split(' ')[0]} | {spec_trim.label(r.get('label'), 80)}{concept}{chs}{con}")
     return PROMPT, "\n".join(lines)
 
 
