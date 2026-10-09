@@ -54,11 +54,12 @@ def _resp(**forms):
     return json.dumps({"forms": [dict({"form_id": k}, **v) for k, v in forms.items()]})
 
 
-def _req(q, section="6"):
-    return {"basis": "required", "section": section, "quotes": [q], "why": "asked for"}
+def _req(q, section="6", fields=("VSDAT", "WIDDAT", "WASHDAT"), kind="record"):
+    return {"quotes": [{"text": q, "section": section, "kind": kind}], "fields": list(fields), "why": "asked for"}
 
 
-MENTION = {"basis": "mentioned", "section": "6.3", "quotes": [Q_MENTION], "why": "a study period, no data asked for"}
+MENTION = {"quotes": [{"text": Q_MENTION, "section": "6.3", "kind": "course"}], "fields": [], "why": "a study period, no data asked for"}
+NONE = {"quotes": [], "fields": []}
 
 
 def test_a_form_the_protocol_never_asks_for_is_removed_everywhere_and_listed_as_not_built():
@@ -98,7 +99,7 @@ def test_a_form_with_a_verified_quote_is_kept_and_the_quote_is_recorded():
     st = pb.apply(spec, _resp(VS=_req(Q_VS, "6.1"), WID=_req(Q_WID, "6.2")), PROTOCOL, fresh=True)
     assert [f["form_id"] for f in spec["forms"]] == ["VS", "WID"] and st["removed"] == []
     rec = {r["form_id"]: r for r in st["forms"]}
-    assert rec["WID"]["basis"] == "verified protocol quote" and rec["WID"]["quote"] == Q_WID and rec["WID"]["section"] == "6.2"
+    assert rec["WID"]["basis"] == "verified protocol quote (instruction to record)" and rec["WID"]["quote"] == Q_WID and rec["WID"]["section"] == "6.2"
     assert pb.FLAG not in spec["review_flags"] and pb.section(spec) is None
 
 
@@ -111,11 +112,25 @@ def test_a_quote_that_is_not_in_the_protocol_does_not_support_the_form():
     assert st["rejected"] == {"quote not found in the protocol": 1}
 
 
+def test_a_real_quote_that_asks_for_none_of_the_forms_fields_does_not_support_it():
+    spec = _spec(_vs(), _invented())
+    st = pb.apply(spec, _resp(VS=_req(Q_VS), WASH=_req(Q_MENTION, fields=["NOT_A_FIELD"])), PROTOCOL, fresh=True)
+    assert [f["form_id"] for f in spec["forms"]] == ["VS"]
+    assert "the protocol only mentions it" in st["removed"][0]["reason"] and st["removed"][0]["mention"] == Q_MENTION
+    assert st["rejected"] == {"requirement without a field of the form": 1}
+    # the kind of passage decides, not the model's own verdict: a real quote that is no instruction supports nothing
+    for kind in ("eligibility", "course", "process", "definition", "time", "other", "made up"):
+        spec = _spec(_vs(), _invented())
+        pb.apply(spec, _resp(VS=_req(Q_VS, kind="schedule"), WASH=_req(Q_MENTION, kind=kind)), PROTOCOL, fresh=True)
+        assert [f["form_id"] for f in spec["forms"]] == ["VS"], kind
+    assert {r["form_id"]: r for r in st["forms"]}["VS"]["fields"] == ["VSDAT"]
+
+
 def test_an_assessment_of_the_completeness_check_supports_a_form_without_a_quote():
     spec = _spec(_vs(), _invented())
     spec["study_meta"]["protocol_forms"] = {"status": "done", "assessments": [
         {"assessment": "Washout", "form": "WASH", "section": "6.3", "quote": Q_MENTION}]}
-    st = pb.apply(spec, _resp(VS=_req(Q_VS), WASH={"basis": "none", "quotes": []}), PROTOCOL, fresh=True)
+    st = pb.apply(spec, _resp(VS=_req(Q_VS), WASH=NONE), PROTOCOL, fresh=True)
     assert [f["form_id"] for f in spec["forms"]] == ["VS", "WASH"] and st["removed"] == []
     assert "assessment of the completeness check" in {r["form_id"]: r for r in st["forms"]}["WASH"]["basis"]
 
@@ -126,7 +141,7 @@ def test_a_customer_standard_form_without_protocol_text_is_kept_and_flagged():
     crf = _invented("LIBF", "Site Checklist")
     crf["library_match"] = {"status": "LIBRARY_MATCH", "source_type": "customer"}
     spec = _spec(_vs(), oc4, crf)
-    st = pb.apply(spec, _resp(VS=_req(Q_VS), SPREV={"basis": "none", "quotes": []}, LIBF={"basis": "none", "quotes": []}),
+    st = pb.apply(spec, _resp(VS=_req(Q_VS), SPREV=NONE, LIBF=NONE),
                   PROTOCOL, fresh=True)
     assert [f["form_id"] for f in spec["forms"]] == ["VS", "SPREV", "LIBF"] and st["removed"] == []
     rec = {r["form_id"]: r for r in st["forms"]}
@@ -170,7 +185,7 @@ def test_a_reused_specification_is_never_changed_the_result_is_recorded_and_flag
 
 
 def test_an_ai_failure_or_an_untrustworthy_answer_removes_nothing():
-    for response in ("", "the model wrote prose", json.dumps({"forms": [{"form_id": "NOPE", "basis": "none"}]})):
+    for response in ("", "the model wrote prose", json.dumps({"forms": [{"form_id": "NOPE", "quotes": []}]})):
         spec = _spec(_vs(), _invented())
         st = pb.apply(spec, response, PROTOCOL, fresh=True)
         assert [f["form_id"] for f in spec["forms"]] == ["VS", "WASH"] and st["status"] == "not_run"
@@ -178,7 +193,7 @@ def test_an_ai_failure_or_an_untrustworthy_answer_removes_nothing():
     # most forms without a basis is not a credible answer
     forms = [_invented(f"F{i}", f"Form {i}") for i in range(5)]
     spec = _spec(_vs(), *forms)
-    st = pb.apply(spec, _resp(VS=_req(Q_VS), **{f"F{i}": {"basis": "none", "quotes": []} for i in range(5)}), PROTOCOL, fresh=True)
+    st = pb.apply(spec, _resp(VS=_req(Q_VS), **{f"F{i}": NONE for i in range(5)}), PROTOCOL, fresh=True)
     assert len(spec["forms"]) == 6 and st["status"] == "not_run" and "not credible" in st["note"]
     # a form the answer does not cover is kept and flagged
     spec = _spec(_vs(), _invented())
@@ -203,7 +218,7 @@ def test_pipeline_and_convention_forms_and_completeness_check_additions_are_not_
     prompt, extra = pb.build_request(spec, PROTOCOL, ["DOV"], answers)
     assert "FORM VS | Vital Signs" in extra and "VSDAT: Date" in extra and "FORM DOV" not in extra and "PROTOCOL TEXT:" in extra
     assert "PROTOCOL TEXT:" not in pb.build_request(spec, PROTOCOL, ["DOV"], answers, with_text=False)[1]
-    st = pb.apply(spec, _resp(VS=_req(Q_VS), WID3={"basis": "none", "quotes": []}), PROTOCOL, True, ["DOV"], answers)
+    st = pb.apply(spec, _resp(VS=_req(Q_VS), WID3=NONE), PROTOCOL, True, ["DOV"], answers)
     assert [f["form_id"] for f in spec["forms"]] == ["VS", "DOV", "SAE", "SAEX", "WID2"]
     rec = {r["form_id"]: r for r in st["forms"]}
     assert rec["DOV"]["basis"] == "required by a pipeline rule" and rec["WID2"]["quote"] == Q_WID and not rec["DOV"]["checked"]

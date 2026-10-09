@@ -40,32 +40,47 @@ REMOVED, KEPT, KEPT_STANDARD, KEPT_REFERENCED, KEPT_NOT_JUDGED, WOULD_REMOVE = (
 NOT_FRESH = ("this Study Specification was reused, not freshly analysed (a reused or edited specification keeps its "
              "forms); the form is not built at the next fresh protocol analysis")
 
-PROMPT = """You check whether a clinical trial PROTOCOL asks for the data of each case report FORM listed below.
+PROMPT = """You find, for each case report FORM listed below, the text of a clinical trial PROTOCOL that is about the
+data the form holds, and you say what kind of statement that text is.
 
 The protocol defines the forms: a form is built only when the protocol requires the site to record, collect,
-report, perform or document the data the form holds. For every form in the FORMS list answer with one of
-  "required"   the protocol says this data is to be recorded / collected / reported / assessed / performed for a
-               participant (a Schedule of Activities row, a study-procedures section or any other section)
-  "mentioned"  the protocol uses the term, or describes a process, a definition, a point in time, a study period or
-               a rule, but does not ask for the data of this form to be recorded
-  "none"       the protocol says nothing about it
+report, perform or document the data the form holds. You do not decide that; you supply the evidence.
+
+For every form give up to three passages of the protocol that are closest to requiring the data of the form's
+FIELDS (judge by the fields, not by the title), and classify each passage by what the passage itself states:
+  "record"       an instruction that this data is recorded, collected, reported or documented, or that the
+                 assessment which produces it is performed, for a participant
+  "schedule"     a row of the Schedule of Activities / Schedule of Assessments (or its footnote) that schedules
+                 this assessment. A column, a visit name or a study period is not such a row
+  "eligibility"  a condition a person must meet to take part
+  "course"       what happens to participants, what they receive, may do or must do, who is treated or assigned
+  "process"      how the site or the sponsor handles a situation; a rule about taking part again, leaving,
+                 replacing or counting participants
+  "definition"   a definition of a term
+  "time"         the term used as a point in time, a milestone or a study period
+  "other"        anything else
 Rules:
-1. Judge a form by its FIELDS as well as its title: the protocol text must require the data the fields hold.
-2. A term used only as a point in time or a study period, a definition, or a description of how the site or the
-   sponsor handles a situation is not a requirement to record data: answer "mentioned".
-3. Answer "required" only when you can point to protocol text that asks for the data. Do not infer a requirement
-   from common practice or from what studies usually collect.
-4. "quotes": for "required" one to three passages copied VERBATIM from the protocol (each one sentence or one
-   table-row fragment, at most 300 characters), from different places when there are several. For "mentioned" the
-   passage where the term appears. A quote that is not found in the protocol text is discarded, and a form without
-   a found quote counts as not required. Copy exactly; do not join separate passages, do not paraphrase.
-5. "section": the protocol section number or table name of the first quote.
-6. Answer for EVERY form in the list, once, using the form ID exactly as given.
+1. Classify the passage as written. A passage is "record" only when its own words instruct recording, collecting,
+   reporting, documenting or performing. Do not upgrade a passage because recording would be usual practice, or
+   because the thing it describes takes place in the study.
+2. "fields": the names of the form's fields whose data the "record" / "schedule" passages ask for; empty when
+   there is no such passage.
+3. Copy each passage VERBATIM (one sentence or one table-row fragment, at most 300 characters). Do not join
+   separate passages, do not paraphrase. A passage that is not found in the protocol text is discarded.
+4. When the protocol has nothing about a form's data, return it with an empty "quotes" list.
+5. Answer for EVERY form in the list, once, using the form ID exactly as given.
 
 Return ONLY JSON:
-{"forms": [{"form_id": "<form ID>", "basis": "required", "section": "<section or table>",
-            "quotes": ["<verbatim protocol text>"], "why": "<one short sentence>"}]}
+{"forms": [{"form_id": "<form ID>",
+            "quotes": [{"text": "<verbatim protocol text>", "section": "<section or table>", "kind": "record"}],
+            "fields": ["<field name>"], "why": "<one short sentence>"}]}
 """
+KINDS_REQUIRE = ("record", "schedule")
+KIND_WORDS = {"eligibility": "an eligibility condition", "course": "what happens to participants, not data to record",
+              "process": "how a situation is handled, not data to record", "definition": "a definition",
+              "time": "a point in time or study period", "other": "no instruction to record it",
+              "record": "the passage asks for none of the form's fields", "schedule": "the passage asks for none of the form's fields"}
+KINDS = KINDS_REQUIRE + ("eligibility", "course", "process", "definition", "time", "other")
 
 
 def enabled():
@@ -175,14 +190,19 @@ def build_request(spec, protocol_text, required_ids=(), answers=None, with_text=
 
 
 def validate_response(spec, response_text, protocol_text, required_ids=(), answers=None):
-    """{"ok": bool, "forms": {form_id: {"basis", "section", "quotes" (verified), "unverified", "why"}}, "rejected"}.
+    """{"ok": bool, "forms": {form_id: {"basis", "quotes" (verified: text, section, kind), "unverified", "fields",
+    "why"}}, "rejected"}. basis is derived here, not taken from the model: "required" when a verified passage is an
+    instruction to record or a schedule row AND names a field of the form; else "mentioned" / "none".
     ok is False when the response is unusable (nothing is then removed)."""
     data = pf._parse(response_text)
     items = (data or {}).get("forms") if isinstance(data, dict) else None
     if not isinstance(items, list):
         return {"ok": False, "forms": {}, "rejected": {"unparseable response": 1}}
     squashed = pf._squash(protocol_text)
-    ids = {str(f["form_id"]) for f in candidates(spec, protocol_text, required_ids, answers)}
+    cands = candidates(spec, protocol_text, required_ids, answers)
+    ids = {str(f["form_id"]) for f in cands}
+    fields = {str(f["form_id"]): {str(r.get("name")) for r in f.get("survey") or [] if isinstance(r, dict) and r.get("name")}
+              for f in cands}
     out, rejected = {}, {}
 
     def rej(why):
@@ -196,17 +216,30 @@ def validate_response(spec, response_text, protocol_text, required_ids=(), answe
         if fid in out:
             rej("duplicate")
             continue
-        basis = str(it.get("basis") or "").strip().lower()
-        if basis not in ("required", "mentioned", "none"):
-            rej("unknown basis")
-            basis = "none"
-        raw = it.get("quotes") if isinstance(it.get("quotes"), list) else [it.get("quote")]
-        quotes = [str(q).strip() for q in raw if isinstance(q, str) and q.strip()][:MAX_QUOTES]
-        good = [q[:400] for q in quotes if pf.quote_in(q, squashed)]
-        if len(good) < len(quotes):
-            rejected["quote not found in the protocol"] = rejected.get("quote not found in the protocol", 0) + len(quotes) - len(good)
-        out[fid] = {"basis": basis, "section": str(it.get("section") or "").strip()[:60], "quotes": good,
-                    "unverified": len(quotes) - len(good), "why": str(it.get("why") or "").strip()[:200]}
+        quotes, unverified = [], 0
+        for q in (it.get("quotes") if isinstance(it.get("quotes"), list) else [])[:MAX_QUOTES]:
+            text = str(q.get("text") or "").strip() if isinstance(q, dict) else ""
+            if not text:
+                continue
+            if not pf.quote_in(text, squashed):
+                unverified += 1
+                rej("quote not found in the protocol")
+                continue
+            kind = str(q.get("kind") or "").strip().lower()
+            if kind not in KINDS:
+                rej("unknown kind of passage")
+                kind = "other"
+            quotes.append({"text": text[:400], "section": str(q.get("section") or "").strip()[:60], "kind": kind})
+        names = fields.get(fid) or set()
+        asked = [str(x).strip() for x in (it.get("fields") if isinstance(it.get("fields"), list) else []) if str(x).strip() in names]
+        requiring = [q for q in quotes if q["kind"] in KINDS_REQUIRE]
+        if requiring and not asked:
+            # the passage exists but asks for none of this form's fields: the protocol mentions it, no more
+            rej("requirement without a field of the form")
+            requiring = []
+        basis = "required" if requiring else "mentioned" if quotes else "none"
+        out[fid] = {"basis": basis, "quotes": requiring or quotes, "unverified": unverified, "fields": asked[:20],
+                    "why": str(it.get("why") or "").strip()[:200]}
     return {"ok": bool(out), "forms": out, "rejected": rejected}
 
 
@@ -317,17 +350,21 @@ def apply(spec, response_text, protocol_text, fresh=False, required_ids=(), answ
         rec["checked"] = True
         a, m = v["forms"].get(fid), mapped.get(fid)
         if a and a["basis"] == "required" and a["quotes"]:
-            rec.update(basis="verified protocol quote", section=a["section"], quote=a["quotes"][0], quotes=a["quotes"])
+            q = a["quotes"][0]
+            rec.update(basis=f"verified protocol quote ({'instruction to record' if q['kind'] == 'record' else 'Schedule of Activities row'})",
+                       section=q["section"], quote=q["text"], quotes=a["quotes"], fields=a["fields"], why=a["why"])
         elif m:
             rec.update(basis=f"assessment of the completeness check (\"{m.get('assessment')}\")",
                        section=m.get("section") or "", quote=m.get("quote") or "")
         elif a is None:
             rec.update(supported=None, action=KEPT_NOT_JUDGED, reason="the AI answer did not cover this form")
         else:
-            detail = ("the protocol only mentions it" if a["basis"] == "mentioned" else
-                      "the quoted text is not in the protocol" if a["basis"] == "required" and a["unverified"] else
-                      "nothing in the protocol")
-            rec.update(supported=False, reason=f"{REASON} ({detail})", mention=(a["quotes"] or [""])[0], why=a["why"])
+            q = (a["quotes"] or [{}])[0]
+            detail = (f"the protocol only mentions it: {KIND_WORDS.get(q.get('kind'), 'no instruction to record it')}"
+                      if a["basis"] == "mentioned" else
+                      "the quoted text is not in the protocol" if a["unverified"] else "nothing in the protocol")
+            rec.update(supported=False, reason=f"{REASON} ({detail})", mention=q.get("text") or "",
+                       section=q.get("section") or "", why=a["why"])
             unsupported.append((f, rec))
         records.append(rec)
     checked = [r for r in records if r.get("checked")]

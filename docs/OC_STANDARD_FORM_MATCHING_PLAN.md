@@ -559,10 +559,14 @@ matching, the form conventions and the completeness check:
 - Checked: every form except those a pipeline rule requires (whatever `_ensure_required_forms` injects under the
   customer's answers), those a convention answer requires (SAE form, Death Details form) and those the
   completeness check added with a verified quote.
-- One validated AI call (protocol + form ID, title and field names/questions): per form `required` / `mentioned` /
-  `none` with verbatim quotes. A quote counts only when it is found in the protocol text (same normalisation as
-  the completeness check). A form has a basis with a verified `required` quote, or when an assessment of the
-  completeness check maps to it.
+- One validated AI call (protocol + form ID, title and field names/questions). The model does not give the
+  verdict: per form it returns up to three verbatim passages closest to requiring the form's data, each classified
+  by what the passage itself states (`record`, `schedule`, `eligibility`, `course`, `process`, `definition`,
+  `time`, `other`), and the names of the form's fields the passages ask for. The code decides: a form has a basis
+  when a passage found in the protocol text (same normalisation as the completeness check) is an instruction to
+  record or a Schedule of Activities row AND names at least one real field of the form, or when an assessment of
+  the completeness check maps to it. (Asking the model directly for "required / mentioned" kept invented forms on
+  loosely related sentences.)
 - No basis, content from the analysis or CDASHIG: removed on a fresh analysis (form, event placements, stored
   check proposals, matching-record entry; the form is kept in `study_meta.protocol_basis_removed`), listed in the
   Study Specification (sheet `FORMS_NOT_BUILT`, PDF section "Forms not built") with the reason. If another form's
