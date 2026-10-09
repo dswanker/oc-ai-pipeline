@@ -48,7 +48,12 @@ def _norm(x):
 
 # ── switches off: today's requests ───────────────────────────────────────────────
 
-def test_with_every_switch_off_the_requests_are_what_they_were():
+def test_with_every_switch_off_the_requests_are_what_they_were(monkeypatch):
+    # the snapshots were recorded before the cost switches; two instructions have since changed on purpose
+    # (every recorded data item is an assessment; a basis passage names the form's subject), each behind its own
+    # kill switch, which restores the recorded request exactly
+    monkeypatch.setenv("PROTOCOL_FORMS_ALL_ITEMS", "0")
+    monkeypatch.setenv("PROTOCOL_BASIS_SUBJECT", "0")
     assert not cc.doc_first_enabled() and not pc.enabled() and not spec_trim.enabled()
     now = _norm(cases.all_cases())
     assert now["client"] == SNAP["client"]
@@ -159,9 +164,9 @@ def test_trim_sends_a_long_list_of_review_flags_as_its_count_and_first_entries(m
 # ── B: three protocol checks in one call ─────────────────────────────────────────
 
 def test_the_merged_request_keeps_each_tasks_instructions_and_splits_the_answer():
-    tasks = {"completeness": (pf.PROMPT, "CHECKLIST"), "basis": (pb.PROMPT, "FORMS"), "protocol_fields": (sm.ADD_PROMPT, "CANDIDATES")}
+    tasks = {"completeness": (pf.prompt(), "CHECKLIST"), "basis": (pb.prompt(), "FORMS"), "protocol_fields": (sm.ADD_PROMPT, "CANDIDATES")}
     prompt, extra = pc.build_request(tasks, None)
-    for p in (sm.ADD_PROMPT, pf.PROMPT, pb.PROMPT):
+    for p in (sm.ADD_PROMPT, pf.prompt(), pb.prompt()):
         assert p.strip() in prompt                         # the same wording per task
     assert prompt.index("TASK 1: PROTOCOL-SPECIFIED FIELDS") < prompt.index("TASK 2: COMPLETENESS CHECKLIST") < prompt.index("TASK 3: PROTOCOL BASIS")
     assert '{"protocol_fields": <the JSON of TASK 1>, "completeness": <the JSON of TASK 2>, "basis": <the JSON of TASK 3>}' in prompt
@@ -249,9 +254,9 @@ def test_merged_off_three_calls_with_todays_requests(monkeypatch):
     pl = _pipeline(monkeypatch)
 
     def answer(prompt, extra):
-        return json.dumps(A_FIELDS if prompt == sm.ADD_PROMPT else A_COMPLETE if prompt == pf.PROMPT else A_BASIS)
+        return json.dumps(A_FIELDS if prompt == sm.ADD_PROMPT else A_COMPLETE if prompt == pf.prompt() else A_BASIS)
     out, calls, _logs = _run_steps(pl, monkeypatch, answer)
-    assert [c["prompt"] for c in calls] == [sm.ADD_PROMPT, pf.PROMPT, pb.PROMPT]
+    assert [c["prompt"] for c in calls] == [sm.ADD_PROMPT, pf.prompt(), pb.prompt()]
     assert [c["max_tokens"] for c in calls] == [8000, 16000, 8000]
     assert calls[0]["extra"] == SNAP["builders"]["protocol_fields"][1]          # byte-identical to before the switch
     assert sm.state(out)["additions"]["status"] == "done" and [a["field"] for a in sm.state(out)["additions"]["added"]] == ["AEHOSP"]
@@ -267,7 +272,7 @@ def test_merged_on_one_call_and_each_section_goes_through_its_own_validator(monk
     out, calls, logs = _run_steps(pl, monkeypatch, answer)
     assert len(calls) == 1 and calls[0]["max_tokens"] == pc.MAX_TOKENS
     p, e = calls[0]["prompt"], calls[0]["extra"]
-    assert all(x.strip() in p for x in (sm.ADD_PROMPT, pf.PROMPT, pb.PROMPT))
+    assert all(x.strip() in p for x in (sm.ADD_PROMPT, pf.prompt(), pb.prompt()))
     assert e.count(cases.PROTOCOL) == 1 and "CANDIDATES BY FORM:" in e and "CHECKLIST (id" in e and "FORM WID | Widget Count" in e
     # the same outcome as the three separate calls
     st = sm.state(out)["additions"]
@@ -282,18 +287,18 @@ def test_merged_on_a_missing_section_or_a_failed_call_falls_back_to_the_own_call
     pl = _pipeline(monkeypatch)
 
     def answer(prompt, extra):                  # the merged answer lacks the basis section
-        if prompt == pb.PROMPT:
+        if prompt == pb.prompt():
             return json.dumps(A_BASIS)
         return json.dumps({"protocol_fields": A_FIELDS, "completeness": A_COMPLETE})
     out, calls, _l = _run_steps(pl, monkeypatch, answer)
-    assert len(calls) == 2 and calls[1]["prompt"] == pb.PROMPT and pb.state(out)["status"] == "done"
+    assert len(calls) == 2 and calls[1]["prompt"] == pb.prompt() and pb.state(out)["status"] == "done"
 
     def broken(prompt, extra):                  # the merged call fails: every check makes its own call
         if "TASK 1:" in prompt:
             raise RuntimeError("boom")
-        return json.dumps(A_FIELDS if prompt == sm.ADD_PROMPT else A_COMPLETE if prompt == pf.PROMPT else A_BASIS)
+        return json.dumps(A_FIELDS if prompt == sm.ADD_PROMPT else A_COMPLETE if prompt == pf.prompt() else A_BASIS)
     out, calls, _l = _run_steps(pl, monkeypatch, broken)
-    assert [c["prompt"] for c in calls[1:]] == [sm.ADD_PROMPT, pf.PROMPT, pb.PROMPT]
+    assert [c["prompt"] for c in calls[1:]] == [sm.ADD_PROMPT, pf.prompt(), pb.prompt()]
     assert sm.state(out)["additions"]["status"] == "done" and pb.state(out)["status"] == "done"
 
 
@@ -304,7 +309,7 @@ def test_merged_on_a_form_the_completeness_check_adds_gets_a_follow_up_basis_cal
     extra_a = dict(_a("Eligibility review", "IE", Q_AE), name="Eligibility review")
 
     def answer(prompt, extra):
-        if prompt == pb.PROMPT:
+        if prompt == pb.prompt():
             added = [l.split(" | ")[0][5:] for l in extra.split("\n") if l.startswith("FORM ")]
             return json.dumps({"forms": [_b(fid, Q_AE, []) for fid in added]})
         return json.dumps({"protocol_fields": A_FIELDS, "completeness": dict(A_COMPLETE, extra=A_COMPLETE["extra"] + [extra_a]),
@@ -313,7 +318,7 @@ def test_merged_on_a_form_the_completeness_check_adds_gets_a_follow_up_basis_cal
     new = [f["form_id"] for f in out["forms"] if f["form_id"] not in ("AEGEN", "VS", "WID")]
     removed = [r["form_id"] for r in pb.state(out).get("removed") or []]
     assert len(new) + len(removed) == 1                     # the completeness check added one form
-    assert len(calls) == 2 and calls[1]["prompt"] == pb.PROMPT
+    assert len(calls) == 2 and calls[1]["prompt"] == pb.prompt()
     asked = [l for l in calls[1]["extra"].split("\n") if l.startswith("FORM ")]
     assert len(asked) == 1 and asked[0].startswith(f"FORM {(new + removed)[0]} |")      # only the added form is judged again
 

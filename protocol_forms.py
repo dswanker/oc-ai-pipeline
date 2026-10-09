@@ -248,6 +248,41 @@ Return ONLY JSON:
              {"id": "<checklist id>", "none": "<one-line reason>"}],
  "extra": []}
 """.replace("__KINDS__", KIND_TEXT)
+_RULES_1_2 = '''1. A "row" entry: the assessments that row schedules. A "heading" entry: the assessments the text of that section
+   requires the site to record (a sub-section with its own entry is answered under its own entry).
+2. An entry that names or contains several assessments gives ONE ASSESSMENT PER DATA COLLECTION, each with a quote
+   (the same quote when one sentence or row covers them). Read the entry word by word: every assessment it names
+   must appear in your answer.
+'''
+_RULES_1_2_ALL = '''1. A "row" entry: the assessments that row schedules. A "heading" entry: EVERY distinct data item the text of
+   that section instructs the site to record, collect, document or report for a participant, not only the topic
+   the heading names. Read the section sentence by sentence: each sentence that asks for a data item gives an
+   assessment for that item, with that sentence as its quote (a sub-section with its own entry is answered under
+   its own entry).
+2. An entry that names or contains several data items gives ONE ASSESSMENT PER DATA ITEM, each with its own quote:
+   the sentence or row fragment that asks for that item (the same quote only when one sentence or row covers
+   several). A data item that has nothing to do with the entry's title is still an assessment of that entry. Read
+   the entry word by word: every data item it asks for must appear in your answer.
+'''
+_RULE_5 = '''5. Do not list a single measurement that is part of a listed assessment (height and weight belong to vital signs;
+   one analyte belongs to its laboratory panel unless the schedule gives it its own row).
+'''
+_RULE_5_ALL = '''5. Do not list a single measurement that is part of a listed assessment (height and weight belong to vital signs;
+   one analyte belongs to its laboratory panel unless the schedule gives it its own row). This never
+   removes a data item the text asks for in its own sentence and that no assessment you list contains.
+'''
+PROMPT_ALL = PROMPT.replace(_RULES_1_2, _RULES_1_2_ALL).replace(_RULE_5, _RULE_5_ALL)
+
+
+def all_items_enabled():
+    """Every data item a checklist entry asks to be recorded is an assessment, not only the entry's main topic."""
+    return os.environ.get("PROTOCOL_FORMS_ALL_ITEMS", "1") != "0"
+
+
+def prompt():
+    return PROMPT_ALL if all_items_enabled() else PROMPT
+
+
 FOLLOW_UP = ("Your previous answer left out the checklist entries below. Answer ONLY these entries now, each with its "
              "assessments or an explicit \"none\"; leave \"extra\" empty.")
 
@@ -286,7 +321,7 @@ def build_request(spec, protocol_text, with_text=True, max_chars=600_000, checkl
                 "footnote number):\n" + ("\n".join(lines) or "(empty: give every assessment under \"extra\")"))
     if with_text:
         extra += "\n\nPROTOCOL TEXT:\n" + str(protocol_text)[:max_chars]
-    return PROMPT, extra
+    return prompt(), extra
 
 
 def _parse(text):
@@ -505,6 +540,14 @@ def _labels_have(form, tokens):
     return False
 
 
+def _form_words(form):
+    out = _tokens(form.get("form_title"))
+    for r in (form.get("survey") or []) + (form.get("choices") or []):
+        if isinstance(r, dict):
+            out += _tokens(r.get("label"))
+    return out
+
+
 def cover(assessment, forms):
     """(form, basis) for the form that collects this assessment, or (None, "")."""
     name, dom, quote = assessment["name"], assessment.get("domain"), assessment.get("quote") or ""
@@ -519,6 +562,21 @@ def cover(assessment, forms):
         if f is not None:
             return f, "dosing / compliance fields on the administration form"
     scored = sorted(((_similar(name, f.get("form_title")), i) for i, f in enumerate(forms)), key=lambda t: (-t[0], t[1]))
+    if all_items_enabled() and a_tok and not (dom and is_generic(name, dom)) and \
+            assessment.get("domain_basis") in ("AI-proposed domain", "no CDASH domain"):
+        # no wording we know says which domain this is (at most the model's guess): a form collects this data item
+        # only when it names it. A word many forms carry says little about one form, so it weighs
+        # 1 / (number of forms that have it); a form names the item with at least half of its words by weight,
+        # in its title, questions or choices. When no form does, no form collects it.
+        words = [_form_words(f) for f in forms]
+        weight = {t: 1.0 / max(1, sum(1 for w in words if any(_same(t, x) for x in w))) for t in a_tok}
+        total = sum(weight.values())
+        if not any(sum(weight[t] for t in a_tok if any(_same(t, x) for x in w)) / total >= 0.5 for w in words):
+            return None, ""
+        # ... and a form whose title has every word of it is the form, whatever domain the model guessed
+        for f in forms:
+            if _overlap(a_tok, _tokens(f.get("form_title"))) >= 1.0:
+                return f, "named in the form title"
     if dom:
         fam = _FAMILY.get(dom, {dom})
         cands = [f for f in forms if fam & set(_form_domains(f)) or str(f.get("form_id") or "").upper() in fam]

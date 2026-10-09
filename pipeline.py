@@ -4622,6 +4622,7 @@ async def _post_match_forms_step(item_id, struct_json, sources, protocol_bytes, 
         struct_json = await _protocol_basis_step(item_id, struct_json, protocol_bytes, cols, answers, fresh,
                                                  prefetched=pre)
         struct_json = await _duplicate_subject_step(item_id, struct_json, protocol_bytes, fresh)
+        struct_json = await _schedule_from_soa_step(item_id, struct_json, protocol_bytes, fresh)
         if ids(struct_json) != before:
             struct_json = _enforce_common_visit(struct_json)
             struct_json = _apply_cdisc_ct(struct_json, crf_files, oc_files)
@@ -4787,6 +4788,53 @@ async def _protocol_basis_step(item_id, struct_json, protocol_bytes=None, cols=N
         return out
     except Exception as e:
         print(f"[protocol-basis] step failed, spec unchanged: {type(e).__name__}: {e}", flush=True)
+        return struct_json
+
+
+async def _schedule_from_soa_step(item_id, struct_json, protocol_bytes=None, fresh=False):
+    """The visit schedule follows the protocol's structure (protocol_schedule.py). The column headers of the
+    Schedule of Activities tables and the timepoint lists the protocol defines are read deterministically; every
+    one of them must be one event and every event one of them: a missing event is added (its forms from the rows
+    marked in that column), an event that folds several timepoints is split, a second event for one visit is
+    dropped. One small validated AI question decides whether a label without a time of its own is the same visit
+    as another (quote verified). Events change only on a fresh analysis. After the completeness check, whose
+    row -> form mapping places the forms. SCHEDULE_FROM_SOA=0 disables. Never fails a build."""
+    try:
+        import copy as _copy
+        import protocol_schedule as _psc
+        import standards_global as _smg
+        import standards_match as _sm
+        if (not isinstance(struct_json, dict) or not _psc.enabled() or not protocol_bytes
+                or protocol_bytes.startswith(b"%%DOCX_TEXT%%")):
+            return struct_json
+        ptext = _protocol_text(protocol_bytes)
+        if not _psc.needs_check(struct_json, ptext):
+            return struct_json
+        structure = _psc.read(protocol_bytes)
+        if not structure["units"]:
+            print("[schedule] no Schedule of Activities column headers read from the protocol; events unchanged", flush=True)
+            return struct_json
+        answer = None
+        req = _psc.build_request(structure["units"], structure["schedule_text"]) if _psc.ai_enabled() else None
+        if req:
+            try:
+                answer = await call_claude(req[0], extra_text=req[1], max_tokens=2000, cache_prompt=False)
+            except Exception as _ce:
+                print(f"[schedule] the same-visit question was not answered ({type(_ce).__name__}); labels without a "
+                      f"time of their own are flagged, not added", flush=True)
+        out = _copy.deepcopy(struct_json)
+        _psc.apply(out, structure, answer, ptext, fresh, _sm.state(out).get("aliases") or _smg.aliases(ptext))
+        for line in _psc.summary_lines(out):
+            print(f"[schedule] {line}", flush=True)
+        lines = _psc.summary_lines(out)
+        if lines:
+            try:
+                await append_log(item_id, "\n".join(lines)[:4000])
+            except Exception:
+                pass
+        return out
+    except Exception as e:
+        print(f"[schedule] step failed, events unchanged: {type(e).__name__}: {e}", flush=True)
         return struct_json
 
 

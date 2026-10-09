@@ -125,3 +125,46 @@ assessed" checklist entries (none) are the same in all nine runs.
 **Economy mode, live, once** (quick analysis and main analysis as batches of one, switches off): both answers parsed;
 $0.33 and $1.02 against $0.65 and $2.03 at the normal price (50%); the batches ended after 1,312 and 707 seconds
 (the normal calls take about 15 and 400 seconds). The extended-output beta header was accepted in the batch.
+
+## Second test of 2026-10-09 (the fixed code, truncated runs, batch mode)
+
+After the schedule, completeness and basis fixes of `docs/SCHEDULE_FROM_SOA.md`. Runs stop after the quick and main
+analysis, standards matching, the three protocol checks and the schedule step. Every call went through the Message
+Batches API (economy mode); costs are computed from the recorded tokens at normal prices, the batch spend is half.
+A = all switches off. K = `PROTOCOL_DOC_FIRST=checks` + `PROTOCOL_CHECKS_MERGED=1` + `SPEC_INPUT_TRIM=1` (the main
+analysis request unchanged). Three runs per arm, the three of an arm started together. Outputs under
+`.cache/abtest2/` (not in git).
+
+| Arm | Calls | Normal-price cost per run | Batch spend per run | Wall-clock per run |
+|---|---|---|---|---|
+| A | 7 | $4.74, $4.84, $4.71 (mean $4.77) | $2.37, $2.42, $2.36 | 2,124, 2,124, 1,828 s |
+| K | 5, 6, 6 | $3.95, $3.97, $3.89 (mean $3.93) | $1.97, $1.99, $1.94 | 1,068, 1,120, 1,234 s |
+
+- K is cold in all three runs: each run's quick analysis wrote the 1-hour entry (129,794 tokens), the merged call and
+  the follow-up basis call read it. The saving on the truncated run is $0.84 (18%): the quick analysis costs $0.65
+  more (the cache write), the three checks cost $1.47 less.
+- The cache worked inside batches in every K call that could read it.
+- A PDF comment appended after the end-of-file marker does NOT make a separate cache entry: later runs with other
+  trailing bytes read the entry of the K runs. The K runs were cold because they started together, before any entry
+  existed.
+- Wall-clock is batch queue time, not a property of the arms.
+
+**Outputs, K against A.** The schedule is the same (19 events, all 18 visits of the protocol's schedule accounted
+for, in 6 of 6 runs). One difference is consistent and makes K unfit as it is:
+
+- With the protocol placed first, the completeness check names the second data item of the concomitant-therapy
+  section after the wording of its sentence instead of as concomitant procedures, in 6 of 6 runs (3 merged, 3 not
+  merged); with the prompt first it is named concomitant procedures in 3 of 3. The item then maps to the medication
+  form, and the customer's Concomitant Procedures standard form is not built (A: built in 3 of 3, K: 0 of 3).
+- In K the completeness check also answers two headings with "none" that A answers with assessments (3 of 3 each);
+  the assessments concerned map to forms that exist either way.
+- The first test, with the earlier completeness instruction, did not show this (Concomitant Procedures in 9 of 9
+  runs). The difference appears with the new instruction that asks for every recorded data item.
+
+The three runs without the merged call (`PROTOCOL_DOC_FIRST=checks` + trim) are incomplete: the API account ran out
+of credit before their basis and schedule calls. Their completeness answers are the ones counted above.
+
+**Verdict.** `PROTOCOL_DOC_FIRST` in any form changes what a protocol call answers, now also for the completeness
+check. Leave it off until the completeness instruction names items independently of the block order and that is
+tested. `PROTOCOL_CHECKS_MERGED` cannot be judged apart from it on these runs.
+

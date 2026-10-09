@@ -262,3 +262,76 @@ def test_an_eligibility_passage_is_the_basis_of_the_eligibility_form_only():
     assert [r["form_id"] for r in st["removed"]] == ["WASH"]
     rec = {r["form_id"]: r for r in st["forms"]}
     assert rec["IE"]["quote"] == q_ie
+
+
+# ── A passage supports a form only when it names the form's subject ──────────────
+
+SUBJECT = ("5.1 Risk group assessment will be performed by the investigators to confirm the category of each patient. "
+           "Table 1 Schedule of Activities: Clinical assessments and concomitant meds. Note 3: clinical assessments "
+           "include the gizmo score and are done before each dose. 5.2 Vital signs will be recorded at every visit. "
+           "5.3 The gizmo score (GS) will be recorded at screening.")
+Q_RISK = "Risk group assessment will be performed by the investigators to confirm the category of each patient."
+Q_ROW = "Clinical assessments and concomitant meds"
+Q_NOTE = "clinical assessments include the gizmo score and are done before each dose"
+
+
+def _gizmo():
+    f = fx._f("GZ", "Gizmo Performance Status", None, [("date", "GZDAT", "Date of assessment", {}),
+                                                       ("select_one GZ", "GZSCORE", "Performance status score", {})])
+    f["library_match"] = {"status": "CUSTOM", "source_type": "protocol"}
+    return f
+
+
+def _exam():
+    return fx._f("EXAM", "Examination", None, [("date", "EXDAT", "Date of assessment", {}), ("text", "EXRES", "Findings", {})])
+
+
+def test_a_sentence_about_something_else_does_not_support_the_form():
+    # a risk-group sentence, classified by the model as an instruction to record, is no basis for a performance-status form
+    spec = _spec(_vs(), _wid(), _exam(), _gizmo())
+    resp = _resp(VS=_req(Q_VS), WID=_req(Q_WID), EXAM=_req(Q_NOTE, fields=("EXDAT",)),
+                 GZ=_req(Q_RISK, "5.1", fields=("GZDAT", "GZSCORE")))
+    st = pb.apply(spec, resp, SUBJECT + PROTOCOL, fresh=True)
+    assert "GZ" not in [f["form_id"] for f in spec["forms"]]
+    rem = next(r for r in st["removed"] if r["form_id"] == "GZ")
+    assert pb.OFF_SUBJECT in rem["reason"] and rem["mention"] == Q_RISK
+
+
+def test_a_schedule_row_with_a_generic_title_supports_an_instrument_form_only_when_it_is_named():
+    def run(quote):
+        spec = _spec(_vs(), _wid(), _exam(), _gizmo())
+        pb.apply(spec, _resp(VS=_req(Q_VS), WID=_req(Q_WID), EXAM=_req(Q_NOTE, fields=("EXDAT",)),
+                             GZ=_req(quote, "Table 1", fields=("GZSCORE",), kind="schedule")),
+                 SUBJECT + PROTOCOL, fresh=True)
+        return "GZ" in [f["form_id"] for f in spec["forms"]]
+    assert not run(Q_ROW)        # the row's label is generic: "assessment" is in a field label, but in other forms too
+    assert run(Q_NOTE)           # its footnote names the instrument
+    v = pb.validate_response(_spec(_vs(), _exam(), _gizmo()), _resp(GZ=_req(Q_ROW, fields=("GZSCORE",), kind="schedule")), SUBJECT)
+    assert v["rejected"] == {"passage does not name the form's subject": 1} and v["forms"]["GZ"]["basis"] == "mentioned"
+
+
+def test_what_names_a_form_title_words_protocol_aliases_and_fields_of_its_own():
+    spec = _spec(_vs(), _wid(), _exam(), _gizmo())
+    spec["study_meta"]["standards_match"] = {"aliases": [["gizmo performance status", "GS"]]}
+    ix = pb.subject_index(spec)
+    assert pb.names_subject(ix, "GZ", "The gizmo score will be recorded.").startswith("title word")
+    assert pb.names_subject(ix, "GZ", "GS is recorded at screening.") != ""          # the protocol's own short name
+    assert pb.names_subject(ix, "WID", "The date of the last calibration is collected.") != ""
+    assert pb.names_subject(ix, "GZ", "The date of assessment is recorded.") == ""   # generic words name no form
+    assert pb.names_subject(ix, "VS", "Systolic pressure is measured.").startswith("field")
+
+
+def test_the_eligibility_form_keeps_its_rule_and_the_subject_check_has_a_kill_switch(monkeypatch):
+    ie = fx._f("IE", "Eligibility", "IE", [("select_one NY", "IEYN", "Met all criteria?", {})])
+    text = SUBJECT + " 4.1 Participants must be at least 18 years old."
+    crit = {"quotes": [{"text": "Participants must be at least 18 years old.", "section": "4.1", "kind": "eligibility"}],
+            "fields": [], "why": "criterion"}
+    v = pb.validate_response(_spec(ie), _resp(IE=crit), text)
+    assert v["forms"]["IE"]["basis"] == "required"
+    assert "names what the form is about" in pb.prompt() and pb.prompt() != pb.PROMPT
+    monkeypatch.setenv("PROTOCOL_BASIS_SUBJECT", "0")
+    assert pb.prompt() == pb.PROMPT
+    spec = _spec(_vs(), _wid(), _exam(), _gizmo())
+    pb.apply(spec, _resp(VS=_req(Q_VS), WID=_req(Q_WID), EXAM=_req(Q_NOTE, fields=("EXDAT",)), GZ=_req(Q_RISK, fields=("GZDAT",))),
+             SUBJECT + PROTOCOL, fresh=True)
+    assert "GZ" in [f["form_id"] for f in spec["forms"]]

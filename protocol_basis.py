@@ -65,13 +65,83 @@ Return ONLY JSON:
             "quotes": [{"text": "<verbatim protocol text>", "section": "<section or table>", "kind": "record"}],
             "fields": ["<field name>"], "why": "<one short sentence>"}]}
 """.replace("__KINDS__", pf.KIND_TEXT)
+SUBJECT_RULE = """6. A passage counts for a form only when it names what the form is about: words of its title, a name the
+   protocol uses for the same thing, or one of its fields. Give such passages first. A passage about something
+   else, or a schedule row whose label does not name it, does not count for the form.
+"""
 KINDS_REQUIRE, KINDS = pf.KINDS_REQUIRE, pf.KINDS
+
+
+def prompt():
+    """The instructions of the call; with the subject check on they say what the check will require."""
+    if not subject_enabled():
+        return PROMPT
+    return PROMPT.replace("\nReturn ONLY JSON:", SUBJECT_RULE + "\nReturn ONLY JSON:", 1)
 KIND_WORDS = dict(pf.KIND_WORDS, record="the passage asks for none of the form's fields",
                   schedule="the passage asks for none of the form's fields")
+OFF_SUBJECT = "the passage found does not name what the form is about"
 
 
 def enabled():
     return os.environ.get("PROTOCOL_BASIS_CHECK", "1") != "0"
+
+
+def subject_enabled():
+    return os.environ.get("PROTOCOL_BASIS_SUBJECT", "1") != "0"
+
+
+# ── A passage supports a form only when it names the form's subject ──────────────
+
+def subject_index(spec, forms=None):
+    """What each form is about, for names_subject(): per form the words of its title(s) and of each field label,
+    without the generic ones. Generic is computed from the forms themselves, as in standards_global: a word in more
+    than a quarter of the form titles (or of the forms' labels) says nothing about one form, and a field label
+    counts only with a word no other form's labels have. Names the protocol
+    declares to be the same thing (the alias table of standards matching) count as one word."""
+    import collections
+    import standards_global as smg
+    import standards_match as sm
+    forms = [f for f in (forms if forms is not None else _forms(spec)) if isinstance(f, dict)]
+    canon = smg.canonicalizer(smg._state_groups(spec))
+    # a text's words as written and with the protocol's alias names replaced: either way of naming counts
+    toks = lambda text: [t for t in dict.fromkeys(sm._m_tokens(text) + sm._m_tokens(canon(text))) if t not in sm._M_GENERIC]
+    titles, labels = {}, {}
+    for f in forms:
+        fid = str(f.get("form_id"))
+        titles[fid] = list(dict.fromkeys(t for x in smg._titles(spec, f) if x for t in toks(x)))
+        labels[fid] = [toks(r.get("label")) for r in f.get("survey") or []
+                       if isinstance(r, dict) and r.get("label") and sm.is_data_row(r)]
+    n = len(forms)
+    df_t = collections.Counter(t for fid in titles for t in set(titles[fid]))
+    df_l = collections.Counter(t for fid in labels for t in {t for lab in labels[fid] for t in lab})
+    generic_t = {t for t, c in df_t.items() if n >= 8 and c / n > 0.25}
+    generic_l = generic_t | {t for t, c in df_l.items() if n >= 8 and c / n > 0.25}
+    return {"canon": canon, "toks": toks,
+            "titles": {fid: [t for t in ts if t not in generic_t] for fid, ts in titles.items()},
+            "raw_titles": {str(f.get("form_id")): [str(x) for x in smg._titles(spec, f) if x] for f in forms},
+            "labels": {fid: [[t for t in lab if t not in generic_l] for lab in labs] for fid, labs in labels.items()},
+            "own": {t for t, c in df_l.items() if c == 1}}
+
+
+def names_subject(index, form_id, passage):
+    """How the passage names what the form is about ("title word <w>", "field <label words>", "abbreviation <w>"),
+    or "" when it does not: a sentence about something else, or a schedule row with a generic title, is no basis."""
+    import standards_match as sm
+    fid = str(form_id)
+    q = index["toks"](passage)
+    named = lambda t: any(t == x or sm._m_same(t, x) for x in q)
+    for t in index["titles"].get(fid) or []:
+        if named(t):
+            return f"title word {t}"
+    for raw in index["raw_titles"].get(fid) or []:
+        word, run = sm._acronym_of(passage, raw)
+        if word and len(run) >= 2:
+            return f"abbreviation {word}"
+    for lab in index["labels"].get(fid) or []:
+        # a field counts when the passage has all its words and one of them is a word of this form only
+        if lab and any(t in index["own"] for t in lab) and all(named(t) for t in lab):
+            return "field " + " ".join(lab)
+    return ""
 
 
 def _log(msg):
@@ -170,7 +240,7 @@ def build_request(spec, protocol_text, required_ids=(), answers=None, with_text=
     extra = "FORMS (form ID | title, then its fields as name: question):\n" + "\n".join(blocks)
     if with_text:
         extra += "\n\nPROTOCOL TEXT:\n" + str(protocol_text)[:max_chars]
-    return PROMPT, extra
+    return prompt(), extra
 
 
 def validate_response(spec, response_text, protocol_text, required_ids=(), answers=None):
@@ -191,6 +261,12 @@ def validate_response(spec, response_text, protocol_text, required_ids=(), answe
     # eligibility passage is its basis. For every other form an eligibility criterion is never a basis.
     ie_ids = {str(f["form_id"]) for f in cands if str(f.get("cdash_domain") or "").strip().upper() == "IE"}
     out, rejected = {}, {}
+    index = None
+    if subject_enabled():
+        try:
+            index = subject_index(spec, cands)
+        except Exception as e:
+            _log(f"subject check skipped ({type(e).__name__}: {e})")
 
     def rej(why):
         rejected[why] = rejected.get(why, 0) + 1
@@ -230,6 +306,18 @@ def validate_response(spec, response_text, protocol_text, required_ids=(), answe
             # the passage exists but asks for none of this form's fields: the protocol mentions it, no more
             rej("requirement without a field of the form")
             requiring = []
+        if requiring and index is not None and fid not in ie_ids:
+            # the passage must name what the form is about (a title word, a name the protocol gives it, a field):
+            # a requirement to record something else is not this form's basis
+            kept = []
+            for q in requiring:
+                how = names_subject(index, fid, q["text"])
+                if how:
+                    kept.append(dict(q, names=how))
+                else:
+                    rej("passage does not name the form's subject")
+                    q["off_subject"] = True
+            requiring = kept
         basis = "required" if requiring else "mentioned" if quotes else "none"
         out[fid] = {"basis": basis, "quotes": requiring or quotes, "unverified": unverified, "fields": asked[:20],
                     "why": str(it.get("why") or "").strip()[:200]}
@@ -355,7 +443,8 @@ def apply(spec, response_text, protocol_text, fresh=False, required_ids=(), answ
             rec.update(supported=None, action=KEPT_NOT_JUDGED, reason="the AI answer did not cover this form")
         else:
             q = (a["quotes"] or [{}])[0]
-            detail = (f"the protocol only mentions it: {KIND_WORDS.get(q.get('kind'), 'no instruction to record it')}"
+            detail = (OFF_SUBJECT if q.get("off_subject") else
+                      f"the protocol only mentions it: {KIND_WORDS.get(q.get('kind'), 'no instruction to record it')}"
                       if a["basis"] == "mentioned" else
                       "the quoted text is not in the protocol" if a["unverified"] else "nothing in the protocol")
             rec.update(supported=False, reason=f"{REASON} ({detail})", mention=q.get("text") or "",

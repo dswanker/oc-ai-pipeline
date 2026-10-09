@@ -348,3 +348,57 @@ def test_one_of_two_administration_forms_is_chosen_by_the_subject_its_questions_
         fx._f("EC", "Prodrug Administration", "EC", [("select_one NY", "ECYN", "Was the betacillin dose administered as per protocol?", {})])]
     f, basis = pf.cover(_a("Betacillin administration", "EX"), spec["forms"])
     assert f["form_id"] == "EC" and basis == "CDASH domain EX, named on the form"
+
+
+# ── Every "record" instruction of an entry is an assessment ──────────────────────
+
+TWO = ("7.4 Prior treatments and other items. At baseline, prior treatments will be recorded in the eCRF. The date of "
+       "the last gadget inspection will be recorded in the eCRF if it took place within 6 months.")
+
+
+def test_a_heading_whose_text_asks_for_two_unrelated_data_items_yields_two_assessments():
+    checklist = {"entries": [{"id": "H1", "type": "heading", "number": "7.4", "label": "Prior treatments and other items"}]}
+    answer = json.dumps({"entries": [{"id": "H1", "assessments": [
+        {"name": "Prior treatments", "cdash_domain": "CM", "section": "7.4", "kind": "record", "log": True,
+         "quote": "At baseline, prior treatments will be recorded in the eCRF."},
+        {"name": "Gadget inspection history", "cdash_domain": "CM", "section": "7.4", "kind": "record",
+         "quote": "The date of the last gadget inspection will be recorded in the eCRF if it took place within 6 months."}]}],
+        "extra": []})
+    v = pf.validate_response(_spec(), answer, TWO, checklist)
+    assert [a["name"] for a in v["assessments"]] == ["Prior treatments", "Gadget inspection history"]
+    assert v["assessments"][0]["quote"] != v["assessments"][1]["quote"] and v["coverage"]["H1"]["assessments"] == [
+        "Prior treatments", "Gadget inspection history"]
+    # the instruction asks for exactly this, for every entry, and the request carries it
+    p, _extra = pf.build_request(_spec(), TWO, checklist=checklist)
+    assert "EVERY distinct data item" in p and "ONE ASSESSMENT PER DATA ITEM" in p and "its own quote" in p
+
+
+def test_a_data_item_no_form_names_gets_a_form_and_is_not_parked_on_a_form_of_the_models_domain():
+    def log_form(*extra):
+        return fx._f("VS", "Vital Signs", "VS", [("date", "VSDAT", "Date", {}), ("text", "VSHX", "Relevant history", {})] + list(extra))
+    spec = _spec()
+    spec["forms"].append(log_form())
+    v = pf.validate_response(spec, json.dumps({"entries": [], "extra": [
+        {"name": "Gadget inspection history", "cdash_domain": "VS", "section": "7.4", "kind": "record",
+         "quote": "The date of the last gadget inspection will be recorded in the eCRF if it took place within 6 months."}]}), TWO)
+    a = v["assessments"][0]
+    assert a["domain"] == "VS" and a["domain_basis"] == "AI-proposed domain"
+    assert pf.cover(a, spec["forms"]) == (None, "")          # "history" on that form does not make it collect this
+    st = pf.apply(spec, v["assessments"], None, None, TWO, v["rejected"])
+    assert len(st["added"]) == 1
+    added = next(f for f in spec["forms"] if f["form_id"] == st["added"][0])
+    assert added["protocol_required"]["quote"].startswith("The date of the last gadget inspection")
+    # once a form names it (its own form, or a field added to another form), that form collects it
+    spec2 = _spec()
+    spec2["forms"].append(log_form(("date", "GADDAT", "Date of last gadget inspection", {})))
+    assert pf.cover(a, spec2["forms"])[0]["form_id"] == "VS"
+
+
+def test_all_items_kill_switch_restores_the_instruction_and_the_mapping(monkeypatch):
+    assert pf.prompt() == pf.PROMPT_ALL != pf.PROMPT
+    monkeypatch.setenv("PROTOCOL_FORMS_ALL_ITEMS", "0")
+    assert pf.prompt() == pf.PROMPT
+    spec = _spec()
+    spec["forms"].append(fx._f("VS", "Vital Signs", "VS", [("date", "VSDAT", "Date", {})]))
+    a = {"name": "Gadget inspection history", "domain": "VS", "domain_basis": "AI-proposed domain", "quote": "x", "log": False}
+    assert pf.cover(a, spec["forms"])[0]["form_id"] == "VS"
