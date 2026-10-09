@@ -187,8 +187,8 @@ Rules:
    specially named laboratory test or biomarker, physical examination, vital signs, ECG, concomitant medications,
    concomitant procedures, biospecimen collection, questionnaires, pregnancy reporting, disposition / end of study,
    death.
-2. A combined row or heading gives ONE ENTRY PER ASSESSMENT: "history and physical" is medical history AND physical
-   examination; "concomitant medications and procedures" is concomitant medications AND concomitant procedures.
+2. A combined row or heading that names several assessments gives ONE ENTRY PER ASSESSMENT, each with the
+   same quote.
 3. Do NOT list something that appears only as an inclusion / exclusion criterion (a test that is only an
    eligibility requirement is not an assessment). List eligibility itself once.
 4. Do not invent assessments. Every entry needs a quote copied VERBATIM from the protocol (one sentence or table
@@ -246,41 +246,6 @@ def _parse(text):
         return None
 
 
-def _split_combined(name):
-    """A combined name the model did not split ("medications and procedures") becomes one entry per assessment."""
-    n = str(name or "")
-    if re.search(r"medication", n, re.I) and re.search(r"procedure", n, re.I):
-        return ["Concomitant medications", "Concomitant procedures"]
-    if re.search(r"history", n, re.I) and re.search(r"physical", n, re.I):
-        return ["Medical history", "Physical examination"]
-    return [n]
-
-
-# Assessments the protocol names in so many words. The model sometimes lists only one half of a combined heading
-# ("Previous and Concomitant Medications and Procedures"); the protocol's own sentence is then the evidence.
-_NAMED_IN_TEXT = [
-    ("Concomitant procedures", "PR", True,
-     re.compile(r"[^.\n]{0,160}concomitant\s+(?:medications?|therap(?:y|ies)|treatments?)\s*(?:and|or|/|&)\s*(?:non-drug\s+)?procedures?[^.\n]{0,160}", re.I),
-     re.compile(r"procedure", re.I)),
-]
-
-
-def supplement(assessments, protocol_text):
-    """Entries for assessments the protocol text names outright and the model's list lacks. Returns the new entries
-    (already in the validated form); each quote is the protocol's own sentence."""
-    out = []
-    text = str(protocol_text or "")
-    for name, dom, log, rx, have in _NAMED_IN_TEXT:
-        if any(have.search(a["name"]) and (a.get("domain") == dom or a.get("log")) for a in assessments):
-            continue
-        m = rx.search(text)
-        if m and len(_squash(m.group(0))) >= MIN_QUOTE:
-            out.append({"name": name, "domain": dom, "domain_basis": "assessment name", "section": "",
-                        "quote": " ".join(m.group(0).split())[:400], "events": [], "log": log,
-                        "found_by": "protocol text (not in the model's list)"})
-    return out
-
-
 def validate_response(spec, response_text, protocol_text):
     """{"assessments": [...], "rejected": {reason: n}}. Only entries with a verified verbatim quote survive."""
     rejected, out, seen = {}, [], set()
@@ -303,7 +268,7 @@ def validate_response(spec, response_text, protocol_text):
         if not quote_in(quote, squashed):
             rej("quote not found in the protocol")
             continue
-        for name in _split_combined(str(it["name"]).strip()):
+        for name in [str(it["name"]).strip()]:
             key = _norm_phrase(name)
             if key in seen:
                 rej("duplicate")
@@ -317,10 +282,7 @@ def validate_response(spec, response_text, protocol_text):
                         "section": str(it.get("section") or "").strip()[:60], "quote": quote[:400],
                         "events": [e for e in (it.get("events") or []) if e in known_events],
                         "log": bool(it.get("log")) or bool(_LOG_WORDS.search(name)) or dom in _LOG_DOMAINS})
-    extra = supplement(out, protocol_text) if out else []
-    for a in extra:
-        _log(f"\"{a['name']}\" is named in the protocol text but was not in the model's list: added to the assessments")
-    return {"assessments": out + extra, "rejected": rejected}
+    return {"assessments": out, "rejected": rejected}
 
 
 # ── Deterministic mapping: assessment -> form ────────────────────────────────────

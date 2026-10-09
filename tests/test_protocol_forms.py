@@ -70,7 +70,9 @@ def _answer(items):
 ITEMS = [
     {"name": "Demographics", "cdash_domain": "DM", "section": "10.2", "log": False, "events": ["SE_SCREENING"],
      "quote": "Demographics will be obtained from the patient and recorded on the eCRF."},
-    {"name": "Concomitant medications and procedures", "cdash_domain": "CM", "section": "10.4", "log": True,
+    {"name": "Concomitant medications", "cdash_domain": "CM", "section": "10.4", "log": True,
+     "events": [], "quote": "Any changes in concomitant medications or procedures will be reassessed as needed"},
+    {"name": "Concomitant procedures", "cdash_domain": "PR", "section": "10.4", "log": True,
      "events": [], "quote": "Any changes in concomitant medications or procedures will be reassessed as needed"},
     {"name": "Vital signs", "cdash_domain": "VS", "section": "10.5.1", "log": False, "events": ["SE_SCREENING"],
      "quote": "Vital signs will be measured at every visit."},
@@ -108,7 +110,7 @@ def test_only_assessments_with_a_verified_verbatim_quote_survive():
     assert pf.validate_response(_spec(), "not json", PROTOCOL)["assessments"] == []
 
 
-def test_a_combined_row_gives_one_assessment_each_and_wording_decides_the_domain():
+def test_each_listed_assessment_keeps_its_domain_and_log_flag():
     v = pf.validate_response(_spec(), _answer(ITEMS), PROTOCOL)
     by = {a["name"]: a for a in v["assessments"]}
     assert by["Concomitant medications"]["domain"] == "CM" and by["Concomitant procedures"]["domain"] == "PR"
@@ -328,17 +330,15 @@ def test_death_details_answer_always_and_never():
     assert pf.needs_check(spec, PROTOCOL, None, pf.DEATH_ALWAYS) is False and pf.needs_check(spec, PROTOCOL, None) is True
 
 
-def test_a_combined_heading_the_model_listed_only_half_of_still_gives_both_assessments():
-    items = [i for i in ITEMS if not i["name"].startswith("Concomitant")]
-    items.append({"name": "Concomitant medications", "cdash_domain": "CM", "section": "Table 1", "log": True, "events": [],
-                  "quote": "Any changes in concomitant medications"})
-    v = pf.validate_response(_spec(), _answer(items), PROTOCOL)
-    extra = next(a for a in v["assessments"] if a["name"] == "Concomitant procedures")
-    assert extra["domain"] == "PR" and extra["log"] is True and extra["found_by"].startswith("protocol text")
-    assert pf.quote_in(extra["quote"], pf._squash(PROTOCOL)) and "Concomitant Medications and Procedures" in extra["quote"]
-    # nothing is supplemented when the model listed it, or when the protocol does not name it
-    assert sum(a["name"] == "Concomitant procedures" for a in pf.validate_response(_spec(), _answer(ITEMS), PROTOCOL)["assessments"]) == 1
-    assert pf.supplement([], "Concomitant medications will be recorded.") == []
+def test_no_assessment_is_invented_from_protocol_phrases():
+    """Only the model's verified list counts: no hard-coded phrase adds or splits an assessment."""
+    items = [i for i in ITEMS if i["name"] != "Concomitant procedures"]
+    names = [a["name"] for a in pf.validate_response(_spec(), _answer(items), PROTOCOL)["assessments"]]
+    assert "Concomitant procedures" not in names
+    combined = [dict(ITEMS[0], name="Medical history and physical examination")]
+    names = [a["name"] for a in pf.validate_response(_spec(), _answer(combined), PROTOCOL)["assessments"]]
+    assert names == ["Medical history and physical examination"]
+    assert not hasattr(pf, "supplement") and not hasattr(pf, "_split_combined")
 
 
 def test_one_of_two_administration_forms_is_chosen_by_the_subject_its_questions_name():
