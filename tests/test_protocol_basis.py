@@ -202,26 +202,26 @@ def test_an_ai_failure_or_an_untrustworthy_answer_removes_nothing():
     assert {r["form_id"]: r for r in st["forms"]}["WASH"]["action"] == pb.KEPT_NOT_JUDGED
 
 
-def test_pipeline_and_convention_forms_and_completeness_check_additions_are_not_candidates():
+def test_pipeline_and_convention_forms_are_not_candidates_but_completeness_check_additions_are():
     dov = _invented("DOV", "Date of Visit")
     sae = _invented("SAE", "Serious Adverse Events")
     conv = _invented("SAEX", "SAE Report")
     conv["convention_required"] = {"convention": "SAE_FORM", "content_source": "CDASHIG"}
     added = _invented("WID2", "Widget Calibration")
     added["protocol_required"] = {"assessment": "Widget calibration", "section": "6.2", "quote": Q_WID, "content_source": pf.SRC_CDASH}
-    unverified = _invented("WID3", "Widget Check")
-    unverified["protocol_required"] = {"assessment": "Widget check", "section": "", "quote": "", "content_source": pf.SRC_CDASH}
-    spec = _spec(_vs(), dov, sae, conv, added, unverified)
+    spec = _spec(_vs(), dov, sae, conv, added)
     answers = {"SAE_FORM": {"value": "yes"}, "DEATH_DETAILS_FORM": {"value": "protocol"}}
-    assert [f["form_id"] for f in pb.candidates(spec, PROTOCOL, ["DOV"], answers)] == ["VS", "WID3"]
-    assert [f["form_id"] for f in pb.candidates(spec, PROTOCOL, [], {})] == ["VS", "DOV", "SAE", "WID3"]
+    assert [f["form_id"] for f in pb.candidates(spec, PROTOCOL, ["DOV"], answers)] == ["VS", "WID2"]
+    assert [f["form_id"] for f in pb.candidates(spec, PROTOCOL, [], {})] == ["VS", "DOV", "SAE", "WID2"]
     prompt, extra = pb.build_request(spec, PROTOCOL, ["DOV"], answers)
     assert "FORM VS | Vital Signs" in extra and "VSDAT: Date" in extra and "FORM DOV" not in extra and "PROTOCOL TEXT:" in extra
+    assert "FORM WID2 | Widget Calibration" in extra and '"heading"' in prompt
     assert "PROTOCOL TEXT:" not in pb.build_request(spec, PROTOCOL, ["DOV"], answers, with_text=False)[1]
-    st = pb.apply(spec, _resp(VS=_req(Q_VS), WID3=NONE), PROTOCOL, True, ["DOV"], answers)
-    assert [f["form_id"] for f in spec["forms"]] == ["VS", "DOV", "SAE", "SAEX", "WID2"]
+    st = pb.apply(spec, _resp(VS=_req(Q_VS), WID2=NONE), PROTOCOL, True, ["DOV"], answers)
+    assert [f["form_id"] for f in spec["forms"]] == ["VS", "DOV", "SAE", "SAEX"]
     rec = {r["form_id"]: r for r in st["forms"]}
-    assert rec["DOV"]["basis"] == "required by a pipeline rule" and rec["WID2"]["quote"] == Q_WID and not rec["DOV"]["checked"]
+    assert rec["DOV"]["basis"] == "required by a pipeline rule" and not rec["DOV"]["checked"]
+    assert [r["form_id"] for r in st["removed"]] == ["WID2"]
 
 
 def test_an_event_left_without_forms_is_reported():

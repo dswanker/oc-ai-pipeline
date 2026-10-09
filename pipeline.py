@@ -4620,12 +4620,30 @@ async def _protocol_forms_step(item_id, struct_json, sources, protocol_bytes=Non
         if not _pf.needs_check(struct_json, ptext, sources, death):
             return struct_json
         is_pdf = bool(protocol_bytes) and not protocol_bytes.startswith(b"%%DOCX_TEXT%%")
-        req = _pf.build_request(struct_json, ptext, with_text=not is_pdf)
-        if req is None:
+        # the protocol's own structure is the checklist the answer must account for, entry by entry: every
+        # Schedule of Activities row and every heading of the procedures chapter(s) (protocol_structure.py)
+        cl = None
+        if _pf.checklist_enabled():
+            try:
+                import protocol_structure as _ps
+                cl = _ps.checklist(ptext, protocol_bytes if is_pdf else None)
+                _cl_lines = _ps.log_lines(cl)
+                print("\n".join(_cl_lines), flush=True)
+                try:
+                    await append_log(item_id, "\n".join(_cl_lines)[:4000])
+                except Exception:
+                    pass
+            except Exception as _se:
+                print(f"[protocol-forms] protocol structure not read (no checklist): {type(_se).__name__}", flush=True)
+                cl = None
+        async def _call(prompt, extra):
+            return await call_claude(prompt, pdf_bytes=protocol_bytes if is_pdf else None, extra_text=extra,
+                                     max_tokens=16000, cache_prompt=False)
+
+        # entries the answer leaves out get one follow-up call; what is still missing is recorded "not assessed"
+        v = await _pf.assess(struct_json, ptext, _call, cl, with_text=not is_pdf)
+        if v is None:
             return struct_json
-        text = await call_claude(req[0], pdf_bytes=protocol_bytes if is_pdf else None, extra_text=req[1],
-                                 max_tokens=8000, cache_prompt=False)
-        v = _pf.validate_response(struct_json, text, ptext)
         if not v["assessments"]:
             print(f"[protocol-forms] no verified assessment (rejected: {v['rejected']}); spec unchanged", flush=True)
             return struct_json
@@ -4634,7 +4652,8 @@ async def _protocol_forms_step(item_id, struct_json, sources, protocol_bytes=Non
         except Exception:
             crf_forms = {}
         out = _copy.deepcopy(struct_json)
-        st = _pf.apply(out, v["assessments"], sources, crf_forms, ptext, v["rejected"], death)
+        st = _pf.apply(out, v["assessments"], sources, crf_forms, ptext, v["rejected"], death,
+                       _pf.coverage_records(cl, v) if cl else None)
         if st.get("added"):
             # a form created for a standard form takes that form's content now (other forms are not re-matched)
             import standards_match as _sm

@@ -5,8 +5,8 @@ form must have a protocol basis: either a verbatim protocol text that requires c
 call: the protocol plus a compact list of the forms with their fields; every quote is verified against the protocol
 text) or an assessment of the completeness check that already maps to it.
 
-Not checked: forms the pipeline's own rules or a customer convention answer require, and forms the completeness
-check added with a verified quote.
+Not checked: forms the pipeline's own rules or a customer convention answer require. A form the completeness
+check added is checked like every other form, and the assessment it was created for does not vouch for it.
 
 A form without a basis
   content from the protocol analysis or CDASHIG   removed, with its event placements and stored check proposals;
@@ -48,17 +48,7 @@ report, perform or document the data the form holds. You do not decide that; you
 
 For every form give up to three passages of the protocol that are closest to requiring the data of the form's
 FIELDS (judge by the fields, not by the title), and classify each passage by what the passage itself states:
-  "record"       an instruction that this data is recorded, collected, reported or documented, or that the
-                 assessment which produces it is performed, for a participant
-  "schedule"     a row of the Schedule of Activities / Schedule of Assessments (or its footnote) that schedules
-                 this assessment. A column, a visit name or a study period is not such a row
-  "eligibility"  a condition a person must meet to take part
-  "course"       what happens to participants, what they receive, may do or must do, who is treated or assigned
-  "process"      how the site or the sponsor handles a situation; a rule about taking part again, leaving,
-                 replacing or counting participants
-  "definition"   a definition of a term
-  "time"         the term used as a point in time, a milestone or a study period
-  "other"        anything else
+__KINDS__
 Rules:
 1. Classify the passage as written. A passage is "record" only when its own words instruct recording, collecting,
    reporting, documenting or performing. Do not upgrade a passage because recording would be usual practice, or
@@ -74,13 +64,10 @@ Return ONLY JSON:
 {"forms": [{"form_id": "<form ID>",
             "quotes": [{"text": "<verbatim protocol text>", "section": "<section or table>", "kind": "record"}],
             "fields": ["<field name>"], "why": "<one short sentence>"}]}
-"""
-KINDS_REQUIRE = ("record", "schedule")
-KIND_WORDS = {"eligibility": "an eligibility condition", "course": "what happens to participants, not data to record",
-              "process": "how a situation is handled, not data to record", "definition": "a definition",
-              "time": "a point in time or study period", "other": "no instruction to record it",
-              "record": "the passage asks for none of the form's fields", "schedule": "the passage asks for none of the form's fields"}
-KINDS = KINDS_REQUIRE + ("eligibility", "course", "process", "definition", "time", "other")
+""".replace("__KINDS__", pf.KIND_TEXT)
+KINDS_REQUIRE, KINDS = pf.KINDS_REQUIRE, pf.KINDS
+KIND_WORDS = dict(pf.KIND_WORDS, record="the passage asks for none of the form's fields",
+                  schedule="the passage asks for none of the form's fields")
 
 
 def enabled():
@@ -128,8 +115,8 @@ def source_kind(form):
 
 
 def exempt_reason(form, squashed, required_ids=(), answers=None):
-    """Why a form is not checked, or "": required by a pipeline rule, by a customer convention answer, or added by
-    the completeness check with a verified protocol quote."""
+    """Why a form is not checked, or "": required by a pipeline rule or by a customer convention answer. A form
+    the completeness check added is checked like every other form."""
     fid = str(form.get("form_id") or "")
     if fid in set(required_ids or ()):
         return "required by a pipeline rule"
@@ -142,12 +129,9 @@ def exempt_reason(form, squashed, required_ids=(), answers=None):
             return "customer convention SAE_FORM"
     except Exception:
         pass
-    pr = form.get("protocol_required") or {}
     if (ans.get("DEATH_DETAILS_FORM") or {}).get("value") == pf.DEATH_ALWAYS and (
             "DD" in pf._form_domains(form) or fid.upper() == "DD"):
         return "customer convention DEATH_DETAILS_FORM"
-    if pr and pf.quote_in(pr.get("quote"), squashed):
-        return "added by the protocol completeness check"
     return ""
 
 
@@ -332,9 +316,11 @@ def apply(spec, response_text, protocol_text, fresh=False, required_ids=(), answ
     v = validate_response(spec, response_text, protocol_text, required_ids, answers)
     if not v["ok"]:
         return _not_run(spec, protocol_text, "the AI answer could not be read")
+    # an assessment of the completeness check supports the form it maps to when its own passage is a requirement
+    # (an instruction to record or a schedule row); the assessment a form was created for does not vouch for it
     mapped = {}
     for r in pf.state(spec).get("assessments") or []:
-        if r.get("form"):
+        if r.get("form") and not r.get("added") and r.get("kind", "record") in KINDS_REQUIRE:
             mapped.setdefault(str(r["form"]), r)
     records, unsupported = [], []
     for f in _forms(spec):
@@ -392,6 +378,9 @@ def apply(spec, response_text, protocol_text, fresh=False, required_ids=(), answ
         if fresh:
             remove_form(spec, f)
             rec["action"] = REMOVED
+            for r in pf.state(spec).get("assessments") or []:
+                if r.get("added") and str(r.get("form")) == rec["form_id"]:
+                    r.update(added=False, form=None, basis="form not built (protocol basis check)")
         else:
             rec.update(action=WOULD_REMOVE, reason=f"{rec['reason']}; {NOT_FRESH}")
     for r in records:
@@ -438,11 +427,14 @@ def not_built(spec):
 def section(spec):
     """(title, note, headers, rows, column weights) for the Study Specification, or None when every form is built."""
     recs = not_built(spec)
-    if not recs:
-        return None
     rows = [[r.get("form_id"), r.get("form_title"), r.get("content_source"),
              "Not built" if r.get("action") == REMOVED else "Kept (reused specification)", r.get("reason") or REASON,
              r.get("mention") or "—"] for r in recs]
+    # assessments of the completeness check that got no form: their protocol passage is not a requirement
+    rows += [["—", r.get("assessment"), "—", "Not built", r.get("reason") or REASON, r.get("quote") or "—"]
+             for r in pf.state(spec).get("assessments") or [] if r.get("not_built")]
+    if not rows:
+        return None
     return ("FORMS NOT BUILT", "the protocol defines the forms: a form the protocol analysis created that no protocol "
             "text asks for is not built", ["Form", "Title", "Content from", "Status", "Reason",
                                            "Where the protocol mentions it"], rows, [2, 4, 3, 3, 8, 8])

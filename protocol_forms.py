@@ -7,8 +7,13 @@ administration form with dosing fields covers compliance with that treatment). N
 assessment another form collects, none whose content would be a standard form another form already uses. A Death
 Details form is added only when the protocol asks for death DETAILS (cause of death, autopsy, circumstances) beyond
 the death itself, which Disposition and Adverse Events capture (CDASHIG: DD is optional), and the customer's
-DEATH_DETAILS_FORM answer allows it. The assessments come from one validated AI call: each carries a
-verbatim protocol quote that is verified against the protocol text, or it is discarded. Mapping an assessment to a
+DEATH_DETAILS_FORM answer allows it. The assessments come from a validated AI call that must account for a
+checklist read from the protocol itself (protocol_structure.py): every Schedule of Activities row and every heading
+of the procedures / assessments chapter(s) is answered with its assessments or an explicit "none"; entries the
+answer leaves out get one follow-up call and are otherwise recorded as "not assessed". Each assessment carries a
+verbatim protocol quote that is verified against the protocol text, or it is discarded, and the kind of that
+passage: a form is added only for an instruction to record or a schedule row, never for an eligibility criterion, a
+heading or a process description. Mapping an assessment to a
 form is deterministic (CDASH domain, form title, field variables). An assessment no form covers gets a form through
 the precedence chain
 
@@ -172,40 +177,79 @@ def assessment_domain(name, ai_domain=None, known=None):
 
 # ── The validated extraction call ────────────────────────────────────────────────
 
-PROMPT = """You list the assessments a clinical trial PROTOCOL requires data to be collected for.
+# what a quoted passage is, judged by its own words; only the first two are a basis for collecting data
+KINDS_REQUIRE = ("record", "schedule")
+KINDS = KINDS_REQUIRE + ("heading", "eligibility", "course", "process", "definition", "time", "other")
+KIND_TEXT = """  "record"       an instruction that this data is recorded, collected, reported or documented, or that the
+                 assessment which produces it is performed, for a participant
+  "schedule"     a row of the Schedule of Activities / Schedule of Assessments (or its footnote) that schedules
+                 this assessment. A column, a visit name or a study period is not such a row
+  "heading"      a section heading or title on its own, without a sentence that instructs anything
+  "eligibility"  a condition a person must meet to take part
+  "course"       what happens to participants, what they receive, may do or must do, who is treated or assigned
+  "process"      how the site or the sponsor handles a situation; a rule about taking part again, leaving,
+                 replacing or counting participants
+  "definition"   a definition of a term
+  "time"         the term used as a point in time, a milestone or a study period
+  "other"        anything else"""
+KIND_WORDS = {"heading": "a section heading without an instruction to record", "eligibility": "an eligibility condition",
+              "course": "a statement of what happens to participants",
+              "process": "a description of how a situation is handled", "definition": "a definition",
+              "time": "a point in time or study period", "other": "no instruction to record it"}
 
-Use ONLY the Schedule of Activities / Schedule of Assessments tables and the study-procedures / study-assessments
-sections of the protocol. List what the SITE records for a participant: a row of the Schedule of Activities, or a
-statement that something "will be recorded / collected / performed / documented". Do NOT list: laboratory methods
-or analyses run later on collected samples, statistical or sponsor activities, a reason for withdrawal, a general
-compliance statement, or a single measurement that is part of a listed assessment (height and weight belong to
-vital signs; one analyte belongs to its laboratory panel unless the Schedule of Activities gives it its own row).
+PROMPT = """You account, entry by entry, for what a clinical trial PROTOCOL requires the site to record for a participant.
+
+You get a CHECKLIST read from the protocol itself: the rows of its Schedule of Activities / Schedule of Assessments
+tables (type "row") and the headings of the sections that describe procedures and assessments (type "heading").
+For EVERY checklist entry return either the assessments it contains, or an explicit "none" with a one-line reason.
+
+An assessment is one distinct data collection the SITE records for a participant, for example: informed consent,
+demographics, medical history, disease assessment / staging, each study treatment administration (investigational
+product, prodrug, radiation and so on, separately), adverse events / serious adverse events, safety laboratory
+tests, each specially named laboratory test or biomarker, physical examination, vital signs, ECG, concomitant
+medications, concomitant procedures, biospecimen collection, questionnaires, pregnancy reporting, disposition / end
+of study, death.
 Rules:
-1. One entry per distinct data collection the protocol requires, for example: informed consent, demographics,
-   medical history, disease assessment / staging, each study treatment administration (investigational product,
-   prodrug, radiation and so on, separately), adverse events / serious adverse events, safety laboratory tests, each
-   specially named laboratory test or biomarker, physical examination, vital signs, ECG, concomitant medications,
-   concomitant procedures, biospecimen collection, questionnaires, pregnancy reporting, disposition / end of study,
-   death.
-2. A combined row or heading that names several assessments gives ONE ENTRY PER ASSESSMENT, each with the
-   same quote.
-3. Do NOT list something that appears only as an inclusion / exclusion criterion (a test that is only an
-   eligibility requirement is not an assessment). List eligibility itself once.
-4. Do not invent assessments. Every entry needs a quote copied VERBATIM from the protocol (one sentence or table
-   row fragment, at most 300 characters) that shows the protocol requires it. An entry whose quote is not found in
-   the protocol text is discarded.
-5. "section": the protocol section number or table name the quote is from (for example "10.5.2", "Table 1 SoA").
-6. "events": the event OIDs from the EVENTS list below at which the protocol schedules it. Use only OIDs from the
-   list. Empty when it is collected continuously (a log) or the timing is not stated.
-7. "log": true when it is recorded continuously over the study (adverse events, concomitant medications and
-   procedures, deviations), false when it is done at visits.
-8. "cdash_domain": the CDASH domain code when you are sure (PE, VS, LB, AE, CM, PR, MH, DM, EX, EC, DS, DD, EG, IE,
-   DV, PC, SU, QS, RS, TU, TR), else null.
+1. A "row" entry: the assessments that row schedules. A "heading" entry: the assessments the text of that section
+   requires the site to record (a sub-section with its own entry is answered under its own entry).
+2. An entry that names or contains several assessments gives ONE ASSESSMENT PER DATA COLLECTION, each with a quote
+   (the same quote when one sentence or row covers them). Read the entry word by word: every assessment it names
+   must appear in your answer.
+3. Give an assessment under EVERY entry that contains it, ALWAYS UNDER THE SAME NAME; repeats are merged by name
+   afterwards. Do not answer "none" because another entry already has it.
+4. "none" when the entry requires nothing to be recorded for a participant: background, a definition, a rule, a
+   laboratory method or an analysis run later on collected samples, a statistical or sponsor activity, or a label
+   that is not an assessment. Give the reason in one line.
+5. Do not list a single measurement that is part of a listed assessment (height and weight belong to vital signs;
+   one analyte belongs to its laboratory panel unless the schedule gives it its own row).
+6. Do not invent assessments. Every assessment needs a "quote" copied VERBATIM from the protocol (one sentence or
+   one table-row fragment, at most 300 characters). An assessment whose quote is not found in the protocol text is
+   discarded.
+7. "kind": what the quoted passage itself states, one of
+__KINDS__
+   Classify the passage as written. It is "record" only when its own words instruct recording, collecting,
+   reporting, documenting or performing. Prefer the sentence of the section that carries such an instruction; quote
+   a heading on its own only when the section has none. Something that appears only as an inclusion / exclusion
+   criterion is "eligibility".
+8. "section": the protocol section number or table name the quote is from.
+9. "events": the event OIDs from the EVENTS list at which the protocol schedules it. Use only OIDs from the list.
+   Empty when it is collected continuously (a log) or the timing is not stated.
+10. "log": true when it is recorded continuously over the study, false when it is done at visits.
+11. "cdash_domain": the CDASH domain code when you are sure (PE, VS, LB, AE, CM, PR, MH, DM, EX, EC, DS, DD, EG, IE,
+    DV, PC, SU, QS, RS, TU, TR), else null.
+12. "extra": assessments of a schedule row or a procedures section that is NOT on the checklist (the checklist may
+    be incomplete or empty). Same fields. Empty list when there are none.
 
 Return ONLY JSON:
-{"assessments": [{"name": "<assessment name>", "cdash_domain": "<domain or null>", "section": "<section or table>",
-                  "quote": "<verbatim protocol text>", "events": ["<event OID>"], "log": false}]}
-"""
+{"entries": [{"id": "<checklist id>",
+              "assessments": [{"name": "<assessment name>", "cdash_domain": "<domain or null>",
+                               "section": "<section or table>", "quote": "<verbatim protocol text>",
+                               "kind": "record", "events": ["<event OID>"], "log": false}]},
+             {"id": "<checklist id>", "none": "<one-line reason>"}],
+ "extra": []}
+""".replace("__KINDS__", KIND_TEXT)
+FOLLOW_UP = ("Your previous answer left out the checklist entries below. Answer ONLY these entries now, each with its "
+             "assessments or an explicit \"none\"; leave \"extra\" empty.")
 
 
 def events_of(spec):
@@ -223,13 +267,23 @@ def events_of(spec):
     return out
 
 
-def build_request(spec, protocol_text, with_text=True, max_chars=600_000):
+def checklist_enabled():
+    return os.environ.get("PROTOCOL_FORMS_CHECKLIST", "1") != "0"
+
+
+def build_request(spec, protocol_text, with_text=True, max_chars=600_000, checklist=None, only=None):
     """(prompt, extra_text) or None when there is no protocol text to verify quotes against. with_text=False when
-    the caller passes the protocol itself (PDF) alongside."""
+    the caller passes the protocol itself (PDF) alongside. checklist: protocol_structure.checklist(); only: the
+    entry ids of a follow-up request for entries the first answer left out."""
     if not str(protocol_text or "").strip():
         return None
     ev = "\n".join(f"{oid} | {title}" for oid, title in events_of(spec))
     extra = "EVENTS (event OID | name):\n" + (ev or "(none)")
+    entries = [e for e in (checklist or {}).get("entries") or [] if only is None or e["id"] in set(only)]
+    lines = [f"{e['id']} | {e['type']} | {e.get('table') or e.get('number') or ''} | {e['label']}" for e in entries]
+    extra += ("\n\n" + (FOLLOW_UP + "\n" if only is not None else "")
+              + "CHECKLIST (id | type | table or section number | row label or heading; a row label may carry a "
+                "footnote number):\n" + ("\n".join(lines) or "(empty: give every assessment under \"extra\")"))
     if with_text:
         extra += "\n\nPROTOCOL TEXT:\n" + str(protocol_text)[:max_chars]
     return PROMPT, extra
@@ -246,43 +300,159 @@ def _parse(text):
         return None
 
 
-def validate_response(spec, response_text, protocol_text):
-    """{"assessments": [...], "rejected": {reason: n}}. Only entries with a verified verbatim quote survive."""
-    rejected, out, seen = {}, [], set()
+def validate_response(spec, response_text, protocol_text, checklist=None, schedule_text=""):
+    """{"assessments": [...], "rejected": {reason: n}, "coverage": {entry id: {...}}, "missing": [entry ids]}.
+    Only assessments with a verified verbatim quote survive. Every checklist entry must be answered (assessments
+    or an explicit none); the ones that are not are "missing". An assessment carries the kind of its quoted
+    passage; a "schedule" passage must be on a schedule-table page when those are known."""
+    rejected, out, by_key = {}, [], {}
 
     def rej(why):
         rejected[why] = rejected.get(why, 0) + 1
 
+    entries = {e["id"]: e for e in (checklist or {}).get("entries") or []}
     data = _parse(response_text)
-    items = (data or {}).get("assessments") if isinstance(data, dict) else None
-    if not isinstance(items, list):
-        return {"assessments": [], "rejected": {"unparseable response": 1}}
+    legacy = isinstance(data, dict) and isinstance(data.get("assessments"), list) and "entries" not in data
+    if not isinstance(data, dict) or not (legacy or isinstance(data.get("entries"), list) or isinstance(data.get("extra"), list)):
+        return {"assessments": [], "rejected": {"unparseable response": 1}, "coverage": {}, "missing": list(entries)}
     squashed = _squash(protocol_text)
+    sched = _squash(schedule_text)
     known_events = {oid for oid, _ in events_of(spec)}
     known_domains = _cdash_domains()
-    for it in items:
+    coverage = {}
+    row_keys = {re.sub(r"\d", "", _squash(e["label"])) for e in entries.values() if e["type"] == "row"} - {""}
+
+    def take(it, entry_id):
+        """The validated assessment, or None. Merged into an earlier one of the same name."""
         if not isinstance(it, dict) or not str(it.get("name") or "").strip():
             rej("no name")
-            continue
+            return None
         quote = str(it.get("quote") or "").strip()
-        if not quote_in(quote, squashed):
+        # a schedule row's label may be shorter than a quote has to be: it counts when it IS a row of the checklist
+        is_row = bool(quote) and re.sub(r"\d", "", _squash(quote)) in row_keys
+        if not quote_in(quote, squashed) and not is_row:
             rej("quote not found in the protocol")
-            continue
-        for name in [str(it["name"]).strip()]:
-            key = _norm_phrase(name)
-            if key in seen:
+            return None
+        name = str(it["name"]).strip()
+        kind = None
+        if not legacy:
+            kind = str(it.get("kind") or "").strip().lower()
+            if kind not in KINDS:
+                rej("unknown kind of passage")
+                kind = "other"
+            if kind == "schedule" and sched and not is_row and _squash(quote) not in sched:
+                rej("schedule passage is not in a schedule table")
+                kind = "other"
+        events = [e for e in (it.get("events") or []) if e in known_events]
+        key = _norm_phrase(name)
+        old = by_key.get(key)
+        if old is not None:
+            # the same assessment under another entry: keep the passage that requires it, add the events
+            if old.get("kind") not in KINDS_REQUIRE and kind in KINDS_REQUIRE:
+                old.update(kind=kind, quote=quote[:400], section=str(it.get("section") or "").strip()[:60])
+            old["events"] += [e for e in events if e not in old["events"]]
+            if entry_id and entry_id not in old["entries"]:
+                old["entries"].append(entry_id)
+            if legacy:
                 rej("duplicate")
-                continue
-            if len(out) >= MAX_ASSESSMENTS:
-                rej("over the limit")
-                continue
-            seen.add(key)
-            dom, basis = assessment_domain(name, it.get("cdash_domain"), known_domains or None)
-            out.append({"name": name, "domain": dom, "domain_basis": basis,
-                        "section": str(it.get("section") or "").strip()[:60], "quote": quote[:400],
-                        "events": [e for e in (it.get("events") or []) if e in known_events],
-                        "log": bool(it.get("log")) or bool(_LOG_WORDS.search(name)) or dom in _LOG_DOMAINS})
-    return {"assessments": out, "rejected": rejected}
+            return old
+        if len(out) >= MAX_ASSESSMENTS:
+            rej("over the limit")
+            return None
+        dom, basis = assessment_domain(name, it.get("cdash_domain"), known_domains or None)
+        a = {"name": name, "domain": dom, "domain_basis": basis, "section": str(it.get("section") or "").strip()[:60],
+             "quote": quote[:400], "events": events, "kind": kind, "entries": [entry_id] if entry_id else [],
+             "log": bool(it.get("log")) or bool(_LOG_WORDS.search(name)) or dom in _LOG_DOMAINS}
+        by_key[key] = a
+        out.append(a)
+        return a
+
+    if legacy:
+        for it in data["assessments"]:
+            take(it, None)
+        return {"assessments": out, "rejected": rejected, "coverage": {}, "missing": list(entries)}
+    for en in data.get("entries") or []:
+        eid = str(en.get("id") or "").strip() if isinstance(en, dict) else ""
+        if eid not in entries:
+            rej("unknown checklist entry")
+            continue
+        if eid in coverage:
+            rej("checklist entry answered twice")
+            continue
+        items = en.get("assessments") if isinstance(en.get("assessments"), list) else []
+        if items:
+            names, dropped = [], 0
+            for it in items:
+                a = take(it, eid)
+                if a is None:
+                    dropped += 1
+                elif a["name"] not in names:
+                    names.append(a["name"])
+            coverage[eid] = {"status": "assessments" if names else "assessments (quotes not verified)",
+                             "assessments": names, "discarded": dropped}
+        elif str(en.get("none") or "").strip():
+            coverage[eid] = {"status": "none", "reason": str(en["none"]).strip()[:200], "assessments": []}
+        # an entry with neither assessments nor a reason is not an answer: it stays missing
+    for it in data.get("extra") if isinstance(data.get("extra"), list) else []:
+        take(it, None)
+    return {"assessments": out, "rejected": rejected, "coverage": coverage,
+            "missing": [eid for eid in entries if eid not in coverage]}
+
+
+def merge_validated(first, second):
+    """The first answer completed by the follow-up answer for the entries it left out."""
+    by_key = {_norm_phrase(a["name"]): a for a in first["assessments"]}
+    for a in second["assessments"]:
+        old = by_key.get(_norm_phrase(a["name"]))
+        if old is None:
+            first["assessments"].append(a)
+            by_key[_norm_phrase(a["name"])] = a
+            continue
+        if old.get("kind") not in KINDS_REQUIRE and a.get("kind") in KINDS_REQUIRE:
+            old.update(kind=a["kind"], quote=a["quote"], section=a["section"])
+        old["events"] += [e for e in a["events"] if e not in old["events"]]
+        old["entries"] += [e for e in a["entries"] if e not in old["entries"]]
+    for k, n in second["rejected"].items():
+        first["rejected"][k] = first["rejected"].get(k, 0) + n
+    for eid, c in second["coverage"].items():
+        first["coverage"].setdefault(eid, c)
+    first["missing"] = [eid for eid in first["missing"] if eid not in first["coverage"]]
+    return first
+
+
+async def assess(spec, protocol_text, call, checklist=None, with_text=True):
+    """The validated assessments for a protocol. `call(prompt, extra_text)` is the (async) AI call. Entries of the
+    checklist the answer leaves out get ONE follow-up call for just those; what is still unanswered stays in
+    "missing" and is recorded as "not assessed". None when there is no protocol text."""
+    req = build_request(spec, protocol_text, with_text=with_text, checklist=checklist)
+    if req is None:
+        return None
+    sched = (checklist or {}).get("schedule_text") or ""
+    v = validate_response(spec, await call(req[0], req[1]), protocol_text, checklist, sched)
+    if checklist and v["missing"] and "unparseable response" not in v["rejected"]:
+        missing = list(v["missing"])
+        _log(f"{len(missing)} checklist entry(ies) not answered, asking again: {', '.join(missing[:40])}")
+        try:
+            req2 = build_request(spec, protocol_text, with_text=with_text, checklist=checklist, only=missing)
+            part = {"entries": [e for e in checklist["entries"] if e["id"] in set(missing)]}
+            v = merge_validated(v, validate_response(spec, await call(req2[0], req2[1]), protocol_text, part, sched))
+        except Exception as e:
+            _log(f"follow-up call failed ({type(e).__name__}); the entries stay not assessed")
+        if v["missing"]:
+            _log(f"not assessed after the follow-up: {', '.join(v['missing'][:40])}")
+    return v
+
+
+def coverage_records(checklist, validated):
+    """One record per checklist entry: what it is and how it was accounted for ("not assessed" when it never was)."""
+    out = []
+    cov = (validated or {}).get("coverage") or {}
+    for e in (checklist or {}).get("entries") or []:
+        c = cov.get(e["id"]) or {"status": "not assessed", "assessments": []}
+        out.append({"id": e["id"], "type": e["type"], "label": e["label"], "where": e.get("table") or e.get("number") or "",
+                    "status": c["status"], "assessments": c.get("assessments") or [], "reason": c.get("reason") or "",
+                    "discarded": c.get("discarded") or 0})
+    return out
 
 
 # ── Deterministic mapping: assessment -> form ────────────────────────────────────
@@ -384,6 +554,10 @@ def cover(assessment, forms):
             for f in forms:
                 if f not in cands and _overlap(a_tok, _tokens(f.get("form_title"))) >= 1.0:
                     return f, "named in the form title"
+        if not a_generic:
+            f = _title_and_fields(a_tok, [f for f in forms if f not in cands])
+            if f is not None:
+                return f, "named in the form title and its fields"
         # a form of another domain that carries this domain's fields (a combined form)
         for f in forms:
             if f not in cands and _field_domain_count(f, dom) >= 2:
@@ -404,7 +578,23 @@ def cover(assessment, forms):
         ft = _tokens(f.get("form_title"))
         if len(ft) >= 1 and _overlap(ft, nq) >= 1.0 and _overlap(a_tok, ft) > 0:
             return f, "form title in the protocol wording"
+    f = _title_and_fields(a_tok, forms)
+    if f is not None:
+        return f, "named in the form title and its fields"
     return None, ""
+
+
+def _title_and_fields(a_tok, forms):
+    """The form whose title has at least half of the assessment's words and whose fields name every other one: the
+    same data collection under a longer name (the model may name one assessment differently under two entries)."""
+    if len(a_tok) < 2:
+        return None
+    for f in forms:
+        ft = _tokens(f.get("form_title"))
+        rest = [t for t in a_tok if not any(_same(t, x) for x in ft)]
+        if rest and len(rest) * 2 <= len(a_tok) and all(_labels_have(f, [t]) for t in rest):
+            return f
+    return None
 
 
 def _dosing_form(assessment, forms):
@@ -609,11 +799,15 @@ def _add(spec, forms, a, sources, crf_forms, note=""):
     return form, source, placement
 
 
-def apply(spec, assessments, sources=None, crf_forms=None, protocol_text="", rejected=None, death=DEATH_PROTOCOL):
-    """Map every assessment to a form; add a form for each one nothing covers. Mutates spec; returns the state.
-    death: the customer's DEATH_DETAILS_FORM answer (DEATH_PROTOCOL | DEATH_ALWAYS | DEATH_NEVER)."""
+def apply(spec, assessments, sources=None, crf_forms=None, protocol_text="", rejected=None, death=DEATH_PROTOCOL,
+          checklist=None):
+    """Map every assessment to a form; add a form for each one nothing covers, provided its protocol passage is an
+    instruction to record or a schedule row (an eligibility criterion, a heading, a process description is not a
+    basis for a form). Mutates spec; returns the state.
+    death: the customer's DEATH_DETAILS_FORM answer (DEATH_PROTOCOL | DEATH_ALWAYS | DEATH_NEVER).
+    checklist: coverage_records() of the protocol's schedule rows and procedures headings."""
     forms = [f for f in spec.get("forms") or [] if isinstance(f, dict)]
-    records, added, skipped = [], [], []
+    records, added, skipped, not_built = [], [], [], []
 
     def by_standard():
         return {(f.get("customer_standard") or {}).get("form_oid") or (f.get("protocol_required") or {}).get("standard_form"): f
@@ -623,6 +817,9 @@ def apply(spec, assessments, sources=None, crf_forms=None, protocol_text="", rej
         f, basis = cover(a, forms)
         rec = {"assessment": a["name"], "domain": a.get("domain"), "section": a.get("section") or "",
                "quote": a.get("quote") or "", "log": bool(a.get("log"))}
+        if a.get("kind"):
+            rec.update(kind=a["kind"], entries=list(a.get("entries") or []))
+        requires = a.get("kind") is None or a.get("kind") in KINDS_REQUIRE
         skip = ""
         if f is None and a.get("domain") == "DD":
             asks = bool(_DEATH_DETAILS.search(f"{a['name']} {a.get('quote') or ''}"))
@@ -632,6 +829,14 @@ def apply(spec, assessments, sources=None, crf_forms=None, protocol_text="", rej
                          + ("the customer does not use one (DEATH_DETAILS_FORM = Never)" if death == DEATH_NEVER else
                             "the protocol does not ask for death details (cause of death, autopsy, circumstances)"))
                 skip = basis
+        if f is None and not skip and not requires:
+            why = (f"no form built: the protocol text for \"{a['name']}\" is {KIND_WORDS.get(a['kind'], KIND_WORDS['other'])}, "
+                   f"not a requirement to record data")
+            rec.update(form=None, basis=why, added=False, not_built=True, reason=why)
+            not_built.append(rec)
+            _log(why + (f" (protocol {a['section']})" if a.get("section") else ""))
+            records.append(rec)
+            continue
         if f is None:
             # the standard form that would supply the content is already another form's content: that form collects it
             std = _standard_for(a, sources, set())
@@ -664,6 +869,9 @@ def apply(spec, assessments, sources=None, crf_forms=None, protocol_text="", rej
     st = {"version": VERSION, "fingerprint": fingerprint(protocol_text, sources, death), "status": "done",
           "assessments": records, "added": [r["form"] for r in added], "rejected": dict(rejected or {}),
           "death_details_form": death}
+    if checklist is not None:
+        st["checklist"] = list(checklist)
+        st["not_assessed"] = [c["id"] for c in checklist if c.get("status") == "not assessed"]
     spec.setdefault("study_meta", {})["protocol_forms"] = st
     return st
 
@@ -730,6 +938,18 @@ def summary_lines(spec):
     for r in added:
         lines.append(f"  + {r['form']}: \"{r['assessment']}\" (protocol {r.get('section') or 'section not given'}); "
                      f"content from {r.get('content_source')}; visits: {r.get('placement')}")
+    for r in recs:
+        if r.get("not_built"):
+            lines.append(f"  x \"{r['assessment']}\" (protocol {r.get('section') or 'section not given'}): {r.get('reason')}")
+    cl = st.get("checklist")
+    if cl:
+        n = lambda status: sum(1 for c in cl if c["status"].startswith(status))
+        lines.append(f"  Checklist from the protocol: {sum(1 for c in cl if c['type'] == 'row')} Schedule of Activities "
+                     f"row(s) and {sum(1 for c in cl if c['type'] == 'heading')} procedures heading(s); "
+                     f"{n('assessments')} with assessments, {n('none')} none, {n('not assessed')} not assessed.")
+        for c in cl:
+            if c["status"] == "not assessed":
+                lines.append(f"  ? not assessed: {c['type']} {c['where']} \"{c['label']}\"")
     for r in recs:
         if r.get("skipped_addition"):
             lines.append(f"  = \"{r['assessment']}\": no form added, covered by {r.get('form') or 'no form'} ({r.get('basis')})")

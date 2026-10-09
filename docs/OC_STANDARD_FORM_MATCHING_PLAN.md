@@ -576,3 +576,39 @@ matching, the form conventions and the completeness check:
 - Nothing is removed when the call fails, the answer cannot be read, a form is missing from the answer (that form
   is kept and flagged), or the answer leaves most forms (4 or more and over half) without a basis.
 - State `study_meta.protocol_basis`, flag `review_flags.protocol_basis`, kill switch `PROTOCOL_BASIS_CHECK=0`.
+
+## Train of 2026-10-08 (fourth): the checklist, and the basis check for every form
+
+Decisions: (1) the basis check judges every form, including the ones the completeness check adds; an eligibility
+criterion, a heading or a process description is not a basis. (2) Every scheduled assessment must be found
+reliably, without phrase lists or study-specific rules.
+
+**The protocol's own structure is the checklist** (`protocol_structure.py`, deterministic):
+- Schedule rows: the first-column labels of every schedule table, read from the PDF's layout text (a row is a line
+  that starts at the table's left edge and has cells to its right; wrapped labels are joined; a table that runs to
+  the end of a page continues on the next; lines printed on most pages are running headers and are dropped).
+  A Word protocol has no layout text, so it has no rows; its headings still apply.
+- Headings: from the table of contents (exact numbers and titles), else from the body, where a numbered line
+  counts only when it continues the numbering.
+- On the checklist: every schedule row; the section headings of each chapter whose title is a generic procedures /
+  assessments / evaluations title; any section heading elsewhere that shares a word with a schedule row. With no
+  such chapter, every section heading. Both lists are logged.
+
+**The completeness check accounts for every entry** (`protocol_forms.py`): the model gets the checklist and
+returns, per entry, its assessments (each with a verbatim quote and the kind of that passage) or an explicit
+"none" with a reason; assessments outside the checklist go under "extra". Validation: every entry answered; the
+ones left out get one follow-up call; what is still unanswered is recorded as "not assessed" (state
+`checklist`, `not_assessed`, monday log). A short schedule-row label counts as a quote when it is a row of the
+checklist; a "schedule" passage must be on a schedule-table page. Splitting an entry that names several
+assessments is the model's job per the instruction; no code splits or adds by wording. Kill switch for the
+checklist only: `PROTOCOL_FORMS_CHECKLIST=0` (the same request with an empty checklist).
+
+**A form needs a requirement.** The kinds of passage are shared by both checks (`protocol_forms.KINDS`): only
+`record` and `schedule` are a basis. The completeness check adds a form only for such an assessment; any other is
+recorded with `not_built` and listed under "Forms not built". The basis check now also judges the forms the
+completeness check added (no exemption; the assessment a form was created for does not vouch for it), and an
+assessment supports an existing form only when its own passage is a requirement. Still not checked: forms
+`_ensure_required_forms` injects, and SAE / Death forms required by a convention answer.
+
+Known consequence: an eligibility form of the analysis is supported only by an instruction to record or a schedule
+row, not by the list of criteria itself; with a customer standard it is kept and flagged.
