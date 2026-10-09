@@ -1217,15 +1217,36 @@ def _form_conventions_section(data):
         return None
 
 
+def _forms_not_built_section(data):
+    try:
+        _root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+        if _root not in sys.path:
+            sys.path.append(_root)
+        import protocol_basis
+        return protocol_basis.section(data)
+    except Exception as e:
+        print(f"[protocol-basis] Study Spec section skipped: {e}")
+        return None
+
+
+def build_forms_not_built_sheet(wb, data):
+    """FORMS_NOT_BUILT sheet: forms of the analysis that no protocol text asks for (protocol_basis.py), with the
+    reason. Absent when every form is built."""
+    _section_sheet(wb, _forms_not_built_section(data), "FORMS_NOT_BUILT", "C0392B")
+
+
 def build_customer_conventions_sheet(wb, data):
     """CUSTOMER_CONVENTIONS sheet: the customer's form convention answers (separate SAE form, Death Details form)
     with their source (customer answer or default) and what each did. Absent when none is recorded."""
-    sec = _form_conventions_section(data)
+    _section_sheet(wb, _form_conventions_section(data), "CUSTOMER_CONVENTIONS", "27AE60")
+
+
+def _section_sheet(wb, sec, sheet_title, tab_color):
     if not sec:
         return
     title, note, headers, rows, weights = sec
-    ws = wb.create_sheet(title="CUSTOMER_CONVENTIONS")
-    ws.sheet_properties.tabColor = "27AE60"
+    ws = wb.create_sheet(title=sheet_title)
+    ws.sheet_properties.tabColor = tab_color
     ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(headers))
     c = ws.cell(row=1, column=1, value=f"{title} — {note}")
     c.font = hdr_font(size=9, color=WHITE_HEX)
@@ -1556,6 +1577,7 @@ def build_edc_xlsx(data: dict, output_path: str):
     build_review_flags_sheet(wb, data.get("review_flags", {}))
     build_study_config_sheet(wb, data)
     build_customer_conventions_sheet(wb, data)
+    build_forms_not_built_sheet(wb, data)
 
     # One set of tabs per form
     for form in data.get("forms", []):

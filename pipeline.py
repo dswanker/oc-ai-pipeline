@@ -4563,6 +4563,7 @@ async def _post_match_forms_step(item_id, struct_json, sources, protocol_bytes, 
         struct_json = await _form_conventions_step(item_id, struct_json, sources, answers, fresh)
         death = ((answers or {}).get("DEATH_DETAILS_FORM") or {}).get("value") or "protocol"
         struct_json = await _protocol_forms_step(item_id, struct_json, sources, protocol_bytes, crf_files, death)
+        struct_json = await _protocol_basis_step(item_id, struct_json, protocol_bytes, cols, answers, fresh)
         if ids(struct_json) != before:
             struct_json = _enforce_common_visit(struct_json)
             struct_json = _apply_cdisc_ct(struct_json, crf_files, oc_files)
@@ -4647,6 +4648,57 @@ async def _protocol_forms_step(item_id, struct_json, sources, protocol_bytes=Non
         return out
     except Exception as e:
         print(f"[protocol-forms] step failed, spec unchanged: {type(e).__name__}: {e}", flush=True)
+        return struct_json
+
+
+async def _protocol_basis_step(item_id, struct_json, protocol_bytes=None, cols=None, answers=None, fresh=False):
+    """The protocol defines the forms (protocol_basis.py). After matching and the completeness check, every form
+    needs a protocol basis: a verbatim protocol text that asks for its data (one validated AI call, quotes verified
+    against the protocol text) or an assessment of the completeness check. A form of the analysis or CDASHIG without
+    one is removed on a fresh analysis (a reused or edited spec: recorded and flagged only); a customer standard
+    form is kept and flagged. Forms the pipeline's own rules or a convention answer require are not checked. When
+    the call fails nothing is removed. PROTOCOL_BASIS_CHECK=0 disables. Never fails a build."""
+    try:
+        import copy as _copy
+        import protocol_basis as _pb
+        if not isinstance(struct_json, dict) or not _pb.enabled():
+            return struct_json
+        ptext = _protocol_text(protocol_bytes)
+        if not _pb.needs_check(struct_json, ptext):
+            return struct_json
+        try:
+            # whatever _ensure_required_forms injects under the customer's answers is a pipeline-required form
+            _conv = _extract_customer_conventions(cols or {})
+            import contextlib as _ctx, io as _io2
+            with _ctx.redirect_stdout(_io2.StringIO()):
+                required = [f.get("form_id") for f in _ensure_required_forms({"forms": []}, "X", _conv).get("forms") or []]
+        except Exception:
+            required = ["DOV"]
+        is_pdf = bool(protocol_bytes) and not protocol_bytes.startswith(b"%%DOCX_TEXT%%")
+        req = _pb.build_request(struct_json, ptext, required, answers, with_text=not is_pdf)
+        if req is None:
+            return struct_json
+        out = _copy.deepcopy(struct_json)
+        try:
+            text = await call_claude(req[0], pdf_bytes=protocol_bytes if is_pdf else None, extra_text=req[1],
+                                     max_tokens=8000, cache_prompt=False)
+        except Exception as _ce:
+            print(f"[protocol-basis] the check did not run ({type(_ce).__name__}); no form removed", flush=True)
+            try:
+                await append_log(item_id, "Protocol basis check did not run (the AI call failed): no form was removed.")
+            except Exception:
+                pass
+            return struct_json
+        _pb.apply(out, text, ptext, fresh, required, answers)
+        lines = _pb.summary_lines(out)
+        if lines:
+            try:
+                await append_log(item_id, "\n".join(lines)[:4000])
+            except Exception:
+                pass
+        return out
+    except Exception as e:
+        print(f"[protocol-basis] step failed, spec unchanged: {type(e).__name__}: {e}", flush=True)
         return struct_json
 
 
@@ -7424,6 +7476,8 @@ async def run_pipeline(item_id):
                     "standards_match",   # match record + proposals (provenance is added deterministically)
                     "protocol_forms",    # assessment list with protocol quotes
                     "form_conventions_removed",   # a form removed by a customer form convention, kept for the record
+                    "protocol_basis",    # per-form protocol basis with quotes
+                    "protocol_basis_removed",   # a form not built for lack of a protocol basis, kept for the record
                     "conventions_prompt_block",
                     "conventions_engine_applied",
                     "customer_vendor_conflicts",

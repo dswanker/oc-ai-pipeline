@@ -561,6 +561,25 @@ def build_form_conventions_block(data, styles):
             grid_table(headers, rows, styles, [CONTENT_W * w / total for w in weights]), Spacer(1, 8)]
 
 
+def build_forms_not_built_block(data, styles):
+    """Forms not built: forms of the analysis that no protocol text asks for (protocol_basis.py), with the reason."""
+    try:
+        _root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+        if _root not in sys.path:
+            sys.path.append(_root)
+        import protocol_basis
+        sec = protocol_basis.section(data)
+    except Exception as e:
+        print(f"[protocol-basis] PDF section skipped: {e}")
+        return []
+    if not sec:
+        return []
+    title, note, headers, rows, weights = sec
+    total = float(sum(weights)) or 1.0
+    return [header_band(f"{title} — {note}", styles), Spacer(1, 4),
+            grid_table(headers, rows, styles, [CONTENT_W * w / total for w in weights]), Spacer(1, 8)]
+
+
 def build_edc_pdf(data: dict, output_path: str):
     global _EXTERNAL_LISTS
     _EXTERNAL_LISTS = _LL.external_lists(data) if _LL else {}
@@ -1259,6 +1278,12 @@ def build_edc_pdf(data: dict, output_path: str):
     if conv_flowables:
         story.append(PageBreak())
         story.extend(conv_flowables)
+
+    not_built_flowables = build_forms_not_built_block(data, styles)
+    if not_built_flowables:
+        if not conv_flowables:
+            story.append(PageBreak())
+        story.extend(not_built_flowables)
 
     # ── APPENDIX — Build Conventions Applied (per references/conventions.md) ─
     appendix_flowables = build_conventions_page(meta, styles)

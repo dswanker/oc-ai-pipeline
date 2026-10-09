@@ -549,3 +549,26 @@ customer match exists.
 4. Validate against real customer data on both Study Spec PDF and
    Protocol Summary PDF outputs — confirm `customer_form_name` and
    `library_match` render correctly, not just that the JSON looks right.
+
+## Train of 2026-10-08 (third): protocol basis for every form
+
+Decision: the protocol defines the forms. A form the protocol analysis created that the protocol never asks for is
+removed. `protocol_basis.py`, run by `_protocol_basis_step` inside `_post_match_forms_step`, after standards
+matching, the form conventions and the completeness check:
+
+- Checked: every form except those a pipeline rule requires (whatever `_ensure_required_forms` injects under the
+  customer's answers), those a convention answer requires (SAE form, Death Details form) and those the
+  completeness check added with a verified quote.
+- One validated AI call (protocol + form ID, title and field names/questions): per form `required` / `mentioned` /
+  `none` with verbatim quotes. A quote counts only when it is found in the protocol text (same normalisation as
+  the completeness check). A form has a basis with a verified `required` quote, or when an assessment of the
+  completeness check maps to it.
+- No basis, content from the analysis or CDASHIG: removed on a fresh analysis (form, event placements, stored
+  check proposals, matching-record entry; the form is kept in `study_meta.protocol_basis_removed`), listed in the
+  Study Specification (sheet `FORMS_NOT_BUILT`, PDF section "Forms not built") with the reason. If another form's
+  logic reads one of its fields it is kept and flagged. An event left without forms is flagged.
+- No basis, content from a customer standard: kept and flagged ("customer standard form, no protocol text found").
+- Reused or edited specification: nothing changes; what a fresh analysis would do is recorded and flagged.
+- Nothing is removed when the call fails, the answer cannot be read, a form is missing from the answer (that form
+  is kept and flagged), or the answer leaves most forms (4 or more and over half) without a basis.
+- State `study_meta.protocol_basis`, flag `review_flags.protocol_basis`, kill switch `PROTOCOL_BASIS_CHECK=0`.
