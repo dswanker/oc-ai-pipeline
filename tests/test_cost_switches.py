@@ -85,6 +85,16 @@ def test_doc_first_moves_the_protocol_to_the_front_with_a_one_hour_cache_marker(
     assert first["type"] == "document" and first["cache_control"] == {"type": "ephemeral"}
 
 
+def test_doc_first_checks_leaves_the_main_analysis_request_as_it_is(monkeypatch):
+    monkeypatch.setenv("PROTOCOL_DOC_FIRST", "checks")
+    got = _norm(cases.client_requests())
+    assert got[1] == SNAP["client"][1] and got[1][0] == "beta"          # the extended-output call: today's request
+    for i in (0, 2):                                                    # the other protocol calls: protocol first
+        first = got[i][1]["messages"][0]["content"][0]
+        assert first["type"] == "document" and first["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
+    assert got[3:] == SNAP["client"][3:]
+
+
 def test_usage_is_recorded_per_call_and_priced():
     rec = {"input": 1_000_000, "output": 100_000, "cache_read": 1_000_000, "cache_write_5m": 1_000_000, "cache_write_1h": 1_000_000}
     assert cc.call_cost(rec) == 5 + 2.5 + 0.5 + 6.25 + 10

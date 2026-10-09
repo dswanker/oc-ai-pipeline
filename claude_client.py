@@ -38,11 +38,14 @@ SKILL_BETAS = [
 
 # ── Cost switches (all default OFF: the request is exactly what it was) ──────
 
-def doc_first_enabled():
+def doc_first_enabled(main_analysis=False):
     """PROTOCOL_DOC_FIRST=1: the protocol PDF is the FIRST content block and carries a 1-hour cache marker, so
     every later call of the run that sends the same PDF reads it from the cache (a tenth of the input price)
-    instead of paying for it again. Only the order of the blocks and the cache markers change."""
-    return os.environ.get("PROTOCOL_DOC_FIRST", "0") == "1"
+    instead of paying for it again. Only the order of the blocks and the cache markers change.
+    PROTOCOL_DOC_FIRST=checks: the same for every protocol call EXCEPT the main analysis (the extended-output
+    call), whose request stays exactly as it is today; it then pays the full price for the protocol."""
+    v = os.environ.get("PROTOCOL_DOC_FIRST", "0").strip().lower()
+    return v == "1" or (v == "checks" and not main_analysis)
 
 
 def doc_cache_ttl():
@@ -51,7 +54,7 @@ def doc_cache_ttl():
     return "5m" if os.environ.get("PROTOCOL_DOC_CACHE_TTL", "1h").strip().lower() == "5m" else "1h"
 
 
-def build_content(prompt, pdf_bytes=None, extra_text=None, cache_prompt=True, images=None):
+def build_content(prompt, pdf_bytes=None, extra_text=None, cache_prompt=True, images=None, main_analysis=False):
     """The content blocks of one call. Default order: prompt (cacheable) FIRST, then PDF + images + extra_text.
     With PROTOCOL_DOC_FIRST=1 and a PDF: the PDF first with its own cache marker, then the prompt (keeping its
     marker), images and extra_text."""
@@ -69,7 +72,7 @@ def build_content(prompt, pdf_bytes=None, extra_text=None, cache_prompt=True, im
             },
         }
     content = []
-    if doc_block is not None and doc_first_enabled():
+    if doc_block is not None and doc_first_enabled(main_analysis):
         cc = {"type": "ephemeral"}
         if doc_cache_ttl() == "1h":
             cc["ttl"] = "1h"
@@ -248,8 +251,8 @@ async def call_claude(prompt, pdf_bytes=None, extra_text=None, max_tokens=MAX_TO
     # The cache key is the literal block content up to & including the
     # cache_control marker — so anything BEFORE the marker gets cached.
     # (PROTOCOL_DOC_FIRST=1 puts the PDF first with its own marker: build_content.)
-    content = build_content(prompt, pdf_bytes, extra_text, cache_prompt, images)
-    if pdf_bytes and doc_first_enabled():
+    content = build_content(prompt, pdf_bytes, extra_text, cache_prompt, images, main_analysis=extended_output)
+    if pdf_bytes and doc_first_enabled(extended_output):
         print(f"call_claude — protocol first, cache ttl {doc_cache_ttl()}, pdf sha256 "
               f"{hashlib.sha256(pdf_bytes).hexdigest()[:12]} ({len(pdf_bytes)} bytes)", flush=True)
     _economy_tried = False
