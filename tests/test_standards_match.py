@@ -149,7 +149,7 @@ def test_ambiguous_domain_is_decided_by_name_and_logged():
     with contextlib.redirect_stdout(io.StringIO()):
         out = sm.apply(fx.spec(), two)
     m = sm.state(out)["matched"][0]
-    assert m["protocol_form"] == "AE" and "share domain AE" in m["note"] and "name similarity" in m["note"]
+    assert m["protocol_form"] == "AE" and "share domain AE" in m["note"] and "best overall fit" in m["note"]
     assert len(sm.state(out)["standard_forms_not_used"]) == 1
 
 

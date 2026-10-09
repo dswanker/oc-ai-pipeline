@@ -612,3 +612,54 @@ assessment supports an existing form only when its own passage is a requirement.
 
 Known consequence: an eligibility form of the analysis is supported only by an instruction to record or a schedule
 row, not by the list of criteria itself; with a customer standard it is kept and flagged.
+
+## Train of 2026-10-09: global best-fit matching
+
+The live run of 2026-10-09 paired the protocol's two dosing forms wrongly. Both carried the same CDASH domain; the
+customer standard had one form of that domain and one of the sibling exposure domain. Domain-first matching took
+the pair inside the domain by name similarity, which followed the one generic word the titles shared. One drug ended
+up with two forms, the other with none, and the protocol-field check put a field of the second drug on the first
+drug's form. Earlier offline runs did not show it because the analysis had named its forms differently.
+
+**One assignment for all forms** (`standards_global.py`, called from `standards_match.match_forms`). Which pairs are
+allowed is unchanged: a shared CDASH domain, the same form id or title, or the same content by meaning. Every
+allowed pair is scored, and the assignment with the highest total score is taken (Hungarian method), each standard
+form used at most once, per source tier (XLSForm, then referenced study, then ODM). The score:
+
+| Part | Weight | What it measures |
+|---|---|---|
+| title | 0.35 | shared title words, each weighted by 1 / (number of titles that carry it); a word in more than a quarter of the standard's titles (8 forms or more) weighs nothing. Computed from the forms, no word list |
+| subject | 0.25 | how far each form's title and questions name what the other form's title names (both directions, averaged) |
+| fields | 0.20 | share of the protocol form's questions that ask for a data point of the standard form |
+| domain | 0.20 | 1 same CDASH domain or both exposure (EX / EC), 0.5 unknown on one side, 0 different |
+
+The domain is one signal among four, not a gate between candidates.
+
+**Names the protocol declares to be the same thing** (`aliases`): read by pattern from the protocol text, never
+from a list. Patterns: a name followed by a bracketed code, a code followed by a bracketed name, "(also known as
+...)", words whose initials spell a bracketed abbreviation, and abbreviation lists. A name in front of a bracket
+reaches back as far as its words nearly always occur together, so a verb is not taken for part of it. Each group of
+names counts as one subject in titles and questions. The groups found are printed; the ones that occur in a form
+are stored (`standards_match.aliases`) and logged.
+
+**Close calls** go to the existing validated AI proposal call. A decision is close when, without the chosen pair,
+another assignment scores within the margin (`STANDARDS_MATCH_MARGIN`, default 0.08): a form's two best standard
+forms are that near and the second is free, or two protocol forms are that near for one standard form. The forms
+concerned and their candidates join the compact lists of the call; an answer is used only for a pair that is a
+candidate of that close call. Without such an answer the deterministic winner stands and the match is noted as
+ambiguous.
+
+**A protocol-specified field follows the final pairing.** Candidates come from the protocol form a standard form
+was finally paired with. In addition a field is not added when its protocol quote names what a sibling form (same
+CDASH domain, or both exposure forms) is about and nothing this form is about.
+
+**Two forms for one subject** (`duplicate_guard`, after the basis check): two forms whose titles name the same
+thing once the protocol's names are read as one, or (same domain) whose titles are each fully named by the other
+form. The one that is not the customer's standard form, or has no protocol basis, is not built on a fresh analysis
+and is listed under "Forms not built"; on a reused specification, when another form reads it, or when neither is
+the weaker one, both stay and the pair is flagged (`review_flags.duplicate_subject_forms`). A specification matched
+before the protocol's names were read gets them from the protocol at this step, so the guard also sees it.
+
+Each match record carries `score_parts`, `decided` (deterministic or AI) and `alternatives`. Kill switch
+`STANDARDS_MATCH_GLOBAL=0` restores domain-first matching and switches the guard and the subject check off. The
+matching version is not bumped, so a specification already matched is not re-matched.

@@ -4587,6 +4587,7 @@ async def _post_match_forms_step(item_id, struct_json, sources, protocol_bytes, 
         death = ((answers or {}).get("DEATH_DETAILS_FORM") or {}).get("value") or "protocol"
         struct_json = await _protocol_forms_step(item_id, struct_json, sources, protocol_bytes, crf_files, death)
         struct_json = await _protocol_basis_step(item_id, struct_json, protocol_bytes, cols, answers, fresh)
+        struct_json = await _duplicate_subject_step(item_id, struct_json, protocol_bytes, fresh)
         if ids(struct_json) != before:
             struct_json = _enforce_common_visit(struct_json)
             struct_json = _apply_cdisc_ct(struct_json, crf_files, oc_files)
@@ -4744,6 +4745,34 @@ async def _protocol_basis_step(item_id, struct_json, protocol_bytes=None, cols=N
         return struct_json
 
 
+async def _duplicate_subject_step(item_id, struct_json, protocol_bytes=None, fresh=False):
+    """After matching and the basis check: two forms that cover the same subject (the protocol's own names read as
+    one) are reported; the one that is not the customer's standard form, or has no protocol basis, is not built on
+    a fresh analysis (standards_global.duplicate_guard). STANDARDS_MATCH_GLOBAL=0 disables. Never fails a build."""
+    try:
+        import copy as _copy
+        import standards_global as _smg
+        import standards_match as _sm
+        if not isinstance(struct_json, dict) or not _smg.enabled() or not _sm.state(struct_json):
+            return struct_json
+        out = struct_json
+        if "aliases" not in _sm.state(struct_json):   # matched before the protocol's names were read
+            out = _copy.deepcopy(struct_json)
+            _smg.ensure_aliases(out, _protocol_text(protocol_bytes))
+        if not _smg.duplicates(out):
+            return struct_json
+        out = _copy.deepcopy(out)
+        if _smg.duplicate_guard(out, fresh):
+            try:
+                await append_log(item_id, "\n".join(_smg.duplicate_lines(out))[:3000])
+            except Exception:
+                pass
+        return out
+    except Exception as e:
+        print(f"[standards-match] duplicate-subject step failed, spec unchanged: {type(e).__name__}: {e}", flush=True)
+        return struct_json
+
+
 def _protocol_forms_refresh(struct_json):
     """After standards matching: record the content source each protocol-required form actually got."""
     try:
@@ -4764,18 +4793,30 @@ async def _standards_match_step(item_id, struct_json, sources, protocol_bytes=No
         if not isinstance(struct_json, dict) or not _sm.needs_match(struct_json, sources):
             return struct_json
         ai_pairs = None
-        if _sm.meaning_enabled() and os.environ.get("STANDARDS_MATCH_MEANING_AI", "1") != "0":
-            # forms the deterministic passes leave unpaired: one call proposes pairs from two compact lists (titles,
-            # domains, field names / labels); every pair is validated in standards_match before it is used
+        aliases = None
+        if _sm.global_enabled():
+            # global best-fit matching (standards_global.py): the names the protocol itself states to be the same
+            # thing ("<name> (<code>)", "also known as", abbreviation lists) count as one subject
             try:
-                req = _sm.build_meaning_request(struct_json, sources)
+                import standards_global as _smg
+                aliases = _smg.aliases(_protocol_text(protocol_bytes))
+                print(f"[standards-match] {len(aliases)} group(s) of names the protocol states to be the same: "
+                      + "; ".join(" = ".join(g[:6]) for g in aliases[:60]), flush=True)
+            except Exception as _le:
+                print(f"[standards-match] protocol names not read: {type(_le).__name__}", flush=True)
+        if _sm.meaning_enabled() and os.environ.get("STANDARDS_MATCH_MEANING_AI", "1") != "0":
+            # forms the deterministic matching leaves unpaired, and close calls: one call proposes pairs from two
+            # compact lists (titles, domains, field names / labels); every pair is validated in standards_match
+            # before it is used, and without a validated answer the deterministic winner stands
+            try:
+                req = _sm.build_meaning_request(struct_json, sources, aliases)
                 if req is not None:
                     text = await call_claude(req[0], extra_text=req[1], max_tokens=2000, cache_prompt=False)
                     ai_pairs = _sm.parse_meaning_pairs(text)
             except Exception as _me:
                 print(f"[standards-match] by-meaning AI proposal skipped (deterministic matching only): "
                       f"{type(_me).__name__}", flush=True)
-        out = _sm.apply(struct_json, sources, ai_pairs)
+        out = _sm.apply(struct_json, sources, ai_pairs, aliases)
         if out is struct_json:
             return struct_json
         if _sm.matched_forms(out):

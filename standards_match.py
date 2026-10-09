@@ -731,8 +731,9 @@ def _compact(fid, title, domain, survey, max_fields=40):
     return f"{fid} | {title} | CDASH domain: {domain or 'none'}\n    fields: {fields}{more}"
 
 
-def meaning_leftovers(spec, sources):
-    """(protocol forms, standard forms) the deterministic passes leave unpaired, for the AI call. Works on a copy with
+def meaning_leftovers(spec, sources, aliases=None, info=None):
+    """(protocol forms, standard forms) for the AI call: the forms the deterministic matching leaves unpaired and,
+    with global matching, the forms of every close call with their candidate standard forms. Works on a copy with
     any earlier match undone; never changes the spec."""
     if not meaning_enabled():
         return [], []
@@ -743,22 +744,29 @@ def meaning_leftovers(spec, sources):
     if state(tmp).get("matched"):
         _restore(tmp)
     pforms = [f for f in tmp.get("forms") or [] if isinstance(f, dict)]
-    m = match_forms(pforms, sforms)
-    up = [p for p in pforms if not any(p is x[0] for x in m)]
-    us = [s for s in sforms if not any(s is x[1] for x in m)]
+    info = info if isinstance(info, dict) else {}
+    m = match_forms(pforms, sforms, None, info, aliases)
+    close_p = {c["form"] for c in info.get("close") or []}
+    close_s = {d["standard_form"] for c in info.get("close") or [] for d in c["candidates"]}
+    up = [p for p in pforms if not any(p is x[0] for x in m) or str(p.get("form_id")) in close_p]
+    us = [s for s in sforms if not any(s is x[1] for x in m) or str(s["form_oid"]) in close_s]
     return up, us
 
 
-def build_meaning_request(spec, sources):
-    """(prompt, extra_text) for the forms still unpaired, or None when either list is empty. Titles, domains and
-    field names / labels only; never full form content."""
-    up, us = meaning_leftovers(spec, sources)
+def build_meaning_request(spec, sources, aliases=None):
+    """(prompt, extra_text) for the forms still unpaired or decided by a close call, or None when either list is
+    empty. Titles, domains and field names / labels only; never full form content."""
+    info = {}
+    up, us = meaning_leftovers(spec, sources, aliases, info)
     if not up or not us:
         return None
     extra = ("PROTOCOL FORMS:\n" + "\n".join(_compact(p.get("form_id"), p.get("form_title"), p.get("cdash_domain"),
                                                       p.get("survey")) for p in up)
              + "\n\nSTANDARD FORMS:\n" + "\n".join(_compact(s["form_oid"], s["title"], s.get("domain"), s["survey"])
                                                    for s in us))
+    if info.get("aliases"):
+        extra += ("\n\nNAMES THE PROTOCOL USES FOR THE SAME THING:\n"
+                  + "\n".join(" = ".join(str(n) for n in g[:8]) for g in info["aliases"][:40]))
     return MEANING_PROMPT, extra
 
 
@@ -825,13 +833,26 @@ def _match_by_meaning(pforms, sforms, pdoms, used_p, used_s, take, ai_pairs, inf
                 take(p, s, f"by meaning, AI-proposed and validated: {text}", ev["score"], reason)
 
 
-def match_forms(pforms, sforms, ai_pairs=None, info=None):
-    """[(protocol form, standard form, basis, score, note)] one-to-one. Domain first (by source priority, then name
-    similarity inside a domain), then identical form id / title for forms the domain pass left unmatched, then by
-    meaning (titles, field labels, questions) for what is still unpaired; ai_pairs are validated here.
-    info, when given, receives {"contested": [...], "ai_rejected": [...]}."""
-    out, used_p, used_s = [], set(), set()
+def global_enabled():
+    return os.environ.get("STANDARDS_MATCH_GLOBAL", "1") != "0"
+
+
+def match_forms(pforms, sforms, ai_pairs=None, info=None, aliases=None):
+    """[(protocol form, standard form, basis, score, note)] one-to-one, by one global best-fit assignment over all
+    forms (standards_global.py; aliases: names the protocol states to be the same thing). ai_pairs are validated
+    there. info, when given, receives {"contested": [...], "ai_rejected": [...]} and the score details.
+    STANDARDS_MATCH_GLOBAL=0: the earlier order instead. Domain first (by source priority, then name similarity
+    inside a domain), then identical form id / title for forms the domain pass left unmatched, then by meaning
+    (titles, field labels, questions) for what is still unpaired."""
     info = info if isinstance(info, dict) else {}
+    if global_enabled():
+        try:
+            import standards_global
+            return standards_global.match_forms(pforms, sforms, ai_pairs, info, aliases)
+        except Exception as e:
+            _log(f"global matching failed ({type(e).__name__}: {e}); domain-first matching instead")
+            info.clear()
+    out, used_p, used_s = [], set(), set()
     info.update({"pairs": [], "contested": [], "ai_rejected": []})
     tiers = sorted({(_tier(s["source"]), s.get("ref_order", 0)) for s in sforms})
     pdoms = {id(p): _protocol_domains(p) for p in pforms}
@@ -1043,10 +1064,11 @@ def needs_match(spec, sources):
     return prev.get("fingerprint") != fp or prev.get("version") != VERSION
 
 
-def apply(spec, sources, ai_pairs=None):
+def apply(spec, sources, ai_pairs=None, aliases=None):
     """Match and splice. Returns a NEW spec (the input is never mutated); on any error the input is returned
     unchanged. A spec already matched against the same sources is returned as is. ai_pairs: pairs proposed by the
-    by-meaning AI call ([(protocol form id, standard form id, reason)]); each is validated in match_forms."""
+    by-meaning AI call ([(protocol form id, standard form id, reason)]); each is validated in match_forms.
+    aliases: groups of names the protocol states to be the same thing (standards_global.aliases)."""
     if not needs_match(spec, sources):
         return spec
     try:
@@ -1058,7 +1080,12 @@ def apply(spec, sources, ai_pairs=None):
         pforms = [f for f in out.get("forms") or [] if isinstance(f, dict)]
         info = {}
         matched = [_splice(out, p, s, basis, score, note)
-                   for p, s, basis, score, note in match_forms(pforms, sforms, ai_pairs, info)]
+                   for p, s, basis, score, note in match_forms(pforms, sforms, ai_pairs, info, aliases)]
+        for m in matched:   # score breakdown and who decided (global matching)
+            d = (info.get("details") or {}).get((str(m["protocol_form"]), str(m["standard_form"])))
+            if d:
+                m["score_parts"] = {k: d[k] for k in ("title", "subject", "fields", "domain", "total")}
+                m["decided"], m["alternatives"] = d["decided"], d["alternatives"]
         used = {m["standard_form"] for m in matched}
         got = {m["form_id"] for m in matched}
         warnings = _dangling_refs(out, got)
@@ -1072,6 +1099,9 @@ def apply(spec, sources, ai_pairs=None):
             "warnings": warnings, "proposals": [], "rejected_ids": list(prev.get("rejected_ids") or []),
             "contested": info.get("contested") or [], "ai_pairs_rejected": info.get("ai_rejected") or [],
             "additions": {"status": "not_run"}}
+        if "details" in info:
+            sm["standards_match"].update(method="global", aliases=info.get("aliases") or [],
+                                         close_calls=info.get("close") or [])
         for c in info.get("contested") or []:
             msg = (f"{c['form']}: also fits the customer standard form {c['standard_form']}, which {c['won_by']} uses "
                    f"(better match); {c['form']} keeps its protocol / CDASH build")
@@ -1363,6 +1393,10 @@ def apply_additions(spec, response_text, protocol_text):
             result["rejected"].append({**rej, "reason": "quote_too_short"})
         elif nq not in proto:
             result["rejected"].append({**rej, "reason": "quote_not_in_protocol", "quote": quote[:200]})
+        elif _other_subject(spec, forms[key[0]], quote):
+            other = _other_subject(spec, forms[key[0]], quote)
+            result["rejected"].append({**rej, "reason": "quote_names_another_forms_subject", "other_form": other[0],
+                                       "subject": other[1], "quote": quote[:200]})
         else:
             done.add(key)
             result["added"].append(_add_field(forms[key[0]], c, quote))
@@ -1370,6 +1404,14 @@ def apply_additions(spec, response_text, protocol_text):
         m["fields_added"] = [x for x in result["added"] if x["form_id"] == m["form_id"]]
     state(spec)["additions"] = {k: v for k, v in result.items()}
     return result
+
+
+def _other_subject(spec, form, quote):
+    """(other form id, word) when the quote is about a sibling form's subject and not this form's (global matching)."""
+    if not global_enabled():
+        return None
+    import standards_global
+    return standards_global.other_subject(spec, form, quote)
 
 
 def _add_field(form, cand, quote):
@@ -1595,10 +1637,16 @@ def summary_lines(spec):
         return []
     out = [f"Customer standard forms: {len(st.get('matched') or [])} protocol form(s) use a customer standard form "
            f"exactly as provided."]
+    if st.get("aliases"):
+        out.append("  Names the protocol uses for the same thing (read as one subject): "
+                   + "; ".join(" = ".join(str(n) for n in g[:6]) for g in st["aliases"][:12]))
     for m in st.get("matched") or []:
         added = m.get("fields_added") or []
+        sp = m.get("score_parts")
+        fit = (f"fit {sp['total']}: title {sp['title']}, subject {sp['subject']}, fields {sp['fields']}, domain "
+               f"{sp['domain']}, {'AI-decided' if m.get('decided') == 'AI' else 'deterministic'}; ") if sp else ""
         out.append(f"  {m['protocol_form']} -> {m['standard_title']} [{m['standard_form']}] ({m['source']}; {m['basis']}; "
-                   f"{m['fields_kept']} fields kept"
+                   f"{fit}{m['fields_kept']} fields kept"
                    + (f", {len(added)} added from protocol: {', '.join(a['field'] for a in added)}" if added else "")
                    + ("; no logic in the standard" if not m.get("has_logic") else "") + ")"
                    + (f" NOTE: {m['note']}" if m.get("note") else ""))
@@ -1614,6 +1662,10 @@ def summary_lines(spec):
         out.append(f"  AI-proposed pair not used: {r['protocol_form']} -> {r['standard_form']} ({r['reason']})")
     for w in st.get("warnings") or []:
         out.append(f"  WARNING: {w}")
+    for r in (st.get("additions") or {}).get("rejected") or []:
+        if r.get("reason") == "quote_names_another_forms_subject":
+            out.append(f"  Field not added: {r['form_id']}.{r['field']} (its protocol text is about \"{r['subject']}\", "
+                       f"the subject of {r['other_form']})")
     return out
 
 

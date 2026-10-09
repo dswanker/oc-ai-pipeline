@@ -430,7 +430,13 @@ def apply(spec, response_text, protocol_text, fresh=False, required_ids=(), answ
 def not_built(spec):
     """Records of the forms that are not built (removed), and of those a fresh analysis would not build."""
     st = state(spec)
-    return list(st.get("removed") or []) + [r for r in st.get("forms") or [] if r.get("action") == WOULD_REMOVE]
+    out = list(st.get("removed") or []) + [r for r in st.get("forms") or [] if r.get("action") == WOULD_REMOVE]
+    try:   # forms the duplicate-subject guard of the standards matching did not build
+        import standards_global
+        out += standards_global.not_built(spec)
+    except Exception:
+        pass
+    return out
 
 
 def section(spec):
