@@ -187,6 +187,9 @@ def validate_response(spec, response_text, protocol_text, required_ids=(), answe
     ids = {str(f["form_id"]) for f in cands}
     fields = {str(f["form_id"]): {str(r.get("name")) for r in f.get("survey") or [] if isinstance(r, dict) and r.get("name")}
               for f in cands}
+    # The eligibility form (CDASH domain IE) exists to record the protocol's inclusion/exclusion criteria, so a verified
+    # eligibility passage is its basis. For every other form an eligibility criterion is never a basis.
+    ie_ids = {str(f["form_id"]) for f in cands if str(f.get("cdash_domain") or "").strip().upper() == "IE"}
     out, rejected = {}, {}
 
     def rej(why):
@@ -217,6 +220,12 @@ def validate_response(spec, response_text, protocol_text, required_ids=(), answe
         names = fields.get(fid) or set()
         asked = [str(x).strip() for x in (it.get("fields") if isinstance(it.get("fields"), list) else []) if str(x).strip() in names]
         requiring = [q for q in quotes if q["kind"] in KINDS_REQUIRE]
+        if fid in ie_ids:
+            eligibility = [q for q in quotes if q["kind"] == "eligibility"]
+            if eligibility and not requiring:
+                out[fid] = {"basis": "required", "quotes": eligibility, "unverified": unverified, "fields": asked[:20],
+                            "why": "the eligibility form records the protocol's inclusion/exclusion criteria"}
+                continue
         if requiring and not asked:
             # the passage exists but asks for none of this form's fields: the protocol mentions it, no more
             rej("requirement without a field of the form")

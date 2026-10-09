@@ -246,3 +246,19 @@ def test_the_pipeline_step_runs_after_the_completeness_check_and_survives_a_fail
     step = src[src.index("async def _protocol_basis_step("):src.index("def _protocol_forms_refresh(")]
     assert "no form removed" in step and "return struct_json" in step.split("except Exception as _ce:")[1].split("_pb.apply(")[0]
     assert "PROTOCOL_BASIS" not in open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "prompts.py")).read()
+
+
+def test_an_eligibility_passage_is_the_basis_of_the_eligibility_form_only():
+    """The IE form records the inclusion/exclusion criteria, so a verified criterion supports it; the same passage
+    never supports any other form (no form is created or kept from a single criterion)."""
+    proto = PROTOCOL + " 5.1 Inclusion criteria: participants must be 18 years of age or older."
+    q_ie = "participants must be 18 years of age or older."
+    ie = fx._f("IE", "Eligibility Criteria", "IE", [("select_one yn", "IEYN", "Were all criteria met?", {})])
+    ie["library_match"] = {"status": "CUSTOM", "source_type": "protocol"}
+    elig = {"quotes": [{"text": q_ie, "section": "5.1", "kind": "eligibility"}], "fields": [], "why": "criterion"}
+    spec = _spec(_vs(), ie, _invented())
+    st = pb.apply(spec, _resp(VS=_req(Q_VS), IE=elig, WASH=elig), proto, fresh=True)
+    assert [f["form_id"] for f in spec["forms"]] == ["VS", "IE"]
+    assert [r["form_id"] for r in st["removed"]] == ["WASH"]
+    rec = {r["form_id"]: r for r in st["forms"]}
+    assert rec["IE"]["quote"] == q_ie
