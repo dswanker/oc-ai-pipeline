@@ -5829,6 +5829,24 @@ def _apply_crf_standards(struct_json: dict, crf_files: list, oc_files: list) -> 
     return struct_json
 
 
+def _backstop_conventions(cols: dict, customer_conventions: dict | None) -> dict:
+    """The customer's CQ answers for the required-forms backstop.
+
+    The backstop runs at points where the run's customer_conventions is still the empty placeholder (a reused
+    Study Specification, an edited one): with no answers it injected DOV although the item's CQ "Do you collect
+    Date of Visit (DOV) at scheduled visits?" was No. Read the answers from the item's columns then.
+    DOV_BACKSTOP_HONOURS_CQ=0 restores the old behaviour (use only what was passed in)."""
+    if customer_conventions:
+        return customer_conventions
+    if os.environ.get("DOV_BACKSTOP_HONOURS_CQ", "1").strip() == "0":
+        return customer_conventions or {}
+    try:
+        return _extract_customer_conventions(cols or {})
+    except Exception as _e:
+        print(f"[spec-backstop] CQ answers could not be read ({_e}); backstop runs without them", flush=True)
+        return customer_conventions or {}
+
+
 def _ensure_required_forms(spec: dict, protocol_num: str,
                             customer_conventions: dict | None = None) -> dict:
     """Deterministically inject required infrastructure forms if Claude dropped them.
@@ -6856,7 +6874,8 @@ async def run_pipeline(item_id):
                         struct_json = _fix_missing_choices(struct_json)
                         struct_json = _backfill_migration_fields(struct_json)
                         struct_json = _sanitize_form_titles(struct_json)
-                        struct_json = _ensure_required_forms(struct_json, protocol_num, customer_conventions)
+                        struct_json = _ensure_required_forms(struct_json, protocol_num,
+                                                             _backstop_conventions(cols, customer_conventions))
                         struct_json = await _standards_match_step(item_id, struct_json, _std_sources, protocol_bytes)
                         struct_json = await _post_match_forms_step(item_id, struct_json, _std_sources, protocol_bytes, _crf_files, _oc_files, cols)
                         struct_json = _apply_omop_coding(struct_json, edc_design_standard)
@@ -7008,7 +7027,8 @@ async def run_pipeline(item_id):
             struct_json = _fix_missing_choices(struct_json)
             struct_json = _backfill_migration_fields(struct_json)
             struct_json = _sanitize_form_titles(struct_json)
-            struct_json = _ensure_required_forms(struct_json, protocol_num, customer_conventions)
+            struct_json = _ensure_required_forms(struct_json, protocol_num,
+                                                 _backstop_conventions(cols, customer_conventions))
             struct_json = await _standards_match_step(item_id, struct_json, _std_sources, protocol_bytes)
             struct_json = await _post_match_forms_step(item_id, struct_json, _std_sources, protocol_bytes, _crf_files, _oc_files, cols)
             struct_json = _apply_omop_coding(struct_json, edc_design_standard)
@@ -7202,7 +7222,8 @@ async def run_pipeline(item_id):
                     struct_json = _fix_missing_choices(struct_json)
                     struct_json = _backfill_migration_fields(struct_json)
                     struct_json = _sanitize_form_titles(struct_json)
-                    struct_json = _ensure_required_forms(struct_json, protocol_num, customer_conventions)
+                    struct_json = _ensure_required_forms(struct_json, protocol_num,
+                                                         _backstop_conventions(cols, customer_conventions))
                     struct_json = await _standards_match_step(item_id, struct_json, _std_sources, protocol_bytes)
                     struct_json = await _post_match_forms_step(item_id, struct_json, _std_sources, protocol_bytes, _crf_files, _oc_files, cols)
                     struct_json = _apply_omop_coding(struct_json, edc_design_standard)
@@ -7552,7 +7573,8 @@ async def run_pipeline(item_id):
             struct_json = _fix_missing_choices(struct_json)
             struct_json = _backfill_migration_fields(struct_json)
             struct_json = _sanitize_form_titles(struct_json)
-            struct_json = _ensure_required_forms(struct_json, protocol_num, customer_conventions)
+            struct_json = _ensure_required_forms(struct_json, protocol_num,
+                                                 _backstop_conventions(cols, customer_conventions))
             struct_json = await _standards_match_step(item_id, struct_json, _std_sources, protocol_bytes)
             struct_json = await _post_match_forms_step(item_id, struct_json, _std_sources, protocol_bytes, _crf_files, _oc_files, cols, fresh=True)
             struct_json = _apply_omop_coding(struct_json, edc_design_standard)
