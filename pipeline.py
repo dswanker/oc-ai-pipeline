@@ -4341,7 +4341,7 @@ async def _tag_concepts(item_id, struct_json, customer_subdomain="", client_name
             req = cdisc_concepts.build_request(struct_json, std, qrs=_qrs_on)
             _trim_log("concept tagging", cdisc_concepts.build_request, req, struct_json, std, qrs=_qrs_on)
             if req:
-                text = await call_claude(req[0], extra_text=req[1], max_tokens=16000, cache_prompt=False)
+                text = await _ai("concept_tagging", req[0], extra_text=req[1], max_tokens=16000, cache_prompt=False)
                 ai = cdisc_concepts.apply_ai_response(struct_json, std, text, qrs=_qrs_on)
             else:
                 ai = {"skipped": "nothing untagged"}
@@ -4692,7 +4692,7 @@ async def _protocol_forms_step(item_id, struct_json, sources, protocol_bytes=Non
             if _first[0]:                         # this check's section of the merged answer (protocol_checks.py)
                 text, _first[0] = _first[0], None
                 return text
-            return await call_claude(prompt, pdf_bytes=protocol_bytes if is_pdf else None, extra_text=extra,
+            return await _ai("completeness", prompt, pdf_bytes=protocol_bytes if is_pdf else None, extra_text=extra,
                                      max_tokens=16000, cache_prompt=False)
 
         # entries the answer leaves out get one follow-up call; what is still missing is recorded "not assessed"
@@ -4762,14 +4762,14 @@ async def _protocol_basis_step(item_id, struct_json, protocol_bytes=None, cols=N
                     try:
                         req2 = _pb.build_request(dict(struct_json, forms=left), ptext, required, answers,
                                                  with_text=not is_pdf)
-                        text2 = await call_claude(req2[0], pdf_bytes=protocol_bytes if is_pdf else None,
+                        text2 = await _ai("basis", req2[0], pdf_bytes=protocol_bytes if is_pdf else None,
                                                   extra_text=req2[1], max_tokens=8000, cache_prompt=False)
                         text = _pc.merge_basis(text, text2)
                     except Exception as _fe:
                         print(f"[protocol-basis] follow-up call failed ({type(_fe).__name__}); those forms are kept, "
                               f"not judged", flush=True)
             else:
-                text = await call_claude(req[0], pdf_bytes=protocol_bytes if is_pdf else None, extra_text=req[1],
+                text = await _ai("basis", req[0], pdf_bytes=protocol_bytes if is_pdf else None, extra_text=req[1],
                                          max_tokens=8000, cache_prompt=False)
         except Exception as _ce:
             print(f"[protocol-basis] the check did not run ({type(_ce).__name__}); no form removed", flush=True)
@@ -4789,6 +4789,17 @@ async def _protocol_basis_step(item_id, struct_json, protocol_bytes=None, cols=N
     except Exception as e:
         print(f"[protocol-basis] step failed, spec unchanged: {type(e).__name__}: {e}", flush=True)
         return struct_json
+
+
+async def _ai(step, *args, **kwargs):
+    """call_claude for a named pipeline step: the step decides the model under MODEL_PROFILE (claude_client.STEPS);
+    with the default profile the call is exactly what it was."""
+    import claude_client as _cc
+    token = _cc.STEP.set(step)
+    try:
+        return await call_claude(*args, **kwargs)
+    finally:
+        _cc.STEP.reset(token)
 
 
 async def _schedule_from_soa_step(item_id, struct_json, protocol_bytes=None, fresh=False):
@@ -4818,7 +4829,7 @@ async def _schedule_from_soa_step(item_id, struct_json, protocol_bytes=None, fre
         req = _psc.build_request(structure["units"], structure["schedule_text"]) if _psc.ai_enabled() else None
         if req:
             try:
-                answer = await call_claude(req[0], extra_text=req[1], max_tokens=2000, cache_prompt=False)
+                answer = await _ai("schedule_question", req[0], extra_text=req[1], max_tokens=2000, cache_prompt=False)
             except Exception as _ce:
                 print(f"[schedule] the same-visit question was not answered ({type(_ce).__name__}); labels without a "
                       f"time of their own are flagged, not added", flush=True)
@@ -4904,7 +4915,7 @@ async def _standards_match_step(item_id, struct_json, sources, protocol_bytes=No
             try:
                 req = _sm.build_meaning_request(struct_json, sources, aliases)
                 if req is not None:
-                    text = await call_claude(req[0], extra_text=req[1], max_tokens=2000, cache_prompt=False)
+                    text = await _ai("standards_close_call", req[0], extra_text=req[1], max_tokens=2000, cache_prompt=False)
                     ai_pairs = _sm.parse_meaning_pairs(text)
             except Exception as _me:
                 print(f"[standards-match] by-meaning AI proposal skipped (deterministic matching only): "
@@ -4967,7 +4978,7 @@ async def _protocol_fields_call(out, protocol_bytes):
         if req is None:
             _sm.state(out)["additions"] = {"status": "nothing_to_check" if ptext else "no_protocol_text"}
         else:
-            text = await call_claude(req[0], extra_text=req[1], max_tokens=8000, cache_prompt=False)
+            text = await _ai("protocol_fields", req[0], extra_text=req[1], max_tokens=8000, cache_prompt=False)
             trial = _copy.deepcopy(out)
             _sm.apply_additions(trial, text, ptext)
             out = trial
@@ -5047,7 +5058,7 @@ async def _merged_protocol_checks(item_id, struct_json, sources, protocol_bytes,
         prompt, extra = _pc.build_request(tasks, None if is_pdf else ptext)
         print(f"[protocol-checks] one call for {len(tasks)} task(s): {', '.join(tasks)} "
               f"({len(prompt) + len(extra):,} characters besides the protocol)", flush=True)
-        text = await call_claude(prompt, pdf_bytes=protocol_bytes if is_pdf else None, extra_text=extra,
+        text = await _ai("merged_checks", prompt, pdf_bytes=protocol_bytes if is_pdf else None, extra_text=extra,
                                  max_tokens=_pc.MAX_TOKENS, cache_prompt=False)
         sections = _pc.split_response(text, list(tasks))
         missing = [k for k, v in sections.items() if v is None]
@@ -5106,7 +5117,7 @@ async def _propose_standard_logic(item_id, struct_json, protocol_bytes=None):
         if req is None:
             _asl.store(struct_json, {"proposed": 0, "proposals": [], "rejected": {}})
             return
-        text = await call_claude(req[0], extra_text=req[1], max_tokens=16000, cache_prompt=False)
+        text = await _ai("standard_logic", req[0], extra_text=req[1], max_tokens=16000, cache_prompt=False)
         v = _asl.validate_response(struct_json, text, ptext)
         _asl.store(struct_json, v)
         await append_log(item_id, f"Customer standard forms: {len(v['proposals'])} AI-suggested check(s) proposed for "
@@ -5163,7 +5174,7 @@ async def _study_config_step(item_id, struct_json, protocol_bytes=None, referenc
                 req = _sdv.build_request(struct_json, ptext, with_text=not is_pdf)
                 _trim_log("SDV endpoint link", _sdv.build_request, req, struct_json, ptext, with_text=not is_pdf)
                 if req is not None:
-                    text = await call_claude(req[0], pdf_bytes=protocol_bytes if is_pdf else None, extra_text=req[1],
+                    text = await _ai("sdv_endpoint", req[0], pdf_bytes=protocol_bytes if is_pdf else None, extra_text=req[1],
                                              max_tokens=4000, cache_prompt=False)
                     ep_result = _sdv.validate_response(struct_json, text, ptext)
         except Exception as _se:
@@ -5202,7 +5213,7 @@ async def _propose_ai_edit_checks(item_id, struct_json):
         import ai_edit_checks as _aec
         prompt, extra = _aec.build_request(struct_json)
         _trim_log("AI-proposed edit checks", _aec.build_request, (prompt, extra), struct_json)
-        text = await call_claude(prompt, extra_text=extra, max_tokens=8000, cache_prompt=False)
+        text = await _ai("ai_edit_checks", prompt, extra_text=extra, max_tokens=8000, cache_prompt=False)
         v = _aec.validate_response(struct_json, text)
         sm["ai_edit_checks"] = {"proposed": v["proposed"], "proposals": v["proposals"], "rejected": v["rejected"]}
         await append_log(item_id, f"AI-proposed edit checks: {len(v['proposals'])} proposed for review "
@@ -7475,7 +7486,7 @@ async def run_pipeline(item_id):
                 _pdf_arg   = protocol_bytes or None
                 _text_args = extra_parts or []
 
-            struct_text = await call_claude(
+            struct_text = await _ai("main_analysis",
                 EDC_STRUCTURE_PROMPT,
                 pdf_bytes     = _pdf_arg,
                 extra_text    = "\n".join(_text_args) if _text_args else None,
@@ -7697,7 +7708,7 @@ async def run_pipeline(item_id):
                     if _adds and os.environ.get("AI_EDIT_CHECKS", "1") != "0":
                         try:
                             _ap, _ax = _dvse.build_add_request(struct_json, _adds)
-                            _at = await call_claude(_ap, extra_text=_ax, max_tokens=6000, cache_prompt=False)
+                            _at = await _ai("dvs_added_checks", _ap, extra_text=_ax, max_tokens=6000, cache_prompt=False)
                             _by_idx = _dvse.parse_add_response(_at, _adds)
                             _trans = {_dvse._add_key(r): _by_idx.get(i) for i, r in enumerate(_adds, 1)}
                         except Exception as _te:
@@ -7857,7 +7868,7 @@ async def run_pipeline(item_id):
                         if isinstance(f, dict)
                     ],
                 }
-                pricing_text = await call_claude(
+                pricing_text = await _ai("pricing_summary",
                     PRICING_SUMMARY_PROMPT,
                     extra_text="Study Specification JSON:\n" + json.dumps(struct_slim),
                     max_tokens=64000,  # B4: Chain B may also produce large output
@@ -8022,7 +8033,7 @@ async def run_pipeline(item_id):
                         "study_meta": struct_json.get("study_meta", {}) if struct_json else {},
                         "forms":      struct_json.get("forms", []) if struct_json else [],
                     }
-                    base_build_text = await call_claude(
+                    base_build_text = await _ai("dvs_build_json",
                         build_prompt_json,
                         extra_text="Study Specification JSON:\n" + json.dumps(struct_slim),
                     )
@@ -8033,7 +8044,7 @@ async def run_pipeline(item_id):
                     except ValueError:
                         base_build = {"forms": {}}
 
-                    updated_text = await call_claude(
+                    updated_text = await _ai("dvs_translate",
                         DVS_TRANSLATE_PROMPT,
                         extra_text=("Current XLSForm JSON:\n" + json.dumps(base_build) +
                                     "\n\nDVS Changes:\n" + dvs_text),

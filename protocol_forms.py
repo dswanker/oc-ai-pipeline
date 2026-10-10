@@ -279,8 +279,27 @@ def all_items_enabled():
     return os.environ.get("PROTOCOL_FORMS_ALL_ITEMS", "1") != "0"
 
 
+# PROTOCOL_FORMS_KIND_NAMES=1: an assessment is named by the kind of data collected, not by the wording of the
+# sentence that asks for it, so the name does not depend on where the model happens to read the sentence from
+_RULE_KIND = """13. NAME each assessment by the KIND of data it collects, the way a case report form for that data would be
+    titled (its data domain, like the kinds listed at the top), never by the wording of the sentence that asks
+    for it. A sentence that asks to record one particular instance or circumstance of a kind of data that the
+    study collects generally (a new, a changed, an additional or a specific one) gives the assessment of that
+    general kind; when it covers several kinds, it gives one assessment per kind. Keep a specific name only
+    where the protocol makes that item a data collection of its own: its own schedule row, its own section, or a
+    named study treatment. The same kind of data has the same name under every entry.
+"""
+
+
+def kind_names_enabled():
+    return os.environ.get("PROTOCOL_FORMS_KIND_NAMES", "0") == "1"
+
+
 def prompt():
-    return PROMPT_ALL if all_items_enabled() else PROMPT
+    p = PROMPT_ALL if all_items_enabled() else PROMPT
+    if kind_names_enabled():
+        p = p.replace("\nReturn ONLY JSON:", _RULE_KIND + "\nReturn ONLY JSON:", 1)
+    return p
 
 
 FOLLOW_UP = ("Your previous answer left out the checklist entries below. Answer ONLY these entries now, each with its "

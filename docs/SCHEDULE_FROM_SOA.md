@@ -91,6 +91,10 @@ an assessment is now covered by a form only when the form names it (at least hal
 few forms carry each word, in the title, a question or a choice). Otherwise no form collects it and one is added
 through the usual chain (customer standard, customer CRF standards, CDASHIG).
 
+`PROTOCOL_FORMS_KIND_NAMES=1` (default OFF) adds one more rule: an assessment is named by the kind of data
+collected, the way a case report form for it would be titled, not by the wording of the sentence that asks for it.
+Tested in `docs/MODEL_PROFILE.md` (Stage 2).
+
 ## 3. A basis passage names the form's subject (`protocol_basis.py`)
 
 A form was sometimes kept on a passage about something else: a sentence the model classified as an instruction to

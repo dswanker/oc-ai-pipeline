@@ -100,22 +100,131 @@ def build_content(prompt, pdf_bytes=None, extra_text=None, cache_prompt=True, im
     return content
 
 
+# ── Model per step (MODEL_PROFILE; default = today's model, requests byte-identical) ──
+
+STEP = contextvars.ContextVar("ai_step", default=None)   # the pipeline step the current call belongs to
+MODEL_OPUS_55, MODEL_SONNET_55 = "claude-opus-5-5", "claude-sonnet-5-5"
+PROFILES = ("default", "opus55", "mixed55")
+# every step that calls the model through this module (call_claude / run_skill), and what it does
+STEPS = {
+    "quick_analysis":       "trainer quick analysis of the protocol",
+    "main_analysis":        "main protocol analysis (Study Specification)",
+    "standards_close_call": "standards matching: pairs by meaning / close calls",
+    "protocol_fields":      "protocol-specified fields of matched standard forms",
+    "completeness":         "protocol completeness checklist",
+    "basis":                "protocol basis of every form",
+    "merged_checks":        "the three protocol checks as one call (PROTOCOL_CHECKS_MERGED)",
+    "schedule_question":    "visit schedule: same-visit question",
+    "concept_tagging":      "CDISC concept tagging",
+    "standard_logic":       "AI logic for standard forms",
+    "sdv_endpoint":         "Study Configuration: SDV endpoint link",
+    "ai_edit_checks":       "AI-proposed edit checks",
+    "pricing_summary":      "pricing summary",
+    "dvs_added_checks":     "edited DVS: added checks",
+    "dvs_build_json":       "DVS update: form JSON from the specification",
+    "dvs_translate":        "DVS update: translate the edited DVS",
+    "migration":            "migration pipeline call",
+    "skill_run":            "skill run (code execution)",
+}
+# the steps that decide forms, visits and fields
+DECIDING_STEPS = ("main_analysis", "completeness", "protocol_fields", "basis", "merged_checks", "schedule_question",
+                  "standards_close_call")
+THINKING_HEADROOM = 16000   # 5.5 models always think, and max_tokens covers thinking plus text: a third more,
+                            # at least this much (the first Opus 5.5 main analysis used 101,602 output tokens)
+MAX_OUTPUT_55 = 128000
+
+
+def model_profile():
+    v = os.environ.get("MODEL_PROFILE", "default").strip().lower()
+    return v if v in PROFILES else "default"
+
+
+def is_55(model):
+    return bool(re.match(r"claude-(?:opus|sonnet|haiku|fable)-5", str(model or "")))
+
+
+def model_for(step=None, today=MODEL):
+    """The model a step's call uses. MODEL_STEP_<STEP>=<model id> overrides one step. Profiles: "default" is the
+    model the call has always used; "opus55" moves every call that uses Opus 4.7 to Opus 5.5; "mixed55" gives
+    Opus 5.5 to the steps that decide forms, visits and fields and Sonnet 5.5 to every other such call. A call
+    that is not on Opus 4.7 today keeps its model in every profile."""
+    over = os.environ.get(f"MODEL_STEP_{str(step).upper()}", "").strip() if step else ""
+    if over:
+        return over
+    prof = model_profile()
+    if prof == "default" or today != "claude-opus-4-7":
+        return today
+    if prof == "opus55":
+        return MODEL_OPUS_55
+    return MODEL_OPUS_55 if step in DECIDING_STEPS else MODEL_SONNET_55
+
+
+def profile_map(profile):
+    """{step: model} of a profile (for reports and tests)."""
+    old = os.environ.get("MODEL_PROFILE")
+    os.environ["MODEL_PROFILE"] = profile
+    try:
+        return {step: model_for(step) for step in STEPS}
+    finally:
+        if old is None:
+            os.environ.pop("MODEL_PROFILE", None)
+        else:
+            os.environ["MODEL_PROFILE"] = old
+
+
+def adapt_request(kwargs, betas, model):
+    """(kwargs, betas) of a request for the model. Opus 4.7 and earlier: only the model id. A 5.5 model: no
+    output-128k beta (128K output is standard and the header is to be removed), room in max_tokens for the thinking
+    that always runs, and the effort level when MODEL_EFFORT sets one (else the model's default). Prompt and
+    content are never changed."""
+    kwargs = dict(kwargs, model=model)
+    if not is_55(model):
+        return kwargs, betas
+    betas = [b for b in (betas or []) if not b.startswith("output-128k")] or None
+    asked = int(kwargs.get("max_tokens") or 0)
+    kwargs["max_tokens"] = min(MAX_OUTPUT_55, max(asked * 4 // 3, asked + int(
+        os.environ.get("MODEL_THINKING_HEADROOM", str(THINKING_HEADROOM)))))
+    effort = os.environ.get("MODEL_EFFORT", "").strip().lower()
+    if effort:
+        kwargs["output_config"] = {"effort": effort}
+    return kwargs, betas
+
+
+def response_text(response):
+    """The text of a reply: its text blocks (a 5.5 model's reply starts with thinking blocks). A refusal raises."""
+    if getattr(response, "stop_reason", None) == "refusal":
+        raise RuntimeError("the model declined the request (stop_reason refusal)")
+    blocks = [b for b in (getattr(response, "content", None) or []) if getattr(b, "type", "text") == "text"]
+    if not blocks:
+        raise RuntimeError(f"the reply has no text (stop_reason {getattr(response, 'stop_reason', None)})")
+    return blocks[0].text if len(blocks) == 1 else "".join(b.text for b in blocks)
+
+
 # ── Usage record (every call; read by cost reports and tests) ────────────────
 
 USAGE = []          # one dict per finished call, in order
 PRICES = {"input": 5.0, "output": 25.0, "cache_write_5m": 6.25, "cache_write_1h": 10.0, "cache_read": 0.50}   # $ / MTok
+# list prices per model, $ / MTok (Anthropic pricing page, 2026-10-09). A model not listed is priced as Opus 4.7.
+MODEL_PRICES = {
+    "claude-opus-4-7":   PRICES,
+    "claude-opus-5-5":   {"input": 4.0, "output": 20.0, "cache_write_5m": 5.0, "cache_write_1h": 8.0, "cache_read": 0.20},
+    "claude-sonnet-5-5": {"input": 2.0, "output": 10.0, "cache_write_5m": 2.5, "cache_write_1h": 4.0, "cache_read": 0.10},
+    "claude-sonnet-4-6": {"input": 3.0, "output": 15.0, "cache_write_5m": 3.75, "cache_write_1h": 6.0, "cache_read": 0.30},
+}
 
 
 def call_cost(rec):
-    """Dollars of one usage record (Opus 4.7 list prices; a batched call costs half)."""
-    usd = (rec.get("input", 0) * PRICES["input"] + rec.get("output", 0) * PRICES["output"]
-           + rec.get("cache_write_5m", 0) * PRICES["cache_write_5m"]
-           + rec.get("cache_write_1h", 0) * PRICES["cache_write_1h"]
-           + rec.get("cache_read", 0) * PRICES["cache_read"]) / 1_000_000
+    """Dollars of one usage record at its model's list prices (Opus 4.7 when the record names no model); a
+    batched call costs half."""
+    p = MODEL_PRICES.get(rec.get("model") or "", PRICES)
+    usd = (rec.get("input", 0) * p["input"] + rec.get("output", 0) * p["output"]
+           + rec.get("cache_write_5m", 0) * p["cache_write_5m"]
+           + rec.get("cache_write_1h", 0) * p["cache_write_1h"]
+           + rec.get("cache_read", 0) * p["cache_read"]) / 1_000_000
     return round(usd * (0.5 if rec.get("batch_id") else 1.0), 4)
 
 
-def _record_usage(response, prompt, pdf_bytes, max_tokens, started, batch_id=None, batch_wait=None):
+def _record_usage(response, prompt, pdf_bytes, max_tokens, started, batch_id=None, batch_wait=None, model=None):
     u = getattr(response, "usage", None)
     cc = getattr(u, "cache_creation", None)
     crt = (getattr(u, "cache_creation_input_tokens", 0) or 0) if u else 0
@@ -132,6 +241,10 @@ def _record_usage(response, prompt, pdf_bytes, max_tokens, started, batch_id=Non
            "cache_write_5m": w5m, "cache_write_1h": w1h,
            "started": round(started, 1), "seconds": round(time.time() - started, 1),
            "batch_id": batch_id, "batch_wait": batch_wait}
+    if model and model != MODEL:
+        rec["model"] = model
+    if STEP.get():
+        rec["step_name"] = STEP.get()
     rec["usd"] = call_cost(rec)
     USAGE.append(rec)
     return rec
@@ -266,6 +379,12 @@ async def call_claude(prompt, pdf_bytes=None, extra_text=None, max_tokens=MAX_TO
                 max_tokens=max_tokens,
                 messages=[{"role": "user", "content": content}],
             )
+            _betas = ["output-128k-2025-02-19"] if extended_output else None
+            _model = model_for(STEP.get())
+            if _model != MODEL:
+                _stream_kwargs, _betas = adapt_request(_stream_kwargs, _betas, _model)
+                print(f"call_claude — step {STEP.get()}: model {_model} (profile {model_profile()}), "
+                      f"max_tokens {_stream_kwargs['max_tokens']}", flush=True)
             _started = time.time()
             response = _batch_id = _batch_wait = None
             if economy_active() and not _economy_tried:
@@ -277,8 +396,7 @@ async def call_claude(prompt, pdf_bytes=None, extra_text=None, max_tokens=MAX_TO
                     print(f"call_claude economy — not batchable ({_why}); running normally", flush=True)
                 else:
                     try:
-                        response, _batch_id, _batch_wait = await _batch_message(
-                            client, _stream_kwargs, ["output-128k-2025-02-19"] if extended_output else None)
+                        response, _batch_id, _batch_wait = await _batch_message(client, _stream_kwargs, _betas)
                     except Exception as _be:
                         if "credit balance" in str(_be).lower():
                             raise
@@ -288,21 +406,21 @@ async def call_claude(prompt, pdf_bytes=None, extra_text=None, max_tokens=MAX_TO
                         _started = time.time()
             if response is not None:
                 pass
-            elif extended_output:
+            elif _betas:
                 # output-128k-2025-02-19 beta raises the per-request output
                 # cap from 32K to 128K for Opus 4.7. Required when the study
                 # spec JSON exceeds ~64K tokens (large studies with many forms
                 # and full per-row XLSForm metadata).
-                _stream_kwargs["betas"] = ["output-128k-2025-02-19"]
+                _stream_kwargs["betas"] = _betas
                 _cm = client.beta.messages.stream(**_stream_kwargs)
             else:
                 _cm = client.messages.stream(**_stream_kwargs)
             if response is None:
                 async with _cm as stream:
                     response = await stream.get_final_message()
-            text = response.content[0].text
+            text = response.content[0].text if _model == MODEL else response_text(response)
             try:
-                _record_usage(response, prompt, pdf_bytes, max_tokens, _started, _batch_id, _batch_wait)
+                _record_usage(response, prompt, pdf_bytes, max_tokens, _started, _batch_id, _batch_wait, _model)
             except Exception:
                 pass
             # Usage info — shows cache hit/miss
@@ -629,7 +747,7 @@ async def run_skill(prompt, skill_ids,
             # Streaming is required for operations that may exceed 10 minutes.
             # The SDK's stream() context manager collects the full message.
             async with client.beta.messages.stream(
-                model=MODEL,
+                model=model_for("skill_run"),
                 max_tokens=MAX_TOKENS_SKILL,
                 betas=SKILL_BETAS,
                 container=container,
@@ -702,7 +820,7 @@ async def run_skill(prompt, skill_ids,
             # Build container dict explicitly to avoid key collision
             container = {"id": cont_id, "skills": original_skills}
         async with client.beta.messages.stream(
-            model=MODEL,
+            model=model_for("skill_run"),
             max_tokens=MAX_TOKENS_SKILL,
             betas=SKILL_BETAS,
             container=container,

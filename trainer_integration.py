@@ -159,6 +159,11 @@ async def run_protocol_analysis_quick(
         return {}
 
     try:
+        try:   # name the step for MODEL_PROFILE (the task below copies the context)
+            import claude_client as _cc
+            _cc.STEP.set("quick_analysis")
+        except Exception:  # noqa: BLE001
+            pass
         text = await asyncio.wait_for(
             call_claude_fn(
                 QUICK_ANALYSIS_PROMPT,

@@ -168,3 +168,10 @@ of credit before their basis and schedule calls. Their completeness answers are 
 check. Leave it off until the completeness instruction names items independently of the block order and that is
 tested. `PROTOCOL_CHECKS_MERGED` cannot be judged apart from it on these runs.
 
+## Third test of 2026-10-09
+
+With the kind-naming rule (`PROTOCOL_FORMS_KIND_NAMES=1`), on today's models: merged checks + trim fails the pass
+rule in 3 of 3 runs, protocol-first + merged checks + trim in 1 of 3; with no cost switch it passes 3 of 3. Details
+in `docs/MODEL_PROFILE.md` (Stage 2). The loss of the Concomitant Procedures form comes with the merged call as
+well as with the protocol-first order, not with the order alone as the second test suggested.
+

@@ -402,3 +402,19 @@ def test_all_items_kill_switch_restores_the_instruction_and_the_mapping(monkeypa
     spec["forms"].append(fx._f("VS", "Vital Signs", "VS", [("date", "VSDAT", "Date", {})]))
     a = {"name": "Gadget inspection history", "domain": "VS", "domain_basis": "AI-proposed domain", "quote": "x", "log": False}
     assert pf.cover(a, spec["forms"])[0]["form_id"] == "VS"
+
+
+def test_kind_names_switch_adds_one_generic_naming_rule_and_is_off_by_default(monkeypatch):
+    assert not pf.kind_names_enabled() and pf.prompt() == pf.PROMPT_ALL
+    monkeypatch.setenv("PROTOCOL_FORMS_KIND_NAMES", "1")
+    p = pf.prompt()
+    assert p != pf.PROMPT_ALL and p.replace(pf._RULE_KIND, "") == pf.PROMPT_ALL
+    assert "by the KIND of data it collects" in p and "never by the wording of the sentence" in p
+    assert p.index("13. NAME each assessment") < p.index("Return ONLY JSON:")
+    assert pf.build_request(_spec(), TWO)[0] == p
+    # the rule names no study content, and quote verification is what it was
+    v = pf.validate_response(_spec(), json.dumps({"entries": [], "extra": [
+        {"name": "Prior treatments", "kind": "record", "quote": "This sentence is not in the protocol at all."}]}), TWO)
+    assert v["assessments"] == [] and v["rejected"] == {"quote not found in the protocol": 1}
+    monkeypatch.setenv("PROTOCOL_FORMS_ALL_ITEMS", "0")
+    assert pf.prompt().replace(pf._RULE_KIND, "") == pf.PROMPT
