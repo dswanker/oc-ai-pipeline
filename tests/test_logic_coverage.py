@@ -335,7 +335,8 @@ def test_approving_on_a_pipeline_form_does_not_turn_it_into_a_customer_standard(
 
 # ── derived helper items ──────────────────────────────────────────────────────
 
-def test_derived_helper_items_are_rebuilt_or_made_read_only_and_reported():
+def test_derived_helper_items_are_rebuilt_or_made_read_only_and_reported(monkeypatch):
+    monkeypatch.setenv("LOGIC_COVERAGE_HELPERS", "1")   # applying is opt-in; default is report only
     donor = form("DOV", [row("calculate", "EVT_CF", label="", calculation="instance('clinicaldata')/ODM/@X",
                              bind__oc_external="clinicaldata"),
                          row("calculate", "TPT", label="", calculation="pulldata('t','timepoint','event',${EVT_CF})")])
@@ -489,3 +490,19 @@ def test_study_specification_generators_render_the_section():
     for name in ("generate_study_spec_xlsx.py", "generate_study_spec_pdf.py"):
         text = open(os.path.join(ROOT, "skills", "protocol-analysis", "scripts", name)).read()
         assert "logic_coverage.section(data)" in text
+
+
+
+def test_derived_helper_items_are_report_only_by_default(monkeypatch):
+    """Default: helper candidates are reported, never changed (real data-entry fields with HTML labels were
+    misread as label-less on the PrTK05 ODM)."""
+    monkeypatch.delenv("LOGIC_COVERAGE_HELPERS", raising=False)
+    f = form("BIO", [row("integer", "T01CRYOVN", label="")])
+    spec = {"forms": [f], "study_meta": {}}
+    for r in f["survey"]:
+        r.pop("readonly", None)
+    import importlib
+    lc = importlib.import_module("logic_coverage")
+    out = lc._handle_helpers(spec, f, True)
+    assert all(str(r.get("readonly") or "").lower() not in ("yes", "true") for r in f["survey"])
+    assert all(o["action"] != "made read-only" for o in out)

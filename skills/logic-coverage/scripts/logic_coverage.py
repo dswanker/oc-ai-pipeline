@@ -686,7 +686,11 @@ def _handle_helpers(spec, form, apply):
     out = []
     if not _structure_only(form):
         return out
-    if os.environ.get("LOGIC_COVERAGE_HELPERS", "1").strip() == "0":
+    # Default REPORT ONLY. Verified 2026-10-10 on the PrTK05 ODM: the "label-less" items of BIOSPECIMENC are real
+    # data-entry fields (status, collection time, operator, cryovial count) whose labels begin with HTML markup;
+    # making them read-only would block data entry. LOGIC_COVERAGE_HELPERS=1 applies the changes once the
+    # detection is proven against a customer's original forms.
+    if os.environ.get("LOGIC_COVERAGE_HELPERS", "0").strip() != "1":
         apply = False                     # report them, change none
     survey = form.get("survey") or []
     referenced = {n for r in survey if isinstance(r, dict)
