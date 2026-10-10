@@ -97,7 +97,7 @@ def test_modes_are_read_by_title_until_the_column_id_is_registered_then_by_id():
 def test_column_specification():
     spec = pm.PIPELINE_MODE_COLUMN
     assert spec["title"] == "Pipeline Mode" and spec["labels"] == ["Full build", "Logic + UAT", "UAT only"]
-    assert "pipeline_mode" not in COL, "add the id here only after the column is created on monday"
+    assert COL.get("pipeline_mode") == "color_mm805s38"   # created on monday 2026-10-10
 
 
 def test_the_pipeline_branches_only_for_a_mode_other_than_full_build():
