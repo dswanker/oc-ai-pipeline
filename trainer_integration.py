@@ -36,6 +36,7 @@ Failure mode (graceful):
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import json
 import os
@@ -164,15 +165,25 @@ async def run_protocol_analysis_quick(
             _cc.STEP.set("quick_analysis")
         except Exception:  # noqa: BLE001
             pass
-        text = await asyncio.wait_for(
-            call_claude_fn(
-                QUICK_ANALYSIS_PROMPT,
-                pdf_bytes=protocol_pdf,
-                cache_prompt=False,
-                max_tokens=2000,  # plenty for the small JSON shape
-            ),
-            timeout=_analysis_timeout(),
-        )
+        # Always at normal speed, even in an economy run: batched, it sat in the queue past its deadline and the
+        # main analysis ran without the trainer's examples (PrTK05 economy run 2026-10-10), so an economy run was
+        # no longer identical in quality. Normal speed costs about $0.33 more and takes seconds.
+        _normal = contextlib.nullcontext()
+        try:
+            import claude_client as _cc2
+            _normal = _cc2.normal_speed()
+        except Exception:  # noqa: BLE001
+            pass
+        with _normal:
+            text = await asyncio.wait_for(
+                call_claude_fn(
+                    QUICK_ANALYSIS_PROMPT,
+                    pdf_bytes=protocol_pdf,
+                    cache_prompt=False,
+                    max_tokens=2000,  # plenty for the small JSON shape
+                ),
+                timeout=_ANALYSIS_TIMEOUT_S,
+            )
     except asyncio.TimeoutError:
         print("[trainer] quick analysis timed out — proceeding without examples", flush=True)
         return {}

@@ -270,6 +270,18 @@ def economy_active():
     return _ECONOMY.get() is not None and economy_allowed()
 
 
+class normal_speed:
+    """Run the calls inside this block at normal speed even in an economy run (a step whose result other steps
+    wait for with a deadline, e.g. the trainer quick analysis). Usage: `with normal_speed(): ...`"""
+    def __enter__(self):
+        self._tok = _ECONOMY.set(None)
+        return self
+
+    def __exit__(self, *exc):
+        _ECONOMY.reset(self._tok)
+        return False
+
+
 _BATCH_UNSUPPORTED = ("stream", "speed")      # Message Batches API: parameters a batched request may not carry
 
 
