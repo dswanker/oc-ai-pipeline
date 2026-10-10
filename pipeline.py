@@ -5216,6 +5216,21 @@ async def _standards_report_step(item_id, struct_json):
                + (": " + ", ".join(f"{n} {k}" for k, n in sorted(by_src.items())) if by_src else "") + ".")
         approved = [d for d in drift if d["reason"] == "changed by approved proposals"]
         other = [d for d in drift if d["reason"] != "changed by approved proposals"]
+        _st = _sm.state(struct_json) or {}
+        _auto = _st.get("auto_applied") or []
+        if _auto:
+            _by_form = {}
+            for a in _auto:
+                _by_form[a.get("target_form")] = _by_form.get(a.get("target_form"), 0) + 1
+            msg += (f" {len(_auto)} engine check(s) built on standard forms that carry no logic of their own "
+                    f"(Draft in the DVS, reason in Notes): "
+                    + ", ".join(f"{k} {n}" for k, n in sorted(_by_form.items(), key=lambda x: str(x[0]))) + ".")
+        if _st.get("build_rules"):
+            msg += (f" {len(_st['build_rules'])} form-authoring rule(s) on standard forms are not data checks "
+                    f"and are not listed in the DVS.")
+        approved = [d for d in approved
+                    if any(not a.get("auto") for f in _sm.matched_forms(struct_json) if f.get("form_id") == d["form_id"]
+                           for a in (f.get("customer_standard") or {}).get("approved") or [])]
         if approved:
             msg += f" Changed by approved proposals: {', '.join(str(d['form_id']) for d in approved)}."
         if other:

@@ -1190,7 +1190,7 @@ def _dvs_row(check_id, qt_id, uat_ids, form_id, field_name, field_label, check, 
         "Build Owner":             "",
         "Priority":                "",
         "UAT Case ID(s)":          ", ".join(uat_ids),
-        "Notes":                   meta.get("item_standard", ""),
+        "Notes":                   " ".join(x for x in (meta.get("applied_reason", ""), meta.get("item_standard", "")) if x),
     }
 
 
@@ -1505,6 +1505,15 @@ def extract_dvs_data(struct_json, forms_json):
     # Logic proposed on customer standard forms (rules engine + AI-suggested): never in the build until Approved.
     _std_props = (((struct_json or {}).get("study_meta") or {}).get("standards_match") or {}).get("proposals") or [] \
         if isinstance(struct_json, dict) else []
+    # A rule about how the form file is authored (settings sheet, naming, layout) is a build rule, not a data
+    # check: never a DVS row (also filters the proposals of a Study Specification saved before this rule).
+    _has_logic_note = "The rules engine does not change a customer standard form. "
+    try:
+        from conventions_engine import customer_standard as _cstd
+        _std_props = [p for p in _std_props if p.get("kind") != "engine" or _cstd.is_data_check(p)]
+        _has_logic_note = _cstd.HAS_LOGIC_NOTE.replace("Set Action = Approve to add to the build.", "")
+    except Exception:
+        pass
 
     _dm_open = [d for d in ((struct_json or {}).get("study_meta") or {}).get("edit_check_decisions") or []
                 if isinstance(struct_json, dict) and d.get("action") == "add" and d.get("status") == "needs_build_team"]
@@ -1570,8 +1579,8 @@ def extract_dvs_data(struct_json, forms_json):
                 "OC4 Logic Pattern": "Local constraint (XPath)" if p.get("check_type") == "Constraint" else "",
                 "Expression / Calculation": p.get("logic") or "",
                 "Constraint / Required / Relevant Message": p.get("message") or "",
-                "Notes": ("AI-suggested logic for a customer standard form. " if _ai else
-                          "The rules engine does not change a customer standard form. ")
+                "Notes": (p.get("note") or ("AI-suggested logic for a customer standard form. " if _ai else
+                                             _has_logic_note))
                          + "Set Action = Approve to add to the build.",
                 "Machine Data": _machine})
         return out

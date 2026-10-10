@@ -71,7 +71,10 @@ def test_validation_accepts_real_references_and_rejects_the_rest():
         assert asl.validate_response(out, bad, PROTOCOL)["proposals"] == []
 
 
-def test_suggestions_are_proposed_in_the_dvs_and_applied_only_on_approve():
+def test_suggestions_are_proposed_in_the_dvs_and_applied_only_on_approve(monkeypatch):
+    # AI suggestions are never applied without Approve. The engine's own checks on a logic-free standard are a
+    # separate rule (tests/test_standard_logic_free.py); it is switched off here to look at the suggestions alone.
+    monkeypatch.setenv("STANDARD_LOGIC_FREE_APPLY", "0")
     out = _odm_matched()
     pristine = copy.deepcopy(_form(out, "AE")["survey"])
     asl.store(out, asl.validate_response(out, RESPONSE, PROTOCOL))

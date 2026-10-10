@@ -197,6 +197,17 @@ def check_meta(struct_form, struct_row, clause, check_type, all_forms):
             out["source"] = approved
         elif out["source"] == "Study Build" and row.get("provenance") != "Added from protocol":
             out["source"] = "Customer Standard"
+    out["applied_reason"] = ""
+    if (struct_form or {}).get("customer_standard"):
+        try:  # a check built on a logic-free customer standard says so (conventions_engine.customer_standard)
+            from conventions_engine import customer_standard as _cs
+            kind = {"Conditional Display": "relevant", "Required": "required"}.get(check_type)
+            out["applied_reason"] = _cs.applied_reason(
+                struct_form, name, check_type,
+                check_id=out["rule_id"] or None,
+                convention_id=(set_by.get(kind) if kind else None))
+        except Exception:
+            pass
     if out["source"].startswith("CDISC CORE (") and not out["rule_id"]:
         out["rule_id"] = out["source"][len("CDISC CORE ("):-1]
     return out

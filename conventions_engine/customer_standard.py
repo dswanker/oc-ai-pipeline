@@ -1,8 +1,15 @@
 """Customer standard forms (form["customer_standard"], set by standards_match.py) are used exactly as the customer
-provided them. The engine never changes their content. Every effect that would have changed a field, a choice list
-or a setting there is run against a copy, and the difference is recorded as a PROPOSAL in
-study_meta.standards_match.proposals: listed in the DVS (DVS_OC4, Status "Proposed") and applied only when a data
-manager sets Action = Approve (standards_match.apply_proposal).
+provided them. Every effect that would have changed a field, a choice list or a setting there is run against a
+copy, and the difference is recorded as a PROPOSAL in study_meta.standards_match.proposals: listed in the DVS
+(DVS_OC4, Status "Proposed") and applied only when a data manager sets Action = Approve
+(standards_match.apply_proposal).
+
+Two refinements (2026-10-10):
+  * A standard that carries NO logic of its own (an ODM gives structure only) gets the engine's data checks
+    built on it, each recorded with the reason. Proposals remain for standards that carry their own logic.
+    STANDARD_LOGIC_FREE_APPLY=0 restores proposals only.
+  * A rule about how the form file is authored (settings sheet, naming, layout) is a build rule, not a data check:
+    it is kept in study_meta.standards_match.build_rules and never listed in the DVS.
 
 Scheduling and other form-level attributes (visits_assigned and the like) are not form content and are still
 applied. An approved (convention, field) pair is applied by the engine like on any other form from then on.
@@ -21,6 +28,65 @@ BOOKKEEPING = {"edit_checks", "edit_check_exprs", "edit_check_msgs", "edit_check
                "edit_check_details", "constraint_engine_only", "completion_status", "library_source", "flag_reason",
                "concept", "concept_qualifier", "concept_source", "cdash", "qrs"}
 _FLAG = "review_flags.customer_standard_not_applied"
+
+
+# Survey columns that hold form logic. A change to one of them on a data item is a data check; a change to
+# anything else (settings, labels, appearance, names, layout) is a rule about how the form file is authored.
+LOGIC_KEYS = ("constraint", "relevant", "required", "calculation")
+LOGIC_FREE_REASON = ("Applied: the customer standard form carries no logic of its own ({source}), so engine "
+                     "checks are built on it.")
+HAS_LOGIC_NOTE = ("Proposed: the customer standard form carries its own logic, so the rules engine does not "
+                  "change it. Set Action = Approve to add to the build.")
+
+
+def _is_logic_key(key: Any) -> bool:
+    # exactly the columns the form builder writes as logic; a directive nothing builds (e.g. a precision hint
+    # no builder reads) changes no check in the form and is not one
+    return str(key or "") in LOGIC_KEYS
+
+
+def is_data_check(prop: Any) -> bool:
+    """True when a proposal changes the logic of a data item (constraint, show-when, required, calculation).
+
+    Decided by what the proposal targets, from its operations: a rule that only touches the form file's own
+    metadata (the settings sheet) or how an item is named, labelled or laid out is a build rule. Build rules are
+    not data checks and are never listed in the DVS."""
+    if not isinstance(prop, dict):
+        return False
+    ops = prop.get("ops")
+    if not isinstance(ops, list) or not ops:      # no operations recorded (a trimmed copy): judge by the target
+        return bool(prop.get("target_field")) and prop.get("check_type") not in (None, "", "Other")
+    for op in ops:
+        if not isinstance(op, dict):
+            continue
+        if op.get("op") == "row" and any(_is_logic_key(k) for k in (op.get("set") or {})):
+            return True
+        if op.get("op") == "insert" and any(str((op.get("row") or {}).get(k) or "").strip() for k in LOGIC_KEYS):
+            return True
+    return False
+
+
+def apply_when_logic_free() -> bool:
+    """STANDARD_LOGIC_FREE_APPLY=0: engine checks on customer standard forms are proposals only, as before."""
+    import os
+    return os.environ.get("STANDARD_LOGIC_FREE_APPLY", "1").strip() != "0"
+
+
+def logic_free(form: Any) -> bool:
+    """A customer standard form that came with no logic of its own: an ODM gives structure only, and an XLSForm
+    standard may simply have no constraint, show-when or calculation. Logic the pipeline added later (fields
+    added from the protocol, approved or applied proposals) does not count."""
+    if not is_standard(form):
+        return False
+    cs = form.get("customer_standard") or {}
+    if cs.get("has_logic"):
+        return False
+    if not cs.get("verbatim", False):
+        return True                                # structure-only source (ODM)
+    added = set(cs.get("added_fields") or [])
+    return not any(str(r.get("calculation") or "").strip() for r in form.get("survey") or []
+                   if isinstance(r, dict) and r.get("library_source") == "CUSTOM"
+                   and r.get("name") not in added and not r.get("standard_proposal"))
 
 
 def protected_form(ctx: EntityContext) -> Optional[Dict[str, Any]]:
@@ -159,12 +225,66 @@ def end_pass(spec: Dict[str, Any], collected: List[Dict[str, Any]]) -> None:
     if not isinstance(st, dict):
         return
     rejected = set(st.get("rejected_ids") or [])
-    seen, mine = set(), []
+    seen, mine, build_rules = set(), [], []
     for p in collected:
-        if p["id"] not in seen and p["id"] not in rejected:
-            seen.add(p["id"])
-            mine.append(p)
+        if p["id"] in seen or p["id"] in rejected:
+            continue
+        seen.add(p["id"])
+        if not is_data_check(p):
+            # how the form file is authored (settings sheet, naming, layout): a build rule, never a DVS row
+            build_rules.append({k: p.get(k) for k in ("id", "convention_id", "title", "target_form",
+                                                      "target_field", "logic")})
+            continue
+        mine.append(p)
+    st["build_rules"] = build_rules
     st["proposals"] = [p for p in st.get("proposals") or [] if p.get("kind") != "engine"] + mine
+    if apply_when_logic_free():
+        _apply_on_logic_free(spec, st, mine)
+
+
+def _apply_on_logic_free(spec: Dict[str, Any], st: Dict[str, Any], proposed: List[Dict[str, Any]]) -> None:
+    """Build this pass's engine checks on the customer standard forms that carry no logic of their own, through
+    the same deterministic step a data manager's Approve uses. Each applied check is recorded with the reason
+    (study_meta.standards_match.auto_applied, and on the form's customer_standard.approved); a check that cannot
+    be applied stays a proposal."""
+    import standards_match
+    forms = {standards_match.norm_id(f.get("form_id")): f for f in spec.get("forms") or [] if isinstance(f, dict)}
+    done = {a.get("id") for a in st.get("auto_applied") or []}
+    for p in proposed:
+        form = forms.get(standards_match.norm_id(p.get("target_form")))
+        if form is None or not logic_free(form):
+            continue
+        status, _note = standards_match.apply_proposal(spec, p)
+        if status not in ("applied", "already"):
+            continue
+        cs = form.get("customer_standard") or {}
+        reason = LOGIC_FREE_REASON.format(source=cs.get("source") or "structure-only source")
+        for a in cs.get("approved") or []:
+            if a.get("id") == p.get("id"):
+                a["auto"], a["check_id"], a["check_type"] = reason, p.get("check_id"), p.get("check_type")
+        if p.get("id") not in done:
+            done.add(p.get("id"))
+            st.setdefault("auto_applied", []).append({
+                "id": p.get("id"), "convention_id": p.get("convention_id"), "check_id": p.get("check_id"),
+                "source": p.get("source"), "target_form": p.get("target_form"),
+                "target_field": p.get("target_field"), "check_type": p.get("check_type"),
+                "logic": p.get("logic"), "reason": reason})
+
+
+def applied_reason(form: Any, field: Any, check_type: str = "", check_id: Any = None,
+                   convention_id: Any = None) -> str:
+    """Why a check on a customer standard form is in the build without a data manager's approval ("" if it is
+    not one of the checks applied on a logic-free standard)."""
+    for a in ((form or {}).get("customer_standard") or {}).get("approved") or []:
+        if not a.get("auto") or a.get("field") != field:
+            continue
+        if check_id and check_id in (a.get("check_id"), a.get("id")):
+            return a["auto"]
+        if convention_id and a.get("convention_id") == convention_id:
+            return a["auto"]
+        if not check_id and not convention_id and (not check_type or a.get("check_type") == check_type):
+            return a["auto"]
+    return ""
 
 
 def dry_run(conv: Dict[str, Any], ctx: EntityContext, spec: Dict[str, Any], canonical_lists: Dict[str, Any],
