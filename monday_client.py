@@ -67,6 +67,7 @@ COL = {
     # before build. STANDARD is a no-op for every existing customer;
     # only studies that explicitly select OMOP CDM are affected.
     "edc_design_standard": "dropdown_mm75cbtp",
+    "pipeline_mode":     "color_mm805s38",   # Pipeline Mode: Full build (blank) / Logic + UAT / UAT only
     # Design change intake columns (added 2026-06-02)
     "spec_xlsx_working":  "file_mm2gjqgx",     # Protocol Specification (xlsx) — read/write by design-change-intake
     "change_transcripts": "file_mm3tntz9",     # Change Request Transcripts — source text files
