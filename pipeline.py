@@ -985,6 +985,78 @@ def run_dvs_xlsx(struct_json, forms_json):
         _add_dvs_lookup_sheet(xlsx_path, struct_json)
         return open(xlsx_path, "rb").read()
 
+def _forms_json_from_edc_zip(edc_bytes):
+    """{"forms": {"<FORM>.xlsx": {"survey": [...], "choices": [...]}}} read from an EDC Build ZIP: the forms as
+    they were built, in the shape run_dvs_xlsx takes. Rows keep the XLSForm column names; empty cells are left out."""
+    import openpyxl as _opxl
+    forms_json = {"forms": {}}
+
+    def _rows(wb, sheet):
+        if sheet not in wb.sheetnames:
+            return []
+        rows = list(wb[sheet].iter_rows(values_only=True))
+        if not rows:
+            return []
+        headers = [str(h or "").strip() for h in rows[0]]
+        out = []
+        for r in rows[1:]:
+            d = {headers[i]: r[i] for i in range(len(headers)) if i < len(r) and r[i] is not None}
+            if d:
+                out.append(d)
+        return out
+
+    with zipfile.ZipFile(io.BytesIO(edc_bytes)) as z:
+        for name in z.namelist():
+            if name.endswith(".xlsx") and "/forms/" in name:
+                wb = _opxl.load_workbook(io.BytesIO(z.read(name)), read_only=True, data_only=True)
+                forms_json["forms"][os.path.basename(name)] = {"survey": _rows(wb, "survey"),
+                                                               "choices": _rows(wb, "choices")}
+    return forms_json
+
+
+def _uat_only_requested(cols: dict) -> bool:
+    """A "Send to AI" on an item that already has its study, with Load DVS UAT Data checked and Publish to Test
+    unchecked, reruns the UAT load only: no build, no form upload, no publish."""
+    uuid = (cols.get(COL["study_uuid"], {}).get("text") or "").strip()
+    load_uat = (cols.get(COL["load_dvs_uat_data"], {}).get("text") or "").strip() == "v"
+    # COL["publish_to_test"] is a button widget and never reads as "v": the checkbox is boolean_mm3g2vzf.
+    publish = (cols.get("boolean_mm3g2vzf", {}).get("text") or "").strip() == "v"
+    return bool(uuid) and load_uat and not publish
+
+
+def _uat_only_regen_dvs_enabled() -> bool:
+    """UAT_ONLY_REGEN_DVS=0: a UAT-only rerun uses the DVS already on the item, as before."""
+    return os.environ.get("UAT_ONLY_REGEN_DVS", "1").strip() != "0"
+
+
+async def regenerate_dvs_for_item(item_id):
+    """Rebuild the DVS workbook from the Study Specification JSON and the EDC Build ZIP already on the item and
+    upload it to the DVS column. Returns (uploaded file name or None, note for the log).
+
+    The UAT cases live in the DVS. A UAT-only rerun used the DVS of the last build, so it never picked up a
+    change to the case generator, and its date cases ("today", "future date") were as of the day of that build:
+    a day later yesterday's future date is today and its constraint no longer fires. The forms in OpenClinica
+    are not touched: the DVS is derived from the build that was published."""
+    spec_bytes = await download_column_file(item_id, COL["spec_json"])
+    if not spec_bytes:
+        return None, "no Study Specification JSON on the item"
+    edc_bytes = await download_column_file(item_id, COL["edc_build"])
+    if not edc_bytes:
+        return None, "no EDC Build ZIP on the item"
+    struct_json = json.loads(spec_bytes)
+    forms_json = _forms_json_from_edc_zip(edc_bytes)
+    if not forms_json["forms"]:
+        return None, "the EDC Build ZIP holds no forms"
+    dvs_bytes = run_dvs_xlsx(struct_json, forms_json)
+    if not dvs_bytes:
+        return None, "DVS generation returned nothing"
+    proto = ((struct_json.get("study_meta") or {}).get("protocol_number") or "Study")
+    proto = proto.replace("/", "-").replace(" ", "_")
+    fname = f"{proto}_DVS_V{_dt.datetime.utcnow().strftime('%m%d.%H%M')}.xlsx"
+    await upload_file(item_id, COL["dvs_output"], fname, dvs_bytes)
+    return fname, f"{len(forms_json['forms'])} forms, {len(dvs_bytes):,} bytes"
+
+
 def _extract_scheduling_block(struct_json):
     """Second-pass targeted extraction of the scheduling block.
 
@@ -6296,18 +6368,28 @@ async def run_pipeline(item_id):
 
         _existing_uuid_early = (cols.get(COL["study_uuid"], {})
                                 .get("text") or "").strip()
-        _load_uat_early = (cols.get(COL["load_dvs_uat_data"], {})
-                           .get("text") or "").strip() == "v"
-        # COL["publish_to_test"] is a button widget (button_mm3gwq70) and never
-        # reads as "v". Check the actual checkbox (boolean_mm3g2vzf) instead.
-        _publish_early  = (cols.get("boolean_mm3g2vzf", {})
-                           .get("text") or "").strip() == "v"
-        if _existing_uuid_early and _load_uat_early and not _publish_early:
+        if _uat_only_requested(cols):
             print(f"[uat-only] Study UUID={_existing_uuid_early!r} already "
                   f"exists and Publish is not checked — running UAT loader "
                   f"directly, skipping all build stages.", flush=True)
             await set_status(item_id, COL["pipeline_status"],
                              UAT_STATUS["loading"])
+            await append_log(item_id, "[UAT-only] Rerunning the UAT load, browser tests, read-back and "
+                                      "reports for the existing study. No forms are built, uploaded or "
+                                      "published.")
+            # The UAT cases are regenerated from the build already on the item, so they carry today's dates
+            # and the current case generator. A failure here is logged and the existing DVS is used.
+            if _uat_only_regen_dvs_enabled():
+                try:
+                    _dvs_name, _dvs_note = await regenerate_dvs_for_item(item_id)
+                    await append_log(item_id, f"[UAT-only] DVS regenerated from the published build: "
+                                              f"{_dvs_name} ({_dvs_note})" if _dvs_name else
+                                              f"[UAT-only] DVS not regenerated ({_dvs_note}); using the DVS "
+                                              f"already on the item")
+                except Exception as _rge:
+                    print(f"[uat-only] DVS regeneration failed: {_rge}\n{traceback.format_exc()}", flush=True)
+                    await append_log(item_id, f"[UAT-only] DVS regeneration failed ({str(_rge)[:160]}); "
+                                              f"using the DVS already on the item")
             # Try to rebuild fo_titles from cached spec JSON so SE_COMMON
             # accordion entries and display-title Edit buttons work correctly.
             _uat_fo_titles = None

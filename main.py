@@ -1128,37 +1128,8 @@ async def regen_dvs_route(request: Request, background_tasks: BackgroundTasks):
                 await append_log(iid, "Regen DVS: ERROR — EDC zip not found in monday")
                 await set_status(iid, COL["pipeline_status"], "Failed")
                 return
-            import openpyxl as _opxl
-            forms_json = {"forms": {}}
-            with _zf.ZipFile(_io.BytesIO(edc_bytes)) as z:
-                for name in z.namelist():
-                    if name.endswith(".xlsx") and "/forms/" in name:
-                        fname = _os.path.basename(name)
-                        wb = _opxl.load_workbook(_io.BytesIO(z.read(name)),
-                                                 read_only=True, data_only=True)
-                        survey_rows = []
-                        if "survey" in wb.sheetnames:
-                            ws = wb["survey"]
-                            rows = list(ws.iter_rows(values_only=True))
-                            if rows:
-                                headers = [str(h or "").strip() for h in rows[0]]
-                                for r in rows[1:]:
-                                    row_dict = {headers[i]: r[i] for i in range(len(headers))
-                                                if i < len(r) and r[i] is not None}
-                                    if row_dict:
-                                        survey_rows.append(row_dict)
-                        choice_rows = []
-                        if "choices" in wb.sheetnames:
-                            ws_c = wb["choices"]
-                            c_rows = list(ws_c.iter_rows(values_only=True))
-                            if c_rows:
-                                c_hdrs = [str(h or "").strip() for h in c_rows[0]]
-                                for r in c_rows[1:]:
-                                    rd = {c_hdrs[i]: r[i] for i in range(len(c_hdrs))
-                                          if i < len(r) and r[i] is not None}
-                                    if rd:
-                                        choice_rows.append(rd)
-                        forms_json["forms"][fname] = {"survey": survey_rows, "choices": choice_rows}
+            from pipeline import _forms_json_from_edc_zip
+            forms_json = _forms_json_from_edc_zip(edc_bytes)
             await append_log(iid, f"Regen DVS: EDC zip loaded, {len(forms_json['forms'])} forms")
 
             # 3. Regenerate DVS
