@@ -20,6 +20,17 @@ How a case is run (each point was a fault of the previous step, kept as playwrig
   * A gate value is set in the form by its choice code (radio, checkbox, select or text), the form re-evaluates
     relevance, then the field is read. Every value the test changed is put back.
 
+  * Cases start only when the form is ready for a user: the questions are in the page while the form is still
+    loading and hidden behind its loader. The browser's language is set explicitly (PW_LOCALE, default en-US):
+    with a C/POSIX system locale the form engine rejects the language Chromium reports and never finishes.
+    PW_FORM_LOAD_S (default 60) is how long a form may take.
+  * "Hidden by a rule" means the form engine marked the question, or a group around it, non-relevant. A question
+    that is off the screen for another reason is brought onto it (its page opened, its section expanded); when
+    that fails the case is Blocked with what hides it. A rule of comparisons joined by "or" is satisfied through
+    the first alternative a user could set.
+  * An empty field emptied again is no change and the form validates nothing: for a blank test on an empty
+    field a value is entered and removed, as a user would.
+
 Result values: Pass, Fail, Blocked (could not be run: reason in Actual Result), Skip.
 PW_UAT_ENGINE=legacy runs the previous implementation.
 """
@@ -126,6 +137,31 @@ def _simple_gate(relevant_expr: str) -> Optional[tuple]:
     return (m.group(1), m.group(2)) if m else None
 
 
+def _gate_options(relevant_expr: str) -> list:
+    """[(field, value)] that each show the field on their own: the one comparison of a simple rule, or every
+    alternative of comparisons joined by "or". [] for anything else (and, !=, functions)."""
+    parts = re.split(r"\s+or\s+", str(relevant_expr or "").strip())
+    gates = [_simple_gate(p) for p in parts]
+    return [g for g in gates if g] if parts and all(gates) else []
+
+
+def _blank_probe(state: dict) -> Optional[str]:
+    """A value to enter and remove again in a field that is already empty: the form only validates a field
+    whose value changed, as it does for a user who types something and deletes it. None when no safe value
+    exists for the field's type."""
+    options = [o for o in (state.get("options") or []) if o != ""]
+    if state.get("type") in ("radio", "checkbox", "select"):
+        return options[0] if options else None
+    xml = str(state.get("xml_type") or "").lower()
+    if xml in ("int", "integer", "decimal"):
+        return "1"
+    if xml == "date":
+        return "2020-01-01"
+    if xml in ("string", "text", ""):
+        return "x"
+    return None
+
+
 def _judge_required(state: dict) -> tuple:
     """(result, actual) for a blank test, from the field's state after it was emptied and validated."""
     if state.get("required"):
@@ -190,6 +226,32 @@ function __find(fn) {
 function __question(e) {
   return e.closest('.question') || e.closest('.calculation') || e.closest('.note') || e.parentElement;
 }
+function __desc(el) {
+  var c = (el.getAttribute('class') || '').trim().split(/\\s+/).filter(function (x) { return x; }).slice(0, 4).join('.');
+  return el.tagName.toLowerCase() + (c ? '.' + c : '');
+}
+// Why a question that no rule hides is not laid out: the outermost thing that takes it off the screen.
+//   loading   — the form is still initialising (Enketo keeps .main hidden while .main-loader exists)
+//   page      — it is on a page of a paged form that is not the current one
+//   collapsed — a group around it is collapsed (its header toggles it)
+//   other     — anything else; el names the element whose display is none
+function __hider(q) {
+  if (document.querySelector('.main-loader')) return {kind: 'loading', el: '.main-loader'};
+  var page = q.closest('[role="page"]');
+  if (page && !page.classList.contains('current') && q.closest('form.pages, .or.pages'))
+    return {kind: 'page', el: __desc(page)};
+  var none = null;
+  for (var a = q; a && a.nodeType === 1; a = a.parentElement) {
+    if (getComputedStyle(a).display === 'none') none = a;
+  }
+  if (!none) return {kind: 'other', el: document.hidden ? 'document not visible' : 'no element with display none'};
+  for (var g = none.parentElement; g && g.nodeType === 1; g = g.parentElement) {
+    if (g.matches('.or-group, .or-group-data, .or-repeat') && g.querySelector(':scope > h4')
+        && g.getClientRects().length > 0)
+      return {kind: 'collapsed', el: __desc(g)};
+  }
+  return {kind: 'other', el: __desc(none)};
+}
 function __value(els) {
   var t = (els[0].getAttribute('type') || '').toLowerCase();
   if (t === 'radio' || t === 'checkbox') {
@@ -206,8 +268,17 @@ _JS_STATE = "(fn) => {" + _JS_FIND + """
   var els = __find(fn);
   if (!els.length) return null;
   var e0 = els[0], q = __question(e0), cls = q.classList;
-  var visible = q.getClientRects().length > 0 && getComputedStyle(q).visibility !== 'hidden'
-                && !q.closest('.or-branch.disabled') && !cls.contains('disabled');
+  var type = (e0.getAttribute('type') || e0.tagName).toLowerCase();
+  // Hidden by a rule = Enketo marked the question, or a group around it, non-relevant. Nothing else is a rule.
+  var branch = q.closest('.or-branch.disabled') || (cls.contains('disabled') ? q : null);
+  var laidOut = q.getClientRects().length > 0 && getComputedStyle(q).visibility !== 'hidden';
+  var visible = laidOut && !branch;
+  var hiddenBy = branch ? 'rule' : '', hiddenEl = '';
+  if (!laidOut && !branch) {
+    var h = __hider(q);
+    hiddenBy = h.kind; hiddenEl = h.el;
+    if (type === 'hidden' || cls.contains('calculation') || q.closest('.calculation')) hiddenBy = 'calculated';
+  }
   var msg = '';
   var want = cls.contains('invalid-constraint') ? '.or-constraint-msg' :
              cls.contains('invalid-required') ? '.or-required-msg' :
@@ -218,15 +289,20 @@ _JS_STATE = "(fn) => {" + _JS_FIND + """
     var pick = shown.filter(function (m) { return m.classList.contains('active'); })[0] || shown[0] || cands[0];
     msg = pick ? pick.textContent.replace(/\\s+/g, ' ').trim() : '';
   }
-  var type = (e0.getAttribute('type') || e0.tagName).toLowerCase();
+  var relOf = function (el) {
+    return el ? (el.getAttribute('data-relevant') ||
+                 ((el.querySelector('[data-relevant]') || {getAttribute: function () { return ''; }})
+                  .getAttribute('data-relevant') || '')) : '';
+  };
   return {
     count: els.length, type: type, value: __value(els), visible: visible,
+    rule_hidden: !!branch, hidden_by: hiddenBy, hidden_el: hiddenEl,
+    xml_type: e0.getAttribute('data-type-xml') || '',
     required: cls.contains('invalid-required'), constraint: cls.contains('invalid-constraint'),
     irrelevant_flag: cls.contains('invalid-relevant'), message: msg,
     readonly: !!(e0.readOnly || e0.getAttribute('data-calculate') || type === 'hidden'),
-    relevant: e0.getAttribute('data-relevant') || (q.closest('.or-branch') ?
-              ((q.closest('.or-branch').querySelector('[data-relevant]') || {getAttribute: function () { return ''; }})
-               .getAttribute('data-relevant') || '') : ''),
+    relevant: (branch && branch !== q ? relOf(branch) : '') || e0.getAttribute('data-relevant') ||
+              relOf(q.closest('.or-branch')),
     options: (type === 'radio' || type === 'checkbox') ? els.map(function (e) { return e.value; }) :
              (e0.tagName === 'SELECT' ? Array.prototype.slice.call(e0.options).map(function (o) { return o.value; }) : null)
   };
@@ -260,6 +336,46 @@ _JS_SET = "([fn, val]) => {" + _JS_FIND + """
   }
   e0.value = val; fire(e0, ['input', 'change']);
   return 'ok';
+}"""
+
+# Brings a question that no rule hides onto the screen: turns to its page, expands the collapsed group around it.
+# Returns what it did ('page', 'collapsed', 'none').
+_JS_REVEAL = "(fn) => {" + _JS_FIND + """
+  var els = __find(fn);
+  if (!els.length) return 'notfound';
+  var q = __question(els[0]), h = __hider(q);
+  if (h.kind === 'page') {
+    var pages = Array.prototype.slice.call(document.querySelectorAll('[role="page"]'));
+    var target = q.closest('[role="page"]');
+    var cur = pages.filter(function (p) { return p.classList.contains('current'); })[0];
+    var steps = pages.indexOf(target) - pages.indexOf(cur);
+    var btn = document.querySelector(steps > 0 ? '.next-page' : '.previous-page');
+    for (var i = 0; btn && cur && i < Math.abs(steps); i++) btn.click();
+    if (!target.classList.contains('current')) {
+      // the form's own Next refuses to leave a page with an error on it: show the page directly
+      pages.forEach(function (p) { p.classList.remove('current'); });
+      target.classList.add('current');
+    }
+    return 'page';
+  }
+  if (h.kind === 'collapsed') {
+    for (var g = q.parentElement; g && g.nodeType === 1; g = g.parentElement) {
+      var head = g.matches('.or-group, .or-group-data, .or-repeat') ? g.querySelector(':scope > h4') : null;
+      if (head && q.getClientRects().length === 0) head.click();
+    }
+    return 'collapsed';
+  }
+  return 'none';
+}"""
+
+# The form is ready for a user: questions rendered, Enketo's loader gone, the form itself laid out.
+_JS_FORM_READY = """() => {
+  var f = document.querySelector('form.or');
+  var said = Array.prototype.slice.call(document.querySelectorAll('.vex-content, .alert-box'))
+    .map(function (e) { return e.textContent.replace(/\\s+/g, ' ').trim(); }).filter(function (t) { return t.length > 3; });
+  return {questions: document.querySelectorAll('.question').length,
+          loading: !!document.querySelector('.main-loader'),
+          shown: !!f && f.getClientRects().length > 0, said: said.join(' | ').slice(0, 160)};
 }"""
 
 _JS_MARK_FORM_CARD = """([evName, titles, mark]) => {
@@ -346,20 +462,45 @@ async def _open_participant(page, url: str):
     raise _Blocked(f"participant page did not open ({last})")
 
 
-async def _wait_form_frame(page, timeout_s: float = 30.0):
-    """The Enketo form frame once it has rendered its questions, else None."""
-    waited = 0.0
+def _locale() -> str:
+    """The language the browser reports. It is set explicitly: a container whose system locale is C/POSIX
+    makes Chromium report "en-US@posix", the form engine rejects it ("Incorrect locale information provided"),
+    never finishes loading and keeps the whole form hidden."""
+    return os.environ.get("PW_LOCALE", "").strip() or "en-US"
+
+
+def _form_load_seconds() -> float:
+    try:
+        return max(5.0, float(os.environ.get("PW_FORM_LOAD_S", "60")))
+    except ValueError:
+        return 60.0
+
+
+async def _wait_form_frame(page, timeout_s: float = None):
+    """The Enketo form frame once a user could work in it: questions rendered, the loader gone, the form on
+    screen. The questions are in the page before that, while Enketo still loads the participant's values and
+    keeps the form hidden; a case run then reads every field as hidden. Returns None when no form frame
+    rendered questions; raises _Blocked when one did but never finished loading."""
+    timeout_s = _form_load_seconds() if timeout_s is None else timeout_s
+    waited, seen = 0.0, None
     while waited < timeout_s:
         for f in page.frames:
             if _is_form_frame(f) and not f.is_detached():
                 try:
-                    if await f.evaluate("() => document.querySelectorAll('.question').length") > 0:
+                    ready = await f.evaluate(_JS_FORM_READY)
+                except Exception:
+                    continue
+                if ready["questions"] > 0:
+                    seen = ready
+                    if ready["shown"] and not ready["loading"]:
                         await page.wait_for_timeout(1500)   # calculations and cross-form values settle
                         return f
-                except Exception:
-                    pass
         await page.wait_for_timeout(500)
         waited += 0.5
+    if seen is not None:
+        raise _Blocked(f"the form rendered its questions but was still "
+                       f"{'loading' if seen['loading'] else 'not on screen'} after {int(timeout_s)}s"
+                       + (f" (the form says: {seen['said']})" if seen.get("said") else ""))
     return None
 
 
@@ -401,7 +542,7 @@ async def _open_form(page, app, ev: str, fo: str, ev_name: str, form_titles: lis
         await app.click(f'[data-pwuat="{mark}"]')
     frame = await _wait_form_frame(page)
     if frame is None:
-        raise _Blocked(f"form {fo} did not open in the browser within 30s")
+        raise _Blocked(f"form {fo} did not open in the browser within {int(_form_load_seconds())}s")
     return frame
 
 
@@ -449,6 +590,40 @@ class _Restore:
         self.items = []
 
 
+def _not_on_screen(name: str, st: dict) -> str:
+    """Why a field that no display rule hides cannot be tested on screen."""
+    why = st.get("hidden_by") or "other"
+    if why == "calculated":
+        return f"field {name} is a calculated item: it is never on screen and a user cannot enter it"
+    if why == "loading":
+        return f"field {name} could not be read: the form was still loading"
+    if why == "page":
+        return f"field {name} is on another page of the form and that page could not be opened ({st.get('hidden_el')})"
+    if why == "collapsed":
+        return f"field {name} is in a collapsed section that could not be expanded ({st.get('hidden_el')})"
+    return (f"field {name} is not on screen although no display rule hides it "
+            f"(taken off the screen by {st.get('hidden_el') or 'an unknown element'})")
+
+
+async def _reveal(frame, name: str, st: dict) -> dict:
+    """A field no rule hides, brought onto the screen (page turned, section expanded, load awaited). Raises
+    _Blocked with the specific reason when it still is not there."""
+    for _ in range(3):
+        if st["visible"] or st.get("hidden_by") == "calculated":
+            break
+        if st.get("hidden_by") == "loading":
+            st = await _wait_state(frame, name, lambda s: s.get("hidden_by") != "loading", 20000) or st
+            continue
+        if await frame.evaluate(_JS_REVEAL, name) == "none":
+            break
+        st = await _wait_state(frame, name, lambda s: s["visible"], 1500) or st
+    if st["rule_hidden"]:
+        return st
+    if not st["visible"]:
+        raise _Blocked(_not_on_screen(name, st))
+    return st
+
+
 async def _bring_into_view(frame, name: str, restore: _Restore, depth: int = 0) -> dict:
     """The field's state, after setting the one-comparison gates that hide it (up to three levels). Raises
     _Blocked when the field is not in the form or cannot be brought into view."""
@@ -457,18 +632,30 @@ async def _bring_into_view(frame, name: str, restore: _Restore, depth: int = 0) 
         raise _Blocked(f"field {name} not found in the published form")
     if st["visible"] and not st["irrelevant_flag"]:
         return st
-    gate = _simple_gate(st.get("relevant"))
-    if not gate or depth >= 3 or gate[0] == name:
-        raise _Blocked(f"field {name} is hidden by its display rule ({(st.get('relevant') or 'unknown').strip()[:90]}) "
-                       f"and the rule is not a single field = value the test can set")
-    await _bring_into_view(frame, gate[0], restore, depth + 1)
-    res = await restore.change(gate[0], gate[1])
-    if res != "ok":
-        raise _Blocked(f"field {name} is hidden and its gate {gate[0]} could not be set to {gate[1]!r} ({res})")
-    st = await _wait_state(frame, name, lambda s: s["visible"])
-    if not st or not st["visible"]:
-        raise _Blocked(f"field {name} stayed hidden after setting {gate[0]}={gate[1]}")
-    return st
+    if not st["rule_hidden"] and not st["irrelevant_flag"]:
+        return await _reveal(frame, name, st)
+    rule = (st.get("relevant") or "").strip()
+    gates = [g for g in _gate_options(rule) if g[0] != name]
+    if not gates or depth >= 3:
+        raise _Blocked(f"field {name} is hidden by its display rule ({rule[:90] or 'not readable'}) "
+                       f"and the rule is not field = value comparisons the test can set")
+    why = ""
+    for gate in gates:                      # the first alternative of the rule that a user could set
+        try:
+            await _bring_into_view(frame, gate[0], restore, depth + 1)
+        except _Blocked as b:
+            why = str(b)
+            continue
+        res = await restore.change(gate[0], gate[1])
+        if res != "ok":
+            why = f"its gate {gate[0]} could not be set to {gate[1]!r} ({res})"
+            continue
+        st = await _wait_state(frame, name, lambda s: not s["rule_hidden"])
+        if not st or st["rule_hidden"]:
+            why = f"it stayed hidden after setting {gate[0]}={gate[1]}"
+            continue
+        return st if st["visible"] else await _reveal(frame, name, st)
+    raise _Blocked(f"field {name} is hidden by its display rule ({rule[:90]}) and could not be shown: {why}")
 
 
 async def _run_leave_blank(frame, name: str) -> tuple:
@@ -480,8 +667,13 @@ async def _run_leave_blank(frame, name: str) -> tuple:
         res = await restore.change(name, "")          # empties a loaded value; on an empty field it just validates
         if res != "ok":
             raise _Blocked(f"field {name} could not be emptied ({res})")
-        after = await _wait_state(frame, name, lambda s: s["required"], 3000)
-        return _judge_required(after or {})
+        after = await _wait_state(frame, name, lambda s: s["required"], 3000) or {}
+        probe = _blank_probe(st) if not after.get("required") and st["value"] == "" else None
+        if probe is not None and await restore.change(name, probe) == "ok":
+            await asyncio.sleep(0.6)        # an empty field emptied again is no change: enter a value, remove it
+            await _set(frame, name, "")
+            after = await _wait_state(frame, name, lambda s: s["required"], 3000) or {}
+        return _judge_required(after)
     finally:
         await restore.undo()
 
@@ -538,10 +730,12 @@ async def _run_visibility(frame, name: str, load_value: str, expect_visible: boo
             if res != "ok":
                 raise _Blocked(f"gate {gate} could not be set to {value!r} ({res})")
         gates_text = ", ".join(f"{g}={v if v != '' else '(blank)'}" for g, v in gates)
-        want = (lambda s: s["visible"] and not s["irrelevant_flag"]) if expect_visible else \
-               (lambda s: not s["visible"] or s["irrelevant_flag"])
-        after = await _wait_state(frame, name, want, 3000)
-        return _judge_visibility(expect_visible, after or {}, gates_text)
+        want = (lambda s: not s["rule_hidden"] and not s["irrelevant_flag"]) if expect_visible else \
+               (lambda s: s["rule_hidden"] or s["irrelevant_flag"])
+        after = await _wait_state(frame, name, want, 3000) or {}
+        if after and not after["visible"] and not after["rule_hidden"] and not after["irrelevant_flag"]:
+            after = await _reveal(frame, name, after)      # no rule hides it: it must be findable on screen
+        return _judge_visibility(expect_visible, after, gates_text)
     finally:
         await restore.undo()
 
@@ -716,7 +910,7 @@ async def run_playwright_uat(
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
-        context = await browser.new_context(storage_state=session_path, user_agent=_UA,
+        context = await browser.new_context(storage_state=session_path, user_agent=_UA, locale=_locale(),
                                             viewport={"width": 1500, "height": 1000})
         if _context_hook is not None:     # tests serve fixture pages instead of the network
             await _context_hook(context)

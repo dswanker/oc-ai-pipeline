@@ -461,3 +461,226 @@ def test_without_a_saved_login_nothing_is_run_and_the_reason_is_kept(tmp_path):
     out = asyncio.run(pw.run_playwright_uat(wb, _HOST, "SS_1", "nobody@example.com", {},
                                             session_path=str(tmp_path / "missing.json")))
     assert out == wb and pw.last_status == {"ran": False, "reason": "no saved browser login for nobody@example.com"}
+
+
+# ── Part 3: what takes a question off the screen (run of 2026-10-10: 415 cases "hidden by its display rule") ──
+# The form engine puts the questions in the page first and keeps the whole form hidden behind its loader until
+# it has finished loading. In a container whose system locale is C/POSIX the browser reported a language the
+# engine rejects, so it never finished: every question was in the page, none was on screen, and each was
+# reported as hidden by a rule. The fixture below follows that structure (loader before .main, pages, a group
+# with a header, a group and a question made non-relevant) with a small model of the engine: a change event is
+# acted on only when the value really changed.
+
+_FORM2_URL = "https://form.eu.openclinica.io/edit/fs/c/i/fixture2"
+_FORM2_HTML = """<html><head><title>OpenClinica</title><style>
+.main-loader ~ .main{display:none}
+.or-required-msg{display:none} .invalid-required .or-required-msg{display:block}
+.or-branch.disabled,.calculation{display:none}
+.or.pages [role=page]{display:none} .or.pages [role=page].current{display:block}
+.shut > :not(h4){display:none} .offscreen{display:none}
+</style></head><body class="iframe"><div class="main-loader"></div><div class="main"><article class="paper">
+<form class="or theme-grid __PAGES__">
+<section class="or-group" role="page" name="/data/P1">
+  <label class="question non-select"><span class="question-label active">First</span>
+    <input type="text" name="/data/P1/FIRST" data-required="true()" data-type-xml="string">
+    <span class="or-required-msg active">This field is required</span></label>
+  <fieldset class="question simple-select"><fieldset><legend>Done?</legend>
+    <label><input type="radio" name="/data/P1/DONE" value="N" data-type-xml="string"><span>No</span></label>
+    <label><input type="radio" name="/data/P1/DONE" value="Y" data-type-xml="string"><span>Yes</span></label></fieldset></fieldset>
+  <label class="calculation non-select"><input type="hidden" name="/data/P1/CALC" data-calculate="1 + 1" value="2"></label>
+</section>
+<section class="or-group" role="page" name="/data/P2">
+  <label class="question non-select"><span class="question-label active">Second</span>
+    <input type="number" name="/data/P2/SECOND" data-required="true()" data-type-xml="int">
+    <span class="or-required-msg active">This field is required</span></label>
+  <section class="or-group shut" name="/data/P2/BOX"><h4>More</h4>
+    <label class="question non-select"><span class="question-label active">Inside</span>
+      <input type="text" name="/data/P2/BOX/INSIDE" data-required="true()" data-type-xml="string">
+      <span class="or-required-msg active">This field is required</span></label></section>
+  <section class="or-group or-branch disabled" name="/data/P2/GATED" data-relevant=" /data/P1/DONE ='Y'">
+    <label class="question non-select"><span class="question-label active">In a gated group</span>
+      <input type="text" name="/data/P2/GATED/DEEP" data-required="true()" data-type-xml="string">
+      <span class="or-required-msg active">This field is required</span></label></section>
+  <label class="question non-select or-branch disabled"><span class="question-label active">Either</span>
+    <input type="text" name="/data/P2/EITHER" data-required="true()" data-type-xml="string"
+           data-relevant=" /data/P1/CALC ='9' or  /data/P1/DONE ='N'">
+    <span class="or-required-msg active">This field is required</span></label>
+  <label class="question non-select or-branch disabled"><span class="question-label active">Both</span>
+    <input type="text" name="/data/P2/BOTH" data-relevant=" /data/P1/DONE ='Y' and  /data/P1/FIRST ='a'"></label>
+  <div class="offscreen"><label class="question non-select"><span class="question-label active">Odd</span>
+    <input type="text" name="/data/P2/ODD" data-required="true()" data-type-xml="string"></label></div>
+</section>
+<button type="button" class="previous-page">Back</button><button type="button" class="next-page">Next</button>
+</form></article></div><script>
+var MODEL = {};
+function named(n) { return Array.prototype.slice.call(document.querySelectorAll('input')).filter(function (e) {
+  return e.name.split('/').pop() === n; }); }
+function shown(n) { var e = named(n); if (!e.length) return '';
+  if (e[0].type === 'radio') { var c = e.filter(function (x) { return x.checked; }); return c.length ? c[0].value : ''; }
+  return e[0].value; }
+function holds(expr) { return expr.split(/\\s+or\\s+/).some(function (alt) {
+  return alt.split(/\\s+and\\s+/).every(function (c) { var m = c.match(/(\\w+)\\s*=\\s*'([^']*)'/);
+    return shown(m[1]) === m[2]; }); }); }
+function relevance() { document.querySelectorAll('[data-relevant]').forEach(function (e) {
+  var b = e.matches('section') ? e : e.closest('.question'); b.classList.toggle('disabled', !holds(e.getAttribute('data-relevant'))); }); }
+document.addEventListener('change', function (ev) { var e = ev.target, n = e.name.split('/').pop(), v = shown(n);
+  if ((MODEL[n] || '') === v) return;                 // nothing changed: the engine does nothing
+  MODEL[n] = v;
+  e.closest('.question').classList.toggle('invalid-required', e.hasAttribute('data-required') && v === '');
+  relevance(); });
+var pages = Array.prototype.slice.call(document.querySelectorAll('[role=page]'));
+function turn(by) { var i = pages.findIndex(function (p) { return p.classList.contains('current'); });
+  if (by > 0 && pages[i].querySelector('.invalid-required')) return;      // Next refuses a page with an error
+  if (pages[i + by]) { pages[i].classList.remove('current'); pages[i + by].classList.add('current'); } }
+if (document.querySelector('form.pages')) pages[0].classList.add('current');
+document.querySelector('.next-page').addEventListener('click', function () { turn(1); });
+document.querySelector('.previous-page').addEventListener('click', function () { turn(-1); });
+document.querySelector('h4').addEventListener('click', function () { this.parentElement.classList.toggle('shut'); });
+relevance();
+var WANT = '__LANGUAGE__';
+setTimeout(function () {
+  if (WANT && navigator.language !== WANT) { var a = document.createElement('div'); a.className = 'vex-content';
+    a.textContent = 'Incorrect locale information provided'; document.body.appendChild(a); return; }
+  document.querySelector('.main-loader').remove(); document.title = 'P-1: Fixture'; }, __LOAD_MS__);
+</script></body></html>"""
+
+
+def _form2(pages=True, load_ms=0, language=""):
+    return (_FORM2_HTML.replace("__PAGES__", "pages" if pages else "").replace("__LOAD_MS__", str(load_ms))
+            .replace("__LANGUAGE__", language))
+
+
+def _on_form2(html, work, **context):
+    """Serve the fixture at a form URL, wait for it the way the step does, then run work(frame)."""
+    from playwright.async_api import async_playwright
+
+    async def go():
+        async with async_playwright() as p:
+            b = await p.chromium.launch(headless=True)
+            ctx = await b.new_context(**context)
+            page = await ctx.new_page()
+
+            async def serve(route):
+                await route.fulfill(content_type="text/html", body=html)
+            await page.route("**/*", serve)
+            await page.goto(_FORM2_URL)
+            try:
+                frame = await pw._wait_form_frame(page)
+                return await work(frame) if work else frame is not None
+            finally:
+                await b.close()
+    return asyncio.run(go())
+
+
+def _blank(item):
+    return {"Item_Name": item, "Load_Value": "(leave blank)", "Expected Result": _REQ}
+
+
+async def _cases(frame, *rows):
+    return [await pw._run_case(frame, r, pw._classify_pw_row(r)) for r in rows]
+
+
+def test_a_rule_with_alternatives_gives_each_gate_and_anything_else_gives_none():
+    assert pw._gate_options(" /data/G/A ='Y' or  /data/B ='Baseline'") == [("A", "Y"), ("B", "Baseline")]
+    assert pw._gate_options(" /data/A ='Y'") == [("A", "Y")]
+    assert pw._gate_options(" /data/A ='Y' and  /data/B ='1'") == []
+    assert pw._gate_options(" /data/A  != 'Baseline'") == [] and pw._gate_options("") == []
+
+
+def test_the_value_entered_and_removed_in_an_empty_field_follows_its_type():
+    assert pw._blank_probe({"type": "radio", "options": ["N", "Y"]}) == "N"
+    assert pw._blank_probe({"type": "select", "options": ["", "A"]}) == "A"
+    assert pw._blank_probe({"type": "text", "xml_type": "int"}) == "1"
+    assert pw._blank_probe({"type": "text", "xml_type": "date"}) == "2020-01-01"
+    assert pw._blank_probe({"type": "text", "xml_type": "string"}) == "x"
+    assert pw._blank_probe({"type": "radio", "options": []}) is None
+    assert pw._blank_probe({"type": "text", "xml_type": "geopoint"}) is None
+
+
+def test_the_reason_a_field_is_not_on_screen_names_what_hides_it():
+    assert "calculated item" in pw._not_on_screen("X", {"hidden_by": "calculated"})
+    assert "still loading" in pw._not_on_screen("X", {"hidden_by": "loading"})
+    assert "another page" in pw._not_on_screen("X", {"hidden_by": "page", "hidden_el": "section.or-group"})
+    assert "collapsed section" in pw._not_on_screen("X", {"hidden_by": "collapsed", "hidden_el": "section.or-group"})
+    text = pw._not_on_screen("X", {"hidden_by": "other", "hidden_el": "div.offscreen"})
+    assert "no display rule hides it" in text and "div.offscreen" in text
+
+
+def test_the_browser_language_is_set_explicitly(monkeypatch):
+    monkeypatch.delenv("PW_LOCALE", raising=False)
+    assert pw._locale() == "en-US"
+    monkeypatch.setenv("PW_LOCALE", "de-CH")
+    assert pw._locale() == "de-CH"
+
+
+@browser
+def test_cases_wait_for_the_form_to_finish_loading(monkeypatch):
+    """The questions are in the page 2.5 s before the form is on screen. Nothing is read before that."""
+    async def work(frame):
+        early = await frame.evaluate("() => document.title")
+        return early, await _cases(frame, _blank("FIRST"))
+    title, results = _on_form2(_form2(pages=False, load_ms=2500), work)
+    assert title == "P-1: Fixture"
+    assert results == [("Pass", "Required message shown: This field is required")]
+
+
+@browser
+def test_a_form_that_never_finishes_loading_blocks_with_what_the_form_says(monkeypatch):
+    monkeypatch.setenv("PW_FORM_LOAD_S", "5")
+    with pytest.raises(pw._Blocked) as e:
+        _on_form2(_form2(pages=False, language="xx-XX"), None, locale="en-US")
+    assert "was still loading after 5s" in str(e.value)
+    assert "the form says: Incorrect locale information provided" in str(e.value)
+
+
+@browser
+def test_the_form_loads_with_the_language_the_step_sets(monkeypatch):
+    """The fixture finishes loading only for the language given: the step's own setting reaches the page."""
+    monkeypatch.setenv("PW_LOCALE", "de-CH")
+    monkeypatch.setenv("PW_FORM_LOAD_S", "5")
+    assert _on_form2(_form2(pages=False, language="de-CH"), None, locale=pw._locale()) is True
+
+
+@browser
+def test_a_question_on_another_page_or_in_a_collapsed_section_is_opened_not_blocked():
+    async def work(frame):
+        first = await pw._state(frame, "SECOND")
+        results = await _cases(frame, _blank("SECOND"), _blank("INSIDE"))
+        return first, results
+    first, results = _on_form2(_form2(), work)
+    assert (first["visible"], first["rule_hidden"], first["hidden_by"]) == (False, False, "page")
+    assert results == [("Pass", "Required message shown: This field is required")] * 2      # empty fields: entered, removed
+
+
+@browser
+def test_the_page_is_opened_even_when_next_refuses_to_leave_a_page_with_an_error():
+    async def work(frame):
+        await pw._set(frame, "FIRST", "a")
+        await pw._set(frame, "FIRST", "")                    # page one now shows a required error
+        return await _cases(frame, _blank("SECOND"))
+    assert _on_form2(_form2(), work) == [("Pass", "Required message shown: This field is required")]
+
+
+@browser
+def test_hidden_by_a_rule_means_non_relevant_itself_or_through_its_group():
+    async def work(frame):
+        deep, either = await pw._state(frame, "DEEP"), await pw._state(frame, "EITHER")
+        results = await _cases(
+            frame, _blank("DEEP"),                           # its group's rule: DONE=Y is set, then it is tested
+            _blank("EITHER"),                                # first alternative is calculated: the second is set
+            {"Item_Name": "DEEP", "Load_Value": "DONE=N", "Expected Result": "Field 'x' is HIDDEN."},
+            {"Item_Name": "DEEP", "Load_Value": "DONE=Y", "Expected Result": "Field 'x' is VISIBLE."},
+            {"Item_Name": "SECOND", "Load_Value": "DONE=N", "Expected Result": "Field 'x' is HIDDEN."},
+            _blank("BOTH"), _blank("CALC"), _blank("ODD"))
+        return deep, either, results, await pw._state(frame, "DONE")
+    deep, either, results, done = _on_form2(_form2(), work)
+    assert deep["rule_hidden"] and deep["relevant"].strip() == "/data/P1/DONE ='Y'"
+    assert either["rule_hidden"] and either["hidden_by"] == "rule"
+    assert results[0][0] == "Pass" and results[1][0] == "Pass", results[:2]
+    assert results[2] == ("Pass", "Field hidden with DONE=N")
+    assert results[3] == ("Pass", "Field shown with DONE=Y")
+    assert results[4] == ("Fail", "Field shown with DONE=N — expected hidden")      # on another page is not hidden
+    assert results[5][0] == "Blocked" and "not field = value comparisons the test can set" in results[5][1]
+    assert results[6][0] == "Blocked" and "calculated item" in results[6][1]
+    assert results[7][0] == "Blocked" and "no display rule hides it" in results[7][1] and "div.offscreen" in results[7][1]
+    assert done["value"] == ""                               # every gate value was put back
