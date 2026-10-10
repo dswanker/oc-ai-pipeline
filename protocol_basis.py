@@ -179,7 +179,10 @@ def source_kind(form):
         return KIND_STANDARD
     lm = form.get("library_match") or {}
     st = f"{lm.get('source_type') or ''} {lm.get('status') or ''}".upper()
-    if "CUSTOMER" in st or "LIBRARY" in st:
+    # Whole status values only: "NO_LIBRARY" / "CDASH_DEFAULT_NO_LIBRARY_MATCH" mean NOT from a library, and a
+    # substring test counted them as customer standard forms, so the basis check could never remove them.
+    tokens = {t for t in re.split(r"[^A-Z_]+", st) if t}
+    if any(t.startswith("CUSTOMER") for t in tokens) or tokens & {"LIBRARY", "LIBRARY_MATCH"}:
         return KIND_STANDARD
     return KIND_CDASH if ("CDASH" in st or src == pf.SRC_CDASH) else KIND_ANALYSIS
 

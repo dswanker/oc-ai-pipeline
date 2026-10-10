@@ -335,3 +335,16 @@ def test_the_eligibility_form_keeps_its_rule_and_the_subject_check_has_a_kill_sw
     pb.apply(spec, _resp(VS=_req(Q_VS), WID=_req(Q_WID), EXAM=_req(Q_NOTE, fields=("EXDAT",)), GZ=_req(Q_RISK, fields=("GZDAT",))),
              SUBJECT + PROTOCOL, fresh=True)
     assert "GZ" in [f["form_id"] for f in spec["forms"]]
+
+
+def test_a_no_library_status_is_not_a_customer_standard():
+    """A form the analysis marked NO_LIBRARY (or CDASH_DEFAULT_NO_LIBRARY_MATCH) is not from a library: it must be
+    judged, not protected as a customer standard form."""
+    for status in ("NO_LIBRARY", "CDASH_DEFAULT_NO_LIBRARY_MATCH"):
+        f = _invented()
+        f["library_match"] = {"status": status}
+        assert pb.source_kind(f) != pb.KIND_STANDARD, status
+    for status in ("CUSTOMER_STANDARD", "LIBRARY_MATCH"):
+        f = _invented()
+        f["library_match"] = {"status": status}
+        assert pb.source_kind(f) == pb.KIND_STANDARD, status
