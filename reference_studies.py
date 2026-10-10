@@ -408,3 +408,50 @@ async def fetch(subdomain, text, username=None, password=None, client=None, own_
     except Exception as e:
         result["log"].append(f"Reference OC Studies: fetch failed ({_safe(e)}); none used")
     return result
+
+
+async def fetch_study_forms(subdomain, study_ref, token, client=None):
+    """The forms of ONE existing study, by its UUID (or identifier / OID), with a bearer token the caller already
+    holds. For the pipeline modes that test or extend a customer's existing study ("UAT only", "Logic + UAT"):
+    here the study IS the item's own, so the own-study exclusion of fetch() does not apply.
+
+    READ-ONLY: the same GETs as fetch() (studies list, design board, form artifacts, rules); no token login.
+    Never raises. Returns {"forms": [(file, bytes)], "study": {"uuid", "identifier", "name"} or None,
+    "config": {...} or None, "log": [...], "note": ""}."""
+    out = {"forms": [], "study": None, "config": None, "log": [], "note": ""}
+    try:
+        sub, ref = str(subdomain or "").strip(), str(study_ref or "").strip()
+        if not sub or not re.match(r"^[A-Za-z0-9-]+$", sub) or not ref or not token:
+            out["note"] = "subdomain, study and token are all needed"
+            return out
+        import httpx
+        own = client is None
+        client = client or httpx.AsyncClient()
+        try:
+            headers = {"Authorization": "Bearer " + str(token)}
+            try:
+                studies = await _all_studies(client, sub, headers)
+            except Exception as e:
+                out["note"] = f"the studies of {sub} could not be read ({_safe(e)})"
+                out["log"].append(f"Existing study: {out['note']}")
+                return out
+            study = next((s for s in studies if str(s.get("uuid") or "").lower() == ref.lower()), None)
+            why = None
+            if study is None:
+                study, why = resolve_study(ref, studies)
+            if study is None:
+                out["note"] = f"study {why or 'not found'} on {sub}"
+                out["log"].append(f"Existing study: '{ref}' {why or 'not found'} on {sub}")
+                return out
+            got = await _fetch_study(client, sub, headers, ref, study, asyncio.Semaphore(CONCURRENCY))
+            out["forms"], out["config"], out["note"] = got.get("forms") or [], got.get("config"), got.get("note") or ""
+            out["study"] = {"uuid": study.get("uuid"), "identifier": study.get("uniqueIdentifier"),
+                            "name": study.get("name")}
+            out["log"] += [line.replace("Reference OC Studies:", "Existing study:") for line in got.get("log") or []]
+        finally:
+            if own:
+                await client.aclose()
+    except Exception as e:
+        out["note"] = f"fetch failed ({_safe(e)})"
+        out["log"].append(f"Existing study: fetch failed ({_safe(e)})")
+    return out

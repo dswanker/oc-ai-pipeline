@@ -5287,6 +5287,72 @@ async def _study_config_step(item_id, struct_json, protocol_bytes=None, referenc
         print(f"[study-config] skipped: {type(e).__name__}: {e}", flush=True)
 
 
+def _pipeline_mode_deps():
+    """What pipeline_modes.run_mode needs from monday and OpenClinica (all OpenClinica calls here are reads)."""
+    import types
+    import httpx
+    import uat_loader as _ul
+
+    async def get_token(sub, email):
+        return await _get_oc_token(sub, oc_email=email)
+
+    async def test_environment(sub, uuid, email):
+        env_uuid, env_oid = await _ul._get_test_env_uuid(sub, uuid, oc_email=email)
+        status = ""
+        async with httpx.AsyncClient(timeout=30) as c:
+            r = await c.get(f"{_ul._study_service_base(sub)}/api/studies/{uuid}/study-environments",
+                            headers={"Authorization": f"Bearer {await get_token(sub, email)}"})
+        for env in (r.json() if r.status_code == 200 else []):
+            if env.get("uuid") == env_uuid:
+                status = env.get("status") or ""
+        return {"uuid": env_uuid, "oid": env_oid, "status": status}
+
+    async def list_sites(sub, env_uuid, email):
+        async with httpx.AsyncClient(timeout=30) as c:
+            r = await c.get(f"{_ul._study_service_base(sub)}/api/study-environments/{env_uuid}/sites",
+                            headers={"Authorization": f"Bearer {await get_token(sub, email)}"})
+        r.raise_for_status()
+        return r.json() if isinstance(r.json(), list) else []
+
+    async def session_valid(sub, email):
+        from auth_manager import AuthManager as _AM
+        from oc_form_publisher import probe_sso_session as _probe
+        am = _AM()
+        return bool(email) and am.session_exists(email) and await _probe(sub, str(am.get_session_path(email)))
+
+    async def pause_for_auth(item_id):
+        await set_status(item_id, COL["pipeline_status"], STATUS["paused_for_auth"])
+        await append_log(item_id, "Authentication required: set Send to AI again to get the authentication link, "
+                                  "authenticate, then run once more.")
+
+    async def fetch_study_forms(sub, uuid, token):
+        import reference_studies as _rs
+        return await _rs.fetch_study_forms(sub, uuid, token)
+
+    async def has_protocol(item_id):
+        try:
+            return bool(await list_column_filenames(item_id, COL["protocol"]))
+        except Exception:
+            return False
+
+    _status = {"failed": STATUS["failed"], "build_complete": STATUS["build_complete"],
+               "all_complete": STATUS["all_complete"], "uat_loading": UAT_STATUS["loading"],
+               "uat_failed": UAT_STATUS["failed"]}
+
+    async def set_status_key(item_id, key):
+        await set_status(item_id, COL["pipeline_status"], _status[key])
+
+    async def run_loader(item_id, titles):
+        return await run_uat_loader(item_id, fo_titles=titles)
+
+    return types.SimpleNamespace(
+        col_ids=COL, append_log=append_log, set_status=set_status_key, set_text=set_text, upload_file=upload_file,
+        download_files=download_all_column_files, get_token=get_token, test_environment=test_environment,
+        list_sites=list_sites, session_valid=session_valid, pause_for_auth=pause_for_auth,
+        fetch_study_forms=fetch_study_forms, fetch_metadata=_ul._fetch_study_metadata, has_protocol=has_protocol,
+        run_uat_loader=run_loader)
+
+
 async def _logic_coverage_step(item_id, struct_json, mode="apply"):
     """Logic coverage audit and generation (skills/logic-coverage): after the build logic is assembled and before
     the DVS and UAT cases are generated. Which catalog checks apply to each form, which are covered, proposed or
@@ -6343,11 +6409,14 @@ async def run_pipeline(item_id):
                 return False
 
         _oc_email_early = (cols.get(COL["oc_email"], {}).get("text") or "").strip()
+        import pipeline_modes as _pm
+        _pipeline_mode = _pm.read_mode(cols, COL)   # Full build unless the Pipeline Mode column says otherwise
         _needs_session_early = (
             _bool_col_early(COL["create_study"])
             or _bool_col_early("boolean_mm3g2vzf")
             or _bool_col_early("boolean_mm3z1xy8")
             or _bool_col_early("boolean_mm3gxe49")
+            or _pipeline_mode == _pm.UAT_ONLY       # the browser tests need the saved login
         )
         if _needs_session_early and _oc_email_early:
             from auth_manager import AuthManager as _AM
@@ -6406,6 +6475,21 @@ async def run_pipeline(item_id):
                 print(f"[auth-early] Auth required for {_oc_email_early} — pausing.",
                       flush=True)
                 return
+
+        # ── Pipeline Mode: "Logic + UAT" / "UAT only" on a customer's existing study ──
+        # Nothing of the build pipeline runs: no protocol analysis, no standards matching, no build, no publish.
+        if _pipeline_mode != _pm.FULL:
+            print(f"[pipeline-mode] {_pm.MODE_LABELS[_pipeline_mode]} for item {item_id}", flush=True)
+            try:
+                _mres = await _pm.run_mode(item_id, cols, _pipeline_mode, _pipeline_mode_deps())
+                print(f"[pipeline-mode] finished: {_mres.get('status')} (applied {_mres.get('applied')}, "
+                      f"proposed {_mres.get('proposed')})", flush=True)
+            except Exception as _me:
+                print(f"[pipeline-mode] failed: {_me}\n{traceback.format_exc()}", flush=True)
+                await append_log(item_id, f"{_pm.MODE_LABELS[_pipeline_mode]} ERROR: {type(_me).__name__}: "
+                                          f"{str(_me)[:200]}")
+                await set_status(item_id, COL["pipeline_status"], STATUS["failed"])
+            return
 
         _existing_uuid_early = (cols.get(COL["study_uuid"], {})
                                 .get("text") or "").strip()
