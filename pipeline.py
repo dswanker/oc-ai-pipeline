@@ -5287,6 +5287,32 @@ async def _study_config_step(item_id, struct_json, protocol_bytes=None, referenc
         print(f"[study-config] skipped: {type(e).__name__}: {e}", flush=True)
 
 
+async def _logic_coverage_step(item_id, struct_json, mode="apply"):
+    """Logic coverage audit and generation (skills/logic-coverage): after the build logic is assembled and before
+    the DVS and UAT cases are generated. Which catalog checks apply to each form, which are covered, proposed or
+    missing; missing ones are built (forms that carry no logic of their own, and forms the pipeline built) or
+    proposed (forms that carry their own logic, and checks that need review). Deterministic, no AI call.
+    LOGIC_COVERAGE=0 skips it. Never fails a build."""
+    try:
+        _add_scripts("logic-coverage")
+        import logic_coverage as _lc
+        if not _lc.enabled() or not isinstance(struct_json, dict):
+            return
+        _lc.run(struct_json, mode)
+        lines = _lc.summary_lines(struct_json)
+        for line in lines:
+            print(f"[logic-coverage] {line}", flush=True)
+        if lines:
+            await append_log(item_id, "\n".join(lines) + "\n  Per form and category: DVS, LOGIC_COVERAGE sheet.")
+    except Exception as e:
+        print(f"[logic-coverage] step failed, build continues without it: {type(e).__name__}: {e}", flush=True)
+        try:
+            await append_log(item_id, f"Logic coverage audit failed ({type(e).__name__}); the build continues "
+                                      f"without it.")
+        except Exception:
+            pass
+
+
 async def _propose_ai_edit_checks(item_id, struct_json):
     """AI-proposed edit checks (ai_edit_checks.py): one call, validated, stored in study_meta.ai_edit_checks as
     PROPOSALS. Nothing is applied: they appear in the DVS 'Edit Checks' sheet for a DM to Approve/Reject.
@@ -7885,6 +7911,10 @@ async def run_pipeline(item_id):
             # AI-proposed edit checks (proposals only; reviewed in the DVS Edit Checks sheet)
             if _want("dvs") or _want("study build zip"):
                 await _propose_ai_edit_checks(item_id, struct_json)
+
+            # Logic coverage: audit the assembled logic against the catalog and fill the gaps, before any chain
+            # reads the specification (the build, the DVS and the Study Specification all show the result).
+            await _logic_coverage_step(item_id, struct_json)
 
             await set_status(item_id, COL["pipeline_status"], STATUS["build_pricing_running"])
             await append_log(item_id, "Chains A (spec files), B (summary+quote), C (build+DVS), D (OC study) starting in parallel.")

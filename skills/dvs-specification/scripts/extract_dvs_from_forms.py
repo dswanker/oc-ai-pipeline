@@ -11,7 +11,7 @@ mid / at-max / above). Non-range checks emit 2+ cases with concrete sample
 data.
 """
 
-import json, os, re
+import json, os, re, sys
 from datetime import date, timedelta
 
 
@@ -1418,6 +1418,25 @@ def _assign_participants(uat_cases):
     return max_p
 
 
+def _logic_coverage_sheet(struct_json):
+    """{"headers", "rows", "helpers", "summary"} for the LOGIC_COVERAGE sheet, or None when the logic coverage
+    audit (skills/logic-coverage) has not run on this specification."""
+    lc = ((struct_json or {}).get("study_meta") or {}).get("logic_coverage") if isinstance(struct_json, dict) else None
+    if not isinstance(lc, dict) or not lc.get("rows"):
+        return None
+    try:
+        here = os.path.dirname(os.path.abspath(__file__))
+        path = os.path.join(here, "..", "..", "logic-coverage", "scripts")
+        if path not in sys.path:
+            sys.path.append(path)
+        import logic_coverage as _lcm
+        return {"headers": _lcm.SHEET_HEADERS, "rows": _lcm.sheet_rows(struct_json),
+                "helpers": _lcm.helper_rows(struct_json), "summary": _lcm.summary_lines(struct_json)}
+    except Exception as e:
+        print(f"[dvs] LOGIC_COVERAGE sheet skipped: {e}", flush=True)
+        return None
+
+
 # ── Main extraction function ──────────────────────────────────────────────────
 
 def _build_form_event_map(struct_json):
@@ -1507,6 +1526,9 @@ def extract_dvs_data(struct_json, forms_json):
         if isinstance(struct_json, dict) else []
     # A rule about how the form file is authored (settings sheet, naming, layout) is a build rule, not a data
     # check: never a DVS row (also filters the proposals of a Study Specification saved before this rule).
+    # the logic coverage audit's proposals (skills/logic-coverage) are listed the same way
+    _lc = ((struct_json or {}).get("study_meta") or {}).get("logic_coverage") if isinstance(struct_json, dict) else None
+    _std_props = list(_std_props) + list((_lc or {}).get("proposals") or [])
     _has_logic_note = "The rules engine does not change a customer standard form. "
     try:
         from conventions_engine import customer_standard as _cstd
@@ -1562,6 +1584,7 @@ def extract_dvs_data(struct_json, forms_json):
             if fid not in (pf, "F_" + pf) and pf != "F_" + fid:
                 continue
             _ai = p.get("kind") == "ai"
+            _cov = p.get("kind") == "coverage"
             _machine = json.dumps({**p, "proposed_by": p.get("kind"), "kind": "standard_proposal"})
             if len(_machine) > 30000:  # Excel cell limit: the proposal is then read back from the Study Spec by id
                 _machine = json.dumps({"kind": "standard_proposal", "id": p.get("id"), "target_form": pf})
@@ -1569,13 +1592,17 @@ def extract_dvs_data(struct_json, forms_json):
             out.append({
                 "Action": "", "Check Source": p.get("source") or "", "Check ID": p.get("id"),
                 "Rule / Proposal ID": p.get("check_id") or p.get("id"), "Status": "Proposed",
-                "Check Name": f"{fid}.{_item or '(form)'} — {p.get('check_type') or 'Check'} (proposed, customer standard form)",
+                "Check Name": f"{fid}.{_item or '(form)'} — {p.get('check_type') or 'Check'} "
+                              + ("(proposed, logic coverage)" if _cov else "(proposed, customer standard form)"),
                 "Plain-English Description": p.get("plain") or p.get("message") or p.get("title") or "",
                 "Business Purpose": p.get("rationale") or "", "Protocol Reference": p.get("protocol_reference") or "",
-                "Source Section": "Proposed on a customer standard form (not in build until Approved)",
+                "Source Section": ("Logic coverage audit (not in build until Approved)" if _cov else
+                                   "Proposed on a customer standard form (not in build until Approved)"),
                 "Check Type": p.get("check_type") or "Constraint", "Severity": "Soft",
                 "Trigger Point": "Real-time on form entry", "Target Form OID": fid, "Target Item Name": _item,
                 "Target Item OID": f"{fid}.{_item}" if _item else "",
+                "Source Item OID(s)": p.get("cross_form") or "",
+                "Source Form OID(s)": str(p.get("cross_form") or "").split(".")[0],
                 "OC4 Logic Pattern": "Local constraint (XPath)" if p.get("check_type") == "Constraint" else "",
                 "Expression / Calculation": p.get("logic") or "",
                 "Constraint / Required / Relevant Message": p.get("message") or "",
@@ -1835,6 +1862,7 @@ def extract_dvs_data(struct_json, forms_json):
 
     return {
         "study_meta":          struct_json.get("study_meta", {}) if isinstance(struct_json, dict) else {},
+        "logic_coverage":      _logic_coverage_sheet(struct_json),
         "protocol_extraction": protocol_extraction,
         "dvs_oc4":             dvs_oc4,
         "query_text_library":  query_text_library,

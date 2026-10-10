@@ -419,6 +419,33 @@ def _finish_dvs_oc4(wb, ws, rows, tmpl_dv, tmpl_cf):
             rm.cell(row=start + j, column=1, value=line)
 
 
+def _write_logic_coverage_sheet(wb, lc):
+    """LOGIC_COVERAGE: for every form and catalog category, how many checks apply and where each stands
+    (covered by existing logic / already proposed / added / newly proposed / missing), then the derived helper
+    items the audit handled. Written by skills/logic-coverage; absent when the audit did not run."""
+    if "LOGIC_COVERAGE" in wb.sheetnames:
+        del wb["LOGIC_COVERAGE"]
+    if not isinstance(lc, dict) or not lc.get("rows"):
+        return
+    ws = wb.create_sheet("LOGIC_COVERAGE")
+    headers = list(lc.get("headers") or [])
+    widths = {"Form": 18, "Level": 13, "Category": 46, "Status": 44, "Examples": 44}
+    _write_sheet(ws, headers, [dict(zip(headers, r)) for r in lc["rows"]],
+                 {h: widths.get(h, 14) for h in headers},
+                 title_text="Logic coverage — " + " ".join(lc.get("summary") or [])[:900])
+    helpers = lc.get("helpers") or []
+    if helpers:
+        r = ws.max_row + 2
+        ws.cell(row=r, column=1, value=f"Derived helper items ({len(helpers)}): a derived value is calculated or "
+                                       f"read-only, never typed in").font = Font(bold=True)
+        for i, h in enumerate(("Form", "Item", "Action", "Detail"), start=1):
+            _hdr(ws.cell(row=r + 1, column=i), h)
+        for k, row in enumerate(helpers, start=r + 2):
+            for i, v in enumerate(row, start=1):
+                ws.cell(row=k, column=i, value=v)
+    ws.freeze_panes = "A3"
+
+
 def build_dvs(dvs_data, output_path):
     """
     Build DVS xlsx from dvs_data dict.
@@ -550,12 +577,15 @@ def build_dvs(dvs_data, output_path):
             cell.value = None
     _write_cal_uat_sheet(ws_cuat, dvs_data.get("calendaring_uat", []), meta, today)
 
+    # ── LOGIC_COVERAGE (skills/logic-coverage): only when the audit ran ────
+    _write_logic_coverage_sheet(wb, dvs_data.get("logic_coverage"))
+
     # Ensure sheet order:
     # README, Lookups, Protocol_Extraction, DVS_OC4, Query_Text_Library,
     # UAT_Cases, UAT_Setup, Calendaring_Rules, Calendaring_UAT,
     # OC4_Syntax_Guide, Examples
     desired_order = [
-        "README", "Lookups", "Protocol_Extraction", "DVS_OC4",
+        "README", "Lookups", "Protocol_Extraction", "DVS_OC4", "LOGIC_COVERAGE",
         "Query_Text_Library", "UAT_Cases", "UAT_Setup",
         "Calendaring_Rules", "Calendaring_UAT",
         "OC4_Syntax_Guide", "Examples",

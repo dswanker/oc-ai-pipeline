@@ -1473,8 +1473,15 @@ def _add_field(form, cand, quote):
 
 # ── Proposals on standard forms (rules 7 and 8) ──────────────────────────────────
 
+def _coverage_state(spec):
+    lc = ((spec or {}).get("study_meta") or {}).get("logic_coverage") if isinstance(spec, dict) else None
+    return lc if isinstance(lc, dict) else {}
+
+
 def proposals(spec):
-    return state(spec).get("proposals") or []
+    """Every proposal a data manager can Approve or Reject in the DVS: the engine's and the AI's on customer
+    standard forms, and the logic coverage audit's (study_meta.logic_coverage.proposals)."""
+    return (state(spec).get("proposals") or []) + (_coverage_state(spec).get("proposals") or [])
 
 
 def set_proposals(spec, kind, items):
@@ -1606,17 +1613,26 @@ def apply_proposal(spec, prop):
         key = "relevant" if prop.get("check_type") == "Conditional Display" else "required"
         row.setdefault("edit_check_set_by", {})[key] = prop.get("convention_id") or prop.get("id")
         row.setdefault("edit_check_source", {})[key] = prop.get("source")
-    cs = form.setdefault("customer_standard", {})
-    if not any(a.get("id") == prop.get("id") for a in cs.get("approved") or []):
+    cs = form.get("customer_standard")       # a form the pipeline built has none, and must not get one here
+    if isinstance(cs, dict) and not any(a.get("id") == prop.get("id") for a in cs.get("approved") or []):
         cs.setdefault("approved", []).append({"id": prop.get("id"), "convention_id": prop.get("convention_id"),
                                               "field": prop.get("target_field"), "source": prop.get("source")})
     st = state(spec)
     if st:
         st["proposals"] = [p for p in st.get("proposals") or [] if p.get("id") != prop.get("id")]
+    lc = _coverage_state(spec)
+    if lc.get("proposals"):
+        lc["proposals"] = [p for p in lc["proposals"] if p.get("id") != prop.get("id")]
     return status, note
 
 
 def reject_proposal(spec, pid):
+    lc = _coverage_state(spec)
+    if any(p.get("id") == pid for p in lc.get("proposals") or []):
+        lc["proposals"] = [p for p in lc["proposals"] if p.get("id") != pid]
+        if pid not in lc.setdefault("rejected_ids", []):
+            lc["rejected_ids"].append(pid)
+        return True
     st = state(spec)
     if not st:
         return False

@@ -561,6 +561,26 @@ def build_form_conventions_block(data, styles):
             grid_table(headers, rows, styles, [CONTENT_W * w / total for w in weights]), Spacer(1, 8)]
 
 
+def build_logic_coverage_block(data, styles):
+    """Logic coverage (skills/logic-coverage): which catalog checks apply to the study and where each stands."""
+    try:
+        _path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "logic-coverage", "scripts"))
+        if _path not in sys.path:
+            sys.path.append(_path)
+        import logic_coverage
+        sec = logic_coverage.section(data)
+    except Exception as e:
+        print(f"[logic-coverage] PDF section skipped: {e}")
+        return []
+    if not sec:
+        return []
+    title, note, headers, rows, weights = sec
+    total = float(sum(weights)) or 1.0
+    return [header_band(f"{title} — {note}", styles), Spacer(1, 4),
+            grid_table(headers, [[str(c) for c in r] for r in rows], styles,
+                       [CONTENT_W * w / total for w in weights]), Spacer(1, 8)]
+
+
 def build_forms_not_built_block(data, styles):
     """Forms not built: forms of the analysis that no protocol text asks for (protocol_basis.py), with the reason."""
     try:
@@ -1284,6 +1304,12 @@ def build_edc_pdf(data: dict, output_path: str):
         if not conv_flowables:
             story.append(PageBreak())
         story.extend(not_built_flowables)
+
+    coverage_flowables = build_logic_coverage_block(data, styles)
+    if coverage_flowables:
+        if not conv_flowables and not not_built_flowables:
+            story.append(PageBreak())
+        story.extend(coverage_flowables)
 
     # ── APPENDIX — Build Conventions Applied (per references/conventions.md) ─
     appendix_flowables = build_conventions_page(meta, styles)

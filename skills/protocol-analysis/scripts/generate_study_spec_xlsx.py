@@ -1229,6 +1229,24 @@ def _forms_not_built_section(data):
         return None
 
 
+def _logic_coverage_section(data):
+    try:
+        _path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "logic-coverage", "scripts"))
+        if _path not in sys.path:
+            sys.path.append(_path)
+        import logic_coverage
+        return logic_coverage.section(data)
+    except Exception as e:
+        print(f"[logic-coverage] Study Spec section skipped: {e}")
+        return None
+
+
+def build_logic_coverage_sheet(wb, data):
+    """LOGIC_COVERAGE sheet: which checks of the logic coverage catalog apply to the study and where each stands
+    (skills/logic-coverage). Absent when the audit did not run."""
+    _section_sheet(wb, _logic_coverage_section(data), "LOGIC_COVERAGE", "2E6DA4")
+
+
 def build_forms_not_built_sheet(wb, data):
     """FORMS_NOT_BUILT sheet: forms of the analysis that no protocol text asks for (protocol_basis.py), with the
     reason. Absent when every form is built."""
@@ -1578,6 +1596,7 @@ def build_edc_xlsx(data: dict, output_path: str):
     build_study_config_sheet(wb, data)
     build_customer_conventions_sheet(wb, data)
     build_forms_not_built_sheet(wb, data)
+    build_logic_coverage_sheet(wb, data)
 
     # One set of tabs per form
     for form in data.get("forms", []):
