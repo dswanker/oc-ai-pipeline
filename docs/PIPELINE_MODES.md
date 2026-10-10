@@ -81,5 +81,6 @@ Proposed checks are approved or rejected in the DVS (Action column) as for any b
 | `UAT_ALLOW_SITE_CREATE=1` | the UAT load of these modes may create a test site when the Test environment has none |
 | `STANDARD_LOGIC_FREE_APPLY=0` | Logic + UAT proposes everything; nothing is built on logic-free forms |
 | `LOGIC_COVERAGE=0` | no audit in the full build (the modes always run it) |
+| `LOGIC_COVERAGE_HELPERS=0` | derived helper items are reported and none is changed |
 
 The UAT switches are in `docs/UAT_RERUN.md`.

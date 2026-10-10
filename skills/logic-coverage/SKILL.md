@@ -37,7 +37,7 @@ validated AI edit-check call and are counted here as proposed.
 | Any form, **report mode** | proposed; no form is changed |
 
 `STANDARD_LOGIC_FREE_APPLY=0` turns the second row into "proposed". `LOGIC_COVERAGE=0` turns the skill off in the
-pipeline.
+pipeline. `LOGIC_COVERAGE_HELPERS=0` reports the derived helper items and changes none of them.
 
 ## The catalog
 

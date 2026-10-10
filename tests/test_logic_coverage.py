@@ -360,6 +360,14 @@ def test_derived_helper_items_are_rebuilt_or_made_read_only_and_reported():
     assert {h["item"] for h in run(s)["helpers"]} == {"TPT", "X_CALC"}        # still reported on a later run
 
 
+def test_helper_switch_reports_them_and_changes_none(monkeypatch):
+    monkeypatch.setenv("LOGIC_COVERAGE_HELPERS", "0")
+    s = spec(form("VS", [row("text", "X_CALC", label="X_CALC"), row("date", "D1")], standard="odm"))
+    res = run(s)
+    assert "readonly" not in r_(s, "VS", "X_CALC") and res["helpers"][0]["action"].startswith("reported")
+    assert r_(s, "VS", "D1")["constraint"] == ". <= today()"          # the checks are still built
+
+
 def test_helper_items_are_only_reported_in_report_mode_and_never_on_forms_with_logic():
     odm = form("VS", [row("text", "X_CALC", label="X_CALC")], standard="odm")
     xls = form("PE", [row("text", "Y_CALC", label="Y_CALC")], standard="xls")

@@ -686,6 +686,8 @@ def _handle_helpers(spec, form, apply):
     out = []
     if not _structure_only(form):
         return out
+    if os.environ.get("LOGIC_COVERAGE_HELPERS", "1").strip() == "0":
+        apply = False                     # report them, change none
     survey = form.get("survey") or []
     referenced = {n for r in survey if isinstance(r, dict)
                   for k in ("calculation", "relevant", "constraint") for n in _REF.findall(str(r.get(k) or ""))}
