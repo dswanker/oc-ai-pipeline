@@ -706,7 +706,8 @@ async def run_playwright_uat(
         if only and fo.upper() not in only:
             continue
         if fo.upper() in skip_forms:
-            _write(row, col_idx, "Skipped — radio/select field not testable via Playwright", "Skip", now_str)
+            _write(row, col_idx, "Skipped — this form's browser cases are not run by default "
+                                 "(PW_TEST_F_IE=1 runs them)", "Skip", now_str)
             counts["Skip"] += 1
             continue
         by_form[(fo, ev, _case_participant(row_dict))].append((row, row_dict, test_type))
