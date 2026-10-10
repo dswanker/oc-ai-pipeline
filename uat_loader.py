@@ -58,6 +58,9 @@ UAT_DVS_RESULTS_COL  = "file_mm3h5s3h"   # Updated DVS with runtime columns stam
 UAT_REPORT_COL       = "file_mm3hvbpb"   # UAT Validation Report (future)
 UAT_MATRIX_COL       = "file_mm3h7r4"    # UAT Traceability Matrix (future)
 
+# Where the saved browser logins live (the Railway volume). BROWSER_SESSION_DIR points a local run elsewhere.
+SESSION_DIR = os.environ.get("BROWSER_SESSION_DIR", "/data/browser_sessions")
+
 ODM_NAMESPACE = (
     'xmlns="http://www.cdisc.org/ns/odm/v1.3" '
     'xmlns:OpenClinica="http://www.openclinica.org/ns/odm_ext_v130/v3.1"'
@@ -123,7 +126,7 @@ async def _get_oc_token(subdomain: str, oc_email: str = None) -> str:
 
     if oc_email:
         from pipeline import _extract_session_token, _decode_jwt_claims
-        session_path = f"/data/browser_sessions/{oc_email}.json"
+        session_path = os.path.join(SESSION_DIR, f"{oc_email}.json")
         token = _extract_session_token(session_path)
         if token:
             claims = _decode_jwt_claims(token)
@@ -719,6 +722,36 @@ def _parse_item_oid_map(metadata_xml: str) -> dict:
                     oid_map.setdefault((form_oid, name), {
                         "item_oid": item_oid, "item_group_oid": group_oid})
     return oid_map
+
+
+def _parse_study_names(metadata_xml: str) -> dict:
+    """{"events": {event OID: name}, "forms": {form OID: name}, "common_events": {OID, ...}} from the study
+    metadata. The participant page shows these names; the browser step uses them to open a form in the visit a
+    case names instead of the first visit that has a form of that name."""
+    import xml.etree.ElementTree as _ET
+    out = {"events": {}, "forms": {}, "common_events": set(), "study_name": ""}
+    if not (metadata_xml or "").strip():
+        return out
+    ns = "{http://www.cdisc.org/ns/odm/v1.3}"
+    try:
+        root = _ET.fromstring(metadata_xml.encode("utf-8"))
+    except Exception as e:
+        print(f"[uat_loader] study metadata parse error (names): {e}", flush=True)
+        return out
+    _name = root.find(f"{ns}Study/{ns}GlobalVariables/{ns}StudyName")
+    out["study_name"] = (_name.text or "").strip() if _name is not None else ""
+    for ev in root.iter(ns + "StudyEventDef"):
+        oid = (ev.get("OID") or "").strip()
+        if not oid:
+            continue
+        out["events"].setdefault(oid, (ev.get("Name") or "").strip())
+        if (ev.get("Type") or "").strip().lower() == "common":
+            out["common_events"].add(oid)
+    for form in root.iter(ns + "FormDef"):
+        oid = (form.get("OID") or "").strip()
+        if oid:
+            out["forms"].setdefault(oid, (form.get("Name") or "").strip())
+    return out
 
 
 def _item_name_for_row(row: dict) -> str:
@@ -1746,6 +1779,7 @@ async def run_uat_loader(item_id: str, fo_titles: dict = None) -> dict:
                 _s0 = _existing[0]
                 created_site_oid = (_s0.get("oid") or _s0.get("uniqueIdentifier")
                                     or _s0.get("siteOid") or _s0.get("id"))
+                result["site_oid"] = created_site_oid
                 await append_log(item_id,
                     f"UAT Loader: reusing existing site → {created_site_oid} keys={list(_s0.keys())[:6]}")
     except Exception as _se:
@@ -1826,9 +1860,11 @@ async def run_uat_loader(item_id: str, fo_titles: dict = None) -> dict:
 
     # ── Real item OIDs: correct the predicted OIDs before anything is loaded ──
     item_oid_map: dict = {}
+    study_names: dict = {"events": {}, "forms": {}, "common_events": set(), "study_name": ""}
     try:
-        item_oid_map = _parse_item_oid_map(
-            await _fetch_study_metadata(subdomain, study_oid, token))
+        _metadata_xml = await _fetch_study_metadata(subdomain, study_oid, token)
+        item_oid_map = _parse_item_oid_map(_metadata_xml)
+        study_names = _parse_study_names(_metadata_xml)
     except Exception as e:
         await append_log(item_id,
             f"UAT Loader: study metadata read failed (non-fatal): {e}")
@@ -2067,7 +2103,8 @@ async def run_uat_loader(item_id: str, fo_titles: dict = None) -> dict:
     # ── Step 9b: Browser (Playwright) tests for the cases a data import cannot test ──
     import os as _os2
     _oc_email = (cols.get(COL.get("oc_email", "emailothn6i3m"), {}).get("text") or "").strip()
-    _sess_file = f"/data/browser_sessions/{_oc_email}.json"
+    _sess_file = os.path.join(SESSION_DIR, f"{_oc_email}.json")
+    _browser_ran = False
     _first_oc_oid = next(iter(stamp_map.values()), {}).get("oc_oid", "") if stamp_map else ""
     if not _first_oc_oid:
         browser_status = "was not attempted (no participants were created)"
@@ -2097,9 +2134,21 @@ async def run_uat_loader(item_id: str, fo_titles: dict = None) -> dict:
                 jsessionid=_jsessionid,
                 study_uuid=_study_uuid,
                 study_env_uuid=_test_env_uuid,
-                fo_titles=fo_titles or {},
+                # names as the participant page shows them: the published study's own, then the build's
+                fo_titles={**(fo_titles or {}), **{k: v for k, v in study_names["forms"].items() if v}},
+                ev_titles=study_names["events"],
+                common_events=study_names["common_events"],
+                session_path=_sess_file,
             )
-            browser_status = "ran but did not reach this case"
+            import playwright_uat as _pw_mod
+            _why = (getattr(_pw_mod, "last_status", None) or {"ran": True, "reason": ""})
+            if _why.get("ran"):
+                browser_status = "ran but did not reach this case"
+                _browser_ran = True
+            else:
+                # nothing was tested: say why on every untested case and in the log, instead of "ran"
+                browser_status = f"was skipped: {_why.get('reason') or 'it could not start'}"
+                await append_log(item_id, f"⚠️ UAT Loader: browser tests were not run — {_why.get('reason')}")
         except Exception as _pw_err:
             browser_status = f"failed ({str(_pw_err)[:150]})"
             await append_log(item_id, f"UAT Loader: browser tests failed: {_pw_err}")
