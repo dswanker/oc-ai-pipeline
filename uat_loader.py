@@ -55,8 +55,8 @@ UAT_STATUS = {
 
 # Column IDs for UAT output files on the AI Hub board
 UAT_DVS_RESULTS_COL  = "file_mm3h5s3h"   # Updated DVS with runtime columns stamped
-UAT_REPORT_COL       = "file_mm3hvbpb"   # UAT Validation Report (future)
-UAT_MATRIX_COL       = "file_mm3h7r4"    # UAT Traceability Matrix (future)
+UAT_REPORT_COL       = "file_mm3hvbpb"   # UAT Validation Report (PDF, uat_reports.py)
+UAT_MATRIX_COL       = "file_mm3h7r4"    # UAT Traceability Matrix (XLSX, uat_reports.py)
 
 # Where the saved browser logins live (the Railway volume). BROWSER_SESSION_DIR points a local run elsewhere.
 SESSION_DIR = os.environ.get("BROWSER_SESSION_DIR", "/data/browser_sessions")
@@ -1704,6 +1704,35 @@ def _method_summary_text(summary: dict) -> str:
     return "; ".join(parts)
 
 
+async def _deliver_uat_reports(item_id: str, results_bytes: bytes, meta: dict, protocol_number: str) -> dict:
+    """Build the UAT Traceability Matrix (XLSX) and the UAT Validation Report (PDF) from the results workbook and
+    upload each to its monday column. The two columns existed but nothing ever generated or uploaded the files
+    (the constants were marked "future"), so a UAT load left them empty without a word in the log. Each file is
+    built and uploaded on its own; a failure is logged and never fails the load. UAT_REPORTS=0 turns this off.
+    Returns {"matrix": bool, "report": bool}."""
+    done = {"matrix": False, "report": False}
+    if os.environ.get("UAT_REPORTS", "1").strip() == "0":
+        await append_log(item_id, "UAT Loader: Traceability Matrix and Validation Report not generated "
+                                  "(UAT_REPORTS=0)")
+        return done
+    import uat_reports
+    for key, label, col, fname, build in (
+        ("matrix", "UAT Traceability Matrix", UAT_MATRIX_COL,
+         f"{protocol_number}_UAT_Traceability_Matrix.xlsx", uat_reports.build_traceability_matrix),
+        ("report", "UAT Validation Report", UAT_REPORT_COL,
+         f"{protocol_number}_UAT_Validation_Report.pdf", uat_reports.build_validation_report),
+    ):
+        try:
+            data = build(results_bytes, meta)
+            await upload_file(item_id, col, fname, data)
+            done[key] = True
+            await append_log(item_id, f"UAT Loader: {label} uploaded ({fname}, {len(data):,} bytes)")
+        except Exception as e:
+            print(f"[uat_loader] {label} failed: {e}\n{traceback.format_exc()}", flush=True)
+            await append_log(item_id, f"⚠️ UAT Loader: {label} was not delivered: {str(e)[:200]}")
+    return done
+
+
 async def run_uat_loader(item_id: str, fo_titles: dict = None) -> dict:
     """
     Execute the full UAT data loading workflow for one monday.com item.
@@ -2173,6 +2202,24 @@ async def run_uat_loader(item_id: str, fo_titles: dict = None) -> dict:
                           dvs_filename, stamped_bytes)
     except Exception as e:
         await append_log(item_id, f"UAT Loader: results upload failed: {e}")
+
+    # ── Step 10b: Traceability Matrix + Validation Report (built from the results workbook) ──
+    try:
+        result["uat_reports"] = await _deliver_uat_reports(item_id, stamped_bytes, {
+            "protocol_number": protocol_number,
+            "study_name":      study_names.get("study_name") or "",
+            "study_uuid":      study_uuid,
+            "study_oid":       study_oid,
+            "environment":     "TEST",
+            "environment_url": _pages_base(subdomain),
+            "site_oid":        created_site_oid or "",
+            "executed_by":     oc_email,
+            "executed_at":     datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+            "participants":    {pid: info.get("participant_key", "") for pid, info in stamp_map.items()},
+            "browser_status":  "ran" if _browser_ran else browser_status,
+        }, protocol_number)
+    except Exception as e:
+        await append_log(item_id, f"⚠️ UAT Loader: UAT reports step failed (non-fatal): {str(e)[:200]}")
 
     # ── Done ───────────────────────────────────────────────────────────────
     n_ok  = len(result["participants_created"])
