@@ -1,7 +1,8 @@
 """
 Ordered (multi-step) UAT: a case that needs a prerequisite value (a cross-form source such as the consent date, or a
-same-form start date) gets structured Setup_Steps; the loader imports those values into UAT-P001 BEFORE the browser
-step, confirms them by read-back, and marks a case Not Run ("Setup failed: ...") when its setup did not store.
+same-form start date) gets structured Setup_Steps; the loader imports those values BEFORE the browser step into the
+participant the case is tested on (one of its own, see test_uat_setup_isolation.py), confirms them by read-back, and
+marks a case Blocked ("Blocked: setup not in place ...") when its setup is not there.
 """
 import contextlib
 import io
@@ -55,27 +56,34 @@ def test_multi_step_cases_carry_structured_setup():
     for c in floor:
         steps = json.loads(c["Setup_Steps"])
         assert steps[0]["form"] == "F_ICF" and steps[0]["item"] == "ICFDAT" and steps[0]["event"] == "SE_SCREEN"
-        assert c["Test_Value"] and c["Participant_ID"] == "UAT-P001"
+        assert c["Test_Value"] and c["Participant_ID"] != "UAT-P001"      # a participant no other case is loaded into
 
 
-def test_setup_rows_are_loaded_into_uat_p001_once():
+def test_setup_rows_are_loaded_once_into_the_participant_of_their_case():
     rows = uat_loader._parse_uat_cases(_dvs_bytes())
     setup = uat_loader._setup_rows(rows)
-    keys = [(r["Form_OID"], r["Item_Name"]) for r in setup]
-    assert ("F_ICF", "ICFDAT") in keys and len(keys) == len(set(keys))
-    assert all(r["Participant_ID"] == "UAT-P001" for r in setup)
+    keys = [(r["Participant_ID"], r["Form_OID"], r["Item_Name"]) for r in setup]
+    assert ("F_ICF", "ICFDAT") in [k[1:] for k in keys] and len(keys) == len(set(keys))
+    assert {r["Participant_ID"] for r in setup} == {r["Participant_ID"] for r in rows if r.get("Setup_Steps")}
     xml = uat_loader._build_odm_xml("S_T", "SITE", "SS_P1", "UAT-P001", setup)
     assert "ICFDAT" in xml and setup[0]["Load_Value"] in xml        # imported before the browser step
 
 
-def test_confirmation_marks_failed_setup_not_run_and_records_confirmed_setup():
+def _stamp(rows):
+    return {r["Participant_ID"]: {"participant_key": "SS_" + r["Participant_ID"]} for r in rows}
+
+
+def _stored(setup, stamp):
+    return {(stamp[r["Participant_ID"]]["participant_key"], r["Study_Event_OID"].upper(), r["Form_OID"].upper(),
+             r["Item_Group_OID"].upper(), r["Item_OID"].upper()): r["Load_Value"] for r in setup}
+
+
+def test_confirmation_blocks_a_case_without_its_setup_and_records_confirmed_setup():
     dvs = _dvs_bytes()
     rows = uat_loader._parse_uat_cases(dvs)
     setup = uat_loader._setup_rows(rows)
-    stamp = {"UAT-P001": {"participant_key": "SS_P1"}}
-    stored = {("SS_P1", r["Study_Event_OID"].upper(), r["Form_OID"].upper(), r["Item_Group_OID"].upper(),
-               r["Item_OID"].upper()): r["Load_Value"] for r in setup}
-    ok = uat_loader._confirm_setup(setup, stamp, stored)
+    stamp = _stamp(setup)
+    ok = uat_loader._confirm_setup(setup, stamp, _stored(setup, stamp))
     assert all(v[0] for v in ok.values())
     marked = _cases(uat_loader._mark_setup_results(dvs, ok))
     floor = [c for c in marked if c["Setup_Steps"]]
@@ -84,7 +92,7 @@ def test_confirmation_marks_failed_setup_not_run_and_records_confirmed_setup():
     assert all(str(c["Preconditions"]).startswith("Setup: F_ICF.ICFDAT=") for c in floor if c["Item_Name"] == "ONSET")
     bad = uat_loader._confirm_setup(setup, stamp, {})                    # nothing stored
     failed = _cases(uat_loader._mark_setup_results(dvs, bad))
-    assert all(c["Test Result"] == "Not Run" and str(c["Actual Result"]).startswith("Setup failed")
+    assert all(c["Test Result"] == "Blocked" and str(c["Actual Result"]).startswith("Blocked: setup not in place")
                for c in failed if c["Setup_Steps"])
 
 
@@ -92,10 +100,8 @@ def test_evidence_shows_setup_then_test():
     dvs = _dvs_bytes()
     rows = uat_loader._parse_uat_cases(dvs)
     setup = uat_loader._setup_rows(rows)
-    stamp = {"UAT-P001": {"participant_key": "SS_P1"}}
-    stored = {("SS_P1", r["Study_Event_OID"].upper(), r["Form_OID"].upper(), r["Item_Group_OID"].upper(),
-               r["Item_OID"].upper()): r["Load_Value"] for r in setup}
-    marked = uat_loader._mark_setup_results(dvs, uat_loader._confirm_setup(setup, stamp, stored))
+    stamp = _stamp(setup)
+    marked = uat_loader._mark_setup_results(dvs, uat_loader._confirm_setup(setup, stamp, _stored(setup, stamp)))
     wb = openpyxl.load_workbook(io.BytesIO(marked))
     ws, hrow, col = uat_loader._case_sheet(wb)
     for r in range(hrow + 1, ws.max_row + 1):                              # simulate the browser result

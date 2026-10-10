@@ -11,7 +11,7 @@ mid / at-max / above). Non-range checks emit 2+ cases with concrete sample
 data.
 """
 
-import json, re
+import json, os, re
 from datetime import date, timedelta
 
 
@@ -293,6 +293,38 @@ def _build_sample_context(study_meta):
     return ctx
 
 
+# Name suffixes of the parts of a partial date (a date collected as separate year / month / day items).
+_DATE_PART_SUFFIXES = {"year": 0, "yyyy": 0, "yr": 0, "yy": 0, "month": 1, "mon": 1, "mm": 1, "day": 2, "dd": 2}
+_ISO_DATE_RE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})(?:[T ].*)?$")
+
+
+def _typed_sample(value, row_type, field_name):
+    """A sample value in the item's real data type. Samples are looked up by field-name prefix, which gave a
+    full date to the integer year item of a partial date (import error valueTypeMismatch). For a numeric item:
+    a numeric sample is kept (whole for an integer); a date sample gives its year, month or day when the name
+    ends in that part; anything else falls back to the type default. UAT_TYPED_SAMPLES=0 restores the old value."""
+    if os.environ.get("UAT_TYPED_SAMPLES", "1").strip() == "0":
+        return value
+    t = (row_type or "").lower()
+    if t not in ("integer", "decimal"):
+        return value
+    text = str(value).strip()
+    try:
+        num = float(text)
+        if t == "integer" and num != int(num):
+            return str(int(num))
+        return text
+    except ValueError:
+        pass
+    m = _ISO_DATE_RE.match(text)
+    if m:
+        suffix = re.split(r"[_.]", (field_name or "").lower())[-1]
+        part = _DATE_PART_SUFFIXES.get(suffix)
+        if part is not None:
+            return str(int(m.group(part + 1)))
+    return "1" if t == "integer" else "1.5"
+
+
 def _sample_for_field(field_name, row_type, choices_for_field, ctx):
     """
     Return a concrete sample value for a field, using protocol context where
@@ -325,12 +357,13 @@ def _sample_for_field(field_name, row_type, choices_for_field, ctx):
         if t == "datetime": return (specific + " 09:00") if specific else "2026-02-01 09:00"
         if t == "time":     return "09:00"
 
-    # Try exact match first, then prefix match
+    # Try exact match first, then prefix match. A name-derived sample must still fit the item's declared
+    # type: the year part of a partial date is an integer item, so "2026-01-15" becomes "2026".
     if fn in ctx:
-        return ctx[fn]
+        return _typed_sample(ctx[fn], t, fn)
     for prefix, val in ctx.items():
         if fn.startswith(prefix):
-            return val
+            return _typed_sample(val, t, fn)
 
     # Type-based fallback
     if t == "integer":  return "1"
@@ -1294,7 +1327,9 @@ def _setup_step(ref, value, world):
     if not fid or not item:
         return None
     # the same prediction _uat_row uses, so reserved slots match the case rows (the loader maps real OIDs anyway)
-    short = (world.get("__form_prefix__") or {}).get(f"F_{fid}", "") or (fo[2:] if fo.upper().startswith("F_") else fo)
+    # keyed by the form OID (F_X): a cross-form source is already named F_X, so "F_" + fid never matched and the
+    # predicted OIDs fell back to the form id (I_ICF_...) instead of the title prefix the case rows use (I_INFOR_...)
+    short = (world.get("__form_prefix__") or {}).get(fo.upper(), "") or (fo[2:] if fo.upper().startswith("F_") else fo)
     return {"form": fo, "event": ev, "item_group": f"IG_{short}_{group_name}",
             "item": item, "item_oid": f"I_{short}_{item}", "value": str(value)}
 
@@ -1325,6 +1360,62 @@ def _odm_slots(uat_case):
         return {(fo, f"{prefix}{part.split('=', 1)[0].strip()}", ev)
                 for part in lv.split(",") if "=" in part}
     return {(fo, item, ev)}
+
+
+def _setup_group_key(uat_case):
+    """Cases that are steps of one ordered test: the same check with the same setup values."""
+    return (str(uat_case.get("Related Check ID", "") or ""), str(uat_case.get("Setup_Steps", "") or ""))
+
+
+def _assign_participants(uat_cases):
+    """Give every UAT row its participant (Participant_ID, in place); returns how many participants are used.
+
+    A row the loader loads (a non-empty _odm_slots) goes to the lowest-numbered participant that has no row for
+    the same (form, item, event) slot, so each participant holds one value per field and the read-back can
+    score each loaded value. Rows that are not loaded (blank, gate, constraint-fires, visibility) are run in the
+    browser on UAT-P001.
+
+    A multi-step case (Setup_Steps) needs its setup value to still be there when the browser enters the value
+    under test, so the cases of one ordered test (same check, same setup) get a participant of their own that
+    no other case is loaded into. Before, the setup was loaded into UAT-P001 next to the data-import cases and a
+    happy-path load of the same item replaced it. UAT_SETUP_OWN_PARTICIPANT=0 restores that assignment (setup
+    on UAT-P001, its slots reserved there)."""
+    own = os.environ.get("UAT_SETUP_OWN_PARTICIPANT", "1").strip() != "0"
+    slot_by_participant = {}   # participant_id -> set of (fo, item, ev) slots
+    if not own:
+        reserved = set()
+        for uc in uat_cases:
+            for st in (json.loads(uc["Setup_Steps"]) if uc.get("Setup_Steps") else []):
+                reserved.add((st.get("form", ""), st.get("item_oid", ""), st.get("event", "")))
+        slot_by_participant["UAT-P001"] = reserved
+    max_p = 1
+    for uc in uat_cases:
+        slots = _odm_slots(uc)
+        if not slots:
+            uc["Participant_ID"] = "UAT-P001"
+            continue
+        for pnum in range(1, max_p + 1):
+            pid = f"UAT-P{pnum:03d}"
+            taken = slot_by_participant.setdefault(pid, set())
+            if not (slots & taken):
+                taken |= slots
+                uc["Participant_ID"] = pid
+                break
+        else:
+            max_p += 1
+            uc["Participant_ID"] = f"UAT-P{max_p:03d}"
+            slot_by_participant[uc["Participant_ID"]] = set(slots)
+    if own:
+        group_pid = {}
+        for uc in uat_cases:
+            if not uc.get("Setup_Steps"):
+                continue
+            key = _setup_group_key(uc)
+            if key not in group_pid:
+                max_p += 1
+                group_pid[key] = f"UAT-P{max_p:03d}"
+            uc["Participant_ID"] = group_pid[key]
+    return max_p
 
 
 # ── Main extraction function ──────────────────────────────────────────────────
@@ -1730,42 +1821,7 @@ def extract_dvs_data(struct_json, forms_json):
                   f"for event {_ev_oid}", flush=True)
 
     # ── Participant assignment: ensure no two rows overwrite the same field ──────
-    # All rows start as UAT-P001. Use greedy bin-packing: for each row, find
-    # the lowest-numbered participant that has no existing row for this
-    # (Form_OID, Item_OID, Study_Event_OID) slot. If none, create a new one.
-    # This guarantees each participant's ODM load has at most one value per
-    # field, so read-back can correctly validate each loaded value.
-    _slot_by_participant = {}   # participant_id -> set of (fo, item, ev) slots
-    # Multi-step cases are tested in the browser on UAT-P001, so their setup values are loaded there: reserve
-    # those slots first, so no data-import case writes a different value into the same field on UAT-P001.
-    _setup_slots = set()
-    for _uc in uat_cases:
-        for _st in (json.loads(_uc["Setup_Steps"]) if _uc.get("Setup_Steps") else []):
-            _setup_slots.add((_st.get("form", ""), _st.get("item_oid", ""), _st.get("event", "")))
-    _slot_by_participant["UAT-P001"] = set(_setup_slots)
-    _max_p = 1
-    for _uc in uat_cases:
-        _slots = _odm_slots(_uc)
-        # Only rows the loader actually loads need a participant of their own
-        # (blank, multi-step, gate, constraint-fires and visibility rows are
-        # not loaded via ODM; Playwright runs them on UAT-P001).
-        if not _slots:
-            _uc["Participant_ID"] = "UAT-P001"
-            continue
-        _assigned = False
-        for _pnum in range(1, _max_p + 1):
-            _pid = f"UAT-P{_pnum:03d}"
-            _taken = _slot_by_participant.setdefault(_pid, set())
-            if not (_slots & _taken):
-                _taken |= _slots
-                _uc["Participant_ID"] = _pid
-                _assigned = True
-                break
-        if not _assigned:
-            _max_p += 1
-            _pid = f"UAT-P{_max_p:03d}"
-            _slot_by_participant[_pid] = set(_slots)
-            _uc["Participant_ID"] = _pid
+    _max_p = _assign_participants(uat_cases)
     print(f"[dvs] Participant assignment: {_max_p} participant(s) for {len(uat_cases)} UAT rows", flush=True)
 
     return {

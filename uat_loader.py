@@ -431,48 +431,182 @@ def _parse_uat_cases(dvs_bytes: bytes) -> list:
     return rows
 
 
-def _setup_rows(rows: list) -> list:
-    """Prerequisite values of multi-step cases (Setup_Steps), as extra rows loaded into UAT-P001 (where the
-    browser step tests those cases). One row per distinct (form, event, item); loaded before any browser test."""
-    out, seen = [], set()
+RESULT_BLOCKED = "Blocked"
+BLOCKED_SETUP_PREFIX = "Blocked: setup not in place"
+
+
+def _own_setup_participants() -> bool:
+    """Multi-step tests get a participant of their own (UAT_SETUP_OWN_PARTICIPANT=0: setup on UAT-P001 as before)."""
+    return os.environ.get("UAT_SETUP_OWN_PARTICIPANT", "1").strip() != "0"
+
+
+def _case_steps(row: dict) -> list:
+    try:
+        steps = json.loads(row.get("Setup_Steps") or "[]")
+    except Exception:
+        steps = []
+    return [st for st in steps if isinstance(st, dict)]
+
+
+def _setup_participant(row: dict) -> str:
+    """The participant a multi-step case's setup is loaded into and its browser test runs on."""
+    if not _own_setup_participants():
+        return "UAT-P001"
+    return str(row.get("Participant_ID") or "").strip() or "UAT-P001"
+
+
+def _isolate_setup_cases(rows: list) -> dict:
+    """Move every multi-step test that shares its participant with other cases to a participant of its own.
+
+    The cases of one ordered test (same check, same setup) stay together; nothing else is loaded into their
+    participant, so no other case can replace the setup value (2026-10-10: a happy-path load of the same item
+    into UAT-P001 replaced the consent date two dependent cases needed). A workbook from the current generator
+    is already assigned this way and is left as it is; an older one is corrected here. Returns
+    {UAT Case ID: new Participant_ID} for the rows it moved (Participant_ID is updated in place)."""
+    if not _own_setup_participants():
+        return {}
+    groups, order = {}, []
     for r in rows:
-        try:
-            steps = json.loads(r.get("Setup_Steps") or "[]")
-        except Exception:
-            steps = []
+        if not _case_steps(r):
+            continue
+        key = (str(r.get("Related Check ID") or ""), str(r.get("Setup_Steps") or ""))
+        if key not in groups:
+            groups[key] = []
+            order.append(key)
+        groups[key].append(r)
+    if not groups:
+        return {}
+    numbers = [int(m.group(1)) for r in rows
+               for m in [re.match(r"^UAT-P(\d+)$", str(r.get("Participant_ID") or "").strip())] if m]
+    next_num = max(numbers or [1]) + 1
+    moved = {}
+    for key in order:
+        members = groups[key]
+        pids = {str(r.get("Participant_ID") or "").strip() or "UAT-P001" for r in members}
+        member_ids = {id(r) for r in members}
+        shared = any((str(r.get("Participant_ID") or "").strip() or "UAT-P001") in pids
+                     for r in rows if id(r) not in member_ids)
+        if len(pids) == 1 and not shared:
+            continue
+        pid = f"UAT-P{next_num:03d}"
+        next_num += 1
+        for r in members:
+            r["Participant_ID"] = pid
+            moved[str(r.get("UAT Case ID") or "")] = pid
+    return moved
+
+
+def _write_participant_ids(dvs_bytes: bytes, moved: dict) -> bytes:
+    """Record the participants _isolate_setup_cases assigned in the workbook's Participant_ID column."""
+    if not moved:
+        return dvs_bytes
+    import openpyxl as _ox
+    wb = _ox.load_workbook(io.BytesIO(dvs_bytes))
+    ws, hrow, col = _case_sheet(wb)
+    if ws is None or hrow is None or "Participant_ID" not in col or "UAT Case ID" not in col:
+        return dvs_bytes
+    for r in range(hrow + 1, ws.max_row + 1):
+        uid = str(ws.cell(row=r, column=col["UAT Case ID"]).value or "").strip()
+        if uid in moved:
+            ws.cell(row=r, column=col["Participant_ID"], value=moved[uid])
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def _plain_loadable(row: dict) -> bool:
+    """A row whose Load_Value is one plain value the data import stores (not blank, gate, multi-step or UI-only)."""
+    lv = str(row.get("Load_Value") or "").strip()
+    return bool(lv) and "=" not in lv and not _not_testable_via_odm(
+        lv, row.get("Expected Result", ""), row.get("Scenario", ""))
+
+
+def _setup_rows(rows: list) -> list:
+    """Prerequisite values of multi-step cases (Setup_Steps), as extra rows loaded before any browser test into
+    the participant the case is tested on. One row per distinct (participant, form, event, item).
+
+    A visit only appears on a participant's page once it holds data. When a case is tested on a form in a visit
+    that none of its setup values are in, one ordinary value of that form (taken from another case) is loaded
+    too, so the browser can open the form."""
+    out, seen = [], set()
+
+    def _add(pid, form, event, group, item_oid, item, value, scenario):
+        key = (pid, form, event, item)
+        if not all(key) or key in seen:
+            return
+        seen.add(key)
+        out.append({"UAT Case ID": f"SETUP-{len(out) + 1:03d}", "Participant_ID": pid,
+                    "Study_Event_OID": event, "Event_Repeat_Key": "1", "Form_OID": form,
+                    "Item_Group_OID": group, "Item_OID": item_oid,
+                    "Item_Name": item, "Load_Value": str(value), "Load_Order": "0",
+                    "Scenario": scenario, "Expected Result": "Setup value stored.",
+                    "_setup": True})
+
+    for r in rows:
+        steps = _case_steps(r)
+        if not steps:
+            continue
+        pid = _setup_participant(r)
         for st in steps:
-            key = (st.get("form"), st.get("event"), st.get("item"))
-            if not all(key) or key in seen:
-                continue
-            seen.add(key)
-            out.append({"UAT Case ID": f"SETUP-{len(out) + 1:03d}", "Participant_ID": "UAT-P001",
-                        "Study_Event_OID": st["event"], "Event_Repeat_Key": "1", "Form_OID": st["form"],
-                        "Item_Group_OID": st.get("item_group", ""), "Item_OID": st.get("item_oid", ""),
-                        "Item_Name": st["item"], "Load_Value": str(st.get("value", "")), "Load_Order": "0",
-                        "Scenario": "Setup for multi-step cases", "Expected Result": "Setup value stored.",
-                        "_setup": True})
+            _add(pid, st.get("form"), st.get("event"), st.get("item_group", ""), st.get("item_oid", ""),
+                 st.get("item"), st.get("value", ""), "Setup for multi-step cases")
+        if not _own_setup_participants():
+            continue
+        form, event = str(r.get("Form_OID") or "").strip(), str(r.get("Study_Event_OID") or "").strip()
+        if not form or not event or any(k[0] == pid and k[2] == event for k in seen):
+            continue
+        tested = _item_name_for_row(r)
+        seed = next((o for o in rows if not o.get("_setup") and str(o.get("Form_OID") or "").strip() == form
+                     and str(o.get("Study_Event_OID") or "").strip() == event
+                     and _item_name_for_row(o) not in ("", tested) and _plain_loadable(o)), None)
+        if seed:
+            _add(pid, form, event, seed.get("Item_Group_OID", ""), seed.get("Item_OID", ""),
+                 _item_name_for_row(seed), seed.get("Load_Value", ""),
+                 "Seed: opens the visit of a multi-step case on its own participant")
     return out
 
 
-def _confirm_setup(setup_rows: list, stamp_map: dict, clinical_data: dict) -> dict:
-    """{(form, event, item): (ok, note)}: was each setup value stored for UAT-P001 (read back from OpenClinica)?"""
-    pkey = str(((stamp_map or {}).get("UAT-P001") or {}).get("participant_key") or "").strip()
+def _confirm_setup(setup_rows: list, stamp_map: dict, clinical_data: dict, all_rows: list = None) -> dict:
+    """{(participant id, form, event, item): (ok, note)}: was each setup value stored where its case is tested
+    (read back from OpenClinica)? When the value read back is what another test case loaded into the same
+    field of the same participant, the note names that case: the pipeline's own load replaced the setup."""
     out = {}
     for r in setup_rows:
+        if str(r.get("Scenario") or "").startswith("Seed:"):
+            continue
+        pid = str(r.get("Participant_ID") or "UAT-P001")
+        pkey = str(((stamp_map or {}).get(pid) or {}).get("participant_key") or "").strip()
         key = (pkey, str(r["Study_Event_OID"]).upper(), str(r["Form_OID"]).upper(),
                str(r.get("Item_Group_OID", "")).upper(), str(r.get("Item_OID", "")).upper())
         stored = clinical_data.get(key)
-        ok = stored is not None and str(stored).strip() == str(r["Load_Value"]).strip()
-        note = (f"{r['Form_OID']}.{r['Item_Name']}={r['Load_Value']} loaded and confirmed" if ok else
-                f"{r['Form_OID']}.{r['Item_Name']}={r['Load_Value']} not stored "
-                f"(OpenClinica holds {stored!r})")
-        out[(r["Form_OID"], r["Study_Event_OID"], r["Item_Name"])] = (ok, note)
+        want = str(r["Load_Value"]).strip()
+        ok = stored is not None and str(stored).strip() == want
+        label = f"{r['Form_OID']}.{r['Item_Name']}={r['Load_Value']}"
+        if ok:
+            note = f"{label} loaded and confirmed"
+        elif not pkey:
+            note = f"{label} not loaded (participant {pid} was not created)"
+        elif stored is None:
+            note = f"{label} not stored (nothing was read back for it)"
+        else:
+            got = str(stored).strip()
+            other = next((o for o in (all_rows or []) if not o.get("_setup")
+                          and (str(o.get("Participant_ID") or "").strip() or "UAT-P001") == pid
+                          and str(o.get("Form_OID") or "").strip().upper() == str(r["Form_OID"]).upper()
+                          and str(o.get("Study_Event_OID") or "").strip().upper() == str(r["Study_Event_OID"]).upper()
+                          and _item_name_for_row(o).upper() == str(r["Item_Name"]).upper()
+                          and str(o.get("Load_Value") or "").strip() == got), None)
+            note = (f"{label}: setup value overwritten by another test case "
+                    f"({other.get('UAT Case ID')} loaded {got!r} into the same field of {pid})" if other else
+                    f"{label} not in place (read back {got!r})")
+        out[(pid, r["Form_OID"], r["Study_Event_OID"], r["Item_Name"])] = (ok, note)
     return out
 
 
 def _mark_setup_results(dvs_bytes: bytes, confirmed: dict) -> bytes:
-    """Write the setup outcome on each multi-step case: failed setup -> Not Run with the reason (the browser step
-    skips it); confirmed setup -> recorded in Preconditions, which the Evidence line quotes."""
+    """Write the setup outcome on each multi-step case. Setup not in place: the case is Blocked with the reason
+    (never Pass or Fail; the browser step skips it). Confirmed setup: recorded in Preconditions, which the
+    Evidence line quotes."""
     import openpyxl as _ox
     wb = _ox.load_workbook(io.BytesIO(dvs_bytes))
     ws, hrow, col = _case_sheet(wb)
@@ -486,14 +620,18 @@ def _mark_setup_results(dvs_bytes: bytes, confirmed: dict) -> bytes:
             steps = json.loads(raw)
         except Exception:
             continue
-        res = [confirmed.get((st.get("form"), st.get("event"), st.get("item")),
+        pid = _setup_participant({"Participant_ID": ws.cell(row=r, column=col["Participant_ID"]).value
+                                  if "Participant_ID" in col else ""})
+        res = [confirmed.get((pid, st.get("form"), st.get("event"), st.get("item")),
                              (False, f"{st.get('form')}.{st.get('item')} setup was not loaded")) for st in steps]
         if all(ok for ok, _ in res):
             ws.cell(row=r, column=col["Preconditions"], value="Setup: " + "; ".join(n for _, n in res))
         else:
-            ws.cell(row=r, column=col["Test Result"], value="Not Run")
+            ws.cell(row=r, column=col["Test Result"], value=RESULT_BLOCKED)
+            if "Status" in col:
+                ws.cell(row=r, column=col["Status"], value=RESULT_BLOCKED)
             ws.cell(row=r, column=col["Actual Result"],
-                    value="Setup failed: " + "; ".join(n for ok, n in res if not ok))
+                    value=f"{BLOCKED_SETUP_PREFIX} — " + "; ".join(n for ok, n in res if not ok))
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
@@ -1011,8 +1149,9 @@ async def _import_odm(subdomain: str, study_oid: str,
     # this cookie to route requests to the same backend node that registered
     # the job. Without it every poll hits a different node and gets 404.
     jsessionid = resp.cookies.get("JSESSIONID")
-    print(f"[uat_loader] ODM import submitted, job_uuid={job_uuid} jsessionid={jsessionid}",
-          flush=True)
+    # the session cookie is a credential: log only whether one came back, never its value
+    print(f"[uat_loader] ODM import submitted, job_uuid={job_uuid} "
+          f"session_cookie={'yes' if jsessionid else 'no'}", flush=True)
 
     # ── Step 2: Wait for OC to process the import ───────────────────────
     # NOTE: The /pages/auth/api/jobs/{uuid}/downloadFile poll endpoint is
@@ -1245,8 +1384,10 @@ def _evaluate_uat_cases(
         if not uid:
             continue  # don't count toward skipped — truly empty row
 
-        # Never overwrite a result the browser test already recorded.
+        # Never overwrite a result the browser test already recorded, or a case blocked by its setup.
         if "Notes" in col_idx and str(row[col_idx["Notes"] - 1].value or "").startswith("Playwright"):
+            continue
+        if str(row[col_idx["Test Result"] - 1].value or "").strip() == RESULT_BLOCKED:
             continue
 
         ev_oid  = str(row[col_idx["Study_Event_OID"]  - 1].value or "").strip().upper()
@@ -1494,6 +1635,9 @@ def _finalize_test_methods(dvs_bytes: bytes, browser_status: str) -> tuple:
             if pre.startswith("Setup:"):
                 evidence = f"{pre}. Test: entered {get('Test_Value') or get('Load_Value')} on " \
                            f"{get('Form_OID')}.{get('Item_Name')}; {evidence}"
+        elif result == RESULT_BLOCKED:
+            # blocked before it could run (its setup was not in place, or the form could not be opened)
+            method, evidence = METHOD_BROWSER, actual or "Blocked before the browser test could run."
         elif result in ("Pass", "Fail") and actual and actual != "Not Testable via ODM":
             method = METHOD_ODM
             evidence = (f"{get('Participant_ID') or 'participant'}: loaded {get('Load_Value') or '(nothing)'}; "
@@ -1637,7 +1781,14 @@ async def run_uat_loader(item_id: str, fo_titles: dict = None) -> dict:
     await append_log(item_id, "UAT Loader: parsing UAT_Cases sheet...")
     try:
         uat_rows = _parse_uat_cases(dvs_bytes)
-        # Prerequisite values for multi-step cases are loaded too (into UAT-P001), before any browser test.
+        # A multi-step test never shares its participant with other cases (an older DVS is corrected here).
+        _moved = _isolate_setup_cases(uat_rows)
+        if _moved:
+            dvs_bytes = _write_participant_ids(dvs_bytes, _moved)
+            await append_log(item_id, f"UAT Loader: {len(_moved)} multi-step case(s) moved to their own "
+                                      f"participant ({', '.join(sorted(set(_moved.values())))}) so no other "
+                                      f"case can replace their setup values")
+        # Prerequisite values for multi-step cases are loaded too, before any browser test.
         _setup = _setup_rows(uat_rows)
         uat_rows = uat_rows + _setup
     except Exception as e:
@@ -1903,12 +2054,13 @@ async def run_uat_loader(item_id: str, fo_titles: dict = None) -> dict:
     # ── Step 9a': multi-step setup confirmed before any browser test ─────
     if _setup:
         try:
-            _conf = _confirm_setup(_setup, stamp_map, clinical_data or {})
+            _conf = _confirm_setup(_setup, stamp_map, clinical_data or {}, uat_rows)
             stamped_bytes = _mark_setup_results(stamped_bytes, _conf)
             _bad = [n for ok, n in _conf.values() if not ok]
             await append_log(item_id, f"UAT Loader: multi-step setup values: {len(_conf) - len(_bad)} of "
                                       f"{len(_conf)} stored and confirmed"
-                                      + (". Not stored: " + "; ".join(_bad[:5]) if _bad else ""))
+                                      + (". Not in place (their cases are Blocked): " + "; ".join(_bad[:5])
+                                         if _bad else ""))
         except Exception as e:
             await append_log(item_id, f"UAT Loader: setup confirmation failed (non-fatal): {e}")
 

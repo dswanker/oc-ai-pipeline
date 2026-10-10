@@ -134,10 +134,10 @@ def test_rows_that_write_the_same_item_never_share_a_participant(cases):
             key = (c["Participant_ID"], slot)
             assert key not in written, (key, c["UAT Case ID"], written[key])
             written[key] = c["UAT Case ID"]
-    # rows the loader does not load stay on the first participant
+    # rows the loader does not load stay on the first participant, except a multi-step test, which has its own
     for c in cases:
         if not gen._odm_slots(c):
-            assert c["Participant_ID"] == "UAT-P001"
+            assert (c["Participant_ID"] == "UAT-P001") == (not c.get("Setup_Steps"))
 
 
 def test_generator_and_loader_agree_on_what_is_loaded(cases):
