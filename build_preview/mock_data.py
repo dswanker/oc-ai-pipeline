@@ -165,6 +165,7 @@ def generate_mock_js(struct_json: dict, study_spec: dict) -> str:
         'today':        '2026-04-30',   # fixed for reproducibility in previews
         'startDate':    '2026-04-01',
         'timepoints':   timepoints,
+        'timepointRows': {str(r.get('event')): r for r in tpt_rows if isinstance(r, dict) and r.get('event')},
         'labranges':    labranges,
         'formDefaults': form_defaults,
         'eventToForms': event_to_forms,

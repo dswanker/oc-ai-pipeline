@@ -232,6 +232,11 @@ function resolvePulldata(csvName, returnCol, matchCol, matchVal) {
     var tpts = DB.timepoints || {};
     return tpts[matchVal] || matchVal || '';
   }
+  // any other column of the timepoint lookup (baseline flag, visit type, visit number)
+  if (matchCol === 'event' && DB.timepointRows && DB.timepointRows[matchVal]) {
+    var cell = DB.timepointRows[matchVal][returnCol];
+    return cell === undefined || cell === null ? '' : String(cell);
+  }
   // pulldata('labranges', 'lower'/'upper'/'unit', 'test_code', 'WBC')
   if (csvName === 'labranges' || csvName.indexOf('labrange') === 0) {
     var lr = (DB.labranges || {})[matchVal] || {};

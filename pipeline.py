@@ -897,14 +897,37 @@ def run_edc_build(struct_json):
         for d in (forms_dir, csv_dir, checklist_dir, package_dir):
             os.makedirs(d, exist_ok=True)
 
+        # Lookup CSVs: one name for the file and every reference to it, stable columns for the rules
+        # (lookup_csv). Done on the specification itself so every later output reads the same names.
+        import lookup_csv as _lc
+        try:
+            _lk = _lc.normalize_spec(struct_json, protocol)
+            for _u in _lk.get("unresolved") or []:
+                build_log['build_warnings'].append(
+                    f"{_u['form']}: a rule compares the looked-up visit label {_u['item']} to '{_u['literal']}', "
+                    f"which is not a label in the timepoint lookup: it can never match")
+        except Exception as _e:
+            print(f"[edc-build] lookup CSV normalisation failed, names left as they are: {_e}", flush=True)
+        _tpt_file = f'{protocol}_tpt.csv'
+        _lab_file = f'{protocol}_labranges.csv'
+        if _lc.canonical_enabled():
+            _tpt_file = _lc.lookup_name(protocol, _lc.TPT) + '.csv'
+            _lab_file = _lc.lookup_name(protocol, _lc.LABRANGES) + '.csv'
+
         build_all_xlsforms(struct_json, forms_dir, build_log)
         write_timepoint_csv(struct_json.get('timepoint_csv', {}),
-                            os.path.join(csv_dir, f'{protocol}_tpt.csv'),
+                            os.path.join(csv_dir, _tpt_file),
                             build_log)
         write_labranges_csv(struct_json.get('labranges_csv', {}),
-                            os.path.join(csv_dir, f'{protocol}_labranges.csv'),
+                            os.path.join(csv_dir, _lab_file),
                             build_log)
         write_calendar_artifacts(struct_json, csv_dir, build_log)
+        # Every lookup a form names must be in the build under that exact name, with the columns it reads.
+        if os.environ.get("LOOKUP_CSV_VALIDATE", "1").strip() != "0":
+            try:
+                build_log['build_errors'].extend(_lc.validate_build(forms_dir, [csv_dir]))
+            except Exception as _e:
+                print(f"[edc-build] lookup CSV validation could not run: {_e}", flush=True)
         build_checklist_pdf(struct_json, build_log,
                             os.path.join(checklist_dir,
                                          f'{protocol}_Build_Checklist.pdf'))
@@ -6070,8 +6093,22 @@ def _ensure_required_forms(spec: dict, protocol_num: str,
             "instance('clinicaldata')/ODM/ClinicalData/SubjectData"
             "/StudyEventData[@OpenClinica:Current='Yes']/@StudyEventOID"
         )
-        _pid = protocol_num.lower().replace("-", "")
-        _tpt_calc = f"pulldata('{_pid}_tpt','timepoint','event',${{EVENT_CF}})"
+        import lookup_csv as _lc
+        # One name for the lookup, the same the build gives the file (lookup_csv). The rules compare the
+        # lookup's baseline flag, never the visit's display label: a renamed visit changes no rule.
+        _stable = _lc.stable_enabled()
+        if _lc.canonical_enabled():
+            _tpt_name = _lc.lookup_name((spec.get("study_meta") or {}).get("protocol_number") or protocol_num, _lc.TPT)
+        else:
+            _tpt_name = protocol_num.lower().replace("-", "") + "_tpt"
+        _tpt_calc = f"pulldata('{_tpt_name}','timepoint','event',${{EVENT_CF}})"
+        _is_base = "${TPTBASE} = '1'" if _stable else "${TPTCALC}='Baseline'"
+        _not_base = "${TPTBASE} != '1'" if _stable else "${TPTCALC} != 'Baseline'"
+        _base_rows = [
+            {"type": "calculate", "name": "TPTBASE", "label": "",
+             "bind__oc_itemgroup": "DOV", "calculation": _lc.dov_rows_rule(_tpt_name),
+             "completion_status": "COMPLETE", "library_source": "CDASH_DEFAULT", "flag_reason": ""},
+        ] if _stable else []
         dov_form = {
             "form_id": "DOV",
             "form_title": "Date of Visit",
@@ -6104,6 +6141,7 @@ def _ensure_required_forms(spec: dict, protocol_num: str,
                 {"type": "calculate", "name": "TPTCALC", "label": "",
                  "bind__oc_itemgroup": "DOV", "calculation": _tpt_calc,
                  "completion_status": "COMPLETE", "library_source": "CDASH_DEFAULT", "flag_reason": ""},
+                *_base_rows,
                 {"type": "begin group", "name": "DOV_GRP", "label": "",
                  "appearance": "field-list",
                  "completion_status": "COMPLETE", "library_source": "CDASH_DEFAULT", "flag_reason": ""},
@@ -6111,11 +6149,11 @@ def _ensure_required_forms(spec: dict, protocol_num: str,
                  "bind__oc_itemgroup": "DOV", "calculation": "${TPTCALC}", "readonly": "yes",
                  "completion_status": "COMPLETE", "library_source": "CDASH_DEFAULT", "flag_reason": ""},
                 {"type": "select_one NY", "name": "VISYN", "label": "Was the visit done?",
-                 "bind__oc_itemgroup": "DOV", "relevant": "${TPTCALC} != 'Baseline'", "required": "yes",
+                 "bind__oc_itemgroup": "DOV", "relevant": _not_base, "required": "yes",
                  "completion_status": "COMPLETE", "library_source": "CDASH_DEFAULT", "flag_reason": ""},
                 {"type": "date", "name": "VISDT", "label": "Provide the date of visit.",
                  "bind__oc_itemgroup": "DOV",
-                 "relevant": "${VISYN}='Y' or ${TPTCALC}='Baseline'", "required": "yes",
+                 "relevant": "${VISYN}='Y' or " + _is_base, "required": "yes",
                  "constraint": ". <= today()", "constraint_message": "Cannot be a future date.",
                  "completion_status": "COMPLETE", "library_source": "CDASH_DEFAULT", "flag_reason": ""},
                 {"type": "text", "name": "VISNDRSN", "label": "Reason visit not done:",

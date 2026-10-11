@@ -22,8 +22,7 @@ CONTENTS
 --------
 forms/           — One XLSForm .xlsx file per CRF ({n_forms} forms)
 csv/             — Supporting CSV files
-  {study_id}_tpt.csv     — Study timepoint lookup table
-  labranges.csv          — Laboratory reference ranges
+{csv_list}
 checklist/       — Study build checklist
   {protocol}_Build_Checklist.pdf   — Printable sign-off document
   {protocol}_Build_Checklist.xlsx  — Digital QA checklist
@@ -35,9 +34,10 @@ UPLOAD INSTRUCTIONS
    a. Open the .xlsx file and verify the content
    b. Upload to OpenClinica Study Designer
    c. Publish the form
-3. Upload {study_id}_tpt.csv as an external dataset named '{study_id}_tpt'
-4. Upload labranges.csv as an external dataset named 'labranges'
-5. After study configuration is complete, update all cross-form OID
+3. A form that reads a lookup (pulldata('name', ...) reads csv/name.csv) needs that
+   file attached as form media: select the .xlsx and the .csv together in the
+   upload dialog. The file name must match the name in the form exactly.
+4. After study configuration is complete, update all cross-form OID
    placeholders (marked [EVENT_OID] and [FORM_OID]) with actual OIDs
    from the OpenClinica Data Dictionary
 
@@ -142,7 +142,9 @@ def build_package(spec_data, build_log, forms_dir, csv_dir,
         v_summary = "  No validation results recorded."
         v_detail  = ""
 
+    _csvs = sorted(f for f in os.listdir(csv_dir) if f.endswith('.csv')) if os.path.isdir(csv_dir) else []
     readme = README_TEMPLATE.format(
+        csv_list='\n'.join(f"  {f}" for f in _csvs) or "  (none)",
         protocol=protocol,
         study_id=study_id,
         date=today_hr,

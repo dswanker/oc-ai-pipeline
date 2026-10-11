@@ -1541,12 +1541,18 @@ def build_all_xlsforms(spec_data, output_dir, build_log):
 def write_timepoint_csv(tpt_data, output_path, build_log):
     """Write the timepoint CSV file."""
     rows = tpt_data.get('rows', [])
+    # Stable columns (visit_number, visit_type, baseline) are written when the rows carry them: rules compare
+    # those, never the display label in `timepoint`.
+    extra = [c for c in ('visit_number', 'visit_type', 'baseline')
+             if any(isinstance(r, dict) and c in r for r in rows)] \
+        if any(isinstance(r, dict) and ('visit_type' in r or 'baseline' in r) for r in rows) else []
     with open(output_path, 'w', newline='') as f:
-        f.write('event,timepoint\r\n')
+        f.write(','.join(['event', 'timepoint'] + extra) + '\r\n')
         for row in rows:
             event = row.get('event', '').replace(',', '')
             tpt = row.get('timepoint', '').replace(',', '')
-            f.write(f'{event},{tpt}\r\n')
+            more = [str(row.get(c, '') if row.get(c) is not None else '').replace(',', '') for c in extra]
+            f.write(','.join([event, tpt] + more) + '\r\n')
     build_log['build_warnings'] = build_log.get('build_warnings', [])
     if not rows:
         build_log['build_warnings'].append('Timepoint CSV has no rows — check TIMEPOINTS sheet')

@@ -1779,6 +1779,12 @@ class FormPublisher:
                                             _oid_label_for_hash = (
                                                 oid[2:] if oid.startswith('F_') else oid)
                                             _form_bytes = xlsx_path.read_bytes()
+                                            try:    # a changed lookup file is a changed upload
+                                                from vocab_attach import files_to_attach as _fta
+                                                for _csv in _fta(xlsx_path):
+                                                    _form_bytes += _csv.read_bytes()
+                                            except Exception:
+                                                pass
                                             _form_hash = _hashlib.md5(
                                                 _form_bytes).hexdigest()
                                             _hash_store_updated[
@@ -1820,10 +1826,11 @@ class FormPublisher:
                                             # every CSV in the folder was fine for two small
                                             # lists but would upload several large lists with
                                             # every one of the study's forms.
-                                            from vocab_attach import csvs_to_attach
-                                            _sibling_csvs = csvs_to_attach(
-                                                xlsx_path,
-                                                sorted(xlsx_path.parent.glob("*.csv")))
+                                            # The lookups a form reads with pulldata() or an
+                                            # external instance live in the build's csv/ folder
+                                            # and are attached the same way (files_to_attach).
+                                            from vocab_attach import files_to_attach
+                                            _sibling_csvs = files_to_attach(xlsx_path)
                                             _upload_paths = [str(xlsx_path)] + [
                                                 str(p) for p in _sibling_csvs
                                             ]

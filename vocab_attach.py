@@ -32,3 +32,16 @@ def referenced_csvs(xlsx_path) -> Set[str]:
 def csvs_to_attach(xlsx_path, sibling_csvs: Iterable[Path]) -> List[Path]:
     refs = referenced_csvs(xlsx_path)
     return sorted((p for p in sibling_csvs if p.name in refs), key=lambda p: p.name)
+
+
+def files_to_attach(xlsx_path) -> List[Path]:
+    """Every CSV a form's upload needs: the vocabulary lists beside it and the lookups it reads with
+    pulldata() or an external instance, which the build keeps in csv/ (lookup_csv.files_for_form).
+    OpenClinica resolves pulldata('name', ...) against the media file name.csv of that form, so a lookup
+    that is not uploaded with the form shows "Can't find name.csv" when the form opens."""
+    import lookup_csv
+    xlsx_path = Path(xlsx_path)
+    out = {p.name: p for p in csvs_to_attach(xlsx_path, sorted(xlsx_path.parent.glob("*.csv")))}
+    for p in lookup_csv.files_for_form(xlsx_path):
+        out.setdefault(p.name, p)
+    return [out[n] for n in sorted(out)]
