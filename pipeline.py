@@ -2100,6 +2100,52 @@ async def _get_board_form_oids(
 UPLOAD_RECORDS_DIR = "/data/pipeline_upload_records"
 
 
+def _publish_failure_hint(err) -> str:
+    """What a known publish failure means, for the run log. The study stays as it was: nothing is retried."""
+    text = str(err or "")
+    if "boardTransformError" in text:
+        return (" — OpenClinica could not transform the design board: a form on the board has more than one form "
+                "object (a duplicate card or a clone with a suffixed OID). The published study is unchanged. "
+                "Remove the duplicate in the Study Designer, then tick Publish to Test again; do not rerun the "
+                "form upload first.")
+    if "No form version defined" in text:
+        return (" — a card on the board has no form version: a form the board lists was not in the build, or its "
+                "upload failed (see the upload lines above). The published study is unchanged.")
+    return ""
+
+
+_BUILD_CODE_FILES = ("lookup_csv.py", "vocab_attach.py", "skills/edc-builder/scripts",
+                     "skills/logic-coverage/scripts", "conventions_engine")
+
+
+def _build_code_fingerprint() -> str:
+    """A digest of the code that turns a specification into forms. An unchanged specification still gives
+    different forms after that code changed, so it is part of the "nothing to upload" decision."""
+    import hashlib
+    root, h = os.path.dirname(os.path.abspath(__file__)), hashlib.sha256()
+    for rel in _BUILD_CODE_FILES:
+        path = os.path.join(root, rel)
+        files = [path] if os.path.isfile(path) else sorted(
+            os.path.join(d, f) for d, _dirs, fs in os.walk(path) for f in fs if f.endswith((".py", ".json", ".yaml", ".yml")))
+        for f in files:
+            try:
+                with open(f, "rb") as fh:
+                    h.update(os.path.relpath(f, root).encode() + b"\0" + fh.read())
+            except OSError:
+                pass
+    return h.hexdigest()[:16]
+
+
+def _spec_upload_hash(struct_json) -> str:
+    """What "the study is already current" is decided on: the specification and the build code
+    (UPLOAD_HASH_BUILD_CODE=0: the specification alone, as before)."""
+    import hashlib
+    data = json.dumps(struct_json, sort_keys=True, ensure_ascii=False).encode()
+    if os.environ.get("UPLOAD_HASH_BUILD_CODE", "1").strip() != "0":
+        data += b"\0" + _build_code_fingerprint().encode()
+    return hashlib.sha256(data).hexdigest()[:16]
+
+
 def _read_upload_record(item_id: str) -> dict:
     """Read the publisher's per-item upload record from disk.
 
@@ -3225,11 +3271,7 @@ async def create_oc_study(subdomain, struct_json, is_production=False,
                     # Save a hash of the Study Spec JSON so future runs can
                     # detect whether the spec changed and skip re-upload if not.
                     if struct_json:
-                        import hashlib as _hashlib
-                        _spec_bytes = json.dumps(struct_json, sort_keys=True,
-                                                 ensure_ascii=False).encode()
-                        _upload_record["spec_hash"] = (
-                            _hashlib.sha256(_spec_bytes).hexdigest()[:16])
+                        _upload_record["spec_hash"] = _spec_upload_hash(struct_json)
                     _write_upload_record(item_id, _upload_record)
                 except Exception as _ue:
                     print(f"[upload-record] post-publish update failed: "
@@ -3859,7 +3901,7 @@ async def publish_to_test(item_id, uploaded_oids=None):
                           f"{_ve} — marking Failed", flush=True)
             if _verified_failed:
                 await set_status(item_id, COL["published_status"], "Failed")
-                await append_log(item_id, f"Publish to Test FAILED: {err}")
+                await append_log(item_id, f"Publish to Test FAILED: {err}" + _publish_failure_hint(err))
         except Exception as inner:
             print(f"PUBLISH_TO_TEST status-update fallback also failed: "
                   f"{inner}", flush=True)
@@ -8038,6 +8080,20 @@ async def run_pipeline(item_id):
             # reads the specification (the build, the DVS and the Study Specification all show the result).
             await _logic_coverage_step(item_id, struct_json)
 
+            # Lookup CSVs: one name for file and references, stable columns and rules (lookup_csv). Here, before
+            # any chain reads the specification, so the build, the DVS and the upload decision see the same thing.
+            try:
+                import lookup_csv as _lcsv
+                _lk = _lcsv.normalize_spec(struct_json, protocol_num)
+                if _lk["files"] or _lk["references"] or _lk["rules"] or _lk["unresolved"]:
+                    await append_log(item_id, (
+                        f"Lookup CSVs: {len(_lk['files'])} file name(s) and {_lk['references']} reference(s) brought to "
+                        f"one name; {len(_lk['rules'])} rule(s) now compare a stable value instead of a visit label"
+                        + (f"; {len(_lk['unresolved'])} rule(s) compare a label that is not in the lookup (see build "
+                           f"warnings)" if _lk["unresolved"] else "")))
+            except Exception as _lke:
+                print(f"[lookup-csv] skipped (build continues): {_lke}", flush=True)
+
             await set_status(item_id, COL["pipeline_status"], STATUS["build_pricing_running"])
             await append_log(item_id, "Chains A (spec files), B (summary+quote), C (build+DVS), D (OC study) starting in parallel.")
 
@@ -8448,10 +8504,7 @@ async def run_pipeline(item_id):
                 _existing_uuid_d = (cols.get(COL["study_uuid"], {})
                                     .get("text") or "").strip()
                 if _existing_uuid_d and struct_json:
-                    import hashlib as _hashlib
-                    _spec_bytes = json.dumps(struct_json, sort_keys=True,
-                                            ensure_ascii=False).encode()
-                    _spec_hash  = _hashlib.sha256(_spec_bytes).hexdigest()[:16]
+                    _spec_hash  = _spec_upload_hash(struct_json)
                     _saved_rec  = _read_upload_record(str(item_id))
                     _saved_hash = _saved_rec.get("spec_hash", "")
                     if _saved_hash and _saved_hash == _spec_hash:
