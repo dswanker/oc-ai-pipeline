@@ -294,7 +294,7 @@ _CASES = [
     _case("UAT-016", "F_DD", "SE_COMMON", "VISDAT", "(leave blank)", _REQ),       # no entry yet: Add New
     _case("UAT-017", "F_BB", "SE_THREE", "PERF", "(leave blank)", _REQ),          # visit not scheduled
     _case("UAT-018", "F_EE", "SE_ONE", "PERF", "(leave blank)", _REQ),            # form not on that visit
-    _case("UAT-019", "F_IE", "SE_ONE", "PERF", "(leave blank)", _REQ),            # skipped by default, as before
+    _case("UAT-019", "F_IE", "SE_ONE", "PERF", "(leave blank)", _REQ),            # run by default: not on the visit
     _case("UAT-020", "F_AA", "SE_ONE", "VOL", "5", _OK, **{"Test Result": "Blocked",
                                                            "Actual Result": "Blocked: setup not in place — x"}),
     _case("UAT-021", "F_AA", "SE_ONE", "VOL", "21", "No required-field error. Form saves.",
@@ -420,7 +420,16 @@ def test_cases_already_scored_or_blocked_are_left_alone(run):
     assert res["UAT-020"]["Actual Result"] == "Blocked: setup not in place — x"
     assert (res["UAT-021"]["Test Result"], res["UAT-021"]["Actual Result"], res["UAT-021"]["Notes"]) == \
         ("Pass", "21", None)
-    assert res["UAT-019"]["Test Result"] == "Skip"
+
+
+@browser
+def test_the_eligibility_form_runs_by_default_and_is_skipped_only_when_switched_off(run, tmp_path, monkeypatch):
+    res, _ = run
+    assert res["UAT-019"]["Test Result"] == "Blocked"            # it was run: its form is not on that visit
+    assert "form F_IE is not on visit" in res["UAT-019"]["Actual Result"]
+    monkeypatch.setenv("PW_TEST_F_IE", "0")
+    off = _run(tmp_path, [c for c in _CASES if c["UAT Case ID"] == "UAT-019"], {})
+    assert off["UAT-019"]["Test Result"] == "Skip" and "PW_TEST_F_IE=0" in off["UAT-019"]["Actual Result"]
 
 
 @browser

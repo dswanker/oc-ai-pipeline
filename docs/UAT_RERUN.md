@@ -60,7 +60,7 @@ Status goes to **Loading UAT Data**, then **All Complete** or **UAT Load Failed*
 | Pass / Fail | The case was run. Data import: the value was stored and read back unchanged (the import does not run form logic). Browser: the field's own message or visibility in the form. |
 | Blocked | The case could not be run; Actual Result gives the reason (setup not in place, form or visit could not be opened, field or gate not in the published form, calculated gate, value not an option). |
 | Not Run | Not attempted on this run (for example the browser step did not run), or it needs a manual check. |
-| Skip | Deliberately not run (the eligibility form, unless `PW_TEST_F_IE=1`). |
+| Skip | Deliberately not run (the eligibility form, only when `PW_TEST_F_IE=0`). |
 
 ## Switches
 
@@ -75,7 +75,7 @@ All default to the behaviour described above.
 | `PW_UAT_ENGINE=legacy` | the previous browser step |
 | `PW_FORMS=F_A,F_B` | browser cases of these forms only |
 | `PW_CONCURRENCY=n` | forms open at once in the browser step (default 6) |
-| `PW_TEST_F_IE=1` | run the eligibility form's browser cases |
+| `PW_TEST_F_IE=0` | skip the eligibility form's browser cases (they run by default) |
 
 ## Without monday
 

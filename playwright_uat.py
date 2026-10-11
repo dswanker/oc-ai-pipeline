@@ -890,8 +890,9 @@ async def run_playwright_uat(
     fo_titles, ev_titles = dict(fo_titles or {}), dict(ev_titles or {})
     common_events = {str(e).upper() for e in (common_events or set())}
 
-    # F_IE stays skipped by default, as before (PW_TEST_F_IE=1 runs it).
-    skip_forms = set() if os.environ.get("PW_TEST_F_IE", "").strip() == "1" else {"F_IE"}
+    # The eligibility form's cases run like every other form's (30 of 30 passed live on 2026-10-10).
+    # PW_TEST_F_IE=0 skips them, as was the default before.
+    skip_forms = {"F_IE"} if os.environ.get("PW_TEST_F_IE", "1").strip() == "0" else set()
     only = {f.strip().upper() for f in os.environ.get("PW_FORMS", "").split(",") if f.strip()}
     by_form, counts = defaultdict(list), defaultdict(int)
     for row, row_dict, test_type in pw_rows:
@@ -900,8 +901,8 @@ async def run_playwright_uat(
         if only and fo.upper() not in only:
             continue
         if fo.upper() in skip_forms:
-            _write(row, col_idx, "Skipped — this form's browser cases are not run by default "
-                                 "(PW_TEST_F_IE=1 runs them)", "Skip", now_str)
+            _write(row, col_idx, "Skipped — this form's browser cases are switched off "
+                                 "(PW_TEST_F_IE=0; unset it to run them)", "Skip", now_str)
             counts["Skip"] += 1
             continue
         by_form[(fo, ev, _case_participant(row_dict))].append((row, row_dict, test_type))
